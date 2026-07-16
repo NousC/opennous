@@ -21,11 +21,32 @@ const COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
 const dim = (t) => (COLOR ? `\x1b[2m${t}\x1b[0m` : t);
 
 // Best-effort open the user's browser; if it fails they have the printed URL.
+//
+// Windows is the sharp edge here: `start` is a cmd.exe builtin, NOT an executable,
+// so `spawn("start", ...)` fails with ENOENT — and that failure arrives as an async
+// 'error' EVENT, not a throw, so a try/catch never sees it. An unhandled 'error' on
+// a child process is an uncaught exception that kills the whole CLI before the
+// device-auth wait. So: go through cmd.exe, and always attach an 'error' handler.
 function openBrowser(url) {
-  const cmd = process.platform === "darwin" ? "open"
-            : process.platform === "win32" ? "start"
-            : "xdg-open";
-  try { spawn(cmd, [url], { stdio: "ignore", detached: true }).unref(); } catch { /* printed URL is the fallback */ }
+  let cmd, args, opts = { stdio: "ignore", detached: true };
+  if (process.platform === "darwin") {
+    cmd = "open"; args = [url];
+  } else if (process.platform === "win32") {
+    // cmd.exe /c start "" "<url>". The empty "" is start's title argument (else a
+    // quoted URL is taken as the window title). windowsVerbatimArguments keeps the
+    // quotes we add, so an & in the auth URL's query string stays inside them and
+    // isn't parsed by cmd as a command separator.
+    cmd = process.env.ComSpec || "cmd.exe";
+    args = ["/c", "start", "", `"${url}"`];
+    opts.windowsVerbatimArguments = true;
+  } else {
+    cmd = "xdg-open"; args = [url];
+  }
+  try {
+    const child = spawn(cmd, args, opts);
+    child.on("error", () => { /* printed URL is the fallback — never crash on this */ });
+    child.unref();
+  } catch { /* printed URL is the fallback */ }
 }
 
 const CONFIG_PATH = join(homedir(), ".nous", "config.json");
