@@ -9,6 +9,7 @@
 // Backed by /api/playground/chat/stream (SSE). Threads and messages are the same
 // rows the old Playground wrote, so history carries over.
 import { useState, useEffect, useMemo, useRef, useCallback, memo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import {
@@ -491,7 +492,20 @@ export default function Home() {
   const workspaceId = userData?.workspace?.id ?? "";
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const [threads, setThreads] = useState<Thread[]>([]);
+  const queryClient = useQueryClient();
+  const threadsKey = useMemo(() => ["threads", workspaceId] as const, [workspaceId]);
+  // Thread list is cached: switching to Threads / back to it is instant. Optimistic
+  // create/rename/delete below update the cache via setQueryData.
+  const { data: threads = [] } = useQuery({
+    queryKey: threadsKey,
+    queryFn: async () => {
+      const r = await fetch(`${apiUrl}/api/playground/threads?workspaceId=${workspaceId}`, { headers: authHeaders });
+      if (!r.ok) return [] as Thread[];
+      const d = await r.json();
+      return (d.threads ?? []) as Thread[];
+    },
+    enabled: !!workspaceId && !!token,
+  });
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   // The inner threads panel — yours to fold away, and it sticks (same localStorage
   // pattern as the app sidebar's collapsed state).
@@ -576,17 +590,7 @@ export default function Home() {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
   }, []);
 
-  const loadThreads = useCallback(async () => {
-    if (!workspaceId || !token) return;
-    try {
-      const r = await fetch(`${apiUrl}/api/playground/threads?workspaceId=${workspaceId}`, { headers: authHeaders });
-      if (!r.ok) return;
-      const d = await r.json();
-      setThreads(d.threads ?? []);
-    } catch { /* silent */ }
-  }, [authHeaders, token, workspaceId]);
-
-  useEffect(() => { loadThreads(); }, [loadThreads]);
+  // Thread list is a cached React Query (defined above) — no manual load effect.
 
   useEffect(() => {
     if (!activeThreadId || !workspaceId) { setMessages([]); return; }
@@ -718,7 +722,7 @@ export default function Home() {
         method: "DELETE", headers: authHeaders,
       });
       if (!r.ok) { toast.error("Failed to delete"); return; }
-      setThreads(prev => prev.filter(t => t.id !== id));
+      queryClient.setQueryData(threadsKey, (prev: Thread[] = []) => prev.filter(t => t.id !== id));
       if (activeThreadId === id) newChat();
     } catch { toast.error("Failed to delete"); }
   }, [activeThreadId, authHeaders, newChat, workspaceId]);
@@ -758,7 +762,7 @@ export default function Home() {
         });
         if (!r.ok) { toast.error("Failed to start chat"); setSending(false); return; }
         const d = await r.json();
-        setThreads(prev => [d.thread, ...prev]);
+        queryClient.setQueryData(threadsKey, (prev: Thread[] = []) => [d.thread, ...prev]);
         threadId = d.thread.id as string;
         // We own this thread's messages already — don't let the load effect
         // overwrite them with an empty list from the DB.
@@ -855,7 +859,7 @@ export default function Home() {
       setLiveText("");
       setLiveSteps([]);
 
-      setThreads(prev => {
+      queryClient.setQueryData(threadsKey, (prev: Thread[] = []) => {
         const i = prev.findIndex(t => t.id === threadId);
         if (i < 0) return prev;
         const updated = {
