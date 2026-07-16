@@ -391,14 +391,6 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
                 however many you import.
               </p>
 
-              {/* The three unlimiteds. On this model the list of what we DON'T charge
-                  for is the pitch, not the fine print. */}
-              <div className="mt-4 space-y-1 text-[12px] text-muted-foreground">
-                <div>Retrievals · <span className="text-foreground">unlimited</span></div>
-                <div>Records and lead imports · <span className="text-foreground">unlimited</span></div>
-                <div>Seats · <span className="text-foreground">unlimited</span></div>
-              </div>
-
               {activeAccounts?.state === 'warn' && (
                 <p className="mt-3 text-[12px] text-amber-600 dark:text-amber-500">
                   You're at {activeAccounts.percentUsed}% of your active-account limit.
@@ -426,9 +418,6 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
       {/* ── Plans ── */}
       <div className="mb-4">
         <h2 className="text-[15px] font-semibold text-foreground">Nous plans</h2>
-        <p className="text-[13px] text-muted-foreground mt-0.5">
-          Pure-tier pricing. Plans are sized by active accounts, the companies you've actually had a conversation with. Retrievals, records, lead imports and seats are unlimited on every plan, and enrichment runs on your own keys. No top-up packs or overage charges.
-        </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
