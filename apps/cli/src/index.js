@@ -956,8 +956,8 @@ program
       }
     }
 
-    console.log('\nYou\'re set. Tell your agent: "set up my Nous workspace" — it reads your');
-    console.log("project, finds your ICP (or drafts one), and syncs it. That's onboarding.\n");
+    console.log('\nYou\'re set. Tell your agent: "set up my GTM context layer and connect it to');
+    console.log("Nous\" — it audits your project's context, drafts what's missing, and syncs it.\n");
     console.log(dim("Docs: https://docs.opennous.cloud/mcp/introduction"));
   });
 

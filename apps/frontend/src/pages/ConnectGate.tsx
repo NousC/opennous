@@ -30,17 +30,30 @@ const API_URL = import.meta.env.VITE_API_URL ?? "";
  */
 
 
-// The ICP, and nothing else.
+// The context layer, not just the ICP.
 //
-// The agent's job here is to RECONCILE, not to create. Plenty of these users already have
-// an ICP written down somewhere — that file IS the ICP, and the worst thing we could do is
-// draft a second one next to it. So: look first, sync what's there untouched, and only
-// write something new when there's genuinely nothing to find.
+// Setup used to fetch one file (the ICP). But the thing that actually took people forever
+// wasn't writing an ICP — it was figuring out the STRUCTURE: where GTM context should live
+// and what belongs in it. So the agent's job here is to stand up the whole load-bearing set
+// (icp, positioning, voice, messaging) as ./context/*.md, and Nous mirrors it. The repo is
+// the vault, Nous is the lens over the context/ subset. See internal/ONBOARDING.md §5.
 //
-// The file lands in THEIR repo either way, because on this road the repo is the author and
-// Nous is the mirror. See internal/ONBOARDING.md §5.
+// Two rules keep it safe:
+//   RECONCILE, don't create. Plenty of these users already have this written down — those
+//   files ARE the context, and drafting a second one next to them is the worst thing we can
+//   do. Look first, sync what's there untouched, draft only what's genuinely missing.
+//   AUDIT-FIRST, scaffold on consent. It shows the plan before it creates any folders — we
+//   don't dump a structure into someone's existing repo without asking.
+//
+// The gate is still just hasIcp: a user who ends up with only icp.md still onboards. The
+// other three docs are upside, not a new requirement — we widen the invitation, not the bar.
+// raw/ and wiki/ are recommended but never built or synced here (context-only for now).
 const ONBOARD_PROMPT =
-  "Set up my Nous workspace. First look for an ICP I already have — check context/, .claude/, gtm/, docs/ and the repo root for icp.md or similar, and check CLAUDE.md for a section describing who we sell to. If you find one, sync it to Nous as-is (don't rewrite it). If it exists but lives somewhere odd, move it to ./context/icp.md and tell me what you moved. If there's nothing, ask me for my website, research it, draft an ICP, write it to ./context/icp.md, and sync that.";
+  "Set up my GTM context layer and connect it to Nous.\n\n" +
+  "First, audit what I already have: check context/, .claude/, gtm/, docs/ and the repo root for anything describing who we sell to (ICP), how we position, our voice, and our core messaging, and read CLAUDE.md for sections covering these. Tell me what you found and where.\n\n" +
+  "Then reconcile toward this structure: context/icp.md, context/positioning.md, context/voice.md, context/messaging.md. For anything I already have that's good, move it into context/ if it lives somewhere odd and sync it to Nous as-is — don't rewrite it. For anything missing, ask me for my website, research it, draft the doc, show me, and once I approve write it to context/ and sync it.\n\n" +
+  "Before creating any folders or files, show me the plan and let me approve it — don't scaffold silently.\n\n" +
+  "Once context/ is synced, tell me how to grow this into a full context layer (a raw/ folder for inputs I drop in, a wiki/ folder you maintain), but don't build those yet unless I ask.";
 
 type Step = { caption: string; code: string };
 
@@ -255,8 +268,8 @@ function Fork({ onPick }: { onPick: (r: "agent" | "app") => void }) {
           <AgentLogos />
           <span className="text-[14px] font-medium text-foreground">I work in a coding agent</span>
           <p className="mt-1.5 text-[12.5px] text-muted-foreground leading-relaxed">
-            Connect it and your agent does the setup — it finds the ICP file already in your
-            project, or writes you one.
+            Connect it and your agent does the setup — it audits the GTM context already in
+            your project, fills in what's missing, and syncs it to Nous.
           </p>
         </button>
 
@@ -281,7 +294,8 @@ function Fork({ onPick }: { onPick: (r: "agent" | "app") => void }) {
 // they just need the prompt, then they go back to their agent and say the word. If they
 // haven't connected yet, the docs are the one place that setup lives; don't duplicate the
 // .mcp.json config in-app. Either way: paste the prompt, this screen unlocks when the ICP
-// lands (the parent polls for it).
+// lands (the parent polls for it — the gate is still hasIcp even though the agent sets up
+// the wider context/ set).
 function AgentRoad({ onBack }: { onBack: () => void }) {
   return (
     <>
@@ -291,8 +305,9 @@ function AgentRoad({ onBack }: { onBack: () => void }) {
 
       <h1 className="text-[19px] font-semibold tracking-tight text-foreground">Connect your agent</h1>
       <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
-        Paste this into your coding agent. It looks for an ICP file already in your project and
-        syncs it — or writes you one from your website. This screen unlocks the moment it lands.
+        Paste this into your coding agent. It audits the GTM context already in your project,
+        drafts whatever's missing from your website, and syncs it to Nous. This screen unlocks
+        the moment your ICP lands.
       </p>
 
       <div className="mt-5">
