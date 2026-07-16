@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Linkedin, Trash2, RefreshCw, Search, Download, Upload, FileText, Filter, X, Users } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -335,25 +335,36 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [contacts, setContacts] = useState<ContactInfo[]>([]);
-  const [loading, setLoading] = useState(true);
   // Team members (co-founders / colleagues) are hidden from Accounts by default —
   // they're recognised records, not leads. Toggle to bring them into view.
   const [showTeam, setShowTeam] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!token || !workspaceId) return;
-    try {
+  const queryClient = useQueryClient();
+  const contactsKey = useMemo(() => ["contacts", workspaceId, showTeam] as const, [workspaceId, showTeam]);
+  // The account list is cached (React Query): returning to it is instant instead of
+  // re-fetching up to 2,000 rows every time. refetch() replaces the old load().
+  const { data: contacts = [], isPending: loading, refetch } = useQuery({
+    queryKey: contactsKey,
+    queryFn: async () => {
       const res = await fetch(`${apiUrl}/api/contacts?workspaceId=${workspaceId}&limit=2000${showTeam ? "&include_team=1" : ""}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = res.ok ? await res.json() : {};
-      setContacts((data.contacts ?? []).map(mapContact));
-    } catch { /* silent */ }
-    finally { setLoading(false); }
-  }, [token, workspaceId, showTeam]);
-
-  useEffect(() => { load(); }, [load]);
+      return ((data.contacts ?? []) as any[]).map(mapContact) as ContactInfo[];
+    },
+    enabled: !!token && !!workspaceId,
+  });
+  // Prefetch a record on row hover so the click opens instantly — same query key
+  // PeopleDetail reads, so the open is a cache hit.
+  const prefetchContact = useCallback((cid: string) => {
+    queryClient.prefetchQuery({
+      queryKey: ["contact", cid],
+      queryFn: async () => {
+        const r = await fetch(`${apiUrl}/api/contacts/${cid}`, { headers: { Authorization: `Bearer ${token}` } });
+        return r.ok ? r.json() : null;
+      },
+    });
+  }, [queryClient, token]);
 
   const [q, setQ] = useState("");
   // One filter builder (same pattern as the lead list) — every filter is a
@@ -417,7 +428,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
 
   const deleteContact = async (cid: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setContacts(prev => prev.filter(c => c.id !== cid));
+    queryClient.setQueryData(contactsKey, (prev: ContactInfo[] = []) => prev.filter(c => c.id !== cid));
     fetch(`${apiUrl}/api/contacts/${cid}`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});
@@ -437,8 +448,8 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
         setEnriched(prev => new Set(prev).add(c.id));
         // Refresh so the new title/seniority/company + ICP score show without a
         // full page reload. A short second pass catches the async claim pipeline.
-        load();
-        setTimeout(() => load(), 2500);
+        refetch();
+        setTimeout(() => refetch(), 2500);
       }
       else setEnrichErr(prev => new Set(prev).add(c.id));
     } catch { setEnrichErr(prev => new Set(prev).add(c.id)); }
@@ -603,7 +614,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
 
   return (
     <div className="h-full flex flex-col bg-background">
-      {showImport && <PeopleImportModal workspaceId={workspaceId} token={token} onClose={()=>setShowImport(false)} onDone={()=>{ setShowImport(false); load(); }}/>}
+      {showImport && <PeopleImportModal workspaceId={workspaceId} token={token} onClose={()=>setShowImport(false)} onDone={()=>{ setShowImport(false); refetch(); }}/>}
       <div className="px-8 pt-7 flex-shrink-0">
         <PageHeader
           title={embedded ? "Accounts" : "People"}
@@ -718,7 +729,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
           {/* Rows */}
           {loading && contacts.length === 0 && <div className="text-[13px] text-muted-foreground/70 text-center py-12">Loading…</div>}
           {pageRows.map(c => (
-            <div key={c.id} className="flex items-center px-4 py-3 border-b border-border/60 last:border-0 hover:bg-muted/50 transition-colors group">
+            <div key={c.id} onMouseEnter={() => prefetchContact(c.id)} className="flex items-center px-4 py-3 border-b border-border/60 last:border-0 hover:bg-muted/50 transition-colors group">
               <button onClick={() => setDetail(c)} className="flex-shrink-0 text-left min-w-0 pr-3 sticky left-0 z-10 bg-background group-hover:bg-muted/50" style={{width:colW("name")}}>
                 <div className="flex items-center gap-1.5 min-w-0">
                   <div className="text-[13px] font-medium text-foreground truncate">{c.name}</div>
