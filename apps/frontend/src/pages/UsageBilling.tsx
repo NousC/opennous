@@ -8,7 +8,7 @@ const apiUrl = import.meta.env.VITE_API_URL ?? "";
 type PlanInfo = {
   id: string;
   name: string;
-  monthlyPriceUsd: number;
+  monthlyPriceUsd: number | null; // null = negotiated (Custom)
   activeAccountsLimit: number | null; // THE meter. null = unlimited
   enrichmentsPerMonth: number;
   workspaceLimit: number | null;
@@ -43,12 +43,16 @@ type BillingState = {
 };
 
 // Order on the page.
-const PLAN_ORDER = ["free", "starter", "pro", "growth", "scale"];
+const PLAN_ORDER = ["free", "starter", "pro", "custom", "growth", "scale"];
+
+// Sales-led plan: the "Choose" button becomes a "Talk to sales" link here.
+const SALES_CALL_URL = "https://cal.com/bennetglinder/nous-partner";
 
 const PLAN_BLURB: Record<string, string> = {
   free: "For builders kicking the tires before committing volume.",
   starter: "For solo operators shipping campaigns from Claude Code.",
   pro: "For internal GTM teams scaling their operations.",
+  custom: "For GTM teams that want the in-app agent, run on our models.",
   growth: "For teams running higher volume across more workspaces.",
   scale: "For agencies running multiple clients in parallel.",
 };
@@ -81,6 +85,14 @@ function planBullets(p: PlanInfo): string[] {
       ? `${num(p.enrichmentsPerMonth)} enrichments / month`
       : "Enrichment on your own keys",
   ];
+  // Custom is the team layer — the surfaces that run on our models. That is what
+  // the sales call is actually selling, so name it instead of the unlimited list.
+  if (p.id === "custom") {
+    b.push("Threads — the in-app agent, unmetered");
+    b.push("Scheduled Tasks and Skills");
+    b.push("Salesforce, HubSpot and Slack");
+    b.push("Bring your own Postgres");
+  }
   // Partner is sold per client workspace — keep that one structural line.
   if (p.perWorkspaceUsd) {
     b.push(`${p.baseWorkspaces} client workspaces included, then $${p.perWorkspaceUsd}/mo each`);
@@ -305,8 +317,11 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
     .filter(Boolean) as PlanInfo[];
 
   const currentPlan = apiPlans.find((p) => p.id === planId);
-  // Next paid tier up — drives the primary CTA on the summary card.
-  const nextPlan = orderedPlans.find((p) => p.monthlyPriceUsd > (currentPlan?.monthlyPriceUsd ?? 0));
+  // Next paid tier up — drives the primary CTA on the summary card. Custom has a
+  // null price (sales-led) so it is never an auto-upgrade target here.
+  const nextPlan = orderedPlans.find(
+    (p) => p.monthlyPriceUsd != null && p.monthlyPriceUsd > (currentPlan?.monthlyPriceUsd ?? 0),
+  );
 
   const statusBadge = (() => {
     if (sub?.is_comp) return ["Comp", "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"];
@@ -437,7 +452,11 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
                 )}
               </div>
               <div className="text-[24px] font-bold text-foreground tabular-nums leading-tight mb-4">
-                {p.monthlyPriceUsd === 0 ? "Free" : <>${p.monthlyPriceUsd}<span className="text-[13px] font-normal text-muted-foreground/70">/mo</span></>}
+                {p.monthlyPriceUsd == null
+                  ? "Let's talk"
+                  : p.monthlyPriceUsd === 0
+                    ? "Free"
+                    : <>${p.monthlyPriceUsd}<span className="text-[13px] font-normal text-muted-foreground/70">/mo</span></>}
               </div>
               <ul className="space-y-2 mb-5">
                 {planBullets(p).map((b) => (
@@ -460,6 +479,16 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
                   >
                     Downgrade
                   </button>
+                ) : p.monthlyPriceUsd == null ? (
+                  // Sales-led (Custom): no self-serve checkout, book a call instead.
+                  <a
+                    href={SALES_CALL_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-full h-9 flex items-center justify-center rounded-lg text-[12.5px] font-medium transition-colors bg-foreground text-background hover:bg-foreground/90 dark:bg-muted dark:text-foreground dark:hover:bg-muted/70 dark:border dark:border-border"
+                  >
+                    Talk to sales
+                  </a>
                 ) : (
                   <button
                     onClick={() => subscribe(p.id)}
