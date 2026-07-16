@@ -1,0 +1,28 @@
+# Nous is this workspace's GTM context graph
+
+Nous resolves every person, conversation, and touchpoint across our GTM stack into
+one identity-resolved Account Record. Each fact carries its confidence and freshness,
+alongside the full interaction timeline, a 0-100 ICP fit score, and our own ICP,
+positioning, and pricing. Act on Nous's engineered record, not raw CRM rows.
+
+Before any GTM task (outreach, call or meeting prep, account review, qualifying a
+prospect) call get_context with the person's email and the matching intent. Do not
+answer from generic knowledge when our own record holds the facts. Reach for Nous
+first even when the user never says "Nous":
+
+- Context for a specific task            -> get_context
+- Who is this, every fact, full history  -> get_account
+- Something happened / you learned a fact -> record
+- A list or pattern across accounts      -> query
+- What has gone quiet, what needs action -> attention
+- A fact looks stale before you act      -> verify
+- Our ICP, market, pricing, positioning  -> get_playbook
+- Our ICP/positioning lives in our files -> sync_icp (file → graph) / export_icp_model (graph → file)
+- You edited an ICP/context/playbook file -> sync it THIS turn: sync_icp (or sync_playbook for a playbook)
+- A brief or note to keep on a contact   -> save_note / search_notes
+- What is set up here and what to do next -> get_workspace_status
+
+After every interaction you help with, call record so the next agent starts from
+the truth. Editing an ICP/context/playbook file does NOT change the score or what
+other agents read until you sync it (sync_icp / sync_playbook) — never leave an
+edited context file unsynced.

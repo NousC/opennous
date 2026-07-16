@@ -1,0 +1,37 @@
+# Secret scanning config. Run locally with:  gitleaks git .
+#
+# The repo history was audited on 2026-07-09 before going public: no live
+# credential has ever been committed, and no env file beyond the .example
+# templates. The allowlists below silence the default ruleset's false positives
+# so a real leak is never buried in noise.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "linkedin-client-secret"
+description = "LinkedIn client secret"
+regex = '''(?i)linkedin[_-]?(client[_-]?)?secret['"\s:=]{1,5}['"]([a-z0-9]{16})['"]'''
+secretGroup = 2
+
+[allowlist]
+description = "Repo-wide false positives"
+
+# The default linkedin-client-id/secret rules fire on any 14-16 char identifier
+# sitting near the word "linkedin". These are camelCase symbols, not secrets.
+regexes = [
+  '''upsertIdentifier''',
+  '''meetingConnected''',
+  '''realProviderId''',
+  '''linkedinMemberId''',
+  '''YOUR_API_KEY''',
+  '''<your-api-key>''',
+]
+
+# Placeholder templates and docs, which are supposed to contain fake keys.
+paths = [
+  '''\.env\.example$''',
+  '''nous\.env\.example$''',
+  '''(^|/)docs/''',
+  '''(^|/)README\.md$''',
+]

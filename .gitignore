@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.turbo/
+
+# Environment — ignore EVERY .env / nous.env variant (incl. .bak, .disabled,
+# .cloud.bak and anything future); only the committed *.example files are allowed.
+.env*
+nous.env*
+!.env.example
+!nous.env.example
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Vite
+apps/frontend/dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# Python build artifacts
+*.egg-info/
+__pycache__/
+
+# Private founder/strategy docs — never publish
+internal/
+
+# local env backups (never commit — contain secrets)
+.env.cloud.bak
+*.bak

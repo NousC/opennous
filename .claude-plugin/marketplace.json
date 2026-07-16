@@ -1,0 +1,16 @@
+{
+  "$schema": "https://code.claude.com/schemas/claude-marketplace.json",
+  "name": "nous-plugins",
+  "description": "Official Nous plugins for Claude Code — give your agents one true GTM account record.",
+  "owner": {
+    "name": "Nous",
+    "url": "https://opennous.cloud"
+  },
+  "plugins": [
+    {
+      "name": "nous",
+      "source": "./plugins/nous",
+      "description": "Connect Claude Code to your Nous workspace. Every prompt has the engineered Account Record one MCP call away — get_context, get_account, record, query, attention, verify."
+    }
+  ]
+}

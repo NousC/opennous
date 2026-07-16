@@ -1,0 +1,91 @@
+services:
+  # ── API (Express) ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: nous-api:local
+    restart: unless-stopped
+    env_file:
+      - ./nous.env
+    environment:
+      NODE_ENV: production
+
+  # ── Hosted MCP server (Streamable HTTP, multi-tenant) ─────────────────────────
+  # Lets cloud clients that cannot run a local process (n8n cloud, etc.) connect
+  # to Nous over HTTPS. Each request authenticates with its own workspace API key
+  # (Authorization: Bearer pk_...), forwarded to the API over the internal network.
+  mcp:
+    build:
+      context: .
+      dockerfile: apps/mcp/Dockerfile
+    image: nous-mcp:local
+    restart: unless-stopped
+    env_file:
+      - ./nous.env
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      NOUS_API_URL: http://api:3000
+    depends_on:
+      - api
+
+  # ── Background worker ────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    image: nous-worker:local
+    restart: unless-stopped
+    env_file:
+      - ./nous.env
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - api
+
+  # ── Frontend (nginx: static SPA) ─────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+        # Leave empty when using same-domain nginx proxy (self-hosted, no Caddy).
+        # Set to https://api.yourdomain.com when using separate subdomains (Caddy / cloud).
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_STRIPE_PUBLISHABLE_KEY: ${VITE_STRIPE_PUBLISHABLE_KEY:-}
+        VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
+        VITE_GOOGLE_ANALYTICS_ID: ${VITE_GOOGLE_ANALYTICS_ID:-}
+        VITE_DOCS_URL: ${VITE_DOCS_URL:-}
+    image: nous-frontend:local
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # ── Caddy (SSL + subdomain routing) ──────────────────────────────────────────
+  # Remove this service if you handle SSL/routing externally (Cloudflare Tunnel, etc.)
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      API_DOMAIN: ${API_DOMAIN}
+      MCP_DOMAIN: ${MCP_DOMAIN}
+    depends_on:
+      - frontend
+      - api
+      - mcp
+
+volumes:
+  caddy_data:
+  caddy_config:

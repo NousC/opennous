@@ -1,0 +1,14 @@
+{
+  "name": "@nous/benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Head-to-head benchmark harness: reconstruct-from-raw-tools vs the resolved context graph.",
+  "scripts": {
+    "bench": "node run.mjs",
+    "dry-run": "node run.mjs --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.0"
+  }
+}

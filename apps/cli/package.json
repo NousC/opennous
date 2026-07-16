@@ -1,0 +1,25 @@
+{
+  "name": "@opennous/cli",
+  "version": "0.7.0",
+  "description": "Nous CLI — set up Nous, connect it to your coding agent, and read the Context API from your terminal",
+  "type": "module",
+  "bin": {
+    "nous": "src/index.js"
+  },
+  "files": ["src", "README.md"],
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js"
+  },
+  "keywords": ["nous", "crm", "cli", "agents", "memory", "observability", "stripe"],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NousC/opennous.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://opennous.cloud",
+  "dependencies": {
+    "commander": "^12.1.0"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "description": "Nous GTM routing — make Claude reach for the engineered Account Record first, on every surface, without editing the user's files.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-routing.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gtm-nudge.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__hubspot__.*|mcp__salesforce__.*|mcp__gong__.*|mcp__granola__.*|mcp__apollo__.*|mcp__smartlead__.*|mcp__instantly__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/competitor-advisory.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/context-sync-reminder.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

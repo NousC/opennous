@@ -1,0 +1,989 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 3.9%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+    --landing-orange: 39 56% 93%;
+    --landing-green: 157 27% 16%;
+    --landing-yellow: 63 92% 57%;
+
+    /* Dark Landing Theme - New Era SaaS */
+    --landing-bg-base: #09090B;
+    --landing-bg-surface: #111113;
+    --landing-bg-elevated: #18181B;
+    --landing-border-subtle: rgba(255, 255, 255, 0.06);
+    --landing-border-default: rgba(255, 255, 255, 0.1);
+    --landing-text-primary: #FAFAFA;
+    --landing-text-secondary: #A1A1AA;
+    --landing-text-muted: #71717A;
+    --landing-accent: #22c55e;
+    --landing-accent-hover: #16a34a;
+    --landing-accent-glow: rgba(34, 197, 94, 0.15);
+
+    /* Workflow Canvas - Light Theme */
+    --workflow-canvas-bg: 248 249 250;        /* #f8f9fa */
+    --workflow-card-bg: 255 255 255;          /* #ffffff */
+    --workflow-card-border: 226 232 240;      /* #e2e8f0 */
+    --workflow-text-primary: 15 23 42;        /* #0f172a */
+    --workflow-text-secondary: 100 116 139;   /* #64748b */
+    --workflow-accent: 16 185 129;            /* #10b981 - KEEP */
+  }
+
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 6%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 11%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 10%;
+    --input: 0 0% 14.9%;
+    --ring: 0 0% 83.1%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  /* ── App type system ──────────────────────────────────────────────────────
+     Inter, everywhere, rendered crisply. This is what makes the interface read as
+     premium rather than characterful: a neutral grotesque instead of DM Sans /
+     Sora, antialiased, with Inter's cleaner single-story `a` and tabular-friendly
+     alternates on. Headings are the SAME family at a restrained weight (semibold,
+     lightly tracked) rather than a heavy display face — the reference (and every
+     tool that reads as premium) leans on weight and spacing, not a second font.
+     The marketing site keeps Fraunces via its own scoped classes; this only
+     governs the app shell. */
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01', 'calt' 1;
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  .font-heading {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.018em;
+  }
+
+  p, span, a, button, label, input, textarea, select,
+  .font-body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  /* TEMPLATE/DOCUMENT EDITOR: Allow theme fonts to override global fonts */
+  .notion-page-editor h1,
+  .notion-page-editor h2,
+  .notion-page-editor h3,
+  .notion-page-editor h4,
+  .notion-page-editor h5,
+  .notion-page-editor h6 {
+    font-family: inherit;
+    font-weight: inherit;
+    letter-spacing: inherit;
+  }
+
+  .notion-page-editor p,
+  .notion-page-editor span,
+  .notion-page-editor a,
+  .notion-page-editor li {
+    font-family: inherit;
+  }
+}
+
+/* Generic placeholder styling for editable content */
+[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+/* Premium scroll-reveal animations - very slow and elegant */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(50px);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.scroll-reveal-left {
+  opacity: 0;
+  transform: translateX(-60px);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal-left.revealed {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.scroll-reveal-right {
+  opacity: 0;
+  transform: translateX(60px);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal-right.revealed {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.scroll-reveal-scale {
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal-scale.revealed {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Pop-in effect for cards - very slow and subtle bounce */
+.scroll-reveal-pop {
+  opacity: 0;
+  transform: scale(0.9) translateY(40px);
+  transition: opacity 1.8s cubic-bezier(0.34, 1.56, 0.64, 1),
+              transform 1.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.scroll-reveal-pop.revealed {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+/* Smooth scroll with subtle snap points */
+.landing-scroll-container {
+  scroll-snap-type: y proximity;
+  overflow-y: auto;
+}
+
+.landing-scroll-section {
+  scroll-snap-align: start;
+}
+
+/* Stagger delays for children */
+.scroll-reveal-stagger > *:nth-child(1) { transition-delay: 0ms; }
+.scroll-reveal-stagger > *:nth-child(2) { transition-delay: 200ms; }
+.scroll-reveal-stagger > *:nth-child(3) { transition-delay: 400ms; }
+.scroll-reveal-stagger > *:nth-child(4) { transition-delay: 600ms; }
+.scroll-reveal-stagger > *:nth-child(5) { transition-delay: 800ms; }
+.scroll-reveal-stagger > *:nth-child(6) { transition-delay: 1000ms; }
+
+/* Premium navbar dropdown animations */
+@keyframes nav-viewport-open {
+  0% {
+    opacity: 0;
+    transform: translateY(-15px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes nav-viewport-close {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+}
+
+.nav-viewport-animate[data-state="open"] {
+  animation: nav-viewport-open 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.nav-viewport-animate[data-state="closed"] {
+  animation: nav-viewport-close 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Content switching animation between tabs */
+@keyframes nav-content-in {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.nav-content-animate[data-motion="from-start"] {
+  animation: nav-content-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.nav-content-animate[data-motion="from-end"] {
+  animation: nav-content-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --direction: -1;
+}
+
+.nav-content-animate[data-motion="from-end"] {
+  animation-name: nav-content-in-reverse;
+}
+
+@keyframes nav-content-in-reverse {
+  0% {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Hero media flow-in animation - slow and elegant */
+@keyframes hero-media-in {
+  0% {
+    opacity: 0;
+    transform: translateY(50px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-hero-media-in {
+  animation: hero-media-in 2.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes rotate-carousel {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-carousel {
+  animation: rotate-carousel 30s linear infinite;
+  transform-origin: center center;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(-50%, -50%) translateY(0px);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-8px);
+  }
+}
+
+/* Premium hero decoration animations */
+@keyframes hero-drift-left {
+  0%, 100% {
+    transform: translateY(0) translateX(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-8px) translateX(4px) rotate(0.5deg);
+  }
+  50% {
+    transform: translateY(-4px) translateX(8px) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-12px) translateX(2px) rotate(-0.5deg);
+  }
+}
+
+@keyframes hero-drift-right {
+  0%, 100% {
+    transform: translateY(0) translateX(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-6px) translateX(-4px) rotate(-0.5deg);
+  }
+  50% {
+    transform: translateY(-10px) translateX(-2px) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-4px) translateX(-6px) rotate(0.5deg);
+  }
+}
+
+.animate-hero-drift-left {
+  animation: hero-drift-left 20s ease-in-out infinite;
+}
+
+.animate-hero-drift-right {
+  animation: hero-drift-right 18s ease-in-out infinite;
+}
+
+/* Tab slide animation */
+@keyframes tab-slide-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-flow {
+  animation: flow 2s ease-in-out infinite;
+}
+
+@keyframes flow-vertical {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+.animate-flow-vertical {
+  animation: flow-vertical 2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Workflow execution border animation - Premium moving border */
+@keyframes border-rotate {
+  0% {
+    --angle: 0deg;
+  }
+  100% {
+    --angle: 360deg;
+  }
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Moving border wrapper for running state */
+.workflow-card-running {
+  position: relative;
+  z-index: 0;
+}
+
+.workflow-card-running::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -3px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--angle),
+    #10b981 0deg,
+    #10b981 90deg,
+    transparent 90deg,
+    transparent 270deg,
+    #10b981 270deg,
+    #10b981 360deg
+  );
+  animation: border-rotate 1.5s linear infinite;
+}
+
+.workflow-card-running::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: white;
+}
+
+/* Blog Content Editor - Ensure headings are properly styled */
+.prose h1 {
+  font-size: 2.25rem !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+  margin-top: 2rem !important;
+  margin-bottom: 1rem !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.prose h2 {
+  font-size: 1.875rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 0.75rem !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.prose h3 {
+  font-size: 1.5rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+  margin-top: 1.25rem !important;
+  margin-bottom: 0.5rem !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Blog Content - Ensure paragraphs have proper spacing */
+.prose p {
+  margin-top: 0 !important;
+  margin-bottom: 1.5rem !important;
+}
+
+.prose p:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Ensure paragraphs after headings have proper spacing */
+.prose h1 + p,
+.prose h2 + p,
+.prose h3 + p {
+  margin-top: 0.75rem !important;
+  margin-bottom: 1.5rem !important;
+}
+
+/* CTA Renderer - Override prose styles for white text */
+.cta-renderer h2 {
+  color: #ffffff !important;
+}
+
+.cta-renderer p {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ============================================
+   DARK LANDING PAGE - NEW ERA SAAS THEME
+   ============================================ */
+
+/* Dark landing page base */
+.landing-dark {
+  background: var(--landing-bg-base);
+  color: var(--landing-text-primary);
+}
+
+/* Gradient text effect (Linear/Vercel style) */
+.landing-gradient-text {
+  background: linear-gradient(180deg, #FAFAFA 0%, #A1A1AA 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Subtle noise texture overlay */
+.landing-noise::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.02;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Gradient orb decorations */
+.landing-orb-1 {
+  position: absolute;
+  width: 800px;
+  height: 600px;
+  background: radial-gradient(ellipse at center, rgba(34, 197, 94, 0.12), transparent 70%);
+  filter: blur(80px);
+  top: -200px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.landing-orb-2 {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(34, 197, 94, 0.08), transparent 70%);
+  filter: blur(60px);
+  bottom: 20%;
+  left: 10%;
+  pointer-events: none;
+}
+
+/* Glassmorphic card */
+.landing-glass-card {
+  background: rgba(17, 17, 19, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 16px;
+}
+
+/* Dark surface card */
+.landing-surface-card {
+  background: var(--landing-bg-surface);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 24px;
+}
+
+/* Card with hover glow effect */
+.landing-glow-card {
+  position: relative;
+  background: var(--landing-bg-surface);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 24px;
+  transition: border-color 0.3s ease;
+}
+
+.landing-glow-card:hover {
+  border-color: var(--landing-border-default);
+}
+
+.landing-glow-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(34, 197, 94, 0.06),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.landing-glow-card:hover::before {
+  opacity: 1;
+}
+
+/* Primary CTA button - green accent with glow */
+.landing-btn-primary {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #09090B;
+  font-weight: 500;
+  padding: 12px 24px;
+  border-radius: 12px;
+  border: none;
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.3),
+    0 0 20px rgba(34, 197, 94, 0.2);
+  transition: all 0.2s ease;
+}
+
+.landing-btn-primary:hover {
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.5),
+    0 0 30px rgba(34, 197, 94, 0.35);
+  transform: translateY(-1px);
+}
+
+/* Flowing line animation for hero section */
+@keyframes flowLine {
+  0%, 100% {
+    transform: translateX(0) translateY(0);
+  }
+  50% {
+    transform: translateX(8px) translateY(-4px);
+  }
+}
+
+.flowing-line {
+  animation: flowLine 6s ease-in-out infinite;
+}
+
+/* Ghost button - subtle white border */
+.landing-btn-ghost {
+  background: transparent;
+  color: var(--landing-text-primary);
+  border: 1px solid var(--landing-border-default);
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.landing-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Announcement pill/badge */
+.landing-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 100px;
+  border: 1px solid var(--landing-border-default);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--landing-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.landing-pill:hover {
+  border-color: var(--landing-accent);
+  color: var(--landing-text-primary);
+}
+
+/* Tab underline indicator (lime) */
+.landing-tab-active {
+  position: relative;
+}
+
+.landing-tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--landing-accent);
+}
+
+/* Product showcase with glow */
+.landing-showcase {
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid var(--landing-border-subtle);
+  background: var(--landing-bg-surface);
+}
+
+.landing-showcase::after {
+  content: '';
+  position: absolute;
+  bottom: -50%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  height: 200px;
+  background: radial-gradient(ellipse at center, rgba(34, 197, 94, 0.15), transparent 70%);
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+/* Dot grid pattern */
+.landing-dot-grid {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Floating glassmorphic navbar */
+.landing-navbar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 24px);
+  max-width: 1200px;
+  background: rgba(9, 9, 11, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 16px;
+  padding: 8px 24px;
+  z-index: 100;
+}
+
+/* Pricing card popular glow */
+.landing-pricing-popular {
+  position: relative;
+}
+
+.landing-pricing-popular::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  border-radius: inherit;
+  z-index: -1;
+  opacity: 0.4;
+  filter: blur(20px);
+}
+
+/* Testimonial card floating animation */
+@keyframes landing-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.landing-float-1 {
+  animation: landing-float 6s ease-in-out infinite;
+}
+
+.landing-float-2 {
+  animation: landing-float 6s ease-in-out infinite;
+  animation-delay: -2s;
+}
+
+.landing-float-3 {
+  animation: landing-float 6s ease-in-out infinite;
+  animation-delay: -4s;
+}
+
+/* Section divider */
+.landing-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--landing-border-subtle), transparent);
+}
+
+/* Print styles for document viewing */
+@media print {
+  /* Force color printing */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Hide UI elements */
+  header,
+  .document-view-header,
+  [class*="DocumentViewHeader"],
+  nav,
+  .sidebar,
+  .page-thumbnails,
+  footer,
+  button,
+  .no-print,
+  [class*="sticky"],
+  [class*="fixed"] {
+    display: none !important;
+  }
+
+  /* Reset page margins */
+  @page {
+    margin: 0.5in;
+    size: letter;
+  }
+
+  /* Reset body for printing */
+  html, body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Remove dark background from share link view */
+  .min-h-screen {
+    min-height: auto !important;
+    padding: 0 !important;
+    background: white !important;
+    background-image: none !important;
+  }
+
+  /* Remove flexbox layout that causes issues */
+  .flex.pt-14 {
+    display: block !important;
+    padding-top: 0 !important;
+  }
+
+  .flex-1 {
+    flex: none !important;
+    width: 100% !important;
+  }
+
+  /* Document pages print settings */
+  .shadow-lg.min-h-\[11in\] {
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    padding: 0.5in !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    page-break-after: always;
+    break-after: page;
+    position: relative !important;
+  }
+
+  /* Last page shouldn't have page break after */
+  .shadow-lg.min-h-\[11in\]:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  /* Preserve background images and colors on document pages */
+  .shadow-lg.min-h-\[11in\],
+  .shadow-lg.min-h-\[11in\] * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Ensure background images in document pages render */
+  .shadow-lg.min-h-\[11in\] > div[style*="background-image"] {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Ensure images print properly */
+  img {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Text colors should print */
+  h1, h2, h3, h4, h5, h6, p, span, div {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide the powered by footer when printing */
+  a[href*="opennous.cloud"] {
+    display: none !important;
+  }
+
+  /* Hide page thumbnails sidebar */
+  .w-24.bg-slate-800\/50 {
+    display: none !important;
+  }
+
+  /* Remove padding/background from content area when printing */
+  .p-8.bg-slate-900\/50 {
+    padding: 0 !important;
+    background: transparent !important;
+  }
+
+  /* Hide document title header in share link mode (it's in the doc already) */
+  .max-w-\[8\.5in\].mx-auto.mb-6 {
+    display: none !important;
+  }
+}
+
+/* ── Nous auth constellation (GraphField) — matches opennous.cloud ── */
+@keyframes graph-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-12px, 10px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes edge-breathe {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.26;
+  }
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes node-pulse {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.18);
+  }
+}
+
+
+
+
+

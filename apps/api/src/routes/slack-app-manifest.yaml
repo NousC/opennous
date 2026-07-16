@@ -1,0 +1,63 @@
+# Nous — distributed Slack app manifest.
+#
+# This is the PRODUCTION app (public "Add to Slack" distribution), not the Socket
+# Mode PoC. Create it once at https://api.slack.com/apps → From a manifest, then
+# customers install it into their own workspace via OAuth (Nous → Settings →
+# Integrations → Slack). Replace api.opennous.cloud if your API runs elsewhere.
+#
+# Required env on the API:
+#   SLACK_CLIENT_ID, SLACK_CLIENT_SECRET   — OAuth (Basic Information)
+#   SLACK_SIGNING_SECRET                   — request signing (Basic Information)
+#   SLACK_REDIRECT_URI (optional)          — defaults to $API_URL/api/oauth/slack/callback
+
+display_information:
+  name: Nous
+  description: Cited answers about your accounts, in the channel where the work happens.
+  background_color: "#0b0b0f"
+
+features:
+  bot_user:
+    display_name: Nous
+    always_online: true
+  slash_commands:
+    - command: /nous
+      url: https://api.opennous.cloud/slack/commands
+      description: Link this channel to an account, or check what it's linked to
+      usage_hint: link acme.com
+      should_escape: false
+
+oauth_config:
+  redirect_urls:
+    - https://api.opennous.cloud/api/oauth/slack/callback
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - reactions:write
+      - commands
+      - channels:read
+      - groups:read
+      - users:read
+      - users:read.email
+    user:
+      # Kept for the existing DM-ingestion poller; the bot itself needs none of these.
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - users:read
+      - users:read.email
+      - team:read
+
+settings:
+  event_subscriptions:
+    request_url: https://api.opennous.cloud/slack/events
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

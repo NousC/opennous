@@ -1,0 +1,383 @@
+// The graph panel.
+//
+// GROUP and FILTER are different verbs. Conflating them is what made this thing feel
+// like it was lying to you.
+//
+//   FILTER removes. "No budget-holder" is a filter: a condition you want to look at on
+//   its own. It is not a group — a bucket of accounts with no budget-holder tells you
+//   nothing about the accounts that do have one, so there is nothing to compare it to.
+//
+//   GROUP partitions. Every account lands in exactly one bucket and the buckets ARE the
+//   answer. ICP tier is a grouping. So is "which signal scored this account". You do not
+//   pick a group to look at — you pick an AXIS, and the graph colours itself along it.
+//
+// The old panel called both of them groups. So switching one on dimmed 90% of the canvas
+// and left you staring at a highlighted fragment with no context, which is why it read
+// as decoration. Grouping by tier lights up the WHOLE graph in four colours and the
+// clusters physically separate. That is a map. The other thing was a spotlight.
+//
+// Every control shows its consequence. A filter that will not tell you how much it just
+// removed is a filter you cannot trust.
+import { useState } from "react";
+import { Search, X, Plus, RotateCcw, ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export type Show = { people: boolean; companies: boolean; claims: boolean; orphans: boolean };
+export type Group = { q: string; color: string; label?: string };
+export type Display = { node: number; label: number; link: number };
+export type Forces = { repel: number; dist: number; center: number };
+export type Counts = {
+  companies: number; people: number; claims: number; matched: number | null; total: number;
+  groups: number[];
+  signals?: { key: string; n: number }[];
+  patterns?: { key: string; n: number; cat: string }[];
+};
+
+export type GroupBy = "tier" | "signal" | "pattern" | "activity" | "custom";
+
+// A palette, not a colour picker. Colours you can tell apart at 6px on white, which is
+// the only test that matters here.
+const SWATCHES = ["#e0a03a", "#2fa36b", "#d4574c", "#7c5cf0", "#2aa8a0", "#4a7fd4", "#c2410c", "#0891b2"];
+
+// The tier colours are the SAME ones the table and the record use. The graph must never
+// have its own private idea of what Tier 1 looks like.
+const TIER_GROUPS: Group[] = [
+  { label: "Tier 1",   q: "tier:t1",      color: "#15803d" },
+  { label: "Tier 2",   q: "tier:t2",      color: "#ca8a04" },
+  { label: "Tier 3",   q: "tier:t3",      color: "#ea580c" },
+  { label: "Not ICP",  q: "tier:not-icp", color: "#9aa0ad" },
+  // Never scored is a real bucket, not an absence. It is usually the biggest one, and
+  // leaving it grey and dimmed hid the single most actionable fact on the canvas.
+  { label: "Never scored", q: "unscored", color: "#4a7fd4" },
+];
+
+const ACTIVITY_GROUPS: Group[] = [
+  { label: "This week",   q: "quiet:0-7",    color: "#15803d" },
+  { label: "This month",  q: "quiet:8-30",   color: "#2aa8a0" },
+  { label: "Went cold",   q: "quiet:31-90",  color: "#e0a03a" },
+  { label: "Long gone",   q: "quiet>90",     color: "#d4574c" },
+  { label: "Never active", q: "dormant",     color: "#9aa0ad" },
+];
+
+const pretty = (k: string) =>
+  k.replace(/^exclusion\./, "").replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
+
+// A pattern is coloured by WHAT KIND of thing it is, not by its position in a palette.
+// Stack, pain, intent and segment are four different reasons to care about an account, and
+// the colour should say which one you are looking at before you read the label.
+const CAT_COLOR: Record<string, string> = {
+  stack:   "#7c5cf0",
+  pain:    "#d4574c",
+  intent:  "#2aa8a0",
+  segment: "#e0a03a",
+  theme:   "#9aa0ad",
+};
+
+const slug = (s: string) => s.toLowerCase().replace(/\s+/g, "_");
+
+// Build the grouping for an axis. `signals` comes from the engine — the signals that have
+// actually fired on a visible account — so the panel never asks you to know the
+// scorecard's key names by heart.
+export function buildGroups(
+  by: GroupBy,
+  facets: { signals?: { key: string; n: number }[]; patterns?: { key: string; n: number; cat: string }[] } = {},
+): Group[] {
+  if (by === "tier")     return TIER_GROUPS;
+  if (by === "activity") return ACTIVITY_GROUPS;
+  if (by === "signal") {
+    return (facets.signals ?? []).slice(0, 7)
+      .map((s, i) => ({ label: pretty(s.key), q: `sig:${s.key}`, color: SWATCHES[i % SWATCHES.length] }));
+  }
+  if (by === "pattern") {
+    // Eight, because patterns overlap and a node belongs to several — past eight hubs the
+    // spokes turn into a hairball and you stop being able to read the overlap, which was
+    // the only reason to draw it.
+    return (facets.patterns ?? []).slice(0, 8)
+      .map(p => ({ label: p.key, q: `pat:${slug(p.key)}`, color: CAT_COLOR[p.cat] ?? CAT_COLOR.theme }));
+  }
+  return [];
+}
+
+export function GraphFilters({
+  show, setShow, search, setSearch,
+  groupBy, setGroupBy, groups, setGroups,
+  filter, setFilter,
+  display, setDisplay, forces, setForces, counts, onFit,
+}: {
+  show: Show; setShow: (s: Show) => void;
+  search: string; setSearch: (s: string) => void;
+  groupBy: GroupBy; setGroupBy: (g: GroupBy) => void;
+  groups: Group[]; setGroups: (g: Group[]) => void;
+  filter: string; setFilter: (f: string) => void;
+  display: Display; setDisplay: (d: Display) => void;
+  forces: Forces; setForces: (f: Forces) => void;
+  counts: Counts;
+  onFit: () => void;
+}) {
+  const [openDisplay, setOpenDisplay] = useState(false);
+  const [openForces, setOpenForces] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  const active = filter.trim().split(/\s+/).filter(Boolean);
+  const toggleFilter = (q: string) => {
+    const has = active.includes(q);
+    setFilter((has ? active.filter(x => x !== q) : [...active, q]).join(" "));
+  };
+
+  const reset = () => {
+    setShow({ people: true, companies: true, claims: true, orphans: true });
+    setSearch("");
+    setFilter("");
+    setGroupBy("tier");
+    setDisplay({ node: 1, label: 1, link: 1 });
+    setForces({ repel: 1, dist: 1, center: 1 });
+    onFit();
+  };
+
+  const AXES: { id: GroupBy; label: string }[] = [
+    { id: "tier",     label: "ICP tier" },
+    { id: "pattern",  label: "Pattern" },
+    { id: "signal",   label: "Signal" },
+    { id: "activity", label: "Activity" },
+  ];
+
+  return (
+    <aside className={cn(
+      "absolute right-4 top-4 bottom-4 z-10 w-[268px] flex flex-col",
+      "rounded-xl border border-border/80 bg-background/85 backdrop-blur-xl",
+      "shadow-[0_8px_30px_rgba(0,0,0,0.10)] overflow-hidden",
+      collapsed && "bottom-auto",
+    )}>
+      <div className="px-3.5 py-3 flex items-center justify-between border-b border-border/60 flex-shrink-0">
+        <button onClick={() => setCollapsed(c => !c)} className="flex items-center gap-1 group">
+          <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground/40 transition-transform", !collapsed && "rotate-90")} strokeWidth={2} />
+          <span className="text-[13px] font-semibold text-foreground">Graph</span>
+        </button>
+        <button onClick={reset} title="Reset"
+          className="p-1 rounded-md text-muted-foreground/40 hover:text-foreground hover:bg-accent transition-colors">
+          <RotateCcw className="h-[14px] w-[14px]" strokeWidth={1.75} />
+        </button>
+      </div>
+
+      {!collapsed && (
+      <div className="flex-1 min-h-0 overflow-y-auto">
+
+        <div className="px-3.5 py-3.5">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-[14px] w-[14px] text-muted-foreground/40" strokeWidth={1.75} />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search accounts…"
+              className="w-full rounded-lg border border-border bg-background pl-8 pr-7 py-1.5 text-[12.5px] text-foreground outline-none focus:border-foreground/25 placeholder:text-muted-foreground/40"
+            />
+            {search && (
+              <button onClick={() => setSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-muted-foreground/40 hover:text-foreground">
+                <X className="h-3 w-3" strokeWidth={2} />
+              </button>
+            )}
+          </div>
+          {counts.matched != null && (
+            <p className="mt-1.5 text-[11.5px] text-muted-foreground/50 tabular-nums">
+              <span className="text-foreground/75 font-medium">{counts.matched}</span> match
+            </p>
+          )}
+        </div>
+
+        {/* ── GROUP BY — the axis you are colouring along. This is the whole point of the
+            panel: not "highlight one thing", but "cut the graph up and show me the
+            shape". Tier is the default because it is the cut you always want first. */}
+        <Section title="Group by" note="colours the whole graph">
+          <div className="grid grid-cols-2 gap-1">
+            {AXES.map(a => (
+              <button
+                key={a.id}
+                onClick={() => setGroupBy(a.id)}
+                className={cn(
+                  "rounded-md px-2 py-1.5 text-[12px] transition-colors text-left",
+                  groupBy === a.id
+                    ? "bg-foreground text-background font-medium"
+                    : "bg-muted/50 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+                )}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
+
+          {/* The buckets the axis produced, with what each one caught. A bucket that says
+              0 is telling you something true about the data, and it should say it out
+              loud rather than quietly not existing. */}
+          {groups.length > 0 && (
+            <div className="mt-2.5 space-y-[3px]">
+              {groups.map((g, i) => (
+                <div key={g.q + i} className="flex items-center gap-2 group/row py-[1px]">
+                  <button
+                    onClick={() => {
+                      const cur = SWATCHES.indexOf(g.color);
+                      setGroups(groups.map((x, j) => j === i ? { ...x, color: SWATCHES[(cur + 1) % SWATCHES.length] } : x));
+                    }}
+                    title="Change colour"
+                    className="h-2.5 w-2.5 rounded-full flex-shrink-0 ring-1 ring-black/10 hover:scale-125 transition-transform"
+                    style={{ background: g.color }}
+                  />
+                  {groupBy === "custom" ? (
+                    <input
+                      value={g.q}
+                      onChange={e => setGroups(groups.map((x, j) => j === i ? { ...x, q: e.target.value } : x))}
+                      placeholder="icp>=85 quiet>30"
+                      className="flex-1 min-w-0 rounded-md border border-border bg-background px-1.5 py-[3px] text-[11.5px] font-mono text-foreground outline-none focus:border-foreground/25"
+                    />
+                  ) : (
+                    <span className="flex-1 min-w-0 truncate text-[12.5px] text-foreground/80">{g.label ?? g.q}</span>
+                  )}
+                  <span className={cn(
+                    "text-[11.5px] tabular-nums flex-shrink-0",
+                    counts.groups?.[i] ? "text-foreground/70 font-medium" : "text-muted-foreground/30",
+                  )}>
+                    {counts.groups?.[i] ?? 0}
+                  </span>
+                  {groupBy === "custom" && (
+                    <button onClick={() => setGroups(groups.filter((_, j) => j !== i))}
+                      className="p-0.5 rounded text-muted-foreground/30 hover:text-foreground flex-shrink-0">
+                      <X className="h-3 w-3" strokeWidth={2} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {groupBy === "signal" && groups.length === 0 && (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground/50">
+              No signal has fired on any account. The ICP model is scoring on its prior alone.
+            </p>
+          )}
+          {groupBy === "pattern" && (
+            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground/40">
+              {groups.length
+                ? "An account can sit in several patterns at once. Where it comes to rest between them is the point."
+                : "No claim is shared by two accounts yet, so there is no pattern to draw."}
+            </p>
+          )}
+
+          {groupBy === "custom" ? (
+            <button
+              onClick={() => setGroups([...groups, { q: "", color: SWATCHES[groups.length % SWATCHES.length] }])}
+              className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-1.5 text-[12px] text-muted-foreground/60 hover:text-foreground hover:border-foreground/25 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={2} /> Add bucket
+            </button>
+          ) : (
+            <button
+              onClick={() => setGroupBy("custom")}
+              className="mt-2 text-[11.5px] text-muted-foreground/45 hover:text-foreground transition-colors"
+            >
+              Cut it my own way…
+            </button>
+          )}
+
+          {groupBy === "custom" && (
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/40">
+              <span className="font-mono">icp&gt;=85</span> · <span className="font-mono">icp:70-84</span> ·{" "}
+              <span className="font-mono">quiet&gt;30</span> · <span className="font-mono">people&gt;=3</span> ·{" "}
+              <span className="font-mono">tier:t1</span> · <span className="font-mono">sig:&lt;key&gt;</span> ·{" "}
+              <span className="font-mono">single</span> · <span className="font-mono">dm</span>. Terms AND together.
+            </p>
+          )}
+        </Section>
+
+        {/* One filter. The panel is for CUTTING the graph (Group by), not for hunting a
+            subset — that is what search is for. The single exception is decision-makers:
+            "who can actually sign" is the one question worth pulling everyone else off the
+            canvas to answer. Everything else (single-threaded, no-budget, activity) is a
+            grouping, and lives above. */}
+        <Section title="Filter">
+          <Toggle
+            label="Decision makers only"
+            on={active.includes("dm")}
+            set={() => toggleFilter("dm")}
+          />
+        </Section>
+
+        <Collapse title="Display" open={openDisplay} setOpen={setOpenDisplay}>
+          <Slider label="Node size"  v={display.node}  set={v => setDisplay({ ...display, node: v })} />
+          <Slider label="Text size"  v={display.label} set={v => setDisplay({ ...display, label: v })} />
+          <Slider label="Link width" v={display.link}  set={v => setDisplay({ ...display, link: v })} />
+        </Collapse>
+
+        <Collapse title="Forces" open={openForces} setOpen={setOpenForces}>
+          <Slider label="Repel"       v={forces.repel}  set={v => setForces({ ...forces, repel: v })} />
+          <Slider label="Link length" v={forces.dist}   set={v => setForces({ ...forces, dist: v })} />
+          <Slider label="Gravity"     v={forces.center} set={v => setForces({ ...forces, center: v })} />
+        </Collapse>
+      </div>
+      )}
+    </aside>
+  );
+}
+
+function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
+  return (
+    <div className="px-3.5 pb-4">
+      <div className="flex items-baseline gap-2 mb-2">
+        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/45">{title}</span>
+        {note && <span className="text-[11px] text-muted-foreground/35">{note}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Collapse({ title, open, setOpen, children }: {
+  title: string; open: boolean; setOpen: (v: boolean) => void; children: React.ReactNode;
+}) {
+  return (
+    <div className="px-3.5 pb-3 border-t border-border/50 pt-3">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center gap-1 group">
+        <ChevronRight className={cn("h-3.5 w-3.5 text-muted-foreground/40 transition-transform", open && "rotate-90")} strokeWidth={2} />
+        <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/45 group-hover:text-foreground/70 transition-colors">{title}</span>
+      </button>
+      {open && <div className="mt-2.5 space-y-2.5">{children}</div>}
+    </div>
+  );
+}
+
+function Toggle({ label, on, set, count, hint }: {
+  label: string; on: boolean; set: (v: boolean) => void; count?: number; hint?: string;
+}) {
+  return (
+    <button onClick={() => set(!on)} title={hint} className="w-full flex items-center gap-2 py-[5px] group">
+      <span className={cn(
+        "relative h-[15px] w-[26px] rounded-full flex-shrink-0 transition-colors",
+        on ? "bg-foreground" : "bg-muted-foreground/20",
+      )}>
+        <span className={cn(
+          "absolute top-[2px] h-[11px] w-[11px] rounded-full bg-background transition-all",
+          on ? "left-[13px]" : "left-[2px]",
+        )} />
+      </span>
+      <span className={cn("text-[12.5px] flex-1 text-left transition-colors", on ? "text-foreground/85" : "text-muted-foreground/45")}>
+        {label}
+      </span>
+      {count != null && <span className="text-[11.5px] tabular-nums text-muted-foreground/40">{count}</span>}
+    </button>
+  );
+}
+
+function Slider({ label, v, set }: { label: string; v: number; set: (v: number) => void }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[12px] text-muted-foreground/60">{label}</span>
+        <span className="text-[11px] tabular-nums text-muted-foreground/35">{v.toFixed(1)}×</span>
+      </div>
+      <input
+        type="range" min={0.3} max={2.5} step={0.1} value={v}
+        onChange={e => set(Number(e.target.value))}
+        className="w-full h-1 rounded-full appearance-none bg-muted-foreground/20 accent-foreground cursor-pointer"
+      />
+    </div>
+  );
+}

@@ -1,0 +1,14 @@
+{$APP_DOMAIN} {
+    reverse_proxy frontend:80
+}
+
+{$API_DOMAIN} {
+    handle /inbound/* {
+        reverse_proxy worker:3001
+    }
+    reverse_proxy api:3000
+}
+
+{$MCP_DOMAIN} {
+    reverse_proxy mcp:3002
+}

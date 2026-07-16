@@ -1,0 +1,85 @@
+# Publish @opennous/cli and @opennous/mcp to npm.
+#
+# These two packages ARE the front door: `curl https://get.opennous.cloud | sh` runs
+# `npx @opennous/cli@latest init`, which runs `@opennous/mcp`. They were being published by
+# hand, which means the install one-liner could point at a version nobody had pushed. This
+# makes a release a tagged, reproducible event instead of a thing someone remembers to do.
+#
+# Release flow:
+#   1. Bump the version in apps/cli/package.json and/or apps/mcp/package.json.
+#   2. Tag it:  cli-v0.7.0   or   mcp-v0.43.0   (the prefix selects which package publishes).
+#   3. git push --tags. This workflow publishes only the package whose prefix matched.
+#
+# Requires an NPM_TOKEN secret (an npm automation token with publish rights on @opennous).
+
+name: publish-cli
+
+on:
+  push:
+    tags:
+      - 'cli-v*'
+      - 'mcp-v*'
+  # Manual escape hatch — pick a package, publish its current version.
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Which package to publish
+        required: true
+        type: choice
+        options: [cli, mcp]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required by npm --provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Decide which package this run publishes, from the tag prefix or the manual input.
+      - name: Resolve target package
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            pkg="${{ inputs.package }}"
+          else
+            case "${{ github.ref_name }}" in
+              cli-v*) pkg=cli ;;
+              mcp-v*) pkg=mcp ;;
+              *) echo "Tag ${{ github.ref_name }} matches no package prefix"; exit 1 ;;
+            esac
+          fi
+          echo "dir=apps/$pkg" >> "$GITHUB_OUTPUT"
+          echo "Publishing apps/$pkg"
+
+      # Guard: for a tag push, the tag version must match package.json, or we'd publish a
+      # version the tag doesn't name. Skipped for manual runs.
+      - name: Check tag matches package version
+        if: github.event_name == 'push'
+        run: |
+          tag_version="${GITHUB_REF_NAME#*-v}"
+          pkg_version="$(node -p "require('./${{ steps.target.outputs.dir }}/package.json').version")"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "Tag version ($tag_version) != package version ($pkg_version)"; exit 1
+          fi
+
+      # These packages have no build step and vendor their own deps thinly; install at the
+      # package dir so a broken root workspace never blocks a release.
+      - name: Install
+        working-directory: ${{ steps.target.outputs.dir }}
+        run: npm install --no-audit --no-fund
+
+      # --access public: @opennous/* is a scoped package, and scoped packages default to
+      # restricted. Without this the first publish of each would 402.
+      # --provenance: signed build provenance, so installers can verify where it came from.
+      - name: Publish
+        working-directory: ${{ steps.target.outputs.dir }}
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
