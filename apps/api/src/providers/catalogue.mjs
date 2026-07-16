@@ -211,6 +211,7 @@ export const CATALOGUE = {
     keyUrl:  null,
     keyHint: 'Blitz dashboard → API key.',
     webhook: 'none',
+    hidden: true, hiddenWhy: 'Stub — no real integration wired (no API base URL, no key URL) and the brand is ambiguous. Removed from the catalogue until it is actually built.',
   },
 
   // ── Verification ──────────────────────────────────────────────────────────

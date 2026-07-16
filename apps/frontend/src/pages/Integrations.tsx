@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { ArrowLeft, Check, RefreshCw, Plus, ExternalLink, Copy } from "lucide-react";
+import { ArrowLeft, Check, RefreshCw, Plus, ExternalLink, Copy, Lock } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePlan } from "@/hooks/usePlan";
 import { toast } from "@/components/ui/sonner";
 import { watchOAuthPopup } from "@/lib/oauthPopup";
 import { IntegrationConn, AvailableProvider, IntegrationLogo } from "@/components/mind/entities";
@@ -83,6 +84,12 @@ const HARDCODED_PROVIDERS: AvailableProvider[] = [
   },
 ];
 
+// CRMs + Slack are the Custom-plan (enterprise) integrations — the backend blocks
+// connecting them off-plan (assertIntegrationAllowed in workflowProviders.mjs).
+// Mirror that here so non-Custom plans see them locked rather than getting a 403
+// on connect. Must match CUSTOM_ONLY_INTEGRATIONS in apps/api/src/lib/plans.mjs.
+const CUSTOM_ONLY_INTEGRATIONS = new Set(["salesforce", "hubspot", "attio", "slack"]);
+
 const CATEGORY_ORDER = ["self","crm","outbound","enrichment","verification","scraping","meetings","communication","database","ai","analytics","productivity","other"] as const;
 const CATEGORY_LABEL: Record<string,string> = {
   self:"Nous", crm:"CRM", outbound:"Outbound", enrichment:"Enrichment", verification:"Email verification", scraping:"Scraping", meetings:"Meetings",
@@ -103,6 +110,12 @@ function groupByCategory<T extends { category?: string }>(items: T[]): Array<[st
 
 export default function Integrations() {
   const { session, userData } = useAuth();
+  const { can, selfHosted, loading: planLoading } = usePlan();
+  // Salesforce/HubSpot/Attio/Slack are on the Custom plan. Self-host has no plans,
+  // so everything is unlocked there. While the plan is still loading, don't lock —
+  // usePlan warns that gating before the first response flickers items away from a
+  // Custom customer on every cold load.
+  const canEnterprise = planLoading || selfHosted || can("enterpriseIntegrations");
   const token = session?.access_token ?? "";
   const workspaceId = userData?.workspace?.id ?? "";
 
@@ -646,8 +659,9 @@ export default function Integrations() {
                     <div className="rounded-xl border border-border overflow-hidden">
                       {items.map(p => {
                         const isSoon = (p as any).coming_soon;
+                        const isLocked = CUSTOM_ONLY_INTEGRATIONS.has(p.name) && !canEnterprise;
                         return (
-                          <div key={p.id} className={`flex items-center gap-4 px-4 py-3.5 border-b border-border/60 last:border-0 transition-colors group ${isSoon ? "opacity-60" : "hover:bg-muted/50"}`}>
+                          <div key={p.id} className={`flex items-center gap-4 px-4 py-3.5 border-b border-border/60 last:border-0 transition-colors group ${(isSoon || isLocked) ? "opacity-60" : "hover:bg-muted/50"}`}>
                             <IntegrationLogo url={p.logo_url} name={p.display_name} />
                             <div className="flex-1 min-w-0">
                               <div className="text-[13px] font-semibold text-foreground">{p.display_name}</div>
@@ -656,6 +670,11 @@ export default function Integrations() {
                               <span className="text-[11px] text-muted-foreground/70 rounded-md border border-border px-2 py-0.5 flex-shrink-0 uppercase tracking-wide">
                                 Coming soon
                               </span>
+                            ) : isLocked ? (
+                              <a href="/settings?section=billing" title="Available on the Custom plan"
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground rounded-md border border-border px-2 py-0.5 flex-shrink-0 hover:text-foreground hover:border-foreground/30 transition-colors">
+                                <Lock className="h-3 w-3" /> Custom plan
+                              </a>
                             ) : (
                               <button onClick={()=>startConnect(p)}
                                 className="text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 rounded-md border border-border px-2.5 py-1 hover:bg-muted/50">

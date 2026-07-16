@@ -133,7 +133,7 @@ export function ActivityIcon({ source, type }: { source: string | null; type: st
   if (s === "stripe"          || t.includes("subscription"))      return logo("/provider-logos/stripe.svg");
   if (s === "linkedin"        || t.includes("linkedin"))          return <img src="/provider-logos/linkedin.png" alt="" className="w-3.5 h-3.5 rounded-sm object-contain flex-shrink-0" />;
   if (s === "gmail"           || s === "email" || s === "smtp" || t.includes("email")) return logo("/provider-logos/gmail.svg");
-  if (s === "google_calendar" || s === "google-calendar"       || t.includes("calendar")) return logo("/provider-logos/google.svg");
+  if (s === "google_calendar" || s === "google-calendar"       || t.includes("calendar")) return logo("/provider-logos/google-calendar.svg");
   if (s === "slack"           || t.includes("slack"))             return logo("/provider-logos/slack.svg");
   if (s === "hubspot"         || t.includes("hubspot"))           return logo("/provider-logos/hubspot.svg");
   if (s === "fireflies"       || t.includes("fireflies"))         return logo("/provider-logos/fireflies.svg");
@@ -156,6 +156,10 @@ const LOGO_FALLBACK: Record<string, string> = {
   apollo: "/provider-logos/apollo.svg",
   "apollo.io": "/provider-logos/apollo.svg",
   gmail: "/provider-logos/gmail.svg",
+  gmail_oauth: "/provider-logos/gmail.svg",
+  google_calendar: "/provider-logos/google-calendar.svg",
+  "google-calendar": "/provider-logos/google-calendar.svg",
+  salesforce: "/provider-logos/salesforce.svg",
   linkedin: "/provider-logos/linkedin.png",
   hubspot: "/provider-logos/hubspot.svg",
   pipedrive: "/provider-logos/pipedrive.svg",
