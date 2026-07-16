@@ -57,6 +57,11 @@ const SignupContent = () => {
   const redirectParam = safeRedirect(searchParams.get("redirect"));
   const hasRedirect = redirectParam !== "/";
   const afterAuth = redirectParam;
+  // Reached from the CLI device-login (`npx @opennous/cli init` → /cli-login → "Create
+  // account"). These users ALREADY ran the terminal command, so leading with the
+  // "Run in terminal" hero tells them to do the thing they just did — and sends them
+  // right back to this page in a loop. In this flow, lead with the account form instead.
+  const fromCli = redirectParam.startsWith("/cli-login");
 
   // Self-host: if registration is closed, there is no signup — send to login.
   useEffect(() => {
@@ -266,9 +271,20 @@ const SignupContent = () => {
           </div>
 
           <h1 className="mt-4 font-fraunces text-[26px] font-semibold tracking-[-0.02em] text-[#1A1712]">
-            Set up Nous
+            {fromCli ? "Create your account" : "Set up Nous"}
           </h1>
+          {fromCli && (
+            <p className="mt-1.5 text-xs text-[#6B655B] leading-relaxed">
+              You already ran the CLI. Create your account and we&apos;ll take you straight
+              back to the terminal to finish connecting.
+            </p>
+          )}
 
+          {/* Agent-first hero — HIDDEN in the CLI flow. The user arrived here by running the
+              terminal command, so leading with "run the terminal command" loops them back to
+              this page forever. Show the account form instead. */}
+          {!fromCli && (
+          <>
           {/* ── Agent-first: the hero. Run the one-liner, or paste a prompt to your agent. ── */}
           <div className="mt-5 rounded-xl border border-[#E7E1D4] bg-[#F7F3EA] p-4">
             <div className="flex items-center gap-2 text-[12px] font-semibold tracking-[-0.01em] text-[#1A1712]">
@@ -318,8 +334,10 @@ const SignupContent = () => {
               </span>
             </div>
           </div>
+          </>
+          )}
 
-          <div className="space-y-3">
+          <div className={`space-y-3 ${fromCli ? "mt-6" : ""}`}>
             {googleEnabled && (
               <Button
                 type="button"
