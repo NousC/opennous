@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Linkedin, Trash2, RefreshCw, Search, Download, Upload, FileText, Filter, X, Users } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -62,13 +63,9 @@ type DetailTab = "overview" | "activity" | "emails" | "linkedin" | "slack" | "ca
 function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token: string; onBack: () => void }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<DetailTab>("overview");
-  const [loading, setLoading] = useState(true);
-  const [acts, setActs] = useState<any[]>([]);
-  const [mems, setMems] = useState<any[]>([]);
-  const [signals, setSignals] = useState<any[]>([]);
-  const [prediction, setPrediction] = useState<any>(null);
-  const [company, setCompany] = useState<any>(null);
-  const [raw, setRaw] = useState<any>(null);
+  // The record is a cached React Query (below): reopening an account you've already
+  // viewed is instant from cache instead of re-running the heavy /api/contacts/:id
+  // endpoint. Fields below are derived from that single response.
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -93,13 +90,23 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
     finally { setLostMarking(false); }
   };
 
-  useEffect(() => {
-    setLoading(true);
-    fetch(`${apiUrl}/api/contacts/${contact.id}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) { setActs((d.activities ?? []).filter((a: any) => a.activity_type !== 'icp_scored')); setMems(d.memories ?? []); setSignals(d.signals ?? []); setRaw(d.contact ?? null); setPrediction(d.prediction ?? null); setCompany(d.company ?? null); } setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [contact.id, token]);
+  const { data, isPending: loading } = useQuery({
+    queryKey: ["contact", contact.id],
+    queryFn: async () => {
+      const r = await fetch(`${apiUrl}/api/contacts/${contact.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      return r.ok ? r.json() : null;
+    },
+    enabled: !!contact.id && !!token,
+  });
+  const acts = useMemo(
+    () => ((data?.activities ?? []) as any[]).filter((a: any) => a.activity_type !== "icp_scored"),
+    [data],
+  );
+  const mems: any[] = data?.memories ?? [];
+  const signals: any[] = data?.signals ?? [];
+  const raw = data?.contact ?? null;
+  const prediction = data?.prediction ?? null;
+  const company = data?.company ?? null;
 
   const patchContact = async (patchKey: string, value: string) => {
     setSaving(true);
