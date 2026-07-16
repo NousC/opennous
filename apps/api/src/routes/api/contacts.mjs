@@ -213,31 +213,43 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', contact.workspace_id).eq('user_id', user.id).single();
     if (!membership) return res.status(403).json({ error: 'contact_not_found_or_unauthorized' });
 
-    // Hybrid ICP score. The contacts view's icp_score is the MODEL prediction; the
-    // lead-list shows the lead's own fields.icp_score (the seed score from a scan).
-    // Until the scorecard is trained on real outcomes the model is thin, so we
-    // DISPLAY the seed and let the model learn quietly. Once enough icp_fit
-    // predictions have RESOLVED (closed-deal outcomes), the model has signal and we
-    // switch the displayed score to it. Keeps the sidebar and the list aligned.
+    // ── One parallel batch ────────────────────────────────────────────────────
+    // Contact + membership are resolved above; every read below depends only on the
+    // id / workspace, never on each other. Running them concurrently instead of as
+    // ~8 sequential round-trips is the first-load win. (viewerUserId / workspaceId
+    // are also needed by the privacy pass below.)
+    const viewerUserId = req.internalUserId ?? req.memberUserId ?? null;
+    // The workspace comes off the CONTACT, not the request: this route is fetched by
+    // id alone, so req.workspaceId is usually undefined. contact.workspace_id is
+    // authoritative and was membership-checked above.
+    const workspaceId = req.workspaceId ?? contact.workspace_id;
+    const sigEntityIds = [id];
+    const [fcRes, resolvedRes, obsRes, sharedAccount, companyRes, memories, sigRes, predRowRes] = await Promise.all([
+      supabase.from('claims').select('value').eq('entity_id', id).eq('property', 'fields').is('invalid_at', null).maybeSingle(),
+      supabase.from('predictions').select('id', { count: 'exact', head: true }).eq('workspace_id', contact.workspace_id).eq('kind', 'icp_fit').not('resolved_at', 'is', null),
+      supabase.from('observations').select('id, property, value, source, observed_at, raw, entity_id, owner_user_id').eq('entity_id', id).eq('kind', 'event').order('observed_at', { ascending: false }).limit(200),
+      isInTouchWith(supabase, workspaceId, id, viewerUserId),
+      contact.company_id
+        ? supabase.from('companies').select('name, domain, industry, employee_count, tech_stack, location, revenue_range').eq('id', contact.company_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      listNotes(supabase, contact.workspace_id, { entityId: id, limit: 30 }),
+      supabase.from('claims').select('entity_id, property, value, confidence, computed_at').in('entity_id', sigEntityIds).like('property', 'signal.%').is('invalid_at', null).order('computed_at', { ascending: false }),
+      supabase.from('predictions').select('predicted_value, predicted_at, model_version, fired_signals').eq('entity_id', id).eq('kind', 'icp_fit').order('predicted_at', { ascending: false }).limit(1).maybeSingle(),
+    ]);
+
+    // Hybrid ICP score: DISPLAY the seed until the model has ≥10 RESOLVED icp_fit
+    // outcomes, then switch to the model prediction. Keeps sidebar and list aligned.
     {
       const prediction = contact.icp_score;          // model prediction (may be null)
-      const { data: fc } = await supabase.from('claims')
-        .select('value').eq('entity_id', id).eq('property', 'fields').is('invalid_at', null).maybeSingle();
-      const sraw = fc?.value?.icp_score ?? fc?.value?.scorecard_score;
+      const sraw = fcRes.data?.value?.icp_score ?? fcRes.data?.value?.scorecard_score;
       const seed = sraw == null || Number.isNaN(Number(sraw)) ? null : Number(sraw);
-      const { count: resolved } = await supabase.from('predictions')
-        .select('id', { count: 'exact', head: true })
-        .eq('workspace_id', contact.workspace_id).eq('kind', 'icp_fit').not('resolved_at', 'is', null);
-      const trained = (resolved ?? 0) >= 10;          // model has enough graded outcomes
+      const trained = (resolvedRes.count ?? 0) >= 10;          // enough graded outcomes
       contact.icp_score = trained ? (prediction ?? seed) : (seed ?? prediction);
     }
 
     // Activities are kind:'event' observations in the v2 substrate.
     // entity_id == contact id (the v1->v2 migration convention).
-    const { data: obsRawAll } = await supabase.from('observations')
-      .select('id, property, value, source, observed_at, raw, entity_id, owner_user_id')
-      .eq('entity_id', id).eq('kind', 'event')
-      .order('observed_at', { ascending: false }).limit(200);
+    const obsRawAll = obsRes.data;
 
     // Per-member privacy (PRIVACY_MODEL.md). Two rules, in order:
     //
@@ -252,14 +264,7 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     //      and its header still show WHAT happened and WHEN — only the body goes.
     //
     // Meetings, calls, facts, signals and notes are never redacted either way.
-    const viewerUserId = req.internalUserId ?? req.memberUserId ?? null;
-    // The workspace comes off the CONTACT, not the request. verifySupabaseAuth only
-    // populates req.workspaceId when the caller passes ?workspaceId=, and this route
-    // is fetched by id alone — so req.workspaceId is undefined here, which used to
-    // reach Postgres as the literal uuid "undefined" and 500 the whole record.
-    // contact.workspace_id is authoritative and is already membership-checked above.
-    const workspaceId = req.workspaceId ?? contact.workspace_id;
-    const sharedAccount = await isInTouchWith(supabase, workspaceId, id, viewerUserId);
+    // viewerUserId / workspaceId / sharedAccount were resolved in the batch above.
     const ownsRaw = (o) => o.owner_user_id == null || o.owner_user_id === viewerUserId;
     const isRedactable = (type) => type.startsWith('email_') || LINKEDIN_MSG_TYPES.has(type);
     // No viewer id (a system/service caller) → don't redact.
@@ -370,15 +375,9 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
       })
       .filter(a => !SYSTEM_TYPES.has(a.activity_type) && a.activity_type !== 'stage_changed');
 
-    let company = null;
-    if (contact.company_id) {
-      const { data: c } = await supabase.from('companies').select('name, domain, industry, employee_count, tech_stack, location, revenue_range').eq('id', contact.company_id).maybeSingle();
-      company = c;
-    }
-
-    // Notes on this contact-entity (entity_id == contact.id in v2). Notes are
-    // fully shared across the team by design — no viewer scoping here.
-    const memories = await listNotes(supabase, contact.workspace_id, { entityId: id, limit: 30 });
+    const company = companyRes.data;
+    // memories (listNotes) came from the batch above — notes are fully shared across
+    // the team by design, no viewer scoping.
 
     // Buying signals — signal.* state claims written by signal-scan / record_signal.
     // Signals are COMPANY-LEVEL and live on the company record (see the company
@@ -387,12 +386,7 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     // are shown on the company, and still feed this person's ICP score via the
     // scorecard's company-feature inheritance (a separate path). So query the
     // person entity only.
-    const sigEntityIds = [id];
-    const { data: sigRows } = await supabase.from('claims')
-      .select('entity_id, property, value, confidence, computed_at')
-      .in('entity_id', sigEntityIds).like('property', 'signal.%')
-      .is('invalid_at', null)
-      .order('computed_at', { ascending: false });
+    const sigRows = sigRes.data;
     const byClass = new Map();
     for (const s of (sigRows || [])) {
       const cls = (s.property || '').replace(/^signal\./, '');
@@ -416,10 +410,7 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     // ICP prediction + its history trail (the evolving per-person score). The
     // headline contact.icp_score stays the hybrid (seed until the model trains);
     // this exposes the live model score + the full trail for the timeline UI.
-    const { data: predRow } = await supabase.from('predictions')
-      .select('predicted_value, predicted_at, model_version, fired_signals')
-      .eq('entity_id', id).eq('kind', 'icp_fit')
-      .order('predicted_at', { ascending: false }).limit(1).maybeSingle();
+    const predRow = predRowRes.data;
     const prediction = predRow ? {
       score:      predRow.predicted_value?.score ?? null,
       fit:        predRow.predicted_value?.fit ?? null,
