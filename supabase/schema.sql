@@ -7839,6 +7839,7 @@ CREATE TABLE IF NOT EXISTS public.contact_enrichment_jobs (
     job_id       uuid PRIMARY KEY,
     workspace_id uuid NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
     contact_ids  jsonb NOT NULL DEFAULT '[]'::jsonb,
+    contacts     jsonb NOT NULL DEFAULT '[]'::jsonb,
     status       text NOT NULL DEFAULT 'pending',
     attempts     integer NOT NULL DEFAULT 0,
     locked_at    timestamptz,

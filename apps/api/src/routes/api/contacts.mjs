@@ -840,18 +840,33 @@ contactsApiRouter.post('/import', verifySupabaseAuth, async (req, res) => {
     // backfill runs in the WORKER (drains contact_enrichment_jobs), not here — see
     // apps/worker/src/workers/contactEnrichmentJobs.mjs. The API just records the job
     // and returns; the modal polls /enrich-progress/:jobId, which reads the row.
-    const existingIds = [
-      ...(existingByEmail || []).map(c => c.id),
-      ...(existingByLinkedin || []).map(c => c.id),
-    ];
-    const allImportedIds = [...newContactIds, ...existingIds];
+    //
+    // We pass the full contact PAYLOAD (email + name + linkedin), not just ids. A
+    // freshly imported person is a cold lead that isn't in the `contacts` view yet, so
+    // the worker can't reload it by id — but we hold its email/name right here, so we
+    // hand them over and the backfill scans off that.
+    const rowToContact = (id, r) => ({
+      id,
+      email:       r.email ? r.email.toLowerCase().trim() : null,
+      first_name:  r.first_name?.trim() || null,
+      last_name:   r.last_name?.trim() || null,
+      company:     r.company?.trim() || null,
+      company_id:  companyIdByKey.get(companyKeyOf(r)) || null,
+      linkedin_url: r.linkedin_url?.trim() || null,
+    });
+    const contactsPayload = [];
+    for (let i = 0; i < newContactIds.length; i++) contactsPayload.push(rowToContact(newContactIds[i], toCreate[i]));
+    for (const r of toUpdateEmail) { const id = emailToId.get(r.email.toLowerCase().trim()); if (id) contactsPayload.push(rowToContact(id, r)); }
+    for (const r of toUpdateLinkedin) { const id = liToId.get(r.linkedin_url.trim()); if (id) contactsPayload.push(rowToContact(id, r)); }
+
     let jobId = null;
-    if (allImportedIds.length) {
+    if (contactsPayload.length) {
       jobId = randomUUID();
       const { error: enqErr } = await supabase.from('contact_enrichment_jobs').insert({
         job_id:       jobId,
         workspace_id: workspaceId,
-        contact_ids:  allImportedIds,
+        contact_ids:  contactsPayload.map(c => c.id),
+        contacts:     contactsPayload,
         status:       'pending',
       });
       if (enqErr) {

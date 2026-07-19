@@ -23,11 +23,13 @@ export async function processContactEnrichmentJobs() {
     const staleLock = new Date(Date.now() - LOCK_STALE_MS).toISOString();
     const { data: jobs, error } = await supabase
       .from('contact_enrichment_jobs')
-      .select('job_id, workspace_id, contact_ids, status, attempts, locked_at')
+      .select('job_id, workspace_id, contact_ids, contacts, status, attempts, locked_at')
       .or(`status.eq.pending,and(status.eq.running,locked_at.lt.${staleLock})`)
       .order('created_at', { ascending: true })
       .limit(1);
-    if (error?.code === '42P01' || error?.code === 'PGRST205') return; // migration not applied yet
+    // Migration not (fully) applied yet: table missing (42P01/PGRST205) or the
+    // `contacts` column missing (42703/PGRST204). No-op quietly until it's run.
+    if (['42P01', 'PGRST205', '42703', 'PGRST204'].includes(error?.code)) return;
     if (error) throw error;
     const job = jobs?.[0];
     if (!job) return;
@@ -44,19 +46,22 @@ export async function processContactEnrichmentJobs() {
       .maybeSingle();
     if (!claimed) return;
 
-    const contactIds = Array.isArray(job.contact_ids)
-      ? job.contact_ids
-      : (job.contact_ids?.ids || []);
+    // Prefer the rich payload the import handed over ({id,email,name,...}); it's the
+    // only source that covers freshly imported COLD LEADS (not yet in the contacts
+    // view). Fall back to bare ids for older jobs.
+    const payload = Array.isArray(job.contacts) ? job.contacts : [];
+    const contactIds = Array.isArray(job.contact_ids) ? job.contact_ids : (job.contact_ids?.ids || []);
+    const input = payload.length ? payload : contactIds;
 
     try {
       // Dynamic import isolates the heavy enricher (googleapis / imapflow / unipile)
       // from worker BOOT: a problem loading it fails THIS job, not the whole process.
       const { enrichContactHistory } = await import('../services/contactHistoryEnricher.mjs');
-      await enrichContactHistory(supabase, job.workspace_id, contactIds, job.job_id);
+      await enrichContactHistory(supabase, job.workspace_id, input, job.job_id);
       await supabase.from('contact_enrichment_jobs')
         .update({ status: 'done', done: true, updated_at: new Date().toISOString() })
         .eq('job_id', job.job_id);
-      console.log(`[CONTACT_ENRICH_JOB] done job=${job.job_id} contacts=${contactIds.length}`);
+      console.log(`[CONTACT_ENRICH_JOB] done job=${job.job_id} contacts=${input.length}`);
     } catch (e) {
       const giveUp = attempts >= MAX_ATTEMPTS;
       console.error(`[CONTACT_ENRICH_JOB] job=${job.job_id} failed (attempt ${attempts}${giveUp ? ', giving up' : ''}):`, e?.message || e);

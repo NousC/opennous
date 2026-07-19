@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.contact_enrichment_jobs (
     job_id       uuid PRIMARY KEY,
     workspace_id uuid NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
     contact_ids  jsonb NOT NULL DEFAULT '[]'::jsonb,
+    contacts     jsonb NOT NULL DEFAULT '[]'::jsonb, -- rich payload {id,email,name,...} from import
     status       text NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
     attempts     integer NOT NULL DEFAULT 0,
     locked_at    timestamptz,
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS public.contact_enrichment_jobs (
 -- Additive guards so a re-run against an earlier (state/done-only) version of the
 -- table fills in the queue columns instead of erroring.
 ALTER TABLE public.contact_enrichment_jobs ADD COLUMN IF NOT EXISTS contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.contact_enrichment_jobs ADD COLUMN IF NOT EXISTS contacts jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE public.contact_enrichment_jobs ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pending';
 ALTER TABLE public.contact_enrichment_jobs ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 0;
 ALTER TABLE public.contact_enrichment_jobs ADD COLUMN IF NOT EXISTS locked_at timestamptz;

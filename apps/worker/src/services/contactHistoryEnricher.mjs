@@ -1115,17 +1115,43 @@ async function persistJob(supabase, jobId, done = false) {
   } catch { /* best-effort */ }
 }
 
-export async function enrichContactHistory(supabase, workspaceId, contactIds, jobId = null) {
-  if (!contactIds?.length) return { enriched: 0, activitiesLogged: 0 };
-  console.log(`[ENRICH] Starting: ${contactIds.length} contacts in ${workspaceId}`);
+// `input` is EITHER a rich payload array [{id, email, first_name, ...}] handed over
+// by the import, OR a bare array of entity ids (legacy). The payload path is the
+// important one: a freshly CSV-imported person is a COLD LEAD — it exists as an
+// `entity` with name/company claims, but it is NOT in the `contacts` view (which only
+// projects people you've engaged), and its email isn't queryable there either. So
+// loading by id from the view returned zero and the whole backfill silently no-op'd
+// on exactly the people it's meant to seed. The import already holds every email and
+// name, so it passes them straight through and we scan off that — no view dependency.
+export async function enrichContactHistory(supabase, workspaceId, input, jobId = null) {
+  if (!input?.length) return { enriched: 0, activitiesLogged: 0 };
 
-  const { data: contacts } = await supabase
-    .from('contacts')
-    .select('id, email, first_name, last_name, company, company_id, linkedin_url, linkedin_member_id')
-    .in('id', contactIds)
-    .eq('workspace_id', workspaceId);
+  let contacts;
+  if (typeof input[0] === 'object') {
+    contacts = input
+      .filter(c => c && c.id)
+      .map(c => ({
+        id: c.id,
+        email: c.email ? String(c.email).toLowerCase().trim() : null,
+        first_name: c.first_name || null,
+        last_name: c.last_name || null,
+        company: c.company || null,
+        company_id: c.company_id || null,
+        linkedin_url: c.linkedin_url || null,
+        linkedin_member_id: c.linkedin_member_id || null,
+      }));
+  } else {
+    // Legacy: bare ids. Load from the view (works only for people already in it).
+    const { data } = await supabase
+      .from('contacts')
+      .select('id, email, first_name, last_name, company, company_id, linkedin_url, linkedin_member_id')
+      .in('id', input)
+      .eq('workspace_id', workspaceId);
+    contacts = data || [];
+  }
 
-  if (!contacts?.length) return { enriched: 0, activitiesLogged: 0 };
+  console.log(`[ENRICH] Starting: ${contacts.length} contacts in ${workspaceId}`);
+  if (!contacts.length) return { enriched: 0, activitiesLogged: 0 };
 
   const connections = await getWorkspaceConnections(supabase, workspaceId);
 

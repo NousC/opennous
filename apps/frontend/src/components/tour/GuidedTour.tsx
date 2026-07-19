@@ -95,23 +95,37 @@ export default function GuidedTour() {
     navigate(route);
   }, [step, persist, navigate]);
 
-  // ── Auto-advance on checkpoint ───────────────────────────────────────────────
-  // When the step's server signal flips true, show a beat of confirmation and move on.
+  // ── Auto-advance on a FRESH checkpoint completion ────────────────────────────
+  // Only advance when the user completes the step's action WHILE on the step — not
+  // when the checkpoint was already satisfied on entry (e.g. an agent-onboarded
+  // workspace that already has integrations/accounts/ICP). Otherwise the tour would
+  // sweep through every pre-done step on a timer. A manual Next is always available.
   const [justDone, setJustDone] = useState(false);
   const advancedFor = useRef<string | null>(null);
+  const baseline = useRef<{ step: number; met: boolean } | null>(null);
   const cp = current?.checkpoint;
-  const cpMet = cp ? progress[cp as keyof TourProgress] : false;
+  const cpMet = cp ? !!progress[cp as keyof TourProgress] : false;
 
-  useEffect(() => { setJustDone(false); }, [step]);
+  useEffect(() => { setJustDone(false); baseline.current = null; }, [step]);
+
+  // Capture the baseline (was it already done?) on the first loaded status for this step.
+  useEffect(() => {
+    if (!active || !cp || !progress.loaded) return;
+    if (!baseline.current || baseline.current.step !== step) {
+      baseline.current = { step, met: cpMet };
+    }
+  }, [active, cp, progress.loaded, step, cpMet]);
 
   useEffect(() => {
     if (!active || !current || !cp || !cpMet) return;
+    // Don't auto-advance a step that was already complete before the user got here.
+    if (!baseline.current || baseline.current.step !== step || baseline.current.met) return;
     if (advancedFor.current === current.id) return;
     advancedFor.current = current.id;
     setJustDone(true);
     const t = setTimeout(() => next(), 1300);
     return () => clearTimeout(t);
-  }, [active, current, cp, cpMet, next]);
+  }, [active, current, cp, cpMet, step, next]);
 
   // ── Drive navigation on step entry ───────────────────────────────────────────
   const navigatedFor = useRef<string | null>(null);
@@ -242,13 +256,10 @@ export default function GuidedTour() {
             <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-2 text-[12.5px] font-semibold text-emerald-600">
               <Check className="h-3.5 w-3.5" /> Done
             </span>
-          ) : current.checkpoint ? (
-            // Gated step: no manual "next" — it advances itself when the work is done.
-            // A skip-ahead stays available under the primary affordance only if they insist.
-            !anchorMissing && (
-              <span className="text-[12px] text-muted-foreground/50">Waiting for you…</span>
-            )
           ) : (
+            // Always a manual Next — the user moves at their own pace. Gated steps ALSO
+            // auto-advance, but only on a fresh completion (see the effect above), so a
+            // pre-satisfied workspace never skips ahead on its own.
             <button
               onClick={next}
               className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3.5 py-2 text-[12.5px] font-semibold text-background hover:opacity-90 transition-opacity"

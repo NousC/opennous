@@ -24,24 +24,30 @@ const NONE: TourProgress = {
   icpTrained: false,
 };
 
-export function useTourProgress(active: boolean): TourProgress & { refetch: () => void } {
+export function useTourProgress(active: boolean): TourProgress & { loaded: boolean; refetch: () => void } {
   const { session } = useAuth();
   const token = session?.access_token ?? '';
   const [data, setData] = useState<TourProgress>(NONE);
+  // True once the first status fetch has resolved. The tour uses this to tell
+  // "already done before the tour" (baseline) apart from "just done during it" — so
+  // it never auto-skips a step whose checkpoint was already satisfied on entry.
+  const [loaded, setLoaded] = useState(false);
 
   const refetch = useCallback(() => {
     if (!token) return;
     fetch(`${apiUrl}/api/onboarding/status`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
-        if (!d) return;
-        setData({
-          integrationConnected: !!d.hasSource,
-          accountsImported: (d.accountCount ?? 0) > 0,
-          icpTrained: !!d.icpTrained,
-        });
+        if (d) {
+          setData({
+            integrationConnected: !!d.hasSource,
+            accountsImported: (d.accountCount ?? 0) > 0,
+            icpTrained: !!d.icpTrained,
+          });
+        }
+        setLoaded(true);
       })
-      .catch(() => { /* keep last known */ });
+      .catch(() => { setLoaded(true); /* keep last known */ });
   }, [token]);
 
   useEffect(() => {
@@ -52,5 +58,5 @@ export function useTourProgress(active: boolean): TourProgress & { refetch: () =
     return () => clearInterval(iv);
   }, [token, active, refetch]);
 
-  return { ...data, refetch };
+  return { ...data, loaded, refetch };
 }
