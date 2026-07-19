@@ -1,0 +1,304 @@
+/**
+ * The guided setup tour — the spotlight overlay + step machine.
+ *
+ * Mounted once inside the app shell (StandardLayout), so it survives navigation between
+ * Integrations, Accounts and the ICP model and can drive that navigation itself. It reads
+ * where the user is, sends them to the right page, spotlights the one button that matters,
+ * and watches server truth (useTourProgress) to know when the step is actually done.
+ *
+ * Two shapes of step: a centered card (welcome, billing) and an anchored spotlight over a
+ * real [data-tour] button. If the anchored element isn't on the page yet, the card centers
+ * and offers to take them there rather than pointing at nothing.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Check, ArrowRight, X } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useTourProgress, type TourProgress } from '@/hooks/useTourProgress';
+import {
+  TOUR_STEPS, loadTourState, saveTourState,
+  type TourStep, type TourStatus,
+} from '@/lib/tour';
+
+const CARD_W = 372;
+
+function anchorRoutePath(route?: string) {
+  return route ? route.split('?')[0] : undefined;
+}
+
+function firstName(session: ReturnType<typeof useAuth>['session'], email?: string): string {
+  const meta = (session?.user as { user_metadata?: { full_name?: string } } | undefined)?.user_metadata;
+  const full = meta?.full_name?.trim();
+  if (full) return full.split(/\s+/)[0];
+  if (email) return email.split('@')[0].replace(/[._-]+/g, ' ').split(' ')[0];
+  return '';
+}
+
+export default function GuidedTour() {
+  const { isAuthenticated, session, userData } = useAuth();
+  const wsId = (userData as { workspace?: { id?: string } })?.workspace?.id;
+  const email = (userData as { user?: { email?: string } })?.user?.email;
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [status, setStatus] = useState<TourStatus>('unstarted');
+  const [step, setStep] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Hydrate from storage once we know the workspace. Auto-open only a never-seen tour.
+  useEffect(() => {
+    if (!wsId) return;
+    const s = loadTourState(wsId);
+    setStatus(s.status === 'unstarted' ? 'active' : s.status);
+    setStep(s.step);
+    setHydrated(true);
+  }, [wsId]);
+
+  const persist = useCallback((next: { status: TourStatus; step: number }) => {
+    if (wsId) saveTourState(wsId, next);
+  }, [wsId]);
+
+  const active = hydrated && isAuthenticated && status === 'active';
+  const current: TourStep | undefined = TOUR_STEPS[step];
+
+  const progress = useTourProgress(active);
+
+  // ── Advance / dismiss ────────────────────────────────────────────────────────
+  const goTo = useCallback((n: number) => {
+    const clamped = Math.max(0, Math.min(TOUR_STEPS.length - 1, n));
+    setStep(clamped);
+    persist({ status: 'active', step: clamped });
+  }, [persist]);
+
+  const next = useCallback(() => {
+    if (step >= TOUR_STEPS.length - 1) {
+      setStatus('done');
+      persist({ status: 'done', step });
+      return;
+    }
+    goTo(step + 1);
+  }, [step, goTo, persist]);
+
+  const dismiss = useCallback(() => {
+    setStatus('dismissed');
+    persist({ status: 'dismissed', step });
+  }, [step, persist]);
+
+  // Secondary action on the finish card: take them somewhere (the verifier lives in
+  // Integrations) and end the tour.
+  const finishAndGo = useCallback((route: string) => {
+    setStatus('done');
+    persist({ status: 'done', step });
+    navigate(route);
+  }, [step, persist, navigate]);
+
+  // ── Auto-advance on checkpoint ───────────────────────────────────────────────
+  // When the step's server signal flips true, show a beat of confirmation and move on.
+  const [justDone, setJustDone] = useState(false);
+  const advancedFor = useRef<string | null>(null);
+  const cp = current?.checkpoint;
+  const cpMet = cp ? progress[cp as keyof TourProgress] : false;
+
+  useEffect(() => { setJustDone(false); }, [step]);
+
+  useEffect(() => {
+    if (!active || !current || !cp || !cpMet) return;
+    if (advancedFor.current === current.id) return;
+    advancedFor.current = current.id;
+    setJustDone(true);
+    const t = setTimeout(() => next(), 1300);
+    return () => clearTimeout(t);
+  }, [active, current, cp, cpMet, next]);
+
+  // ── Drive navigation on step entry ───────────────────────────────────────────
+  const navigatedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!active || !current?.route) return;
+    if (navigatedFor.current === current.id) return;
+    navigatedFor.current = current.id;
+    const wantPath = anchorRoutePath(current.route);
+    if (wantPath && location.pathname !== wantPath) navigate(current.route);
+  }, [active, current, navigate, location.pathname]);
+
+  // ── Track the anchored element's position ────────────────────────────────────
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    if (!active || current?.placement !== 'anchor' || !current.anchor) { setRect(null); return; }
+    const sel = `[data-tour="${current.anchor}"]`;
+    let raf = 0;
+    let firstFound = false;
+    const read = () => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setRect(prev => (prev && prev.top === r.top && prev.left === r.left && prev.width === r.width ? prev : r));
+        if (!firstFound) { firstFound = true; el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      } else {
+        setRect(null);
+      }
+    };
+    read();
+    const iv = setInterval(read, 250);
+    const onMove = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(read); };
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', onMove);
+    return () => {
+      clearInterval(iv);
+      cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', onMove);
+    };
+  }, [active, current, location.pathname]);
+
+  const stepNumber = useMemo(() => {
+    // Human "1 of 3" over the three real steps, ignoring the two bookends.
+    const gated = TOUR_STEPS.filter(s => s.checkpoint);
+    const idx = gated.findIndex(s => s.id === current?.id);
+    return idx >= 0 ? { n: idx + 1, total: gated.length } : null;
+  }, [current]);
+
+  if (!active || !current) return null;
+
+  const name = firstName(session, email);
+  const isCenter = current.placement === 'center';
+  const anchorMissing = current.placement === 'anchor' && !rect;
+
+  // Position the coach card relative to the spotlight.
+  let cardStyle: React.CSSProperties = {};
+  if (rect) {
+    const below = rect.bottom + 14;
+    const roomBelow = window.innerHeight - rect.bottom > 260;
+    const top = roomBelow ? below : Math.max(16, rect.top - 260);
+    let left = rect.left;
+    left = Math.min(left, window.innerWidth - CARD_W - 16);
+    left = Math.max(16, left);
+    cardStyle = { position: 'fixed', top, left, width: CARD_W };
+  }
+
+  const card = (
+    <motion.div
+      key={current.id}
+      initial={{ opacity: 0, y: 8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.98 }}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+      className="pointer-events-auto rounded-2xl border border-border bg-background shadow-2xl p-5"
+      style={isCenter || anchorMissing ? { width: CARD_W } : cardStyle}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <img src="/nous-logo.svg" alt="" className="h-4 w-4 object-contain" />
+          {stepNumber && (
+            <span className="text-[11px] font-medium text-muted-foreground/70 tabular-nums">
+              Step {stepNumber.n} of {stepNumber.total}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={dismiss}
+          className="text-muted-foreground/50 hover:text-foreground transition-colors -mt-1 -mr-1 p-1"
+          aria-label="Skip the tour"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <h2 className="mt-3 text-[17px] font-semibold tracking-tight text-foreground">
+        {current.id === 'welcome' && name ? `Welcome to Nous, ${name}` : current.title}
+      </h2>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{current.body}</p>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <button
+          onClick={dismiss}
+          className="text-[12px] text-muted-foreground/60 hover:text-foreground transition-colors"
+        >
+          Skip tour
+        </button>
+
+        <div className="flex items-center gap-2">
+          {anchorMissing && current.route && (
+            <button
+              onClick={() => { navigatedFor.current = null; navigate(current.route!); }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[12.5px] font-medium text-foreground hover:bg-muted/50 transition-colors"
+            >
+              Take me there
+            </button>
+          )}
+
+          {current.secondaryCta && current.secondaryRoute && (
+            <button
+              onClick={() => finishAndGo(current.secondaryRoute!)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[12.5px] font-medium text-foreground hover:bg-muted/50 transition-colors"
+            >
+              {current.secondaryCta}
+            </button>
+          )}
+
+          {justDone ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-2 text-[12.5px] font-semibold text-emerald-600">
+              <Check className="h-3.5 w-3.5" /> Done
+            </span>
+          ) : current.checkpoint ? (
+            // Gated step: no manual "next" — it advances itself when the work is done.
+            // A skip-ahead stays available under the primary affordance only if they insist.
+            !anchorMissing && (
+              <span className="text-[12px] text-muted-foreground/50">Waiting for you…</span>
+            )
+          ) : (
+            <button
+              onClick={next}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3.5 py-2 text-[12.5px] font-semibold text-background hover:opacity-90 transition-opacity"
+            >
+              {current.cta ?? 'Next'} <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+
+  return createPortal(
+    // z-40: above the page, but BELOW radix dialogs (z-50). So when the user clicks the
+    // spotlit button and its connect dialog opens, the dialog sits cleanly on top instead
+    // of being dimmed by our spotlight. By the time it closes the checkpoint has usually
+    // flipped and the tour has moved on.
+    <div className="fixed inset-0 z-40" style={{ pointerEvents: 'none' }}>
+      {/* Backdrop. Centered cards dim the whole screen; anchored steps punch a hole with a
+          huge box-shadow so the target button stays lit and clickable. */}
+      {isCenter || anchorMissing ? (
+        <div className="absolute inset-0 bg-black/50" style={{ pointerEvents: 'auto' }} />
+      ) : rect ? (
+        <div
+          className="absolute rounded-xl"
+          style={{
+            top: rect.top - 6,
+            left: rect.left - 6,
+            width: rect.width + 12,
+            height: rect.height + 12,
+            boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
+            outline: '2px solid rgba(224,145,43,0.9)',
+            outlineOffset: '2px',
+            pointerEvents: 'none',
+          }}
+        >
+          <span className="absolute inset-0 rounded-xl ring-2 ring-[#E0912B]/60 animate-ping" />
+        </div>
+      ) : null}
+
+      <AnimatePresence mode="wait">
+        {isCenter || anchorMissing ? (
+          <div className="absolute inset-0 flex items-center justify-center px-4" style={{ pointerEvents: 'none' }}>
+            {card}
+          </div>
+        ) : (
+          card
+        )}
+      </AnimatePresence>
+    </div>,
+    document.body,
+  );
+}

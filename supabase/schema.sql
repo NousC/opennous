@@ -7827,3 +7827,27 @@ CREATE POLICY ws_skills_write ON public.workspace_skills USING (((workspace_id I
 --
 
 
+
+
+--
+-- Name: contact_enrichment_jobs; Type: TABLE; Schema: public; Owner: -
+-- Durable progress snapshot for the post-import contact-history backfill.
+-- See supabase/migrations/contact_enrichment_jobs.sql.
+--
+
+CREATE TABLE IF NOT EXISTS public.contact_enrichment_jobs (
+    job_id       uuid PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    contact_ids  jsonb NOT NULL DEFAULT '[]'::jsonb,
+    status       text NOT NULL DEFAULT 'pending',
+    attempts     integer NOT NULL DEFAULT 0,
+    locked_at    timestamptz,
+    error        text,
+    state        jsonb NOT NULL DEFAULT '{}'::jsonb,
+    done         boolean NOT NULL DEFAULT false,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS contact_enrichment_jobs_status ON public.contact_enrichment_jobs (status, created_at);
+CREATE INDEX IF NOT EXISTS contact_enrichment_jobs_workspace_id ON public.contact_enrichment_jobs (workspace_id);

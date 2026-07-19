@@ -294,6 +294,27 @@ export async function getOrCreateEntity(
 
   await attachIdentifiers(supabase, workspaceId, data.id, identifiers);
 
+  // Race reconciliation. This function is select-then-insert, so two calls carrying
+  // the same identifier — e.g. several Cal.com BOOKING_CREATED webhooks for one
+  // attendee arriving together, or a calendar poll overlapping a webhook — can BOTH
+  // miss the initial resolve and BOTH create an entity. The entity_identifiers_active
+  // unique index lets only ONE of them actually claim the identifier; attachIdentifiers'
+  // insert silently no-ops for the loser. Left unreconciled, the loser keeps its own
+  // bare entity and the caller mints a SECOND contact on it — one person fanning out
+  // into N duplicate records (the "imported me 5×" bug). So: if any identifier now
+  // resolves to a DIFFERENT entity, a concurrent create won — drop ours (no contact
+  // row exists on it yet) and hand back the winner. The caller's contact insert then
+  // collapses onto the shared id via its PK-conflict path.
+  for (const id of identifiers) {
+    const owner = await resolveEntity(supabase, workspaceId, id);
+    if (owner && owner !== data.id) {
+      await supabase.from('entities').delete()
+        .eq('id', data.id).eq('workspace_id', workspaceId)
+        .then(() => {}, () => {});
+      return owner;
+    }
+  }
+
   // A brand-new person whose email is a workspace member is internal — a teammate,
   // not a prospect. Flag them the moment they enter the graph so they never get
   // scored or pushed. Best-effort: a hiccup here must not fail ingestion.

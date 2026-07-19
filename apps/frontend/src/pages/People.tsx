@@ -632,6 +632,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                 <Download className="h-3.5 w-3.5" /> Export
               </button>
               <button onClick={() => setShowImport(true)}
+                data-tour="import-accounts"
                 className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-background border border-border text-foreground/80 text-[13px] font-semibold hover:bg-muted/50 transition-colors">
                 <Upload className="h-3.5 w-3.5" /> Import
               </button>

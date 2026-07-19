@@ -33,6 +33,10 @@ export interface LogActivityParams {
    *  system/derived/shared observation, not a private conversation. Drives the
    *  per-member read scope (see PRIVACY_MODEL.md). */
   ownerUserId?: string | null;
+  /** Skip the inline per-activity pipeline-stage advance. Bulk backfills set this so
+   *  a 5,000-activity import doesn't fire 5,000 stage reads/writes; the hourly
+   *  stageDerivation worker recomputes stages from the logged activities afterwards. */
+  skipStageAdvance?: boolean;
 }
 
 // Activity types that advance pipeline stage.
@@ -169,7 +173,7 @@ export async function logActivity(
   supabase: SupabaseClient,
   params: LogActivityParams,
 ): Promise<{ id: string } | null> {
-  const { workspaceId, contactId, type, source, externalId, occurredAt, description, summary, rawData, ownerUserId } = params;
+  const { workspaceId, contactId, type, source, externalId, occurredAt, description, summary, rawData, ownerUserId, skipStageAdvance } = params;
   const entityId = params.entityId ?? contactId;
   if (!entityId) return null;
 
@@ -209,7 +213,7 @@ export async function logActivity(
   // Advance pipeline stage based on signal type (best-effort, contact-only).
   // Pass message direction so an inbound LinkedIn reply advances but an outbound
   // one doesn't (rawData.is_outbound is set true on every message WE send).
-  if (contactId) {
+  if (contactId && !skipStageAdvance) {
     await advancePipelineStage(supabase, workspaceId, contactId, type, {
       isOutbound: rawData?.is_outbound === true,
     }).catch(() => {});

@@ -6,7 +6,6 @@ import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
 import { requireEnrichmentQuota } from '../../lib/access.mjs';
 import { enrichContact } from '../../services/enrichment.mjs';
-import { enrichContactHistory, enrichmentJobs } from '../../services/contactHistoryEnricher.mjs';
 
 export const contactsApiRouter = Router();
 
@@ -150,11 +149,28 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
   }
 });
 
-// GET /api/contacts/enrich-progress/:jobId — must be before /:id so Express doesn't swallow it
-contactsApiRouter.get('/enrich-progress/:jobId', verifySupabaseAuth, (req, res) => {
-  const job = enrichmentJobs.get(req.params.jobId);
-  if (!job) return res.json({ found: false });
-  return res.json({ found: true, contacts: job.contacts, done: job.done });
+// GET /api/contacts/enrich-progress/:jobId — must be before /:id so Express doesn't swallow it.
+// The backfill runs in the WORKER now, so its live snapshot isn't in this process —
+// progress is read from the contact_enrichment_jobs row the worker keeps updating.
+contactsApiRouter.get('/enrich-progress/:jobId', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const { data } = await supabase
+      .from('contact_enrichment_jobs')
+      .select('state, done, status')
+      .eq('job_id', req.params.jobId)
+      .maybeSingle();
+    if (data) {
+      return res.json({
+        found: true,
+        contacts: data.state?.contacts || [],
+        // 'done' flag OR a terminal queue status — so a failed job doesn't spin forever.
+        done: !!data.done || data.status === 'done' || data.status === 'failed',
+      });
+    }
+  } catch { /* table may not exist yet — fall through */ }
+
+  return res.json({ found: false });
 });
 
 // GET /api/contacts/:id
@@ -820,7 +836,10 @@ contactsApiRouter.post('/import', verifySupabaseAuth, async (req, res) => {
       if (relErr) console.error('[CONTACTS_IMPORT_WORKS_AT_UPDATE]', relErr.message);
     }
 
-    // Fire async history enrichment for all imported contacts (new + updated)
+    // ENQUEUE history enrichment for all imported contacts (new + updated). The heavy
+    // backfill runs in the WORKER (drains contact_enrichment_jobs), not here — see
+    // apps/worker/src/workers/contactEnrichmentJobs.mjs. The API just records the job
+    // and returns; the modal polls /enrich-progress/:jobId, which reads the row.
     const existingIds = [
       ...(existingByEmail || []).map(c => c.id),
       ...(existingByLinkedin || []).map(c => c.id),
@@ -829,9 +848,18 @@ contactsApiRouter.post('/import', verifySupabaseAuth, async (req, res) => {
     let jobId = null;
     if (allImportedIds.length) {
       jobId = randomUUID();
-      enrichContactHistory(supabase, workspaceId, allImportedIds, jobId).catch(e =>
-        console.error('[CONTACTS_IMPORT_ENRICH_ERROR]', e.message)
-      );
+      const { error: enqErr } = await supabase.from('contact_enrichment_jobs').insert({
+        job_id:       jobId,
+        workspace_id: workspaceId,
+        contact_ids:  allImportedIds,
+        status:       'pending',
+      });
+      if (enqErr) {
+        // Table not migrated yet, or a write hiccup — don't fail the import over the
+        // backfill. The contacts are in; enrichment just won't run until it's fixed.
+        console.error('[CONTACTS_IMPORT_ENQUEUE]', enqErr.message);
+        jobId = null;
+      }
     }
 
     return res.json({ created, updated, skipped: rows.length - validRows.length, jobId });

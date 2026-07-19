@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useSearchParams, useLocation, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useSearchParams, useLocation, useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import GraphField from "@/components/GraphField";
 import { PAGE_STYLE, BOX_SHADOW } from "@/lib/authTheme";
@@ -19,6 +19,7 @@ const API_URL = import.meta.env.VITE_API_URL ?? "";
 export default function CliLogin() {
   const [params] = useSearchParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const code = params.get("code") || "";
   const { session, userData, loading } = useAuth();
   const workspaceId = (userData as { workspace?: { id?: string } })?.workspace?.id;
@@ -29,8 +30,24 @@ export default function CliLogin() {
 
   const [state, setState] = useState<"idle" | "approving" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(3);
 
   const signedIn = !!session?.access_token;
+
+  // Once the terminal is connected the user is signed in on the web too, but they're
+  // stranded on this success page with no way into the product. Keep the "go back to your
+  // terminal" confirmation, then whisk them into their workspace after a short countdown so
+  // they don't have to go hunting for the sign-in. The router takes it from here — into
+  // onboarding if the workspace isn't set up yet, into the app if it is.
+  useEffect(() => {
+    if (state !== "done") return;
+    if (secondsLeft <= 0) {
+      navigate("/", { replace: true });
+      return;
+    }
+    const t = setTimeout(() => setSecondsLeft(s => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [state, secondsLeft, navigate]);
 
   const approve = async () => {
     if (!session?.access_token || !workspaceId) {
@@ -128,7 +145,16 @@ export default function CliLogin() {
                 You&apos;re connected
               </h1>
               <p className="mt-1 text-xs text-[#6B655B]">
-                Return to your terminal. Your agent is ready to set up Nous.
+                Go back to your terminal — your agent is ready to set up Nous.
+              </p>
+              <p className="mt-3 text-[11.5px] text-[#6B655B]/80">
+                Opening your workspace in {secondsLeft}s…{" "}
+                <button
+                  onClick={() => navigate("/", { replace: true })}
+                  className="font-semibold text-[#1A1712] hover:text-[#96601f] underline underline-offset-2"
+                >
+                  Go now
+                </button>
               </p>
             </>
           ) : (

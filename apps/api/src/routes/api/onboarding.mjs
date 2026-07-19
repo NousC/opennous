@@ -50,11 +50,26 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
     const workspaceId = await resolveWorkspaceId(supabase, req.user, req.workspaceId);
     if (!workspaceId) return res.json({ connected: false, onboarded: false, hasIcp: false });
 
-    const [{ data: ws }, { data: keys }, { count: sources }, icpPresent] = await Promise.all([
+    const [{ data: ws }, { data: keys }, { count: sources }, { count: accounts }, { count: trainedDeals }, icpPresent] = await Promise.all([
       supabase.from('workspaces').select('website').eq('id', workspaceId).maybeSingle(),
       supabase.from('api_keys').select('last_used_at').eq('workspace_id', workspaceId).is('revoked_at', null),
       supabase.from('workflow_provider_connections')
         .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+      // Accounts in the graph — the "import your accounts" checkpoint of the guided tour.
+      // These two are guided-tour extras, not the gate, so they degrade to a zero count on
+      // any failure rather than rejecting Promise.all and 500-ing the whole gate.
+      supabase.from('contacts')
+        .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId)
+        .then(r => r, () => ({ count: 0 })),
+      // Closed deals fed to the ICP model — the "build your ICP model" checkpoint. A resolved
+      // prediction carrying a won/lost disposition is training signal, however it got there
+      // (the Add-deals import, or an organic resolution).
+      supabase.from('predictions')
+        .select('id', { count: 'exact', head: true })
+        .eq('workspace_id', workspaceId)
+        .not('resolved_at', 'is', null)
+        .in('outcome_value->>disposition', ['won', 'lost'])
+        .then(r => r, () => ({ count: 0 })),
       // The playbook row, and only the playbook row. This is the whole gate.
       hasIcp(supabase, workspaceId),
     ]);
@@ -67,6 +82,9 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
       // Something is feeding the graph. Without this the ICP is set and nothing
       // ever arrives, which is a lonelier failure than not being set up at all.
       hasSource: (sources ?? 0) > 0,
+      // Guided-tour checkpoints. Additive — the gate above reads none of these.
+      accountCount: accounts ?? 0,
+      icpTrained: (trainedDeals ?? 0) > 0,
       website: ws?.website ?? null,
     });
   } catch (err) {

@@ -212,15 +212,17 @@ export function AppSidebar() {
         </ul>
       </nav>
 
-      {/* WORKSPACE — the operational layer. Is it healthy, is it being used, is it
-          connected. You check these; you don't live in them. Activities sits here
-          rather than at the top for exactly that reason: it is a log.
+      {/* Spacer — pushes the operational layer + Vault to the floor */}
+      <div className="flex-1" />
 
-          Health goes directly under Activities when it exists, with a red dot when
-          a sync breaks. Graph is here only until it becomes a view inside Accounts,
-          where a rendering of the record belongs. */}
+      {/* Self-host version / update status (only renders when self_hosted) */}
+      <VersionWidget collapsed={collapsed} />
+
+      {/* WORKSPACE — the operational layer, docked at the bottom just above the Vault.
+          Is it healthy, is it being used, is it connected. You check these; you don't
+          live in them, so they sit out of the daily flow, at the floor. */}
       {visibleWorkspaceItems.length > 0 && (
-        <nav className="px-2.5 pt-7">
+        <nav className="px-2.5 pb-1">
           {!collapsed && (
             <div className="px-2.5 py-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-white/30">
@@ -234,14 +236,7 @@ export function AppSidebar() {
         </nav>
       )}
 
-      {/* Spacer — pushes billing to the floor */}
-      <div className="flex-1" />
-
-      {/* Self-host version / update status (only renders when self_hosted) */}
-      <VersionWidget collapsed={collapsed} />
-
-      {/* Bottom: Usage & Billing. Everything else you touch once lives in Settings,
-          behind the profile row. */}
+      {/* Bottom: the Vault sits on the floor, directly below the operational layer. */}
       <nav className="px-2.5 pb-1">
         <ul className="flex flex-col gap-0.5">
           {visibleBottomNavItems.map(renderNavItem)}

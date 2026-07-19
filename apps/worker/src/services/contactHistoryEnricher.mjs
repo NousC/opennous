@@ -1,12 +1,17 @@
-// Retroactive contact history enricher.
-// After CSV import, fans out to every connected integration (Gmail, IMAP/SMTP,
-// LinkedIn/Unipile, Instantly, Slack) to find prior interactions and logs them
-// as event observations so pipeline stages are correct from day 1.
+// Retroactive contact history enricher. Runs in the WORKER (drained from the
+// contact_enrichment_jobs queue), NOT the API request path — a 50-account import
+// hitting 5 integrations is minutes of I/O that must not sit on the API event loop.
+//
+// Scale strategy: fetch each provider ONCE and map locally, never once-per-contact.
+// Gmail, IMAP and Fireflies are bulk (one sweep, mapped by participant). Calendly,
+// Cal.com and Fathom are already one call per contact (their APIs only take a single
+// email), so they run in bounded per-provider lanes. LinkedIn/Unipile is the
+// irreducible per-contact tail and gets the smallest lane + backoff.
 
 import { google } from 'googleapis';
-import { decrypt } from '../utils/crypto.mjs';
-import { refreshGoogleTokenIfNeeded } from '../utils/googleOAuth.js';
-import { logActivity as coreLogActivity, hasActivityWithExternalId } from '@nous/core';
+import { decrypt } from '../utils/encryption.mjs';
+import { refreshGoogleToken } from '../utils/googleOAuth.mjs';
+import { logActivity as coreLogActivity } from '@nous/core';
 
 // ── Unipile helpers ───────────────────────────────────────────────────────────
 
@@ -40,7 +45,7 @@ async function unipilePages(url, accountId) {
     u.searchParams.set('account_id', accountId);
     u.searchParams.set('limit', '100');
     if (cursor) u.searchParams.set('cursor', cursor);
-    const res = await fetch(u.toString(), { headers: unipileHeaders() });
+    const res = await fetchRetry(u.toString(), { headers: unipileHeaders() });
     if (!res.ok) break;
     const body = await res.json();
     if (Array.isArray(body.items)) items.push(...body.items);
@@ -56,15 +61,188 @@ export const enrichmentJobs = new Map();
 
 // ── logActivity — dedup by external_id ───────────────────────────────────────
 
-async function logActivity(supabase, { workspaceId, contactId, companyId, type, source, externalId, occurredAt, description, summary }) {
-  if (externalId && await hasActivityWithExternalId(supabase, workspaceId, source, externalId)) {
-    return false;
-  }
-  const result = await coreLogActivity(supabase, {
-    workspaceId, contactId, companyId, type, source, externalId,
-    occurredAt, description, summary,
-  });
+// No pre-check SELECT. coreLogActivity already dedups on the (workspace, source,
+// external_id) unique index and returns null on the 23505 — the old
+// hasActivityWithExternalId pre-check was a wasted round-trip on every single
+// activity (thousands, on a big import). skipStageAdvance defers per-activity
+// pipeline staging to the hourly stageDerivation worker, so a bulk insert doesn't
+// fire a stage read+write per row. Spreads all params so rawData (e.g. LinkedIn
+// is_outbound) is no longer silently dropped.
+async function logActivity(supabase, params) {
+  const result = await coreLogActivity(supabase, { ...params, skipStageAdvance: true });
   return result != null;
+}
+
+// ── Concurrency + parsing helpers ─────────────────────────────────────────────
+
+function chunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+// Run `fn` over `items` with at most `limit` in flight. Errors on one item are
+// swallowed so a single bad contact/thread never sinks the whole backfill.
+async function pool(items, limit, fn) {
+  const queue = items.map((item, i) => [item, i]);
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, queue.length)) }, async () => {
+    for (;;) {
+      const next = queue.shift();
+      if (!next) return;
+      try { await fn(next[0], next[1]); } catch (e) { console.error('[ENRICH_POOL]', e?.message || e); }
+    }
+  });
+  await Promise.all(runners);
+}
+
+const EMAIL_RE = /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi;
+function extractEmails(headerValue) {
+  return (String(headerValue || '').match(EMAIL_RE) || []).map(e => e.toLowerCase());
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// fetch with exponential backoff on 429 / 5xx. The rate-limited providers (Unipile
+// above all) 429 the moment concurrency climbs; the per-provider lanes keep that rare,
+// and this absorbs the ones that slip through instead of dropping the data.
+async function fetchRetry(url, opts = {}, { tries = 4, baseMs = 500 } = {}) {
+  let last;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const res = await fetch(url, opts);
+      if (res.status !== 429 && res.status < 500) return res;
+      last = res;
+    } catch (e) { last = e; }
+    if (attempt < tries - 1) await sleep(baseMs * 2 ** attempt);
+  }
+  if (last instanceof Response) return last;
+  throw last instanceof Error ? last : new Error('fetch failed');
+}
+
+// ── Gmail (bulk) ──────────────────────────────────────────────────────────────
+//
+// One pass for the WHOLE batch, not a mailbox scan per contact. We already know
+// every contact's email, so we ask Gmail for the threads involving ANY of them
+// (OR-batched into chunks to stay under the query-length limit), fetch each unique
+// thread ONCE (metadata only, in parallel), then map its participants back to
+// whichever contacts we hold. At 100 contacts that's a few dozen API calls instead
+// of hundreds of sequential per-contact scans — and shared threads are fetched once,
+// not once per participant. Returns Map<contactId, activitiesLogged>.
+
+const GMAIL_EMAIL_CHUNK = 20;          // emails OR'd into a single search query
+const GMAIL_THREAD_CONCURRENCY = 12;   // parallel thread fetches
+const GMAIL_MAX_MSGS_PER_CHUNK = 3000; // pagination safety cap per chunk
+
+async function scanGmailBulk(supabase, workspaceId, contacts, gmailConn) {
+  const withEmail = contacts.filter(c => c.email);
+  const counts = new Map(withEmail.map(c => [c.id, 0]));
+  if (!withEmail.length) return counts;
+
+  try {
+    const { credentials, needsUpdate, updatedCredentials } =
+      await refreshGoogleToken(gmailConn.encrypted_credentials);
+    if (needsUpdate) {
+      await supabase.from('workflow_provider_connections')
+        .update({ encrypted_credentials: updatedCredentials }).eq('id', gmailConn.id);
+    }
+
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_OAUTH_REDIRECT_URI,
+    );
+    oauth2Client.setCredentials({ access_token: credentials.access_token });
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // email → contact (first wins on the rare shared address).
+    const emailToContact = new Map();
+    for (const c of withEmail) {
+      const e = c.email.toLowerCase();
+      if (!emailToContact.has(e)) emailToContact.set(e, c);
+    }
+
+    // 1) Collect the unique thread ids that involve any of our contacts. A bare
+    //    email in Gmail search matches it in any header (from/to/cc/bcc), so OR-ing
+    //    the addresses is both shorter than from:()/to:()/cc:() (stays well under the
+    //    query-length limit at 20 per chunk) and wider. Over-fetch is harmless: step 2
+    //    re-derives participants from the actual thread headers and only logs a real
+    //    From/To/Cc match, so a stray body mention never becomes a false touchpoint.
+    const threadIds = new Set();
+    for (const group of chunk([...emailToContact.keys()], GMAIL_EMAIL_CHUNK)) {
+      const q = group.join(' OR ');
+      let pageToken = null, fetched = 0;
+      do {
+        let listRes;
+        try {
+          listRes = await gmail.users.messages.list({
+            userId: 'me', q, maxResults: 500, ...(pageToken && { pageToken }),
+          });
+        } catch (e) { console.error('[ENRICH_GMAIL_BULK] list:', e.message); break; }
+        for (const m of listRes.data.messages || []) if (m.threadId) threadIds.add(m.threadId);
+        pageToken = listRes.data.nextPageToken || null;
+        fetched += (listRes.data.messages || []).length;
+      } while (pageToken && fetched < GMAIL_MAX_MSGS_PER_CHUNK);
+    }
+
+    // 2) Fetch each unique thread once (metadata), map participants → contacts, log.
+    await pool([...threadIds], GMAIL_THREAD_CONCURRENCY, async (threadId) => {
+      let t;
+      try {
+        t = await gmail.users.threads.get({
+          userId: 'me', id: threadId, format: 'metadata',
+          metadataHeaders: ['From', 'To', 'Cc', 'Date', 'Subject'],
+        });
+      } catch { return; }
+      const msgs = t.data.messages || [];
+      if (!msgs.length) return;
+
+      const participants = new Set();
+      let hasSent = false, hasInbox = false;
+      for (const m of msgs) {
+        if (m.labelIds?.includes('SENT')) hasSent = true;
+        if (m.labelIds?.includes('INBOX')) hasInbox = true;
+        for (const h of m.payload?.headers || []) {
+          if (h.name === 'From' || h.name === 'To' || h.name === 'Cc') {
+            for (const addr of extractEmails(h.value)) participants.add(addr);
+          }
+        }
+      }
+
+      const matched = [];
+      const seen = new Set();
+      for (const addr of participants) {
+        const c = emailToContact.get(addr);
+        if (c && !seen.has(c.id)) { seen.add(c.id); matched.push(c); }
+      }
+      if (!matched.length) return;
+
+      const first = msgs[0];
+      const hdrs0 = first.payload?.headers || [];
+      const dateHdr = hdrs0.find(h => h.name === 'Date')?.value;
+      const subject = hdrs0.find(h => h.name === 'Subject')?.value || '(no subject)';
+      const occurredAt = dateHdr ? new Date(dateHdr).toISOString() : new Date().toISOString();
+      const snippet = first.snippet || '';
+      const isReply = msgs.length > 1 || (hasSent && hasInbox);
+
+      for (const c of matched) {
+        const r = await logActivity(supabase, {
+          workspaceId, contactId: c.id, companyId: c.company_id || null,
+          type: isReply ? 'email_reply' : 'email_opened',
+          source: 'gmail', externalId: `gmail_thread_${threadId}`,
+          occurredAt, description: subject, summary: snippet ? snippet.slice(0, 200) : null,
+        });
+        if (r) counts.set(c.id, (counts.get(c.id) || 0) + 1);
+      }
+    });
+
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    console.log(`[ENRICH_GMAIL_BULK] ${withEmail.length} contacts, ${threadIds.size} threads, ${total} logged`);
+  } catch (e) {
+    if (e?.code === 'google_token_revoked') {
+      await supabase.from('workflow_provider_connections').update({ is_verified: false }).eq('id', gmailConn.id);
+      console.warn(`[ENRICH_GMAIL_BULK] connection=${gmailConn.id} revoked — flagged for re-auth`);
+    }
+    console.error('[ENRICH_GMAIL_BULK]', e.message);
+  }
+  return counts;
 }
 
 // ── Connection loader ─────────────────────────────────────────────────────────
@@ -124,11 +302,14 @@ async function buildAttendeeMap(accountId) {
 
 // ── Gmail ─────────────────────────────────────────────────────────────────────
 
+// Superseded by scanGmailBulk (one pass for the whole batch). Kept for reference /
+// as a per-contact fallback; not called by the orchestrator anymore.
+// eslint-disable-next-line no-unused-vars
 async function scanGmail(supabase, workspaceId, contact, gmailConn) {
   if (!contact.email) return 0;
   try {
     const { credentials, needsUpdate, updatedCredentials } =
-      await refreshGoogleTokenIfNeeded(gmailConn.encrypted_credentials);
+      await refreshGoogleToken(gmailConn.encrypted_credentials);
 
     if (needsUpdate) {
       await supabase.from('workflow_provider_connections')
@@ -300,6 +481,117 @@ async function scanImap(supabase, workspaceId, contact, smtpConn) {
     console.error(`[ENRICH_IMAP] ${contact.email}:`, e.message);
     return 0;
   }
+}
+
+// Bulk IMAP — ONE connection for the whole batch, ENVELOPE-only. The per-contact
+// scanImap above opened a fresh IMAP connection per contact and downloaded + parsed
+// up to 200 full message BODIES each (thousands of body downloads at 50 accounts —
+// the single heaviest thing the backfill did). Here we connect once, search each
+// folder for the OR of every contact email, and fetch only envelopes (from/to/
+// subject/date, no body), mapping each message to its contact. Returns
+// Map<contactId, count>.
+async function scanImapBulk(supabase, workspaceId, contacts, smtpConn) {
+  const withEmail = contacts.filter(c => c.email);
+  const counts = new Map(withEmail.map(c => [c.id, 0]));
+  if (!withEmail.length) return counts;
+
+  let client;
+  try {
+    const { ImapFlow } = await import('imapflow');
+    const creds = smtpConn.encrypted_credentials;
+    let host, username, password;
+    try { host     = decrypt(creds.host     || creds.smtp_host); }    catch { host     = creds.host     || creds.smtp_host; }
+    try { username = decrypt(creds.username || creds.smtp_username || creds.email); } catch { username = creds.username || creds.smtp_username || creds.email; }
+    try { password = decrypt(creds.password || creds.smtp_password); } catch { password = creds.password || creds.smtp_password; }
+    if (!host || !username || !password) return counts;
+
+    let imapHost;
+    try { imapHost = creds.imap_host ? decrypt(creds.imap_host) : null; } catch { imapHost = creds.imap_host || null; }
+    let imapPort;
+    try { imapPort = creds.imap_port ? parseInt(decrypt(creds.imap_port)) : null; } catch { imapPort = parseInt(creds.imap_port || '993'); }
+    if (!imapHost) {
+      if (/office365\.com|smtp-mail\.outlook\.com/i.test(host)) imapHost = 'outlook.office365.com';
+      else imapHost = host.replace(/^smtp\./i, 'imap.');
+    }
+    imapPort = imapPort || 993;
+
+    client = new ImapFlow({
+      host: imapHost, port: imapPort, secure: imapPort === 993,
+      auth: { user: username, pass: password }, logger: false,
+    });
+    await client.connect();
+
+    const connectedEmail = username.toLowerCase();
+    const emailToContact = new Map();
+    for (const c of withEmail) {
+      const e = c.email.toLowerCase();
+      if (!emailToContact.has(e)) emailToContact.set(e, c);
+    }
+    const emails = [...emailToContact.keys()];
+
+    const allFolders = await client.list();
+    const inboxPath = allFolders.find(m => m.flags?.has('\\Inbox') || m.path === 'INBOX')?.path || 'INBOX';
+    const sentPath  = allFolders.find(m => m.flags?.has('\\Sent'))?.path || null;
+
+    const processFolder = async (folderPath) => {
+      const lock = await client.getMailboxLock(folderPath);
+      try {
+        // One search per chunk of addresses (OR from/to); union the UIDs. Chunked so
+        // a huge OR criteria set never trips a server's search-complexity limit.
+        const uidSet = new Set();
+        for (const group of chunk(emails, 30)) {
+          const or = [];
+          for (const e of group) { or.push({ from: e }); or.push({ to: e }); }
+          try {
+            const uids = await client.search({ or }, { uid: true });
+            for (const u of uids || []) uidSet.add(u);
+          } catch (e) { console.warn('[ENRICH_IMAP_BULK] search:', e.message); }
+        }
+        if (!uidSet.size) return;
+
+        // Envelope-only fetch — headers, no body download.
+        for await (const msg of client.fetch([...uidSet], { envelope: true, uid: true })) {
+          const env = msg.envelope || {};
+          const fromEmail = (env.from?.[0]?.address || '').toLowerCase();
+          const toEmails  = (env.to || []).map(a => (a.address || '').toLowerCase());
+          const isOutbound = fromEmail === connectedEmail;
+          const involved = isOutbound ? toEmails : [fromEmail];
+
+          const seen = new Set();
+          for (const addr of involved) {
+            const c = emailToContact.get(addr);
+            if (!c || seen.has(c.id)) continue;
+            seen.add(c.id);
+            const subject   = env.subject || '(no subject)';
+            const occurredAt = env.date ? new Date(env.date).toISOString() : new Date().toISOString();
+            const messageId = env.messageId || `uid_${msg.uid}_${folderPath}`;
+            const r = await logActivity(supabase, {
+              workspaceId, contactId: c.id, companyId: c.company_id || null,
+              type:       isOutbound ? 'email_sent' : 'email_received',
+              source:     'smtp',
+              externalId: `imap_${String(messageId).replace(/[<>\s]/g, '')}_${occurredAt.slice(0, 10)}`,
+              occurredAt, description: subject, summary: null,
+            });
+            if (r) counts.set(c.id, (counts.get(c.id) || 0) + 1);
+          }
+        }
+      } finally {
+        lock.release();
+      }
+    };
+
+    for (const folder of [inboxPath, ...(sentPath ? [sentPath] : [])]) {
+      try { await processFolder(folder); } catch (e) { console.warn(`[ENRICH_IMAP_BULK] folder ${folder}:`, e.message); }
+    }
+
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    console.log(`[ENRICH_IMAP_BULK] ${withEmail.length} contacts, ${total} logged`);
+  } catch (e) {
+    console.error('[ENRICH_IMAP_BULK]', e.message);
+  } finally {
+    try { if (client) await client.logout(); } catch { /* ignore */ }
+  }
+  return counts;
 }
 
 // ── LinkedIn / Unipile ────────────────────────────────────────────────────────
@@ -573,6 +865,71 @@ async function scanFireflies(supabase, workspaceId, contact, apiKey) {
   }
 }
 
+// Bulk Fireflies — one paginated sweep of recent transcripts, mapped locally by
+// participant email, instead of a GraphQL query per contact. Each transcript already
+// carries its participants' emails, so a few pages cover the whole batch.
+const FIREFLIES_PAGES = 6;
+const FIREFLIES_PAGE_SIZE = 50;
+
+async function scanFirefliesBulk(supabase, workspaceId, contacts, apiKey) {
+  const withEmail = contacts.filter(c => c.email);
+  const counts = new Map(withEmail.map(c => [c.id, 0]));
+  if (!withEmail.length) return counts;
+
+  const emailToContact = new Map();
+  for (const c of withEmail) {
+    const e = c.email.toLowerCase();
+    if (!emailToContact.has(e)) emailToContact.set(e, c);
+  }
+
+  try {
+    for (let page = 0; page < FIREFLIES_PAGES; page++) {
+      const query = `query {
+        transcripts(limit: ${FIREFLIES_PAGE_SIZE}, skip: ${page * FIREFLIES_PAGE_SIZE}) {
+          id title date
+          participants { name email }
+          summary { overview }
+        }
+      }`;
+      const res = await fetchRetry('https://api.fireflies.ai/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) break;
+      const data = await res.json();
+      const transcripts = data.data?.transcripts || [];
+      if (!transcripts.length) break;
+
+      for (const t of transcripts) {
+        const occurredAt = t.date ? new Date(t.date).toISOString() : new Date().toISOString();
+        const partList = (t.participants || []).map(p => p.name || p.email).filter(Boolean).join(', ');
+        const seen = new Set();
+        for (const p of t.participants || []) {
+          const c = emailToContact.get((p.email || '').toLowerCase());
+          if (!c || seen.has(c.id)) continue;
+          seen.add(c.id);
+          const r = await logActivity(supabase, {
+            workspaceId, contactId: c.id, companyId: c.company_id || null,
+            type: 'meeting_held', source: 'fireflies',
+            externalId: `ff_${t.id}_${c.id}`,
+            occurredAt,
+            description: t.title || 'Meeting recorded',
+            summary: t.summary?.overview ? t.summary.overview.slice(0, 300) : (partList ? `Participants: ${partList}` : null),
+          });
+          if (r) counts.set(c.id, (counts.get(c.id) || 0) + 1);
+        }
+      }
+      if (transcripts.length < FIREFLIES_PAGE_SIZE) break;
+    }
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    console.log(`[ENRICH_FIREFLIES_BULK] ${withEmail.length} contacts, ${total} logged`);
+  } catch (e) {
+    console.error('[ENRICH_FIREFLIES_BULK]', e.message);
+  }
+  return counts;
+}
+
 // ── Fathom ────────────────────────────────────────────────────────────────────
 
 async function scanFathom(supabase, workspaceId, contact, apiKey) {
@@ -729,6 +1086,35 @@ async function scanCalCom(supabase, workspaceId, contact, pat) {
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
+// Per-PROVIDER concurrency lanes for the per-contact sources (the bulk sources —
+// Gmail, IMAP, Fireflies — fetch once and don't use these). A single global pool
+// was wrong: it would fire 8 Unipile calls AND 8 Calendly calls at once and earn
+// 429s. Each provider gets its own cap, and the lanes run concurrently so different
+// providers still overlap. Unipile is the strictest, so it gets the smallest lane.
+const LANES = {
+  calendly:  3,
+  cal_com:   3,
+  fathom:    3,
+  instantly: 3,
+  slack:     3,
+  linkedin:  2,
+};
+
+// Write the in-memory job snapshot through to the DB row (created by the API on
+// enqueue) so progress survives a worker restart / the 10-min in-memory cleanup. An
+// UPDATE, not an upsert — it must never clobber the queue columns (status,
+// contact_ids) the drainer owns. Best-effort; the in-memory copy drives the live UI.
+async function persistJob(supabase, jobId, done = false) {
+  if (!jobId) return;
+  const job = enrichmentJobs.get(jobId);
+  if (!job) return;
+  try {
+    await supabase.from('contact_enrichment_jobs')
+      .update({ state: { contacts: job.contacts }, done: done || job.done, updated_at: new Date().toISOString() })
+      .eq('job_id', jobId);
+  } catch { /* best-effort */ }
+}
+
 export async function enrichContactHistory(supabase, workspaceId, contactIds, jobId = null) {
   if (!contactIds?.length) return { enriched: 0, activitiesLogged: 0 };
   console.log(`[ENRICH] Starting: ${contactIds.length} contacts in ${workspaceId}`);
@@ -788,7 +1174,9 @@ export async function enrichContactHistory(supabase, workspaceId, contactIds, jo
       })),
       done: false,
     });
-    setTimeout(() => enrichmentJobs.delete(jobId), 10 * 60 * 1000);
+    // Long enough to outlast a big run (the LinkedIn lane is the slow tail). The DB
+    // row is the durable copy the API reads once this is gone.
+    setTimeout(() => enrichmentJobs.delete(jobId), 30 * 60 * 1000);
   }
 
   const setSource = (contactId, source, status, count = 0) => {
@@ -800,96 +1188,74 @@ export async function enrichContactHistory(supabase, workspaceId, contactIds, jo
   };
 
   let totalActivities = 0;
+  const persist = (done = false) => persistJob(supabase, jobId, done);
 
-  // Process in batches of 5 to respect external API rate limits
-  for (let i = 0; i < contacts.length; i += 5) {
-    const batch = contacts.slice(i, i + 5);
-    const results = await Promise.allSettled(batch.map(async (contact) => {
-      let count = 0;
+  // Heartbeat: setSource updates the in-memory snapshot as work lands; this flushes
+  // it to the DB every few seconds so the modal shows smooth progress even while the
+  // concurrent lanes are mid-run.
+  const heartbeat = jobId ? setInterval(() => { persist().catch(() => {}); }, 4000) : null;
 
-      const logScanEvent = (source, n, contactName) => supabase.from('workspace_system_log').insert({
-        workspace_id: workspaceId, source, event_type: 'scan_complete',
-        contact_id: contact.id,
-        summary: n > 0 ? `${contactName}: found ${n} item${n === 1 ? '' : 's'}` : `${contactName}: no new activity`,
-        metadata: { contact_id: contact.id, items_found: n },
-        occurred_at: new Date().toISOString(),
-      }).then(() => {}).catch(() => {});
+  const logScanEvent = (contact, source, n) => {
+    const name = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email || 'Contact';
+    return supabase.from('workspace_system_log').insert({
+      workspace_id: workspaceId, source, event_type: 'scan_complete', contact_id: contact.id,
+      summary: n > 0 ? `${name}: found ${n} item${n === 1 ? '' : 's'}` : `${name}: no new activity`,
+      metadata: { contact_id: contact.id, items_found: n },
+      occurred_at: new Date().toISOString(),
+    }).then(() => {}).catch(() => {});
+  };
 
-      const contactName = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email || 'Contact';
+  try {
+    // ── Bulk sweeps: fetch each provider ONCE, map locally. ──
+    const runBulk = async (source, enabled, fn) => {
+      if (!enabled) return;
+      for (const c of contacts) setSource(c.id, source, 'scanning');
+      let counts = new Map();
+      try { counts = await fn(); } catch (e) { console.error(`[ENRICH_${source.toUpperCase()}_BULK]`, e?.message || e); }
+      for (const c of contacts) {
+        const n = counts.get(c.id) || 0;
+        setSource(c.id, source, 'done', n);
+        totalActivities += n;
+      }
+    };
 
-      if (gmailConn) {
-        setSource(contact.id, 'gmail', 'scanning');
-        const n = await scanGmail(supabase, workspaceId, contact, gmailConn);
-        setSource(contact.id, 'gmail', 'done', n);
-        logScanEvent('gmail', n, contactName);
-        count += n;
-      }
-      if (smtpConn) {
-        setSource(contact.id, 'smtp', 'scanning');
-        const n = await scanImap(supabase, workspaceId, contact, smtpConn);
-        setSource(contact.id, 'smtp', 'done', n);
-        logScanEvent('smtp', n, contactName);
-        count += n;
-      }
-      if (connections.linkedin?.account_id) {
-        setSource(contact.id, 'linkedin', 'scanning');
-        const n = await scanLinkedIn(supabase, workspaceId, contact, connections.linkedin.account_id, attendeeMap);
-        setSource(contact.id, 'linkedin', 'done', n);
-        logScanEvent('linkedin', n, contactName);
-        count += n;
-      }
-      if (instantlyKey) {
-        setSource(contact.id, 'instantly', 'scanning');
-        const n = await scanInstantly(supabase, workspaceId, contact, instantlyKey);
-        setSource(contact.id, 'instantly', 'done', n);
-        logScanEvent('instantly', n, contactName);
-        count += n;
-      }
-      if (slackConn) {
-        setSource(contact.id, 'slack', 'scanning');
-        const n = await scanSlack(supabase, workspaceId, contact, slackConn);
-        setSource(contact.id, 'slack', 'done', n);
-        logScanEvent('slack', n, contactName);
-        count += n;
-      }
-      if (firefliesKey) {
-        setSource(contact.id, 'fireflies', 'scanning');
-        const n = await scanFireflies(supabase, workspaceId, contact, firefliesKey);
-        setSource(contact.id, 'fireflies', 'done', n);
-        logScanEvent('fireflies', n, contactName);
-        count += n;
-      }
-      if (fathomKey) {
-        setSource(contact.id, 'fathom', 'scanning');
-        const n = await scanFathom(supabase, workspaceId, contact, fathomKey);
-        setSource(contact.id, 'fathom', 'done', n);
-        logScanEvent('fathom', n, contactName);
-        count += n;
-      }
-      if (calendlyPat && calendlyUserUri) {
-        setSource(contact.id, 'calendly', 'scanning');
-        const n = await scanCalendly(supabase, workspaceId, contact, calendlyPat, calendlyUserUri);
-        setSource(contact.id, 'calendly', 'done', n);
-        logScanEvent('calendly', n, contactName);
-        count += n;
-      }
-      if (calComPat) {
-        setSource(contact.id, 'cal_com', 'scanning');
-        const n = await scanCalCom(supabase, workspaceId, contact, calComPat);
-        setSource(contact.id, 'cal_com', 'done', n);
-        logScanEvent('cal_com', n, contactName);
-        count += n;
-      }
+    await runBulk('gmail',     !!gmailConn,   () => scanGmailBulk(supabase, workspaceId, contacts, gmailConn));
+    await runBulk('smtp',      !!smtpConn,    () => scanImapBulk(supabase, workspaceId, contacts, smtpConn));
+    await runBulk('fireflies', !!firefliesKey, () => scanFirefliesBulk(supabase, workspaceId, contacts, firefliesKey));
 
-      return count;
-    }));
-    totalActivities += results.reduce((sum, r) => sum + (r.status === 'fulfilled' ? r.value : 0), 0);
+    // ── Per-contact sources: each its own concurrency lane, lanes run concurrently.
+    //    (Calendly/Cal.com/Fathom only accept a single email per call, so they can't
+    //    be bulked; LinkedIn/Unipile is per-attendee and rate-limited — smallest lane
+    //    + fetchRetry backoff.) ──
+    const runLane = async (source, enabled, laneSize, scan) => {
+      if (!enabled) return;
+      await pool(contacts, laneSize, async (contact) => {
+        setSource(contact.id, source, 'scanning');
+        let n = 0;
+        try { n = await scan(contact); } catch (e) { console.error(`[ENRICH_${source.toUpperCase()}]`, e?.message || e); }
+        setSource(contact.id, source, 'done', n);
+        logScanEvent(contact, source, n);
+        totalActivities += n;
+      });
+    };
+
+    await Promise.all([
+      runLane('calendly',  !!(calendlyPat && calendlyUserUri), LANES.calendly, c => scanCalendly(supabase, workspaceId, c, calendlyPat, calendlyUserUri)),
+      runLane('cal_com',   !!calComPat,   LANES.cal_com,   c => scanCalCom(supabase, workspaceId, c, calComPat)),
+      runLane('fathom',    !!fathomKey,   LANES.fathom,    c => scanFathom(supabase, workspaceId, c, fathomKey)),
+      runLane('instantly', !!instantlyKey, LANES.instantly, c => scanInstantly(supabase, workspaceId, c, instantlyKey)),
+      runLane('slack',     !!slackConn,   LANES.slack,     c => scanSlack(supabase, workspaceId, c, slackConn)),
+      runLane('linkedin',  !!connections.linkedin?.account_id, LANES.linkedin, c => scanLinkedIn(supabase, workspaceId, c, connections.linkedin.account_id, attendeeMap)),
+    ]);
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
   }
 
   if (jobId) {
     const job = enrichmentJobs.get(jobId);
     if (job) job.done = true;
   }
+  await persist(true);
 
   console.log(`[ENRICH] Done: ${totalActivities} activities for ${contacts.length} contacts`);
   return { enriched: contacts.length, activitiesLogged: totalActivities };

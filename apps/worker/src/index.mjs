@@ -20,6 +20,7 @@ import { processLeadReplies } from './workers/leadReplies.mjs';
 import { runScorecardLoop } from './workers/scorecardLoop.mjs';
 import { processClaimJobs } from './workers/claimEngine.mjs';
 import { processBulkLeadJobs } from './workers/bulkLeadJobs.mjs';
+import { processContactEnrichmentJobs } from './workers/contactEnrichmentJobs.mjs';
 import { scoreEntities } from './workers/scoreEntities.mjs';
 import { scoreIntentCron } from './intentScore.mjs';
 import { processEmbeddings } from './workers/embeddings.mjs';
@@ -248,6 +249,12 @@ console.log('[WORKER] Claim-derivation engine — every minute');
 // in resumable chunks, advancing `processed` so the UI shows live progress.
 cron.schedule('*/20 * * * * *', processBulkLeadJobs);
 console.log('[WORKER] Bulk enrich/verify jobs — every 20 seconds');
+
+// ── Contact history backfill jobs — every 20 seconds ─────────────────────────
+// Drains contact_enrichment_jobs (enqueued by the API on CSV import). Runs the
+// bulk, rate-lane'd history backfill off the API request path; resumable.
+cron.schedule('*/20 * * * * *', processContactEnrichmentJobs);
+console.log('[WORKER] Contact enrichment jobs — every 20 seconds');
 
 // ── Scorecard prediction-write — every 10 minutes ────────────────────────────
 // Stakes an `icp_fit` prediction on every person-entity that has claims but no

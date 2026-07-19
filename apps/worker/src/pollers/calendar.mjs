@@ -407,6 +407,12 @@ async function pollWorkspace(supabase, conn) {
 
   // ── Log one activity per event ───────────────────────────────────────────────
   let logged = 0;
+  // Within a single run, resolve each title-fallback name ONCE. resolveOrCreateByName
+  // creates name-only contacts (no email, so no entity-identifier dedup to lean on),
+  // and several guest-less bookings can name the same person ("… with Alex Fine" ×5).
+  // Sequential DB lookups usually catch the prior create, but this makes it certain and
+  // cheap — one create per distinct name per run, never a fan-out of duplicates.
+  const nameResolveCache = new Map();
   for (const event of events) {
     if (!(event.start?.dateTime || event.start?.date)) continue;
 
@@ -453,7 +459,12 @@ async function pollWorkspace(supabase, conn) {
 
     const name = await extractCounterpartyName({ title: event.summary, description: event.description, ownerName, ourNames });
     if (!name) continue;
-    const res = await resolveOrCreateByName(supabase, conn.workspace_id, name, internal);
+    const nameKey = name.trim().toLowerCase();
+    let res = nameResolveCache.get(nameKey);
+    if (!res) {
+      res = await resolveOrCreateByName(supabase, conn.workspace_id, name, internal);
+      if (res?.contact) nameResolveCache.set(nameKey, res);
+    }
     if (!res?.contact) {
       console.log(`[CAL_POLL] Title name "${name}" ambiguous/partial — skipped event "${event.summary}"`);
       continue;

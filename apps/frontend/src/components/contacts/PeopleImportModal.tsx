@@ -222,6 +222,14 @@ function ImportBody(s: ReturnType<typeof useImportState>) {
           )}
         </div>
 
+        {!s.enrichProgress?.done && (
+          <div className="mb-4 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-[12.5px] text-muted-foreground leading-relaxed">
+            We&apos;re backfilling each person&apos;s touchpoints and conversations from your
+            connected tools. This runs in the background, so you can close this and keep working.
+            It won&apos;t stop. Stay if you want to watch it happen.
+          </div>
+        )}
+
         <div className="space-y-2 max-h-[55vh] overflow-y-auto">
           {(s.enrichProgress?.contacts ?? []).map((contact: any) => {
             const entries = Object.entries(contact.sources as Record<string, { status: string; count: number }>);
@@ -274,12 +282,15 @@ function ImportBody(s: ReturnType<typeof useImportState>) {
         </div>
 
         <div className="mt-5 pt-4 border-t border-border/60">
+          {/* Never gate the close on `done`. The backfill is fire-and-forget on the
+              server and its progress lives in an in-memory job that can vanish (API
+              restart, a replica that didn't run it, the 10-min cleanup) — so `done`
+              may never arrive here even when the work finished. Let them leave. */}
           <button
-            disabled={!s.enrichProgress?.done}
             onClick={() => { s.onDone(); s.onClose(); }}
             className={`${BTN_PRIMARY} w-full h-10`}
           >
-            {s.enrichProgress?.done ? "Done" : "Scanning…"}
+            {s.enrichProgress?.done ? "Done" : "Close (this keeps running in the background)"}
           </button>
         </div>
       </div>

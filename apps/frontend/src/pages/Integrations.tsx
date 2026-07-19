@@ -423,6 +423,7 @@ export default function Integrations() {
           actions={
             <button onClick={() => { setConnecting(null); setAddOpen(true); }}
               aria-label="Add an integration"
+              data-tour="add-integration"
               className="h-9 w-9 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center transition-colors">
               <Plus className="h-4 w-4" />
             </button>

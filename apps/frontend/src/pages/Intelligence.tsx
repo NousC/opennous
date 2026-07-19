@@ -816,6 +816,7 @@ export default function Intelligence() {
                 <button
                   onClick={() => setCdOpen(true)}
                   title="Add closed-won / closed-lost deals to sharpen the model"
+                  data-tour="add-deals"
                   className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-background border border-border text-foreground/80 text-[13px] font-semibold hover:bg-muted/50 transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" /> Add deals
