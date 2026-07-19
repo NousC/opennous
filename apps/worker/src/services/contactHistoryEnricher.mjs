@@ -12,6 +12,11 @@ import { google } from 'googleapis';
 import { decrypt as rawDecrypt } from '../utils/encryption.mjs';
 import { refreshGoogleToken } from '../utils/googleOAuth.mjs';
 import { logActivity as coreLogActivity } from '@nous/core';
+// The Fireflies backfill REPLAYS each recent transcript through the same handler the
+// webhook uses, so it gets the full pipeline the raw scan lacked: identity resolution
+// (co-attendance + alternate-email learning — this is what links Aakash's 03↔04),
+// the stored transcript document, and claim/fact extraction.
+import { reprocessFireflies } from '../webhooks/handlers/fireflies.mjs';
 
 // The worker's decrypt THROWS on a bad/foreign-key credential; the API's crypto.mjs
 // (which the enricher used before it moved here) returned null. The credential
@@ -938,6 +943,53 @@ async function scanFirefliesBulk(supabase, workspaceId, contacts, apiKey) {
   return counts;
 }
 
+// Fireflies backfill via REPLAY. Instead of the thin bulk map above (which only
+// matched a transcript to a contact by exact email — so a person whose meetings run
+// under a different address than the one we imported, like Aakash's 03 vs 04, was
+// invisible), we list the recent transcript ids and run each through reprocessFireflies
+// — the same handler the live webhook uses. That does the full job: resolveMeeting
+// contacts (attendee match + co-attendance by booking time/title, which LEARNS the
+// alternate email), saves the transcript document, and extracts durable CRM claims.
+// externalId dedup (ff_<id>_<contact>) makes it idempotent, so re-imports are free.
+const FIREFLIES_REPLAY_PAGES = 3;   // up to 3 * 50 = 150 most-recent transcripts
+
+async function scanFirefliesReplay(supabase, workspaceId, apiKey) {
+  const ids = [];
+  try {
+    for (let page = 0; page < FIREFLIES_REPLAY_PAGES; page++) {
+      const query = `query { transcripts(limit: ${FIREFLIES_PAGE_SIZE}, skip: ${page * FIREFLIES_PAGE_SIZE}) { id } }`;
+      const res = await fetchRetry('https://api.fireflies.ai/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) break;
+      const data = await res.json();
+      const ts = data.data?.transcripts || [];
+      if (!ts.length) break;
+      for (const t of ts) if (t.id) ids.push(t.id);
+      if (ts.length < FIREFLIES_PAGE_SIZE) break;
+    }
+
+    let touched = 0;
+    // Low concurrency: each replay fetches the full transcript AND may run LLM
+    // extraction. reprocessFireflies attaches only to contacts we already hold and
+    // no-ops (returns logged:0) for meetings with none, so the extraction cost tracks
+    // relevant meetings, not the whole list.
+    await pool(ids, 2, async (id) => {
+      try {
+        const r = await reprocessFireflies(supabase, workspaceId, { meetingId: id });
+        if (r?.logged) touched += r.logged;
+      } catch (e) { console.warn('[ENRICH_FIREFLIES_REPLAY]', id, e?.message || e); }
+    });
+    console.log(`[ENRICH_FIREFLIES_REPLAY] ${ids.length} transcripts replayed, ${touched} contact-meetings logged`);
+    return touched;
+  } catch (e) {
+    console.error('[ENRICH_FIREFLIES_REPLAY]', e.message);
+    return 0;
+  }
+}
+
 // ── Fathom ────────────────────────────────────────────────────────────────────
 
 async function scanFathom(supabase, workspaceId, contact, apiKey) {
@@ -1253,9 +1305,21 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
       }
     };
 
-    await runBulk('gmail',     !!gmailConn,   () => scanGmailBulk(supabase, workspaceId, contacts, gmailConn));
-    await runBulk('smtp',      !!smtpConn,    () => scanImapBulk(supabase, workspaceId, contacts, smtpConn));
-    await runBulk('fireflies', !!firefliesKey, () => scanFirefliesBulk(supabase, workspaceId, contacts, firefliesKey));
+    await runBulk('gmail', !!gmailConn, () => scanGmailBulk(supabase, workspaceId, contacts, gmailConn));
+    await runBulk('smtp',  !!smtpConn,  () => scanImapBulk(supabase, workspaceId, contacts, smtpConn));
+
+    // Fireflies runs the REPLAY path (identity resolution + transcript docs + claim
+    // extraction), not the bulk map. It resolves meetings to contacts itself (incl.
+    // alternate emails via co-attendance), so we can't attribute a per-contact count
+    // up front — mark the source done and fold the total into the tally.
+    if (firefliesKey) {
+      for (const c of contacts) setSource(c.id, 'fireflies', 'scanning');
+      await persist();
+      const touched = await scanFirefliesReplay(supabase, workspaceId, firefliesKey);
+      for (const c of contacts) setSource(c.id, 'fireflies', 'done', 0);
+      totalActivities += touched;
+      await persist();
+    }
 
     // ── Per-contact sources: each its own concurrency lane, lanes run concurrently.
     //    (Calendly/Cal.com/Fathom only accept a single email per call, so they can't
@@ -1281,6 +1345,33 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
       runLane('slack',     !!slackConn,   LANES.slack,     c => scanSlack(supabase, workspaceId, c, slackConn)),
       runLane('linkedin',  !!connections.linkedin?.account_id, LANES.linkedin, c => scanLinkedIn(supabase, workspaceId, c, connections.linkedin.account_id, attendeeMap)),
     ]);
+
+    // ── Second email pass over ALTERNATE addresses identity resolution discovered.
+    //    Fireflies co-attendance can learn that a contact also uses another email
+    //    (Aakash's 03 vs the imported 04); a person's history lives across all their
+    //    addresses, so re-scan Gmail/IMAP for the newly-linked ones, mapped back to the
+    //    SAME contact. Bounded to genuinely-new addresses so it's cheap and idempotent.
+    if (gmailConn || smtpConn) {
+      const known = new Set(contacts.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+      const { data: allIdents } = await supabase
+        .from('entity_identifiers')
+        .select('entity_id, value')
+        .eq('workspace_id', workspaceId).eq('kind', 'email').eq('status', 'active')
+        .in('entity_id', contacts.map(c => c.id));
+      const byId = new Map(contacts.map(c => [c.id, c]));
+      const alts = [];
+      for (const r of allIdents || []) {
+        const e = (r.value || '').toLowerCase();
+        const base = byId.get(r.entity_id);
+        if (e && base && !known.has(e)) alts.push({ ...base, email: e });
+      }
+      if (alts.length) {
+        console.log(`[ENRICH] identity resolution surfaced ${alts.length} alternate email(s) — second pass`);
+        if (gmailConn) { const gc = await scanGmailBulk(supabase, workspaceId, alts, gmailConn); for (const n of gc.values()) totalActivities += n; }
+        if (smtpConn)  { const ic = await scanImapBulk(supabase, workspaceId, alts, smtpConn);  for (const n of ic.values()) totalActivities += n; }
+        await persist();
+      }
+    }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
   }

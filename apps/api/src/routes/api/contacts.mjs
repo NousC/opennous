@@ -697,19 +697,28 @@ contactsApiRouter.post('/import', verifySupabaseAuth, async (req, res) => {
     const emailRows = validRows.filter(r => r.email && EMAIL.test(r.email.trim()));
     const linkedinOnlyRows = validRows.filter(r => !(r.email && EMAIL.test(r.email.trim())));
 
-    // Dedup email rows by email
+    // Dedup against the ENTITY graph (entity_identifiers), NOT the `contacts` view.
+    // The view only projects engaged people, so a cold lead imported earlier is
+    // invisible to it — which made every re-import fork a NEW entity whose email
+    // identifier then collided with the original's (unique index → ON CONFLICT DO
+    // NOTHING in the insert trigger) and got dropped. Net result: empty email/LinkedIn
+    // columns and duplicate contacts. Identifiers cover every entity, engaged or cold.
     const emails = emailRows.map(r => r.email.toLowerCase().trim());
-    const { data: existingByEmail } = emails.length
-      ? await supabase.from('contacts').select('id, email').eq('workspace_id', workspaceId).in('email', emails)
+    const { data: emailIdents } = emails.length
+      ? await supabase.from('entity_identifiers').select('entity_id, value')
+          .eq('workspace_id', workspaceId).eq('kind', 'email').eq('status', 'active').in('value', emails)
       : { data: [] };
-    const existingEmailSet = new Set((existingByEmail || []).map(c => c.email.toLowerCase()));
+    const existingByEmail = (emailIdents || []).map(r => ({ id: r.entity_id, email: r.value }));
+    const existingEmailSet = new Set(existingByEmail.map(c => c.email.toLowerCase()));
 
-    // Dedup linkedin-only rows by linkedin_url
+    // Dedup linkedin-only rows by linkedin_url, same way.
     const linkedinUrls = linkedinOnlyRows.map(r => r.linkedin_url.trim());
-    const { data: existingByLinkedin } = linkedinUrls.length
-      ? await supabase.from('contacts').select('id, linkedin_url').eq('workspace_id', workspaceId).in('linkedin_url', linkedinUrls)
+    const { data: liIdents } = linkedinUrls.length
+      ? await supabase.from('entity_identifiers').select('entity_id, value')
+          .eq('workspace_id', workspaceId).eq('kind', 'linkedin_url').eq('status', 'active').in('value', linkedinUrls)
       : { data: [] };
-    const existingLinkedinSet = new Set((existingByLinkedin || []).map(c => c.linkedin_url));
+    const existingByLinkedin = (liIdents || []).map(r => ({ id: r.entity_id, linkedin_url: r.value }));
+    const existingLinkedinSet = new Set(existingByLinkedin.map(c => c.linkedin_url));
 
     const toCreate = [
       ...emailRows.filter(r => !existingEmailSet.has(r.email.toLowerCase().trim())),
