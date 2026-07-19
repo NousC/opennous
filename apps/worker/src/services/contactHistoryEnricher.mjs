@@ -9,9 +9,17 @@
 // irreducible per-contact tail and gets the smallest lane + backoff.
 
 import { google } from 'googleapis';
-import { decrypt } from '../utils/encryption.mjs';
+import { decrypt as rawDecrypt } from '../utils/encryption.mjs';
 import { refreshGoogleToken } from '../utils/googleOAuth.mjs';
 import { logActivity as coreLogActivity } from '@nous/core';
+
+// The worker's decrypt THROWS on a bad/foreign-key credential; the API's crypto.mjs
+// (which the enricher used before it moved here) returned null. The credential
+// resolution below runs outside any try, so one undecryptable key would kill the
+// whole job instead of just disabling that one source. Restore null-on-failure.
+function decrypt(value) {
+  try { return rawDecrypt(value); } catch { return null; }
+}
 
 // ── Unipile helpers ───────────────────────────────────────────────────────────
 
