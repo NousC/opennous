@@ -49,11 +49,10 @@ const API_URL = import.meta.env.VITE_API_URL ?? "";
 // other three docs are upside, not a new requirement — we widen the invitation, not the bar.
 // raw/ and wiki/ are recommended but never built or synced here (context-only for now).
 const ONBOARD_PROMPT =
-  "Set up my GTM context layer and connect it to Nous.\n\n" +
-  "First, audit what I already have: check context/, .claude/, gtm/, docs/ and the repo root for anything describing who we sell to (ICP), how we position, our voice, and our core messaging, and read CLAUDE.md for sections covering these. Tell me what you found and where.\n\n" +
-  "Then reconcile toward this structure: context/icp.md, context/positioning.md, context/voice.md, context/messaging.md. For anything I already have that's good, move it into context/ if it lives somewhere odd and sync it to Nous as-is — don't rewrite it. For anything missing, ask me for my website, research it, draft the doc, show me, and once I approve write it to context/ and sync it.\n\n" +
-  "Before creating any folders or files, show me the plan and let me approve it — don't scaffold silently.\n\n" +
-  "Once context/ is synced, tell me how to grow this into a full context layer (a raw/ folder for inputs I drop in, a wiki/ folder you maintain), but don't build those yet unless I ask.";
+  "Set up my revenue context layer and sync it to Nous.\n\n" +
+  "First look through my repo (context/, .claude/, docs/, CLAUDE.md) for anything about who we sell to (ICP), how we position, our pricing, and our competitors. Tell me what you found and where.\n\n" +
+  "Then get it into context/icp.md, context/positioning.md, context/pricing.md, and context/competitors.md. Keep what's already good as it is, don't rewrite it. For anything missing, ask me for my website, research it, draft it, show me, and once I approve, save it and sync it to Nous.\n\n" +
+  "Show me the plan before you create any files.";
 
 type Step = { caption: string; code: string };
 
@@ -304,14 +303,9 @@ function AgentRoad({ onBack }: { onBack: () => void }) {
       </button>
 
       <h1 className="text-[19px] font-semibold tracking-tight text-foreground">Connect your agent</h1>
-      <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
-        Paste this into your coding agent. It audits the GTM context already in your project,
-        drafts whatever's missing from your website, and syncs it to Nous. This screen unlocks
-        the moment your ICP lands.
-      </p>
 
       <div className="mt-5">
-        <Cmd caption="Paste this to your agent" code={ONBOARD_PROMPT} />
+        <Cmd caption="Paste this into your coding agent to get started" code={ONBOARD_PROMPT} />
       </div>
 
       <p className="mt-4 text-[12px] text-muted-foreground/80 leading-relaxed">
