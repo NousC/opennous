@@ -258,6 +258,87 @@ async function scanGmailBulk(supabase, workspaceId, contacts, gmailConn) {
   return counts;
 }
 
+// ── Google Calendar (bulk) ─────────────────────────────────────────────────────
+//
+// The Gmail OAuth grant includes calendar scope, so the same connection can read the
+// calendar. The backfill scanned email but never the CALENDAR, so meetings that live
+// only as calendar events (no transcript) never landed. We look back further than the
+// hourly poller (which only sweeps ±7d) to pull real history, map attendees to our
+// contacts by email, and log the meeting. Same externalId as the poller (gcal_<ev>_<c>)
+// so the two never double-log. These bookings also feed Fireflies co-attendance.
+const GCAL_LOOKBACK_DAYS  = 180;
+const GCAL_LOOKAHEAD_DAYS = 30;
+
+async function scanGoogleCalendarBulk(supabase, workspaceId, contacts, gmailConn) {
+  const withEmail = contacts.filter(c => c.email);
+  const counts = new Map(withEmail.map(c => [c.id, 0]));
+  if (!withEmail.length) return counts;
+  if (!(gmailConn.encrypted_credentials?.scope || '').includes('calendar')) return counts;
+
+  try {
+    const { credentials, needsUpdate, updatedCredentials } = await refreshGoogleToken(gmailConn.encrypted_credentials);
+    if (needsUpdate) {
+      await supabase.from('workflow_provider_connections').update({ encrypted_credentials: updatedCredentials }).eq('id', gmailConn.id);
+    }
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_OAUTH_REDIRECT_URI,
+    );
+    oauth2Client.setCredentials({ access_token: credentials.access_token });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    const emailToContact = new Map();
+    for (const c of withEmail) {
+      const e = c.email.toLowerCase();
+      if (!emailToContact.has(e)) emailToContact.set(e, c);
+    }
+
+    const timeMin = new Date(Date.now() - GCAL_LOOKBACK_DAYS * 86400000).toISOString();
+    const timeMax = new Date(Date.now() + GCAL_LOOKAHEAD_DAYS * 86400000).toISOString();
+    let pageToken = null, pages = 0;
+    do {
+      let resp;
+      try {
+        resp = await calendar.events.list({
+          calendarId: 'primary', timeMin, timeMax, singleEvents: true, maxResults: 250, ...(pageToken && { pageToken }),
+        });
+      } catch (e) { console.error('[ENRICH_GCAL] list:', e.message); break; }
+
+      for (const ev of (resp.data.items || []).filter(e => e.status !== 'cancelled')) {
+        const start = ev.start?.dateTime || ev.start?.date;
+        if (!start) continue;
+        const occurredAt = new Date(start).toISOString();
+        const isPast = new Date(start) < new Date();
+        const attendees = [...(ev.attendees || [])];
+        if (ev.organizer?.email && !attendees.find(a => a.email === ev.organizer.email)) {
+          attendees.push({ email: ev.organizer.email, responseStatus: 'accepted' });
+        }
+        const seen = new Set();
+        for (const a of attendees) {
+          const c = a.email && emailToContact.get(a.email.toLowerCase());
+          if (!c || seen.has(c.id)) continue;
+          seen.add(c.id);
+          const type = (isPast && a.responseStatus === 'accepted') ? 'meeting_held' : 'meeting_scheduled';
+          const r = await logActivity(supabase, {
+            workspaceId, contactId: c.id, companyId: c.company_id || null,
+            type, source: 'google_calendar',
+            externalId: `gcal_${ev.id}_${c.id}`,
+            occurredAt,
+            description: `${ev.summary || 'Calendar meeting'} ${isPast ? '(Held)' : '(Scheduled)'}`,
+          });
+          if (r) counts.set(c.id, (counts.get(c.id) || 0) + 1);
+        }
+      }
+      pageToken = resp.data.nextPageToken || null;
+    } while (pageToken && ++pages < 8);
+
+    const total = [...counts.values()].reduce((a, b) => a + b, 0);
+    console.log(`[ENRICH_GCAL] ${withEmail.length} contacts, ${total} logged`);
+  } catch (e) {
+    console.error('[ENRICH_GCAL]', e.message);
+  }
+  return counts;
+}
+
 // ── Connection loader ─────────────────────────────────────────────────────────
 
 async function getWorkspaceConnections(supabase, workspaceId) {
@@ -943,46 +1024,68 @@ async function scanFirefliesBulk(supabase, workspaceId, contacts, apiKey) {
   return counts;
 }
 
-// Fireflies backfill via REPLAY. Instead of the thin bulk map above (which only
-// matched a transcript to a contact by exact email — so a person whose meetings run
-// under a different address than the one we imported, like Aakash's 03 vs 04, was
-// invisible), we list the recent transcript ids and run each through reprocessFireflies
-// — the same handler the live webhook uses. That does the full job: resolveMeeting
-// contacts (attendee match + co-attendance by booking time/title, which LEARNS the
-// alternate email), saves the transcript document, and extracts durable CRM claims.
-// externalId dedup (ff_<id>_<contact>) makes it idempotent, so re-imports are free.
+// Fireflies backfill via REPLAY, but RATE-LIMIT SAFE. We run each transcript through
+// reprocessFireflies (the same handler the live webhook uses — full identity resolution,
+// saved document, claim extraction), but we HYDRATE the body from a single paginated
+// list query up front. The earlier version fetched the id list AND then re-fetched every
+// transcript one-by-one inside reprocessFireflies (~2 calls × N), which blew straight
+// through Fireflies' request quota and returned 429s for everything. Passing a body that
+// already carries participants makes reprocessFireflies skip its own fetch entirely, so
+// the whole batch costs ~3 API calls instead of ~200. externalId dedup keeps re-imports
+// free.
 const FIREFLIES_REPLAY_PAGES = 3;   // up to 3 * 50 = 150 most-recent transcripts
 
 async function scanFirefliesReplay(supabase, workspaceId, apiKey) {
-  const ids = [];
+  const transcripts = [];
   try {
     for (let page = 0; page < FIREFLIES_REPLAY_PAGES; page++) {
-      const query = `query { transcripts(limit: ${FIREFLIES_PAGE_SIZE}, skip: ${page * FIREFLIES_PAGE_SIZE}) { id } }`;
+      const query = `query { transcripts(limit: ${FIREFLIES_PAGE_SIZE}, skip: ${page * FIREFLIES_PAGE_SIZE}) {
+        id title date host_email organizer_email
+        participants
+        meeting_attendees { displayName email name }
+        summary { overview action_items keywords }
+        sentences { speaker_name text }
+      } }`;
       const res = await fetchRetry('https://api.fireflies.ai/graphql', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ query }),
       });
-      if (!res.ok) break;
+      if (!res.ok) { console.warn(`[ENRICH_FIREFLIES_REPLAY] list ${res.status}`); break; }
       const data = await res.json();
+      if (data.errors?.length && !data.data?.transcripts) {
+        console.warn('[ENRICH_FIREFLIES_REPLAY] api:', JSON.stringify(data.errors).slice(0, 160));
+        break;
+      }
       const ts = data.data?.transcripts || [];
       if (!ts.length) break;
-      for (const t of ts) if (t.id) ids.push(t.id);
+      transcripts.push(...ts);
       if (ts.length < FIREFLIES_PAGE_SIZE) break;
     }
 
     let touched = 0;
-    // Low concurrency: each replay fetches the full transcript AND may run LLM
-    // extraction. reprocessFireflies attaches only to contacts we already hold and
-    // no-ops (returns logged:0) for meetings with none, so the extraction cost tracks
-    // relevant meetings, not the whole list.
-    await pool(ids, 2, async (id) => {
+    // Hydrated body → reprocessFireflies skips its per-transcript fetch. Extraction still
+    // runs (LLM), but only for transcripts that resolve to a contact we hold.
+    await pool(transcripts, 3, async (t) => {
       try {
-        const r = await reprocessFireflies(supabase, workspaceId, { meetingId: id });
+        const body = {
+          meetingId:       t.id,
+          title:           t.title,
+          date:            t.date,
+          host_email:      t.host_email,
+          organizer_email: t.organizer_email,
+          participants:    t.participants,
+          meeting_attendees: t.meeting_attendees,
+          summary:         t.summary?.overview || null,
+          action_items:    t.summary?.action_items || null,
+          keywords:        Array.isArray(t.summary?.keywords) ? t.summary.keywords : [],
+          transcript_text: (t.sentences || []).map(sn => `${sn.speaker_name || 'Speaker'}: ${sn.text || ''}`).join('\n').slice(0, 100000) || null,
+        };
+        const r = await reprocessFireflies(supabase, workspaceId, body);
         if (r?.logged) touched += r.logged;
-      } catch (e) { console.warn('[ENRICH_FIREFLIES_REPLAY]', id, e?.message || e); }
+      } catch (e) { console.warn('[ENRICH_FIREFLIES_REPLAY]', t.id, e?.message || e); }
     });
-    console.log(`[ENRICH_FIREFLIES_REPLAY] ${ids.length} transcripts replayed, ${touched} contact-meetings logged`);
+    console.log(`[ENRICH_FIREFLIES_REPLAY] ${transcripts.length} transcripts (hydrated, ~3 API calls), ${touched} contact-meetings logged`);
     return touched;
   } catch (e) {
     console.error('[ENRICH_FIREFLIES_REPLAY]', e.message);
@@ -1247,7 +1350,8 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
         name:  [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email,
         email: c.email,
         sources: {
-          gmail:     makeSource(!!gmailConn),
+          gmail:           makeSource(!!gmailConn),
+          google_calendar: makeSource(!!gmailConn && (gmailConn.encrypted_credentials?.scope || '').includes('calendar')),
           smtp:      makeSource(!!smtpConn),
           linkedin:  makeSource(!!connections.linkedin?.account_id),
           instantly: makeSource(!!instantlyKey),
@@ -1307,6 +1411,8 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
 
     await runBulk('gmail', !!gmailConn, () => scanGmailBulk(supabase, workspaceId, contacts, gmailConn));
     await runBulk('smtp',  !!smtpConn,  () => scanImapBulk(supabase, workspaceId, contacts, smtpConn));
+    // Calendar before Fireflies: its bookings feed Fireflies co-attendance matching.
+    await runBulk('google_calendar', !!gmailConn, () => scanGoogleCalendarBulk(supabase, workspaceId, contacts, gmailConn));
 
     // Fireflies runs the REPLAY path (identity resolution + transcript docs + claim
     // extraction), not the bulk map. It resolves meetings to contacts itself (incl.

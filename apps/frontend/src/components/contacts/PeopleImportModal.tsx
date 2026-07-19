@@ -72,7 +72,7 @@ export function detectImportMappings(headers: string[]): Record<string, string> 
 }
 
 export const SOURCE_LABELS: Record<string, string> = {
-  gmail: "Gmail", smtp: "Email (SMTP)", linkedin: "LinkedIn",
+  gmail: "Gmail", google_calendar: "Google Calendar", smtp: "Email (SMTP)", linkedin: "LinkedIn",
   instantly: "Instantly", slack: "Slack",
   fireflies: "Fireflies", fathom: "Fathom", calendly: "Calendly", cal_com: "Cal.com",
 };
@@ -80,6 +80,7 @@ export const SOURCE_LABELS: Record<string, string> = {
 // Real provider logos instead of text labels — the marks read faster than names.
 export const SOURCE_LOGOS: Record<string, string> = {
   gmail: "/provider-logos/gmail.svg",
+  google_calendar: "/provider-logos/google-calendar.svg",
   smtp: "/provider-logos/smtp.svg",
   linkedin: "/provider-logos/linkedin.png",
   instantly: "/provider-logos/instantly.svg",
@@ -132,16 +133,23 @@ function useImportState({ workspaceId, token, onClose, onDone, skipScan }: Peopl
     return () => clearInterval(id);
   }, [step, enrichJobId, token]);
 
-  // The contacts are created the moment the import returns, so they're already in the
-  // Accounts list behind this modal. The backfill runs in the WORKER regardless of this
-  // window, so once we hit the scanning step, auto-close after a short beat and let the
-  // list reveal — the user shouldn't have to sit on a modal to watch a background job.
+  // On open: if a backfill is already running for this workspace, jump straight to its
+  // live view instead of offering a fresh import on top of it.
   useEffect(() => {
-    if (step !== "scanning") return;
-    const t = setTimeout(() => onDone(), 5000);
-    return () => clearTimeout(t);
+    if (!token || !workspaceId) return;
+    let alive = true;
+    fetch(`${apiUrl}/api/contacts/enrich-active?workspaceId=${workspaceId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (!alive || !d?.active) return;
+        setEnrichJobId(d.jobId);
+        setEnrichProgress(d.contacts?.length ? { contacts: d.contacts, done: false } : null);
+        setStep("scanning");
+      })
+      .catch(() => {});
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
+  }, []);
 
   const parseCSVFile = async (file: File) => {
     try {
@@ -246,14 +254,6 @@ function ImportBody(s: ReturnType<typeof useImportState>) {
             </span>
           )}
         </div>
-
-        {!s.enrichProgress?.done && (
-          <div className="mb-4 rounded-lg border border-border bg-muted/40 px-3.5 py-3 text-[12.5px] text-muted-foreground leading-relaxed">
-            We&apos;re backfilling each person&apos;s touchpoints and conversations from your
-            connected tools. This runs in the background, so you can close this and keep working.
-            It won&apos;t stop. Stay if you want to watch it happen.
-          </div>
-        )}
 
         <div className="space-y-2 max-h-[55vh] overflow-y-auto">
           {(s.enrichProgress?.contacts ?? []).map((contact: any) => {

@@ -173,6 +173,24 @@ contactsApiRouter.get('/enrich-progress/:jobId', verifySupabaseAuth, async (req,
   return res.json({ found: false });
 });
 
+// GET /api/contacts/enrich-active?workspaceId= — the workspace's currently-running
+// backfill, if any. The import modal checks this on open so it surfaces the live
+// backfill instead of letting the user start a second import on top of one running.
+contactsApiRouter.get('/enrich-active', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const wsId = req.query.workspaceId;
+    if (!wsId) return res.json({ active: false });
+    const { data } = await supabase
+      .from('contact_enrichment_jobs')
+      .select('job_id, state')
+      .eq('workspace_id', wsId).in('status', ['pending', 'running'])
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (data) return res.json({ active: true, jobId: data.job_id, contacts: data.state?.contacts || [] });
+  } catch { /* fall through */ }
+  return res.json({ active: false });
+});
+
 // GET /api/contacts/:id
 contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
   try {
