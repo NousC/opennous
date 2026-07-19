@@ -221,7 +221,9 @@ export default function GuidedTour() {
       </div>
 
       <h2 className="mt-3 text-[17px] font-semibold tracking-tight text-foreground">
-        {current.id === 'welcome' && name ? `Welcome to Nous, ${name}` : current.title}
+        {current.id === 'welcome' && name ? `Welcome to Nous, ${name}`
+          : current.id === 'billing' && name ? `Congrats, ${name}`
+          : current.title}
       </h2>
       <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{current.body}</p>
 

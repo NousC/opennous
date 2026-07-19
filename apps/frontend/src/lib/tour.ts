@@ -72,8 +72,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'billing',
     placement: 'center',
-    title: 'How billing works',
-    body: "You're charged only when an agent reads from the graph, on the accounts you're working. Never for leads you haven't touched.",
+    // Title is personalized to "Congrats, <name>" in GuidedTour when we know the name.
+    title: 'Congrats',
+    body: "You've completed onboarding, and your agents now hold the complete picture of every buyer in your pipeline. Pricing only covers active accounts, so we never store cold leads with no activity.",
     cta: 'Next',
   },
   {
