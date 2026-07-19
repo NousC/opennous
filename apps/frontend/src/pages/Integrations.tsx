@@ -183,12 +183,20 @@ export default function Integrations() {
   const connected  = visibleConns.filter(i=>i.is_verified);
   const needsAuth  = visibleConns.filter(i=>!i.is_verified);
   const linkedinAccountCount = linkedinStatus?.connections?.length ?? 0;
-  const notConnected = allProviders.filter(p => {
-    // LinkedIn lives in workspace_linkedin_connections (native), not workflow
-    // connections — show it in the catalog only until at least one account is on.
-    if (p.name === "linkedin") return linkedinAccountCount === 0;
-    return !visibleConns.some(i=>i.provider?.name===p.name||i.name===p.name);
-  });
+  // Every provider can hold MULTIPLE connections — one per teammate, or several
+  // accounts owned by the same person (three Gmails, three Fireflies). So the
+  // catalog always offers every tool ("Add another") instead of hiding it once a
+  // connection exists. How many are already on drives the row's hint + button label.
+  // LinkedIn is the exception: it's native (Unipile) and manages its own per-rep
+  // accounts inline, so it only appears in the catalog until the first account is on.
+  const connCountByProvider = new Map<string, number>();
+  for (const c of visibleConns) {
+    const n = c.provider?.name ?? c.name;
+    if (n) connCountByProvider.set(n, (connCountByProvider.get(n) ?? 0) + 1);
+  }
+  const catalogProviders = allProviders.filter(p =>
+    p.name === "linkedin" ? linkedinAccountCount === 0 : true
+  );
 
   // The database is the only answer to "how does this connect" — see the auth_type
   // column on workflow_providers. This used to be a hardcoded list of provider
@@ -197,7 +205,11 @@ export default function Integrations() {
   // one list said "gmail" while the provider is named "gmail_oauth".
   const isOAuth = (p: AvailableProvider | null) => p?.auth_type === "oauth2";
 
-  const startConnect = (p: AvailableProvider) => {
+  // presetName is passed when re-opening an EXISTING connection ("Update") so the
+  // save upserts that same (workspace, provider, name) row. Adding a NEW connection
+  // to an already-connected provider gets a uniquified default ("Fireflies.ai 2") so
+  // it lands as its own row instead of overwriting the first.
+  const startConnect = (p: AvailableProvider, presetName?: string) => {
     // LinkedIn is native (Unipile) — hand off to its own popup flow, not the
     // credential form. Close the catalog so the popup is unobstructed.
     if (p.name === "linkedin") { setAddOpen(false); connectLinkedIn(); return; }
@@ -208,7 +220,10 @@ export default function Integrations() {
     const merged = hardcoded
       ? { ...p, auth_fields: hardcoded.auth_fields ?? p.auth_fields, auth_type: hardcoded.auth_type ?? p.auth_type }
       : p;
-    setConnecting(merged); setConnApiKey(""); setConnCreds({}); setConnName(merged.display_name);
+    const existingCount = connCountByProvider.get(merged.name) ?? 0;
+    const defaultName = presetName
+      ?? (existingCount > 0 ? `${merged.display_name} ${existingCount + 1}` : merged.display_name);
+    setConnecting(merged); setConnApiKey(""); setConnCreds({}); setConnName(defaultName);
     setConnTestResult(null); setConnSuccess(null); setConnOAuthLoading(false);
   };
 
@@ -497,7 +512,7 @@ export default function Integrations() {
                       Webhook ✓
                     </span>
                   )}
-                  <button onClick={()=>{ startConnect(providerForConnect); setAddOpen(true); }}
+                  <button onClick={()=>{ startConnect(providerForConnect, conn.name); setAddOpen(true); }}
                     className="text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0 ml-2 rounded-md border border-border px-2.5 py-1 hover:bg-muted/50">
                     Update
                   </button>
@@ -647,11 +662,11 @@ export default function Integrations() {
               </div>
             )
           ) : (
-            notConnected.length === 0 ? (
-              <div className="text-[13px] text-muted-foreground/70 text-center py-12">All providers connected</div>
+            catalogProviders.length === 0 ? (
+              <div className="text-[13px] text-muted-foreground/70 text-center py-12">No integrations available</div>
             ) : (
               <div className="space-y-5">
-                {groupByCategory(notConnected).map(([cat, items]) => (
+                {groupByCategory(catalogProviders).map(([cat, items]) => (
                   <div key={cat}>
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70 mb-2">
                       {CATEGORY_LABEL[cat]} <span className="text-muted-foreground/50 font-normal ml-1">{items.length}</span>
@@ -660,11 +675,15 @@ export default function Integrations() {
                       {items.map(p => {
                         const isSoon = (p as any).coming_soon;
                         const isLocked = CUSTOM_ONLY_INTEGRATIONS.has(p.name) && !canEnterprise;
+                        const already = connCountByProvider.get(p.name) ?? 0;
                         return (
                           <div key={p.id} className={`flex items-center gap-4 px-4 py-3.5 border-b border-border/60 last:border-0 transition-colors group ${(isSoon || isLocked) ? "opacity-60" : "hover:bg-muted/50"}`}>
                             <IntegrationLogo url={p.logo_url} name={p.display_name} />
                             <div className="flex-1 min-w-0">
                               <div className="text-[13px] font-semibold text-foreground">{p.display_name}</div>
+                              {already > 0 && (
+                                <div className="text-[11.5px] text-muted-foreground/70">{already} connected</div>
+                              )}
                             </div>
                             {isSoon ? (
                               <span className="text-[11px] text-muted-foreground/70 rounded-md border border-border px-2 py-0.5 flex-shrink-0 uppercase tracking-wide">
@@ -678,7 +697,7 @@ export default function Integrations() {
                             ) : (
                               <button onClick={()=>startConnect(p)}
                                 className="text-[12px] font-medium text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 rounded-md border border-border px-2.5 py-1 hover:bg-muted/50">
-                                Connect
+                                {already > 0 ? "Add another" : "Connect"}
                               </button>
                             )}
                           </div>

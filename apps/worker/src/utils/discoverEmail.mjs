@@ -53,39 +53,51 @@ function pickWinner(candidates) {
 
 // ── Gmail ───────────────────────────────────────────────────────────────────
 async function discoverViaGmail(supabase, workspaceId, first, last) {
-  const { data: conn } = await supabase
+  // A workspace can hold several Gmail mailboxes (one per teammate, or several
+  // accounts owned by the same person). Search across ALL of them — the more
+  // mailboxes, the better the coverage — and never .maybeSingle() (which errors
+  // the moment there's more than one row).
+  const { data: conns } = await supabase
     .from('workflow_provider_connections')
     .select('id, encrypted_credentials, workflow_providers!inner(name)')
     .eq('workspace_id', workspaceId).eq('is_verified', true)
-    .eq('workflow_providers.name', 'gmail_oauth').maybeSingle();
-  if (!conn) return [];
-
-  const { credentials, needsUpdate, updatedCredentials } = await refreshGoogleToken(conn.encrypted_credentials);
-  if (needsUpdate) await supabase.from('workflow_provider_connections').update({ encrypted_credentials: updatedCredentials }).eq('id', conn.id);
-  const ownEmail = (credentials.email || conn.encrypted_credentials.email || '').toLowerCase();
-
-  const auth = makeOAuth2Client();
-  auth.setCredentials({ access_token: credentials.access_token });
-  const gmail = google.gmail({ version: 'v1', auth });
+    .eq('workflow_providers.name', 'gmail_oauth');
+  if (!conns?.length) return [];
 
   const fullName = `${first} ${last}`;
   const q = `from:"${fullName}" OR to:"${fullName}"`;
-  const list = await gmail.users.messages.list({ userId: 'me', q, maxResults: 12 });
-  const ids = (list.data.messages || []).map(m => m.id);
-
   const candidates = [];
-  for (const id of ids) {
-    const msg = await gmail.users.messages.get({
-      userId: 'me', id, format: 'metadata', metadataHeaders: ['From', 'To', 'Cc', 'Subject'],
-    });
-    const headers = msg.data.payload?.headers || [];
-    const subject = headers.find(h => h.name === 'Subject')?.value || '(no subject)';
-    for (const hname of ['From', 'To', 'Cc']) {
-      const raw = headers.find(h => h.name === hname)?.value;
-      for (const { name, email } of parseAddressList(raw)) {
-        if (!email || email === ownEmail || FREE_OR_NOISE.test(email.split('@')[0])) continue;
-        if (bothNamesPresent(name, first, last)) candidates.push({ email, name, source: 'gmail', subject });
+
+  for (const conn of conns) {
+    try {
+      const { credentials, needsUpdate, updatedCredentials } = await refreshGoogleToken(conn.encrypted_credentials);
+      if (needsUpdate) await supabase.from('workflow_provider_connections').update({ encrypted_credentials: updatedCredentials }).eq('id', conn.id);
+      const ownEmail = (credentials.email || conn.encrypted_credentials.email || '').toLowerCase();
+
+      const auth = makeOAuth2Client();
+      auth.setCredentials({ access_token: credentials.access_token });
+      const gmail = google.gmail({ version: 'v1', auth });
+
+      const list = await gmail.users.messages.list({ userId: 'me', q, maxResults: 12 });
+      const ids = (list.data.messages || []).map(m => m.id);
+
+      for (const id of ids) {
+        const msg = await gmail.users.messages.get({
+          userId: 'me', id, format: 'metadata', metadataHeaders: ['From', 'To', 'Cc', 'Subject'],
+        });
+        const headers = msg.data.payload?.headers || [];
+        const subject = headers.find(h => h.name === 'Subject')?.value || '(no subject)';
+        for (const hname of ['From', 'To', 'Cc']) {
+          const raw = headers.find(h => h.name === hname)?.value;
+          for (const { name, email } of parseAddressList(raw)) {
+            if (!email || email === ownEmail || FREE_OR_NOISE.test(email.split('@')[0])) continue;
+            if (bothNamesPresent(name, first, last)) candidates.push({ email, name, source: 'gmail', subject });
+          }
+        }
       }
+    } catch (err) {
+      // One bad mailbox (revoked token, quota) must not sink discovery across the rest.
+      console.warn(`[discoverEmail] gmail mailbox ${conn.id} failed:`, err.message);
     }
   }
   return candidates;
@@ -95,55 +107,60 @@ async function discoverViaGmail(supabase, workspaceId, first, last) {
 function safeDecrypt(v) { if (!v) return null; try { return decrypt(v); } catch { return v; } }
 
 async function discoverViaImap(supabase, workspaceId, first, last) {
-  const { data: conn } = await supabase
+  // Like Gmail, a workspace can hold several SMTP/IMAP mailboxes — search each
+  // one, never .maybeSingle() (it errors once there's more than one row).
+  const { data: conns } = await supabase
     .from('workflow_provider_connections')
     .select('id, encrypted_credentials, workflow_providers!inner(name)')
     .eq('workspace_id', workspaceId).eq('is_verified', true)
-    .eq('workflow_providers.name', 'smtp').maybeSingle();
-  if (!conn) return [];
-
-  const raw = conn.encrypted_credentials || {};
-  const host = safeDecrypt(raw.host), username = safeDecrypt(raw.username), password = safeDecrypt(raw.password);
-  if (!host || !username || !password) return [];
-  let imapHost = safeDecrypt(raw.imap_host) || (/office365\.com|smtp-mail\.outlook\.com/i.test(host) ? 'outlook.office365.com' : host.replace(/^smtp\./i, 'imap.'));
-  const imapPort = raw.imap_port ? parseInt(safeDecrypt(raw.imap_port) || '993') : 993;
-  const ownEmail = username.toLowerCase();
-
-  const client = new ImapFlow({
-    host: imapHost, port: imapPort, secure: imapPort === 993,
-    auth: { user: username, pass: password }, logger: false,
-    connectionTimeout: 15_000, greetingTimeout: 10_000, socketTimeout: 30_000,
-  });
+    .eq('workflow_providers.name', 'smtp');
+  if (!conns?.length) return [];
 
   const fullName = `${first} ${last}`;
   const candidates = [];
-  try {
-    await client.connect();
-    const folders = await client.list();
-    const inbox = folders.find(f => f.flags?.has('\\Inbox') || f.path === 'INBOX')?.path || 'INBOX';
-    const sent  = folders.find(f => f.flags?.has('\\Sent'))?.path || null;
-    for (const folder of [inbox, ...(sent ? [sent] : [])]) {
-      const lock = await client.getMailboxLock(folder);
-      try {
-        const uids = (await client.search({ or: [{ from: fullName }, { to: fullName }] }, { uid: true }) || []).slice(-12);
-        for (const uid of uids) {
-          const { content } = await client.download(String(uid), undefined, { uid: true });
-          const chunks = []; for await (const c of content) chunks.push(c);
-          const parsed = await simpleParser(Buffer.concat(chunks));
-          for (const grp of [parsed.from, parsed.to, parsed.cc]) {
-            for (const a of grp?.value || []) {
-              const email = (a.address || '').toLowerCase();
-              if (!email || email === ownEmail || FREE_OR_NOISE.test(email.split('@')[0])) continue;
-              if (bothNamesPresent(a.name, first, last)) candidates.push({ email, name: a.name, source: 'imap', subject: parsed.subject || '(no subject)' });
+
+  for (const conn of conns) {
+    const raw = conn.encrypted_credentials || {};
+    const host = safeDecrypt(raw.host), username = safeDecrypt(raw.username), password = safeDecrypt(raw.password);
+    if (!host || !username || !password) continue;
+    let imapHost = safeDecrypt(raw.imap_host) || (/office365\.com|smtp-mail\.outlook\.com/i.test(host) ? 'outlook.office365.com' : host.replace(/^smtp\./i, 'imap.'));
+    const imapPort = raw.imap_port ? parseInt(safeDecrypt(raw.imap_port) || '993') : 993;
+    const ownEmail = username.toLowerCase();
+
+    const client = new ImapFlow({
+      host: imapHost, port: imapPort, secure: imapPort === 993,
+      auth: { user: username, pass: password }, logger: false,
+      connectionTimeout: 15_000, greetingTimeout: 10_000, socketTimeout: 30_000,
+    });
+
+    try {
+      await client.connect();
+      const folders = await client.list();
+      const inbox = folders.find(f => f.flags?.has('\\Inbox') || f.path === 'INBOX')?.path || 'INBOX';
+      const sent  = folders.find(f => f.flags?.has('\\Sent'))?.path || null;
+      for (const folder of [inbox, ...(sent ? [sent] : [])]) {
+        const lock = await client.getMailboxLock(folder);
+        try {
+          const uids = (await client.search({ or: [{ from: fullName }, { to: fullName }] }, { uid: true }) || []).slice(-12);
+          for (const uid of uids) {
+            const { content } = await client.download(String(uid), undefined, { uid: true });
+            const chunks = []; for await (const c of content) chunks.push(c);
+            const parsed = await simpleParser(Buffer.concat(chunks));
+            for (const grp of [parsed.from, parsed.to, parsed.cc]) {
+              for (const a of grp?.value || []) {
+                const email = (a.address || '').toLowerCase();
+                if (!email || email === ownEmail || FREE_OR_NOISE.test(email.split('@')[0])) continue;
+                if (bothNamesPresent(a.name, first, last)) candidates.push({ email, name: a.name, source: 'imap', subject: parsed.subject || '(no subject)' });
+              }
             }
           }
-        }
-      } finally { lock.release(); }
+        } finally { lock.release(); }
+      }
+    } catch (e) {
+      console.warn(`[DISCOVER_IMAP] mailbox ${conn.id} failed (non-fatal):`, e.message);
+    } finally {
+      try { await client.logout(); } catch { /* ignore */ }
     }
-  } catch (e) {
-    console.warn('[DISCOVER_IMAP] failed (non-fatal):', e.message);
-  } finally {
-    try { await client.logout(); } catch { /* ignore */ }
   }
   return candidates;
 }

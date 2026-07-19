@@ -79,59 +79,36 @@ oauthGoogleRouter.get('/callback', async (req, res) => {
       scope:         tokens.scope,
     };
 
-    // Per-member mailboxes: key the connection by (workspace, provider, OWNER) so
-    // each teammate gets their OWN Gmail row instead of overwriting the workspace's
-    // one connection. Reconnecting updates that member's row; a new member inserts
-    // a new one. The name is the member's email, which also keeps the
-    // (workspace_id, provider_id, name) unique index distinct across members.
-    // See PRIVACY_MODEL.md / internal/MULTI_ACCOUNT_FOUNDATION.md. The poller already
-    // iterates all connections and attributes each email to its owner.
+    // Multi-account mailboxes: key the connection by the GOOGLE ACCOUNT
+    // (workspace, provider, account_email), NOT the member. This lets ONE person
+    // connect several mailboxes (bennet@, sales@) as distinct rows AND lets each
+    // teammate connect their own — reconnecting the SAME mailbox updates in place,
+    // a new mailbox inserts a new row. owner_user_id still records WHO connected it,
+    // for attribution + privacy scoping. name = the mailbox email, which keeps the
+    // (workspace_id, provider_id, name) unique index distinct per account. The
+    // poller iterates all connections and attributes each email to its owner.
     const connName = userInfo.email || stateData.connectionName;
-    const { data: existing } = await supabase
+    const accountEmail = userInfo.email?.toLowerCase() ?? null;
+    // Upsert on the (workspace, provider, name) unique key, where name = the mailbox
+    // email. Reconnecting the SAME mailbox updates it in place; a DIFFERENT mailbox
+    // (even owned by the same person) inserts a new row. No pre-lookup, so there's no
+    // legacy-row edge where a null account_email would collide on insert.
+    const { data: connection, error } = await supabase
       .from('workflow_provider_connections')
+      .upsert({
+        workspace_id: stateData.workspaceId,
+        provider_id: provider.id,
+        name: connName,
+        encrypted_credentials: credentials,
+        created_by: stateData.userId,
+        owner_user_id: stateData.userId,
+        account_email: accountEmail,
+        is_verified: true,
+        last_test_at: new Date().toISOString(),
+      }, { onConflict: 'workspace_id,provider_id,name' })
       .select('id')
-      .eq('workspace_id', stateData.workspaceId)
-      .eq('provider_id', provider.id)
-      .eq('owner_user_id', stateData.userId)
-      .maybeSingle();
-
-    let connection;
-    if (existing) {
-      const { data, error } = await supabase
-        .from('workflow_provider_connections')
-        .update({
-          encrypted_credentials: credentials,
-          name: connName,
-          is_verified: true,
-          last_test_at: new Date().toISOString(),
-          owner_user_id: stateData.userId,
-          account_email: userInfo.email?.toLowerCase() ?? null,
-        })
-        .eq('id', existing.id)
-        .select('id')
-        .single();
-      if (error) throw error;
-      connection = data;
-      console.log('[GOOGLE_OAUTH] Updated existing connection:', existing.id);
-    } else {
-      const { data, error } = await supabase
-        .from('workflow_provider_connections')
-        .insert({
-          workspace_id: stateData.workspaceId,
-          provider_id: provider.id,
-          name: connName,
-          encrypted_credentials: credentials,
-          created_by: stateData.userId,
-          owner_user_id: stateData.userId,
-          account_email: userInfo.email?.toLowerCase() ?? null,
-          is_verified: true,
-          last_test_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single();
-      if (error) throw error;
-      connection = data;
-    }
+      .single();
+    if (error) throw error;
 
     console.log('[GOOGLE_OAUTH] Connected:', userInfo.email, 'connection:', connection.id);
     return res.redirect(`${frontendUrl}/oauth-callback.html?oauth_success=true&connection_id=${connection.id}`);
