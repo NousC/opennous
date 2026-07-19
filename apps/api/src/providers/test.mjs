@@ -12,6 +12,9 @@
  * same provider was tested by one code path and waved through by another.
  */
 
+// Cal.com's v2 API requires a dated cal-api-version header on every request.
+const CAL_COM_API_VERSION = '2026-05-01';
+
 // A key-based provider we can verify with a live call.
 export const TESTABLE_PROVIDERS = ['apollo', 'instantly', 'lemlist', 'emailbison', 'heyreach', 'smartlead', 'prospeo', 'findymail', 'millionverifier', 'neverbounce', 'hubspot', 'pipedrive', 'attio', 'calendly', 'fireflies', 'fathom', 'cal_com', 'apify'];
 

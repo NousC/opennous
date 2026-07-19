@@ -522,7 +522,7 @@ export default function Integrations() {
 
       {/* Add an integration modal */}
       <Dialog open={addOpen} onOpenChange={(o)=>{ setAddOpen(o); if (!o) setConnecting(null); }}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle className="text-[18px] font-bold tracking-tight text-foreground">
               {connecting ? (
@@ -567,7 +567,7 @@ export default function Integrations() {
                 <p className="text-[12px] text-muted-foreground/70 text-center">You'll be redirected to authorize securely</p>
               </div>
             ) : (
-              <div className="rounded-xl border border-border p-5 space-y-4">
+              <div className="min-w-0 rounded-xl border border-border p-5 space-y-4">
                 <div>
                   <div className="text-[11px] font-medium text-muted-foreground/70 mb-1.5">Connection name</div>
                   <input value={connName} onChange={e=>setConnName(e.target.value)}
@@ -591,11 +591,11 @@ export default function Integrations() {
                   ))
                 ) : (
                   <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="text-[11px] font-medium text-muted-foreground/70">API key</div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="text-[11px] font-medium text-muted-foreground/70 min-w-0 truncate">API key</div>
                       {connecting?.key_url && (
                         <a href={connecting.key_url} target="_blank" rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline shrink-0 whitespace-nowrap">
                           Get your API key <ExternalLink className="h-3 w-3" />
                         </a>
                       )}

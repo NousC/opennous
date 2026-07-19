@@ -135,7 +135,7 @@ export const CATALOGUE = {
   },
   fireflies: {
     display: 'Fireflies.ai', category: 'meetings', auth: 'api_key',
-    keyUrl:  'https://app.fireflies.ai/settings',
+    keyUrl:  'https://app.fireflies.ai/settings/developer-settings',
     keyHint: 'Settings → Developer settings → copy your API key.',
     // Fireflies has no webhook mutation in its GraphQL API — not a gap on our side.
     webhook: 'manual',
