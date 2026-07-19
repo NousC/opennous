@@ -74,6 +74,20 @@ export function detectImportMappings(headers: string[]): Record<string, string> 
 export const SOURCE_LABELS: Record<string, string> = {
   gmail: "Gmail", smtp: "Email (SMTP)", linkedin: "LinkedIn",
   instantly: "Instantly", slack: "Slack",
+  fireflies: "Fireflies", fathom: "Fathom", calendly: "Calendly", cal_com: "Cal.com",
+};
+
+// Real provider logos instead of text labels — the marks read faster than names.
+export const SOURCE_LOGOS: Record<string, string> = {
+  gmail: "/provider-logos/gmail.svg",
+  smtp: "/provider-logos/smtp.svg",
+  linkedin: "/provider-logos/linkedin.png",
+  instantly: "/provider-logos/instantly.svg",
+  slack: "/provider-logos/slack.svg",
+  fireflies: "/provider-logos/fireflies.svg",
+  fathom: "/provider-logos/fathom.svg",
+  calendly: "/provider-logos/calendly.svg",
+  cal_com: "/provider-logos/cal_com.svg",
 };
 
 // ── Importer body (state machine, no chrome) ───────────────────────────────
@@ -117,6 +131,17 @@ function useImportState({ workspaceId, token, onClose, onDone, skipScan }: Peopl
     const id = setInterval(poll, 1500);
     return () => clearInterval(id);
   }, [step, enrichJobId, token]);
+
+  // The contacts are created the moment the import returns, so they're already in the
+  // Accounts list behind this modal. The backfill runs in the WORKER regardless of this
+  // window, so once we hit the scanning step, auto-close after a short beat and let the
+  // list reveal — the user shouldn't have to sit on a modal to watch a background job.
+  useEffect(() => {
+    if (step !== "scanning") return;
+    const t = setTimeout(() => onDone(), 5000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   const parseCSVFile = async (file: File) => {
     try {
@@ -247,7 +272,10 @@ function ImportBody(s: ReturnType<typeof useImportState>) {
                   <div className="space-y-1.5">
                     {active.map(([src, val]) => (
                       <div key={src} className="flex items-center justify-between">
-                        <span className="text-[12px] text-muted-foreground">{SOURCE_LABELS[src] ?? src}</span>
+                        <span className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                          {SOURCE_LOGOS[src] && <img src={SOURCE_LOGOS[src]} alt="" className="h-4 w-4 rounded-sm object-contain flex-shrink-0" />}
+                          {SOURCE_LABELS[src] ?? src}
+                        </span>
                         {val.status === "pending" && <span className="text-[12px] text-muted-foreground/50">Waiting…</span>}
                         {val.status === "scanning" && (
                           <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">

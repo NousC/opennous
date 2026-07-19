@@ -438,13 +438,13 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   // score and identifier for the account goes with it — so a re-import starts clean.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const toggleSel = (cid: string) => setSelected(prev => {
     const s = new Set(prev); s.has(cid) ? s.delete(cid) : s.add(cid); return s;
   });
-  const bulkDelete = async () => {
+  const doBulkDelete = async () => {
     const ids = [...selected];
     if (!ids.length) return;
-    if (!window.confirm(`Delete ${ids.length} account${ids.length === 1 ? '' : 's'} and ALL their Nous data — claims, activities, meetings, scores? This can't be undone.`)) return;
     setBulkDeleting(true);
     queryClient.setQueryData(contactsKey, (prev: ContactInfo[] = []) => prev.filter(c => !selected.has(c.id)));
     try {
@@ -456,6 +456,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     } catch { /* optimistic; refetch reconciles */ }
     setSelected(new Set());
     setBulkDeleting(false);
+    setConfirmDelete(false);
     refetch();
   };
 
@@ -640,6 +641,46 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   return (
     <div className="h-full flex flex-col bg-background">
       {showImport && <PeopleImportModal workspaceId={workspaceId} token={token} onClose={()=>setShowImport(false)} onDone={()=>{ setShowImport(false); refetch(); }}/>}
+
+      {/* Delete confirmation — a real in-app dialog, not the browser's native confirm. */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => !bulkDeleting && setConfirmDelete(false)} />
+          <div className="relative z-10 w-full max-w-[420px] rounded-2xl border border-border bg-background shadow-2xl p-6">
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-full bg-red-500/10 text-red-500">
+                <Trash2 className="h-4.5 w-4.5" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-[16px] font-semibold tracking-tight text-foreground">
+                  Delete {selected.size} account{selected.size === 1 ? '' : 's'}?
+                </h2>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+                  This permanently removes them and everything Nous knows about them — claims,
+                  activities, meetings, notes and scores. It can&apos;t be undone.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                disabled={bulkDeleting}
+                className="h-9 px-4 rounded-lg border border-border bg-background text-[13px] font-medium text-foreground/80 hover:bg-muted/50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doBulkDelete}
+                disabled={bulkDeleting}
+                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-red-500 text-white text-[13px] font-semibold hover:bg-red-600 transition-colors disabled:opacity-50"
+              >
+                {bulkDeleting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Delete {selected.size}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="px-8 pt-7 flex-shrink-0">
         <PageHeader
           title={embedded ? "Accounts" : "People"}
@@ -724,7 +765,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
               )}
             </div>
             {selected.size > 0 && (
-              <button onClick={bulkDelete} disabled={bulkDeleting}
+              <button onClick={() => setConfirmDelete(true)} disabled={bulkDeleting}
                 className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50">
                 {bulkDeleting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                 Delete {selected.size}
