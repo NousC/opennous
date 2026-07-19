@@ -590,6 +590,23 @@ contactsApiRouter.patch('/:id', verifySupabaseAuth, async (req, res) => {
 });
 
 // DELETE /api/contacts/:id
+// Full cascade delete of person entities. Deleting the `entities` row cascades
+// EVERYTHING Nous knows about them — claims (incl. notes + meeting documents),
+// observations/activities, entity_identifiers, predictions/scores, relationships,
+// claim_jobs, collection (lead-list) memberships — all ON DELETE CASCADE from here.
+// So the account is removed completely and a re-import starts clean. We null out any
+// `merged_into` pointer first, since that FK would otherwise RESTRICT the delete.
+async function cascadeDeleteEntities(supabase, workspaceId, ids) {
+  if (!ids.length) return 0;
+  await supabase.from('entities').update({ merged_into: null })
+    .eq('workspace_id', workspaceId).in('merged_into', ids)
+    .then(() => {}, () => {});
+  const { data, error } = await supabase.from('entities').delete()
+    .eq('workspace_id', workspaceId).in('id', ids).select('id');
+  if (error) throw error;
+  return data?.length || 0;
+}
+
 contactsApiRouter.delete('/:id', verifySupabaseAuth, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
@@ -597,14 +614,36 @@ contactsApiRouter.delete('/:id', verifySupabaseAuth, async (req, res) => {
     const { user } = await ensureUserAndTeam(req.user);
     if (!UUID.test(id)) return res.status(400).json({ error: 'invalid_contact_id' });
 
-    const { data: contact } = await supabase.from('contacts').select('id, workspace_id').eq('id', id).single();
-    if (!contact) return res.status(404).json({ error: 'contact_not_found' });
+    // Resolve the workspace off the ENTITY, not the contacts view — a cold lead isn't
+    // in the view, which is why the old delete 404'd on freshly imported people.
+    const { data: ent } = await supabase.from('entities').select('workspace_id').eq('id', id).maybeSingle();
+    if (!ent) return res.status(404).json({ error: 'contact_not_found' });
 
-    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', contact.workspace_id).eq('user_id', user.id).single();
-    if (!membership) return res.status(403).json({ error: 'contact_not_found_or_unauthorized' });
+    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', ent.workspace_id).eq('user_id', user.id).maybeSingle();
+    if (!membership) return res.status(403).json({ error: 'unauthorized' });
 
-    await supabase.from('contacts').delete().eq('id', id);
-    return res.json({ success: true });
+    const deleted = await cascadeDeleteEntities(supabase, ent.workspace_id, [id]);
+    return res.json({ success: true, deleted });
+  } catch (err) {
+    return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
+  }
+});
+
+// POST /api/contacts/bulk-delete { workspaceId, ids } — multi-select delete.
+contactsApiRouter.post('/bulk-delete', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const { workspaceId, ids } = req.body || {};
+    const { user } = await ensureUserAndTeam(req.user);
+    if (!workspaceId || !Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'workspace_and_ids_required' });
+    const valid = ids.filter(x => UUID.test(String(x)));
+    if (!valid.length) return res.status(400).json({ error: 'no_valid_ids' });
+
+    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', workspaceId).eq('user_id', user.id).maybeSingle();
+    if (!membership) return res.status(403).json({ error: 'unauthorized' });
+
+    const deleted = await cascadeDeleteEntities(supabase, workspaceId, valid);
+    return res.json({ success: true, deleted });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
   }

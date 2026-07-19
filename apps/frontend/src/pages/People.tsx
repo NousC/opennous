@@ -434,6 +434,31 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     }).catch(() => {});
   };
 
+  // Multi-select delete. The delete cascades server-side — every claim, activity,
+  // score and identifier for the account goes with it — so a re-import starts clean.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const toggleSel = (cid: string) => setSelected(prev => {
+    const s = new Set(prev); s.has(cid) ? s.delete(cid) : s.add(cid); return s;
+  });
+  const bulkDelete = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} account${ids.length === 1 ? '' : 's'} and ALL their Nous data — claims, activities, meetings, scores? This can't be undone.`)) return;
+    setBulkDeleting(true);
+    queryClient.setQueryData(contactsKey, (prev: ContactInfo[] = []) => prev.filter(c => !selected.has(c.id)));
+    try {
+      await fetch(`${apiUrl}/api/contacts/bulk-delete`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, ids }),
+      });
+    } catch { /* optimistic; refetch reconciles */ }
+    setSelected(new Set());
+    setBulkDeleting(false);
+    refetch();
+  };
+
   const handleEnrich = async (c: ContactInfo, e: React.MouseEvent) => {
     e.stopPropagation();
     if (enriching.has(c.id) || enriched.has(c.id)) return;
@@ -698,6 +723,13 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                 </>
               )}
             </div>
+            {selected.size > 0 && (
+              <button onClick={bulkDelete} disabled={bulkDeleting}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50">
+                {bulkDeleting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Delete {selected.size}
+              </button>
+            )}
             <span className="text-[12px] text-muted-foreground/70 ml-1 tabular-nums">{sorted.length} of {contacts.length}</span>
           </div>
         </div>
@@ -710,6 +742,18 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
           {/* Table header — sticky top; Name frozen left */}
           <div className="flex items-center px-4 py-2.5 bg-muted/50 border-b border-border sticky top-0 z-20">
             <div className="relative flex items-center flex-shrink-0 overflow-hidden sticky left-0 z-30 bg-muted/50" style={{width: colW("name")}}>
+              <input
+                type="checkbox"
+                aria-label="Select all on this page"
+                checked={pageRows.length > 0 && pageRows.every(c => selected.has(c.id))}
+                onChange={() => setSelected(prev => {
+                  const s = new Set(prev);
+                  const all = pageRows.every(c => s.has(c.id));
+                  pageRows.forEach(c => all ? s.delete(c.id) : s.add(c.id));
+                  return s;
+                })}
+                className="mr-2 h-3.5 w-3.5 flex-shrink-0 accent-foreground cursor-pointer"
+              />
               <span className="w-full min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">Name</span>
               <ColResizer onMouseDown={e=>startResize("name", e)} />
             </div>
@@ -731,17 +775,27 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
           {loading && contacts.length === 0 && <div className="text-[13px] text-muted-foreground/70 text-center py-12">Loading…</div>}
           {pageRows.map(c => (
             <div key={c.id} onMouseEnter={() => prefetchContact(c.id)} className="flex items-center px-4 py-3 border-b border-border/60 last:border-0 hover:bg-muted/50 transition-colors group">
-              <button onClick={() => setDetail(c)} className="flex-shrink-0 text-left min-w-0 pr-3 sticky left-0 z-10 bg-background group-hover:bg-muted/50" style={{width:colW("name")}}>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <div className="text-[13px] font-medium text-foreground truncate">{c.name}</div>
-                  {c.isInternal && (
-                    <span className="flex-shrink-0 inline-flex items-center gap-1 h-4 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-orange-500/15 text-orange-600 border border-orange-500/25">
-                      <Users className="h-2.5 w-2.5" /> Team
-                    </span>
-                  )}
-                </div>
-                {c.title && <div className="text-[12px] text-muted-foreground/70 truncate">{c.title}</div>}
-              </button>
+              <div className="flex items-center flex-shrink-0 min-w-0 pr-3 sticky left-0 z-10 bg-background group-hover:bg-muted/50" style={{width:colW("name")}}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${c.name}`}
+                  checked={selected.has(c.id)}
+                  onChange={() => toggleSel(c.id)}
+                  onClick={e => e.stopPropagation()}
+                  className="mr-2 h-3.5 w-3.5 flex-shrink-0 accent-foreground cursor-pointer"
+                />
+                <button onClick={() => setDetail(c)} className="text-left min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="text-[13px] font-medium text-foreground truncate">{c.name}</div>
+                    {c.isInternal && (
+                      <span className="flex-shrink-0 inline-flex items-center gap-1 h-4 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-orange-500/15 text-orange-600 border border-orange-500/25">
+                        <Users className="h-2.5 w-2.5" /> Team
+                      </span>
+                    )}
+                  </div>
+                  {c.title && <div className="text-[12px] text-muted-foreground/70 truncate">{c.title}</div>}
+                </button>
+              </div>
               <button onClick={() => setDetail(c)} className="text-[13px] text-muted-foreground truncate pr-2 flex-shrink-0 text-left" style={{width:colW("company")}}>{c.companyName ?? "—"}</button>
               <span className="text-[13px] text-muted-foreground/70 truncate pr-2 flex-shrink-0" style={{width:colW("domain")}}>{c.domain ?? "—"}</span>
               <div className="flex-shrink-0" style={{width:colW("li")}}>
