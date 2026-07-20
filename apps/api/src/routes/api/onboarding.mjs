@@ -51,7 +51,7 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
     if (!workspaceId) return res.json({ connected: false, onboarded: false, hasIcp: false });
 
     const [{ data: ws }, { data: keys }, { count: sources }, { count: accounts }, { count: trainedDeals }, icpPresent] = await Promise.all([
-      supabase.from('workspaces').select('website').eq('id', workspaceId).maybeSingle(),
+      supabase.from('workspaces').select('website, tour_completed_at').eq('id', workspaceId).maybeSingle(),
       supabase.from('api_keys').select('last_used_at').eq('workspace_id', workspaceId).is('revoked_at', null),
       supabase.from('workflow_provider_connections')
         .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
@@ -85,11 +85,33 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
       // Guided-tour checkpoints. Additive — the gate above reads none of these.
       accountCount: accounts ?? 0,
       icpTrained: (trainedDeals ?? 0) > 0,
+      // The one-time guided TOUR has been completed/dismissed for this workspace. Server
+      // truth so it never re-shows on a new browser/device, only localStorage-cached.
+      tourCompleted: !!ws?.tour_completed_at,
       website: ws?.website ?? null,
     });
   } catch (err) {
     console.error('[GET /api/onboarding/status]', err);
     return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// POST /api/onboarding/tour-seen — the guided tour was completed or dismissed. Stamps
+// the workspace so it never auto-shows again, on any device. Idempotent (keeps the first
+// completion time). Best-effort; localStorage still gives the instant local suppression.
+onboardingRouter.post('/tour-seen', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const workspaceId = await resolveWorkspaceId(supabase, req.user, req.workspaceId);
+    if (!workspaceId) return res.json({ ok: false });
+    await supabase.from('workspaces')
+      .update({ tour_completed_at: new Date().toISOString() })
+      .eq('id', workspaceId).is('tour_completed_at', null)
+      .then(() => {}, () => {});
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[POST /api/onboarding/tour-seen]', err);
+    return res.json({ ok: false });
   }
 });
 

@@ -16,12 +16,15 @@ export interface TourProgress {
   integrationConnected: boolean;
   accountsImported: boolean;
   icpTrained: boolean;
+  /** Server truth: the tour was already completed/dismissed for this workspace. */
+  tourCompleted: boolean;
 }
 
 const NONE: TourProgress = {
   integrationConnected: false,
   accountsImported: false,
   icpTrained: false,
+  tourCompleted: false,
 };
 
 export function useTourProgress(active: boolean): TourProgress & { loaded: boolean; refetch: () => void } {
@@ -43,6 +46,7 @@ export function useTourProgress(active: boolean): TourProgress & { loaded: boole
             integrationConnected: !!d.hasSource,
             accountsImported: (d.accountCount ?? 0) > 0,
             icpTrained: !!d.icpTrained,
+            tourCompleted: !!d.tourCompleted,
           });
         }
         setLoaded(true);

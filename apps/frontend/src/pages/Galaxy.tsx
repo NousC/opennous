@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Crown, AlertTriangle, ArrowUpRight, X } from "lucide-react";
 import { GraphFilters, buildGroups, type Show, type Group, type GroupBy, type Display, type Forces, type Counts } from "@/components/GraphFilters";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
@@ -846,6 +846,134 @@ function writePref<T>(key: string, val: T): void {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch { /* private mode / quota — not worth surfacing */ }
 }
 
+// ── The committee readout ─────────────────────────────────────────────────────
+//
+// The graph draws which accounts are alive. Clicking one on the war-room used to do
+// nothing but light its neighbours — a dead interaction on the one surface where the
+// whole buying group is already on screen. This is what makes the graph read as buyer
+// INTELLIGENCE rather than a heat map: click a company and it reads the room. Who is in
+// the buying group, who holds budget, who is your champion, and where the account is
+// exposed — single-threaded, or with nobody who can sign.
+//
+// Every number here already rides on the nodes the graph loaded: the committee is the
+// people whose `co` is this company, each carrying score, tier, decision-maker flag and
+// days-since-activity. No new fetch. The intelligence was always in the graph; we were
+// only ever drawing the temperature.
+const TIER_LABEL: Record<string, string> = { tier_1: "Tier 1", tier_2: "Tier 2", tier_3: "Tier 3", not_icp: "Not ICP" };
+// Score → the same gold/green/slate the canvas uses, so a dot in the card and a dot on
+// the graph mean the identical thing.
+function scoreHex(s: number | null): string {
+  if (s == null) return "#9aa0ad";
+  if (s >= 85) return "#e0a03a";
+  if (s >= 70) return "#2fa36b";
+  if (s >= 50) return "#8ec9a9";
+  return "#9aa0ad";
+}
+// Days-since-activity, said the way a rep says it. Cold flags the ones that need warming.
+function warmthOf(a: number | null): { label: string; cold: boolean } {
+  if (a == null) return { label: "no activity yet", cold: true };
+  if (a <= 7) return { label: "active this week", cold: false };
+  if (a <= 30) return { label: `active ${a}d ago`, cold: false };
+  return { label: `quiet ${a}d`, cold: true };
+}
+// The read of the room. A verdict, the gaps, and who the champion is — the champion being
+// the engaged decision-maker with the strongest fit, because that is the thread you work.
+function readRoom(members: any[]) {
+  const n = members.length;
+  const dms = members.filter((m) => m.dm);
+  const engagedDm = dms.filter((m) => m.a != null && m.a <= 30).sort((a, b) => (b.s ?? -1) - (a.s ?? -1))[0] || null;
+  const topDm = [...dms].sort((a, b) => (b.s ?? -1) - (a.s ?? -1))[0] || null;
+  const active = members.filter((m) => m.a != null && m.a <= 30).length;
+  const gaps: string[] = [];
+  if (n <= 1) gaps.push("Single-threaded");
+  if (!dms.length && n >= 1) gaps.push("No budget-holder");
+  let verdict: string;
+  if (n === 0) verdict = "No contacts mapped on this account yet";
+  else if (n === 1) verdict = "Single-threaded — one contact carries the whole account";
+  else if (!dms.length) verdict = `${n} contacts, none with buying authority`;
+  else if (engagedDm) verdict = `Championed — ${engagedDm.l || "a decision-maker"} holds budget and is engaged`;
+  else verdict = `${topDm?.l || "The decision-maker"} has gone quiet — warm the room`;
+  return { n, active, gaps, verdict, championId: engagedDm?.i || null, dmIds: new Set(dms.map((d) => d.i)) };
+}
+
+function CommitteeCard({ room, onClose, onOpenAccount }: {
+  room: { company: any; members: any[]; focus: string | null };
+  onClose: () => void;
+  onOpenAccount: (id: string) => void;
+}) {
+  const { company, members, focus } = room;
+  const r = readRoom(members);
+  const w = warmthOf(company.a);
+  const tier = company.tier ? TIER_LABEL[company.tier] : null;
+  return (
+    <aside className={cn(
+      "absolute left-4 top-16 z-10 w-[300px] max-h-[calc(100%-5rem)] flex flex-col",
+      "rounded-xl border border-border/80 bg-background/90 backdrop-blur-xl",
+      "shadow-[0_8px_30px_rgba(0,0,0,0.12)] overflow-hidden",
+    )}>
+      <div className="px-3.5 py-3 flex items-start justify-between border-b border-border/60 flex-shrink-0">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full flex-shrink-0 ring-1 ring-black/10" style={{ background: scoreHex(company.s) }} />
+            <span className="text-[13px] font-semibold text-foreground truncate">{company.l || "Company"}</span>
+          </div>
+          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+            {tier && <span className="tabular-nums">{tier}{company.s != null ? ` · ${company.s}` : ""}</span>}
+            {tier && <span className="opacity-40">·</span>}
+            <span className={cn(w.cold && "text-amber-600/80")}>{w.label}</span>
+          </div>
+        </div>
+        <button onClick={onClose} className="p-1 -mr-1 -mt-0.5 rounded text-muted-foreground/40 hover:text-foreground flex-shrink-0" title="Close">
+          <X className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+      </div>
+
+      <div className="px-3.5 py-2.5 border-b border-border/50 flex-shrink-0">
+        <p className="text-[12px] leading-snug text-foreground/85">{r.verdict}</p>
+        {r.gaps.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {r.gaps.map((g) => (
+              <span key={g} className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[10.5px] font-medium">
+                <AlertTriangle className="h-3 w-3" strokeWidth={2} />{g}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-1.5 py-1.5">
+        {members.length === 0 ? (
+          <p className="px-2 py-3 text-[11.5px] text-muted-foreground/50">No people resolved at this account yet.</p>
+        ) : members.map((m) => {
+          const mw = warmthOf(m.a);
+          const isChamp = m.i === r.championId;
+          const isDm = r.dmIds.has(m.i);
+          return (
+            <div key={m.i} className={cn("flex items-center gap-2 rounded-lg px-2 py-1.5", m.i === focus && "bg-accent/60")}>
+              <span className="h-2 w-2 rounded-full flex-shrink-0 ring-1 ring-black/10" style={{ background: scoreHex(m.s) }} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[12px] text-foreground/90 truncate">{m.l || "Unknown"}</span>
+                  {isChamp && <Crown className="h-3 w-3 flex-shrink-0 text-amber-500" strokeWidth={2} />}
+                </div>
+                <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground/60 truncate">
+                  {m.jt && <span className="truncate">{m.jt}</span>}
+                  {isDm && !isChamp && <span className="text-foreground/50 flex-shrink-0">· decision-maker</span>}
+                </div>
+              </div>
+              <span className={cn("text-[10px] tabular-nums flex-shrink-0", mw.cold ? "text-amber-600/70" : "text-muted-foreground/50")}>{mw.label}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <button onClick={() => onOpenAccount(company.i)} className="flex items-center justify-center gap-1.5 border-t border-border/60 px-3.5 py-2.5 text-[12px] font-medium text-foreground/80 hover:bg-accent/60 flex-shrink-0 transition-colors">
+        Open account <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
+    </aside>
+  );
+}
+
 export default function Galaxy({ embedded = false, view = "graph", onOpen }: { embedded?: boolean; view?: "graph" | "icp"; onOpen?: (n: { i: string; l: string | null; t: number }) => void } = {}) {
   const { session, userData } = useAuth();
   const token = session?.access_token ?? "";
@@ -856,6 +984,29 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
   // Held in a ref so a new callback identity never tears down and rebuilds the engine.
   const onOpenRef = useRef(onOpen);
   useEffect(() => { onOpenRef.current = onOpen; }, [onOpen]);
+  // The loaded graph, kept so a click can read the committee off nodes already on the
+  // canvas — no second fetch. The committee readout is the war-room's own interaction;
+  // embedded on the Accounts page a click opens the full record instead, so we leave that
+  // path untouched and only build the room when we own the whole window.
+  const dataRef = useRef<any>(null);
+  const [room, setRoom] = useState<{ company: any; members: any[]; focus: string | null } | null>(null);
+  const openRef = useRef<(n: any) => void>(() => {});
+  const openCommittee = (n: any) => {
+    const D = dataRef.current;
+    if (embedded || !D || !n || n.t === 3) { if (!embedded) setRoom(null); return; }
+    const companyId = n.t === 1 ? n.i : n.co;
+    if (!companyId) { setRoom(null); return; }
+    setRoom((prev) => {
+      // Re-clicking the open company toggles it shut, the same way the canvas toggles its
+      // own selection — clicking a PERSON re-focuses the room rather than closing it.
+      if (prev && prev.company.i === companyId && n.t === 1) return null;
+      const company = D.nodes.find((x: any) => x.i === companyId);
+      if (!company) return null;
+      const members = D.nodes.filter((x: any) => x.t === 0 && x.co === companyId).sort((a: any, b: any) => (b.s ?? -1) - (a.s ?? -1));
+      return { company, members, focus: n.t === 0 ? n.i : null };
+    });
+  };
+  openRef.current = (n: any) => { onOpenRef.current?.(n); openCommittee(n); };
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -903,7 +1054,7 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
   useEffect(() => {
     if (!token || !workspaceId || !rootRef.current) return;
     let disposed = false; let dispose: (() => void) | null = null;
-    setLoading(true); setErr(null);
+    setLoading(true); setErr(null); setRoom(null);
     // The ICP view needs the learned model as well as the graph, so the rail can show
     // what actually predicts a win. Fetched alongside, and a failure here is not fatal:
     // a graph with no rail beats no graph.
@@ -927,6 +1078,7 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
         DATA.scorecard = await scorecard;
         if (disposed || !rootRef.current) return;
         setLoading(false);
+        dataRef.current = DATA;
         if (!DATA.nodes?.length) return;
         // Seed positions only. The engine's live simulation takes it from here, warms
         // it, settles it, and keeps responding. There is no second precomputed layout
@@ -934,7 +1086,7 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
         layout(DATA.nodes, DATA.edges);
         // A live wrapper, not the value: the engine is built once, and a callback captured
         // by value would freeze whatever `onOpen` was on the very first render.
-        const c = runEngine(rootRef.current, DATA, view, embedded, (n: any) => onOpenRef.current?.(n));
+        const c = runEngine(rootRef.current, DATA, view, embedded, (n: any) => openRef.current(n));
         ctl.current = c;
         dispose = () => c.dispose();
         // Push the panel's initial state in before the first counts read, or the tier
@@ -973,6 +1125,9 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
         counts={counts}
         onFit={() => sync(c => c.fit())}
       />
+    )}
+    {room && !embedded && (
+      <CommitteeCard room={room} onClose={() => setRoom(null)} onOpenAccount={(id) => navigate(`/companies/${id}`)} />
     )}
     </div>
   );

@@ -24,6 +24,7 @@ import {
 } from '@/lib/tour';
 
 const CARD_W = 372;
+const apiUrl = import.meta.env.VITE_API_URL ?? '';
 
 function anchorRoutePath(route?: string) {
   return route ? route.split('?')[0] : undefined;
@@ -48,12 +49,13 @@ export default function GuidedTour() {
   const [step, setStep] = useState(0);
   const [hydrated, setHydrated] = useState(false);
 
-  // Hydrate from storage once we know the workspace. Auto-open only a never-seen tour.
+  // Hydrate from storage once we know the workspace. A finished/dismissed tour stays
+  // that way; an 'unstarted' one is NOT opened yet — it waits for the server flag below,
+  // so it never flashes for someone who already completed it on another device.
   useEffect(() => {
     if (!wsId) return;
     const s = loadTourState(wsId);
-    setStatus(s.status === 'unstarted' ? 'active' : s.status);
-    setStep(s.step);
+    if (s.status !== 'unstarted') { setStatus(s.status); setStep(s.step); }
     setHydrated(true);
   }, [wsId]);
 
@@ -61,10 +63,30 @@ export default function GuidedTour() {
     if (wsId) saveTourState(wsId, next);
   }, [wsId]);
 
+  // Fire-and-forget: stamp the workspace so the tour never re-shows on any device.
+  const markTourSeen = useCallback(() => {
+    const token = session?.access_token;
+    if (!token) return;
+    fetch(`${apiUrl}/api/onboarding/tour-seen`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+  }, [session]);
+
   const active = hydrated && isAuthenticated && status === 'active';
   const current: TourStep | undefined = TOUR_STEPS[step];
 
   const progress = useTourProgress(active);
+
+  // Server-gated auto-start. Only open a never-seen tour once we've confirmed with the
+  // server that this workspace hasn't already completed it (tourCompleted) — otherwise
+  // a cleared/new browser would re-show it. If the server says done, cache that locally.
+  useEffect(() => {
+    if (!hydrated || status !== 'unstarted' || !progress.loaded || !wsId) return;
+    if (progress.tourCompleted) {
+      setStatus('done');
+      saveTourState(wsId, { status: 'done', step: 0 });
+    } else {
+      setStatus('active');
+    }
+  }, [hydrated, status, progress.loaded, progress.tourCompleted, wsId]);
 
   // ── Advance / dismiss ────────────────────────────────────────────────────────
   const goTo = useCallback((n: number) => {
@@ -77,23 +99,26 @@ export default function GuidedTour() {
     if (step >= TOUR_STEPS.length - 1) {
       setStatus('done');
       persist({ status: 'done', step });
+      markTourSeen();
       return;
     }
     goTo(step + 1);
-  }, [step, goTo, persist]);
+  }, [step, goTo, persist, markTourSeen]);
 
   const dismiss = useCallback(() => {
     setStatus('dismissed');
     persist({ status: 'dismissed', step });
-  }, [step, persist]);
+    markTourSeen();
+  }, [step, persist, markTourSeen]);
 
   // Secondary action on the finish card: take them somewhere (the verifier lives in
   // Integrations) and end the tour.
   const finishAndGo = useCallback((route: string) => {
     setStatus('done');
     persist({ status: 'done', step });
+    markTourSeen();
     navigate(route);
-  }, [step, persist, navigate]);
+  }, [step, persist, navigate, markTourSeen]);
 
   // ── Auto-advance on a FRESH checkpoint completion ────────────────────────────
   // Only advance when the user completes the step's action WHILE on the step — not

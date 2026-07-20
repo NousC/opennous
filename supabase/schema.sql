@@ -7852,3 +7852,6 @@ CREATE TABLE IF NOT EXISTS public.contact_enrichment_jobs (
 
 CREATE INDEX IF NOT EXISTS contact_enrichment_jobs_status ON public.contact_enrichment_jobs (status, created_at);
 CREATE INDEX IF NOT EXISTS contact_enrichment_jobs_workspace_id ON public.contact_enrichment_jobs (workspace_id);
+
+-- Guided-tour completion flag (see migrations/workspaces_tour_completed_at.sql)
+ALTER TABLE public.workspaces ADD COLUMN IF NOT EXISTS tour_completed_at timestamptz;
