@@ -171,16 +171,25 @@ function computeFindings({ accounts, meetingSummaries }) {
 // ── LLM synthesis ────────────────────────────────────────────────────────────
 async function synthesize(findings, firstName) {
   const f = findings;
-  const prompt = `You are writing a short revenue report for a GTM founder who just imported their accounts into Nous, which then backfilled every email, meeting and call across their connected tools and scored each account for fit.
+  const prompt = `You are writing a short revenue report for a GTM founder. Nous just backfilled every email, meeting and call for their accounts and scored each one for fit.
 
-Write the report FROM THE FINDINGS BELOW ONLY. Never invent an account, number, or pattern that isn't here. Be specific and name accounts. Warm, direct, peer-to-peer. No fluff, no marketing, no em-dashes.
+Write FROM THE FINDINGS BELOW ONLY. Never invent an account, number, or pattern that isn't here. Be specific and NAME accounts. Warm, direct, peer to peer. No fluff, no marketing, no em dashes.
 
-Return JSON: { "subject": "...", "summary": "2-3 sentence opener", "sections": [ { "title": "...", "body": "..." } ] }
+Format EXACTLY as markdown, like this:
+Subject: <one-line email subject>
 
-Cover, only where there's real signal:
-- Revenue slipping through: quiet high-fit accounts, high-fit accounts never engaged, meetings with no follow-up. Name them.
-- Where effort is going vs where the fit is (most-active accounts, any low-fit accounts getting a lot of work).
-- Meeting patterns: read the meeting summaries and call out recurring themes, objections, or competitors if any are clear. If not, say what you'd watch.
+<a 2 to 3 sentence opening paragraph>
+
+## <Section title>
+<section body, a short paragraph or a few bullet lines>
+
+## <Section title>
+<section body>
+
+Cover these, but SKIP any section whose findings are empty:
+- Revenue slipping through: quiet high-fit accounts, high-fit accounts never engaged, meetings with no follow-up. Name the accounts.
+- Where effort is going vs where the fit is (most-active accounts; any low-fit accounts eating a lot of work).
+- Meeting patterns: read the meeting summaries and call out recurring themes, objections, or competitors if any are clear.
 - One "you'd never have known" line if the data supports it.
 
 Recipient first name: ${firstName || 'there'}
@@ -188,20 +197,42 @@ Recipient first name: ${firstName || 'there'}
 FINDINGS:
 ${JSON.stringify(f, null, 1).slice(0, 14000)}`;
 
-  const msg = await anthropic.messages.create({
-    feature: 'revenue-report', model: MODEL, max_tokens: 1600,
-    messages: [{ role: 'user', content: prompt }],
-  });
-  const raw = msg.content?.[0]?.text?.trim() || '';
+  let raw = '';
   try {
-    const j = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```$/, '').trim());
-    if (j && Array.isArray(j.sections)) return j;
-  } catch { /* fall through to a minimal report */ }
-  return {
-    subject: 'Your Nous revenue report',
-    summary: `We backfilled ${f.totals.activities} touchpoints across ${f.totals.accounts} accounts.`,
-    sections: [{ title: 'Summary', body: raw.slice(0, 2000) || 'Your accounts are in and enriched.' }],
-  };
+    const msg = await anthropic.messages.create({
+      feature: 'revenue-report', model: MODEL, max_tokens: 2500,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    raw = msg.content?.[0]?.text?.trim() || '';
+  } catch (e) {
+    console.error('[REVENUE_REPORT] llm error:', e?.message || e);
+  }
+  return parseMarkdownReport(raw, f);
+}
+
+// Markdown → { subject, summary, sections }. Robust to fences, prose, and truncation:
+// a cut-off final section still yields all the earlier ones.
+function parseMarkdownReport(raw, f) {
+  const fallbackSummary = `We backfilled ${f.totals.activities} touchpoints across ${f.totals.accounts} accounts and scored each for fit. Here's what stands out.`;
+  if (!raw) return { subject: 'Your revenue report from Nous', summary: fallbackSummary, sections: [] };
+
+  let body = raw.replace(/^```(?:markdown)?\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  let subject = 'Your revenue report from Nous';
+  const sm = body.match(/^\s*subject:\s*(.+)$/im);
+  if (sm) { subject = sm[1].trim(); body = body.replace(/^\s*subject:\s*.+$/im, '').trim(); }
+
+  const parts = body.split(/\n(?=##\s)/);
+  let summary = fallbackSummary;
+  let blocks = parts;
+  if (parts[0] && !/^##\s/.test(parts[0])) { summary = parts[0].trim() || fallbackSummary; blocks = parts.slice(1); }
+
+  const sections = [];
+  for (const blk of blocks) {
+    const m = blk.match(/^##\s*(.+?)\n([\s\S]*)$/);
+    if (m && m[2].trim()) sections.push({ title: m[1].trim(), body: m[2].trim() });
+  }
+  return { subject, summary, sections };
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
