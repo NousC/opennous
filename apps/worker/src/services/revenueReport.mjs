@@ -203,7 +203,8 @@ ${JSON.stringify(f, null, 1).slice(0, 14000)}`;
       feature: 'revenue-report', model: MODEL, max_tokens: 2500,
       messages: [{ role: 'user', content: prompt }],
     });
-    raw = msg.content?.[0]?.text?.trim() || '';
+    // Sonnet emits a thinking block first (content[0]), so grab the TEXT block, not [0].
+    raw = (msg.content?.find(c => c.type === 'text')?.text || '').trim();
   } catch (e) {
     console.error('[REVENUE_REPORT] llm error:', e?.message || e);
   }
