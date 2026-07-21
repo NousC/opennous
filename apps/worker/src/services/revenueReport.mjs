@@ -286,5 +286,5 @@ export async function generateAndEmailRevenueReport(supabase, workspaceId, conta
     text, html, tag: 'REVENUE_REPORT',
   });
   console.log(`[REVENUE_REPORT] sent to ${recipient.email} — ${findings.totals.accounts} accounts, ${findings.totals.activities} touchpoints`);
-  return { sent: true };
+  return { sent: true, report, totals: findings.totals };
 }
