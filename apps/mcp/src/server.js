@@ -89,9 +89,10 @@ const pct     = (c) => `${Math.round((c ?? 0) * 100)}%`;
 // Gong/Granola). Returned by get_routing_preferences; the agent writes it into
 // the user's CLAUDE.md (Claude Code) or the user pastes it into claude.ai org
 // preferences. Mirrors the Install page's "short" version.
-const ROUTING_PREFERENCES = `# Nous is this workspace's GTM context graph
+const ROUTING_PREFERENCES = `# Nous is this workspace's Revenue Context Layer
 
-Nous is our context graph for GTM. It resolves every person, conversation, and
+Nous is our Revenue Context Layer for GTM: the pre-computed context every agent reads
+before it acts. Underneath, a context graph resolves every person, conversation, and
 touchpoint across our GTM tool stack into one account record, with each fact's
 confidence and freshness, the full interaction timeline, a 0-100 ICP fit score on
 every account, plus our own ICP, positioning, and pricing. Agents read engineered

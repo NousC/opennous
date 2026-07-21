@@ -1,15 +1,17 @@
-// Revenue report — the onboarding "wow moment".
+// Revenue Intelligence Report — the onboarding "wow", C-level edition.
 //
-// The instant the post-import backfill finishes, we have every touchpoint, meeting and
-// score for the imported accounts resolved into one graph. This turns that into a report
-// the user could never have written themselves: where revenue is slipping, what to fix,
-// and the patterns hiding in their meetings — then emails it to them.
+// The moment the backfill finishes, we hold every touchpoint, meeting, extracted fact
+// and fit score for the imported accounts in one graph. This turns that into a report
+// a CRO would forward to the board: it does not SHOW the data, it TELLS you what's
+// happening, what it's costing, what's about to happen, and what to do — with named
+// accounts and the buyer's own words.
 //
-// Two halves, on purpose:
-//   1. Deterministic findings (computeFindings) — real numbers and NAMED accounts pulled
-//      straight from the graph. This is what makes it credible, not horoscope.
-//   2. LLM synthesis (synthesize) — turns those findings into a warm, specific narrative.
-//      It only ever speaks about findings we handed it, so it can't invent accounts.
+// Two halves:
+//   1. Deterministic findings (computeFindings) — a Revenue Health score, at-risk and
+//      predictive account lists, and the cross-account INTEL synthesis with verbatim
+//      quotes. Real numbers and real accounts, so nothing is invented.
+//   2. LLM synthesis (synthesize) — writes the diagnosis-first narrative FROM those
+//      findings only.
 
 import { getSupabaseClient, sendEmail } from '@nous/core';
 import Anthropic from 'useleak';
@@ -18,10 +20,18 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-5';
 
 const DAY = 86400000;
-const QUIET_DAYS = 30;       // no touch in this long = at risk
-const HIGH_FIT = 70;         // ICP score at or above this = a fit worth protecting
+const QUIET_DAYS = 21;
+const HIGH_FIT = 70;
 const MEETING_PROPS = new Set(['interaction.meeting_held', 'interaction.meeting_scheduled']);
 const REPLY_PROPS   = new Set(['interaction.email_reply', 'interaction.email_received', 'interaction.linkedin_message']);
+
+// Human labels for the intel categories the extractor tags (see core claimCategories).
+const CAT_LABEL = {
+  pain: 'Pain points', objection: 'Objections', goal: 'Goals', competitor: 'Competitors',
+  budget: 'Budget signals', timeline: 'Timelines', authority: 'Buying authority',
+  status_quo: 'Current stack / status quo', preference: 'Preferences', relationship: 'Relationships',
+};
+const INTEL_ORDER = ['pain', 'objection', 'competitor', 'goal', 'budget', 'timeline', 'authority', 'status_quo'];
 
 // ── Recipient ────────────────────────────────────────────────────────────────
 async function resolveOwnerEmail(supabase, workspaceId) {
@@ -37,98 +47,87 @@ async function resolveOwnerEmail(supabase, workspaceId) {
   } catch { return null; }
 }
 
-// ── Gather the graph slice for the imported accounts ─────────────────────────
-async function gatherAccounts(supabase, workspaceId, contactIds, payload) {
-  if (!contactIds.length) return [];
+// ── Gather the graph slice ───────────────────────────────────────────────────
+async function gatherAccounts(supabase, workspaceId, contactIds) {
+  if (!contactIds.length) return { accounts: [] };
 
-  // Names/company/email come from the import payload (works for cold leads not yet in
-  // the contacts view). Everything else comes from the graph the backfill just filled.
   const byId = new Map();
-  for (const p of payload || []) {
-    if (p?.id) byId.set(p.id, { id: p.id, name: [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email || 'Unknown', company: p.company || null, email: p.email || null });
-  }
-  for (const id of contactIds) if (!byId.has(id)) byId.set(id, { id, name: 'Unknown', company: null, email: null });
+  for (const id of contactIds) byId.set(id, { id, name: 'Unknown', company: null, email: null, intel: [], disposition: null });
 
-  // Fill names from the graph for anything the import payload didn't cover — this is
-  // what makes the report work on an EXISTING workspace (no payload), not just a fresh
-  // import. Engaged people are in the contacts view; cold leads only in claims.
-  const missing = () => [...byId.values()].filter(a => !a.name || a.name === 'Unknown');
-  if (missing().length) {
-    const ids = missing().map(a => a.id);
-    const { data: cv } = await supabase.from('contacts')
-      .select('id, first_name, last_name, company, email').in('id', ids);
-    for (const c of cv || []) {
-      const a = byId.get(c.id); if (!a) continue;
-      a.name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || a.name;
-      a.company = a.company || c.company || null;
-      a.email = a.email || c.email || null;
-    }
+  // Names (contacts view first, then claims for cold leads).
+  const { data: cv } = await supabase.from('contacts')
+    .select('id, first_name, last_name, company, email').in('id', contactIds);
+  for (const c of cv || []) {
+    const a = byId.get(c.id); if (!a) continue;
+    a.name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || 'Unknown';
+    a.company = c.company || null; a.email = c.email || null;
   }
-  if (missing().length) {
-    const ids = missing().map(a => a.id);
-    const { data: claims } = await supabase.from('claims')
-      .select('entity_id, property, value').in('entity_id', ids).in('property', ['first_name', 'last_name', 'company']);
+  const stillUnknown = [...byId.values()].filter(a => a.name === 'Unknown').map(a => a.id);
+  if (stillUnknown.length) {
+    const { data: nc } = await supabase.from('claims')
+      .select('entity_id, property, value').in('entity_id', stillUnknown).in('property', ['first_name', 'last_name', 'company']);
     const nm = new Map();
-    for (const c of claims || []) {
-      const v = c.value;
-      const s = typeof v === 'string' ? v : (v && typeof v === 'object' ? (v.value ?? '') : (v == null ? '' : String(v)));
+    for (const c of nc || []) {
+      const v = c.value; const s = typeof v === 'string' ? v : (v && typeof v === 'object' ? (v.value ?? '') : (v == null ? '' : String(v)));
       const e = nm.get(c.entity_id) || {}; e[c.property] = s; nm.set(c.entity_id, e);
     }
-    for (const a of missing()) {
-      const e = nm.get(a.id); if (!e) continue;
-      a.name = [e.first_name, e.last_name].filter(Boolean).join(' ') || a.name;
-      a.company = a.company || e.company || null;
-    }
+    for (const id of stillUnknown) { const a = byId.get(id); const e = nm.get(id); if (a && e) { a.name = [e.first_name, e.last_name].filter(Boolean).join(' ') || a.name; a.company = a.company || e.company || null; } }
   }
 
   // Activities.
   const { data: obs } = await supabase.from('observations')
-    .select('entity_id, property, observed_at, source, value')
+    .select('entity_id, property, observed_at, value')
     .eq('workspace_id', workspaceId).in('entity_id', contactIds)
-    .like('property', 'interaction.%').order('observed_at', { ascending: false }).limit(5000);
-
-  // ICP fit scores (latest prediction per entity).
-  const { data: preds } = await supabase.from('predictions')
-    .select('entity_id, predicted_value, predicted_at')
-    .eq('workspace_id', workspaceId).in('entity_id', contactIds).eq('kind', 'icp_fit')
-    .order('predicted_at', { ascending: false }).limit(2000);
-  const scoreById = new Map();
-  for (const p of preds || []) if (!scoreById.has(p.entity_id)) scoreById.set(p.entity_id, Number(p.predicted_value?.score));
-
+    .like('property', 'interaction.%').order('observed_at', { ascending: false }).limit(8000);
   const now = Date.now();
-  const meetingSummaries = [];
   for (const o of obs || []) {
-    const a = byId.get(o.entity_id);
-    if (!a) continue;
+    const a = byId.get(o.entity_id); if (!a) continue;
     a.activities = (a.activities || 0) + 1;
     const t = o.observed_at ? new Date(o.observed_at).getTime() : 0;
     if (!a.lastActivity || t > a.lastActivity) a.lastActivity = t;
-    if (MEETING_PROPS.has(o.property)) {
-      a.meetings = (a.meetings || 0) + 1;
-      if (!a.lastMeeting || t > a.lastMeeting) a.lastMeeting = t;
-      const s = o.value?.summary || o.value?.description;
-      if (s && meetingSummaries.length < 40) meetingSummaries.push({ who: a.name, text: String(s).slice(0, 500) });
-    }
+    if (MEETING_PROPS.has(o.property)) { a.meetings = (a.meetings || 0) + 1; if (!a.lastMeeting || t > a.lastMeeting) a.lastMeeting = t; }
     if (REPLY_PROPS.has(o.property)) a.replies = (a.replies || 0) + 1;
   }
 
-  for (const a of byId.values()) {
-    a.activities = a.activities || 0;
-    a.meetings = a.meetings || 0;
-    a.replies = a.replies || 0;
-    a.score = scoreById.has(a.id) && Number.isFinite(scoreById.get(a.id)) ? scoreById.get(a.id) : null;
-    a.daysSinceTouch = a.lastActivity ? Math.floor((now - a.lastActivity) / DAY) : null;
-    // A meeting with no activity logged AFTER it = no follow-up happened.
-    a.meetingNoFollowup = a.lastMeeting && (!a.lastActivity || a.lastActivity <= a.lastMeeting) && a.meetings > 0;
+  // ICP fit scores.
+  const { data: preds } = await supabase.from('predictions')
+    .select('entity_id, predicted_value, outcome_value, resolved_at, predicted_at')
+    .eq('workspace_id', workspaceId).in('entity_id', contactIds).eq('kind', 'icp_fit')
+    .order('predicted_at', { ascending: false }).limit(4000);
+  const scoreSeen = new Set();
+  for (const p of preds || []) {
+    const a = byId.get(p.entity_id); if (!a) continue;
+    if (!scoreSeen.has(p.entity_id)) { const sc = Number(p.predicted_value?.score); if (Number.isFinite(sc)) a.score = sc; scoreSeen.add(p.entity_id); }
+    if (p.resolved_at && p.outcome_value?.disposition && !a.disposition) a.disposition = p.outcome_value.disposition; // won | lost
   }
 
-  return { accounts: [...byId.values()], meetingSummaries };
+  // INTEL — the extracted facts (note.* claims), with verbatim content + category.
+  const { data: notes } = await supabase.from('claims')
+    .select('entity_id, value').in('entity_id', contactIds).like('property', 'note.%').limit(6000);
+  for (const n of notes || []) {
+    const a = byId.get(n.entity_id); if (!a) continue;
+    const cat = (n.value?.category || 'general').toLowerCase();
+    const content = String(n.value?.content || '').trim();
+    if (content) a.intel.push({ category: cat, content });
+  }
+
+  const accounts = [...byId.values()];
+  for (const a of accounts) {
+    a.activities = a.activities || 0; a.meetings = a.meetings || 0; a.replies = a.replies || 0;
+    a.score = Number.isFinite(a.score) ? a.score : null;
+    a.daysSinceTouch = a.lastActivity ? Math.floor((now - a.lastActivity) / DAY) : null;
+    a.meetingNoFollowup = a.meetings > 0 && a.lastMeeting && (!a.lastActivity || a.lastActivity <= a.lastMeeting);
+  }
+  return { accounts };
 }
 
 // ── Deterministic findings ───────────────────────────────────────────────────
-function computeFindings({ accounts, meetingSummaries }) {
+function computeFindings({ accounts }) {
+  const nm = (a) => a.name + (a.company ? ` (${a.company})` : '');
   const withScore = accounts.filter(a => a.score != null);
   const engaged = accounts.filter(a => a.activities > 0);
+  const highFit = withScore.filter(a => a.score >= HIGH_FIT);
+  const now = Date.now();
 
   const totals = {
     accounts: accounts.length,
@@ -136,156 +135,194 @@ function computeFindings({ accounts, meetingSummaries }) {
     meetings: accounts.reduce((s, a) => s + a.meetings, 0),
     replies: accounts.reduce((s, a) => s + a.replies, 0),
     engaged: engaged.length,
-    highFit: withScore.filter(a => a.score >= HIGH_FIT).length,
+    highFit: highFit.length,
   };
 
-  const byActivity = (a, b) => b.activities - a.activities;
-  const name = (a) => a.name + (a.company ? ` (${a.company})` : '');
+  // Revenue Health score — follow-through, high-fit coverage, momentum.
+  const withMeetings = accounts.filter(a => a.meetings > 0);
+  const followThrough = withMeetings.length ? 1 - withMeetings.filter(a => a.meetingNoFollowup).length / withMeetings.length : null;
+  const highFitCoverage = highFit.length ? highFit.filter(a => a.activities > 0).length / highFit.length : null;
+  const momentum = engaged.length ? engaged.filter(a => a.daysSinceTouch != null && a.daysSinceTouch <= QUIET_DAYS).length / engaged.length : null;
+  const parts = [[followThrough, 0.4], [highFitCoverage, 0.35], [momentum, 0.25]].filter(([v]) => v != null);
+  const wsum = parts.reduce((s, [, w]) => s + w, 0);
+  const health = {
+    score: wsum ? Math.round(100 * parts.reduce((s, [v, w]) => s + v * w, 0) / wsum) : null,
+    followThroughPct: followThrough == null ? null : Math.round(followThrough * 100),
+    highFitCoveragePct: highFitCoverage == null ? null : Math.round(highFitCoverage * 100),
+    momentumPct: momentum == null ? null : Math.round(momentum * 100),
+  };
 
-  // Revenue slipping through.
-  const quietHighFit = accounts
-    .filter(a => a.score != null && a.score >= HIGH_FIT && a.daysSinceTouch != null && a.daysSinceTouch >= QUIET_DAYS)
-    .sort((a, b) => b.score - a.score).slice(0, 8)
-    .map(a => ({ name: name(a), score: a.score, days: a.daysSinceTouch }));
+  // At risk.
+  const quietHighFit = highFit.filter(a => a.daysSinceTouch != null && a.daysSinceTouch >= QUIET_DAYS)
+    .sort((a, b) => b.score - a.score).slice(0, 8).map(a => ({ name: nm(a), score: a.score, days: a.daysSinceTouch }));
+  const meetingsNoFollowup = accounts.filter(a => a.meetingNoFollowup).sort((a, b) => b.meetings - a.meetings)
+    .slice(0, 8).map(a => ({ name: nm(a), meetings: a.meetings, score: a.score }));
+  const neverEngaged = accounts.filter(a => a.activities === 0).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 6).map(a => ({ name: nm(a), score: a.score }));
 
-  const neverEngaged = accounts
-    .filter(a => a.activities === 0)
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 8)
-    .map(a => ({ name: name(a), score: a.score }));
+  // Predictions.
+  const aboutToSlip = highFit.filter(a => a.daysSinceTouch != null && a.daysSinceTouch >= QUIET_DAYS && a.activities > 0)
+    .sort((a, b) => b.score - a.score).slice(0, 6).map(a => ({ name: nm(a), score: a.score, days: a.daysSinceTouch }));
+  const nextBest = highFit.filter(a => a.meetings === 0 && a.activities <= 3)
+    .sort((a, b) => b.score - a.score).slice(0, 6).map(a => ({ name: nm(a), score: a.score, activities: a.activities }));
 
-  const meetingsNoFollowup = accounts
-    .filter(a => a.meetingNoFollowup)
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 8)
-    .map(a => ({ name: name(a), score: a.score, meetings: a.meetings }));
+  // Effort vs fit.
+  const mostActive = [...engaged].sort((a, b) => b.activities - a.activities).slice(0, 6)
+    .map(a => ({ name: nm(a), activities: a.activities, meetings: a.meetings, score: a.score }));
+  const overWorkedLowFit = engaged.filter(a => a.score != null && a.score < 40 && a.activities >= 3)
+    .sort((a, b) => b.activities - a.activities).slice(0, 5).map(a => ({ name: nm(a), activities: a.activities, score: a.score }));
 
-  // Effort allocation: where is your time going vs. where the fit is?
-  const mostActive = [...engaged].sort(byActivity).slice(0, 6)
-    .map(a => ({ name: name(a), activities: a.activities, meetings: a.meetings, score: a.score }));
-  const overWorkedLowFit = engaged
-    .filter(a => a.score != null && a.score < 40 && a.activities >= 3)
-    .sort(byActivity).slice(0, 6).map(a => ({ name: name(a), activities: a.activities, score: a.score }));
+  // INTEL synthesis — cross-account, with verbatim quotes.
+  const catMap = new Map();
+  for (const a of accounts) {
+    const seenCat = new Set();
+    for (const it of a.intel) {
+      const c = it.category;
+      const e = catMap.get(c) || { category: c, label: CAT_LABEL[c] || c, count: 0, accounts: new Set(), quotes: [] };
+      e.count += 1; e.accounts.add(a.id);
+      if (e.quotes.length < 4 && !seenCat.has(c)) { e.quotes.push({ who: a.name, text: it.content.slice(0, 220) }); seenCat.add(c); }
+      catMap.set(c, e);
+    }
+  }
+  const intel = [...catMap.values()].map(e => ({ category: e.category, label: e.label, count: e.count, accounts: e.accounts.size, quotes: e.quotes }))
+    .sort((a, b) => (INTEL_ORDER.indexOf(a.category) + 100 * (INTEL_ORDER.indexOf(a.category) < 0)) - (INTEL_ORDER.indexOf(b.category) + 100 * (INTEL_ORDER.indexOf(b.category) < 0)) || b.count - a.count);
 
-  return { totals, quietHighFit, neverEngaged, meetingsNoFollowup, mostActive, overWorkedLowFit, meetingSummaries };
+  // Win / loss.
+  const won = accounts.filter(a => a.disposition === 'won');
+  const lost = accounts.filter(a => a.disposition === 'lost');
+  const catShare = (list) => {
+    const m = new Map();
+    for (const a of list) for (const it of new Set(a.intel.map(x => x.category))) m.set(it, (m.get(it) || 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([c, n]) => ({ label: CAT_LABEL[c] || c, count: n }));
+  };
+  const winLoss = { won: won.length, lost: lost.length, enough: won.length + lost.length >= 3,
+    wonShare: catShare(won), lostShare: catShare(lost) };
+
+  return { totals, health, quietHighFit, meetingsNoFollowup, neverEngaged, aboutToSlip, nextBest, mostActive, overWorkedLowFit, intel, winLoss };
 }
 
-// ── LLM synthesis ────────────────────────────────────────────────────────────
+// ── LLM synthesis (diagnosis-first) ──────────────────────────────────────────
 async function synthesize(findings, firstName) {
-  const f = findings;
-  const prompt = `You are writing a short revenue report for a GTM founder. Nous just backfilled every email, meeting and call for their accounts and scored each one for fit.
+  const prompt = `You are a revenue-intelligence analyst writing a report for a GTM leader. Nous resolved every email, meeting and call for their accounts into one graph, extracted the buyer's own words, and scored each account for fit. Write like a sharp CRO advisor: a point of view, not a data dump.
 
-Write FROM THE FINDINGS BELOW ONLY. Never invent an account, number, or pattern that isn't here. Be specific and NAME accounts. Warm, direct, peer to peer. No fluff, no marketing, no em dashes.
+Write FROM THE FINDINGS BELOW ONLY. Never invent an account, number, quote, or pattern that isn't here. Name accounts. Quote buyers verbatim from the intel quotes. Warm, direct, no fluff, no marketing, no em dashes.
 
-Format EXACTLY as markdown, like this:
-Subject: <one-line email subject>
+Format EXACTLY as markdown:
+Subject: <one-line subject that states the single most important finding>
 
-<a 2 to 3 sentence opening paragraph>
+## The diagnosis
+<2 to 4 sentences. Name the ONE thing constraining revenue and the evidence for it. This is a verdict, not a summary.>
 
-## <Section title>
-<section body, a short paragraph or a few bullet lines>
+## What it's costing you
+<The revenue at risk, in concrete named accounts. Quantify in accounts/pipeline. Bullet the specific accounts.>
 
-## <Section title>
-<section body>
+## What's about to happen
+<Two short blocks if the data supports them: accounts about to slip (high fit, gone quiet), and your next-best untapped high-fit accounts to prioritize. Name them.>
 
-Cover these, but SKIP any section whose findings are empty:
-- Revenue slipping through: quiet high-fit accounts, high-fit accounts never engaged, meetings with no follow-up. Name the accounts.
-- Where effort is going vs where the fit is (most-active accounts; any low-fit accounts eating a lot of work).
-- Meeting patterns: read the meeting summaries and call out recurring themes, objections, or competitors if any are clear.
-- One "you'd never have known" line if the data supports it.
+## What your market is telling you
+<The cross-account intel synthesis. For each strong category, one line on the pattern, then 1-2 VERBATIM quotes from the findings, attributed. This is the part no dashboard can produce.>
 
-Recipient first name: ${firstName || 'there'}
+## Why you win and lose
+<Only if there are enough closed deals: what won accounts share vs lost accounts. If not enough, say the model is still learning and what it will surface.>
+
+## Do this now
+<3 to 5 ranked, specific actions, each tied to a named account or a clear process fix.>
+
+Skip any section whose findings are empty. Recipient first name: ${firstName || 'there'}
 
 FINDINGS:
-${JSON.stringify(f, null, 1).slice(0, 14000)}`;
+${JSON.stringify(findings, null, 1).slice(0, 16000)}`;
 
   let raw = '';
   try {
-    const msg = await anthropic.messages.create({
-      feature: 'revenue-report', model: MODEL, max_tokens: 2500,
-      messages: [{ role: 'user', content: prompt }],
-    });
-    // Sonnet emits a thinking block first (content[0]), so grab the TEXT block, not [0].
+    const msg = await anthropic.messages.create({ feature: 'revenue-report', model: MODEL, max_tokens: 3000, messages: [{ role: 'user', content: prompt }] });
     raw = (msg.content?.find(c => c.type === 'text')?.text || '').trim();
-  } catch (e) {
-    console.error('[REVENUE_REPORT] llm error:', e?.message || e);
-  }
-  return parseMarkdownReport(raw, f);
+  } catch (e) { console.error('[REVENUE_REPORT] llm error:', e?.message || e); }
+  return parseMarkdownReport(raw, findings);
 }
 
-// Markdown → { subject, summary, sections }. Robust to fences, prose, and truncation:
-// a cut-off final section still yields all the earlier ones.
 function parseMarkdownReport(raw, f) {
-  const fallbackSummary = `We backfilled ${f.totals.activities} touchpoints across ${f.totals.accounts} accounts and scored each for fit. Here's what stands out.`;
-  if (!raw) return { subject: 'Your revenue report from Nous', summary: fallbackSummary, sections: [] };
-
+  const fallbackSummary = `We resolved ${f.totals.activities} touchpoints and ${f.totals.meetings} meetings across ${f.totals.accounts} accounts. Here's what stands out.`;
+  if (!raw) return { subject: 'Your revenue intelligence report', summary: fallbackSummary, sections: [] };
   let body = raw.replace(/^```(?:markdown)?\s*/i, '').replace(/```\s*$/i, '').trim();
-
-  let subject = 'Your revenue report from Nous';
+  let subject = 'Your revenue intelligence report';
   const sm = body.match(/^\s*subject:\s*(.+)$/im);
   if (sm) { subject = sm[1].trim(); body = body.replace(/^\s*subject:\s*.+$/im, '').trim(); }
-
   const parts = body.split(/\n(?=##\s)/);
-  let summary = fallbackSummary;
+  let summary = '';
   let blocks = parts;
-  if (parts[0] && !/^##\s/.test(parts[0])) { summary = parts[0].trim() || fallbackSummary; blocks = parts.slice(1); }
-
+  if (parts[0] && !/^##\s/.test(parts[0])) { summary = parts[0].trim(); blocks = parts.slice(1); }
   const sections = [];
-  for (const blk of blocks) {
-    const m = blk.match(/^##\s*(.+?)\n([\s\S]*)$/);
-    if (m && m[2].trim()) sections.push({ title: m[1].trim(), body: m[2].trim() });
-  }
-  return { subject, summary, sections };
+  for (const blk of blocks) { const m = blk.match(/^##\s*(.+?)\n([\s\S]*)$/); if (m && m[2].trim()) sections.push({ title: m[1].trim(), body: m[2].trim() }); }
+  return { subject, summary: summary || fallbackSummary, sections };
 }
 
 // ── Render ───────────────────────────────────────────────────────────────────
+function mdInline(s) {
+  return String(s ?? '')
+    .replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+function mdBlock(body) {
+  const lines = String(body || '').split('\n');
+  let html = '', inList = false;
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (/^[-*]\s+/.test(t)) { if (!inList) { html += '<ul style="margin:6px 0 6px 18px;padding:0">'; inList = true; } html += `<li style="margin:3px 0">${mdInline(t.replace(/^[-*]\s+/, ''))}</li>`; }
+    else { if (inList) { html += '</ul>'; inList = false; } if (t) html += `<p style="margin:8px 0">${mdInline(t)}</p>`; }
+  }
+  if (inList) html += '</ul>';
+  return html;
+}
+function healthColor(s) { return s == null ? '#6B655B' : s >= 70 ? '#15803d' : s >= 45 ? '#E0912B' : '#b45309'; }
+
 function renderHtml(report, f) {
-  const esc = (s) => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  const stat = (n, l) => `<td style="padding:8px 14px;text-align:center"><div style="font-size:22px;font-weight:700;color:#1A1712">${n}</div><div style="font-size:11px;color:#6B655B;text-transform:uppercase;letter-spacing:.04em">${l}</div></td>`;
+  const h = f.health;
+  const stat = (n, l) => `<td style="padding:8px 12px;text-align:center"><div style="font-size:20px;font-weight:700;color:#1A1712">${n}</div><div style="font-size:10px;color:#6B655B;text-transform:uppercase;letter-spacing:.04em">${l}</div></td>`;
+  const scoreBlock = h.score == null ? '' : `<div style="text-align:center;margin:0 0 18px">
+    <div style="font-size:11px;color:#6B655B;text-transform:uppercase;letter-spacing:.05em">Revenue Health</div>
+    <div style="font-size:40px;font-weight:800;color:${healthColor(h.score)};line-height:1.1">${h.score}<span style="font-size:18px;color:#6B655B">/100</span></div>
+    <div style="font-size:11px;color:#6B655B">Follow-through ${h.followThroughPct ?? '—'}% · High-fit coverage ${h.highFitCoveragePct ?? '—'}% · Momentum ${h.momentumPct ?? '—'}%</div>
+  </div>`;
   const sections = (report.sections || []).map(s =>
-    `<div style="margin:22px 0"><div style="font-size:15px;font-weight:600;color:#1A1712;margin-bottom:6px">${esc(s.title)}</div><div style="font-size:14px;line-height:1.65;color:#3a352d;white-space:pre-wrap">${esc(s.body)}</div></div>`
+    `<div style="margin:22px 0"><div style="font-size:15px;font-weight:700;color:#1A1712;margin-bottom:4px">${mdInline(s.title)}</div><div style="font-size:14px;line-height:1.6;color:#3a352d">${mdBlock(s.body)}</div></div>`
   ).join('');
-  return `<div style="max-width:620px;margin:0 auto;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1712;padding:8px 4px">
-  <div style="font-size:13px;color:#6B655B;margin-bottom:4px">Nous revenue report</div>
-  <div style="font-size:15px;line-height:1.6;color:#3a352d;margin-bottom:18px">${esc(report.summary)}</div>
-  <table style="width:100%;border-collapse:collapse;background:#FBFAF5;border:1px solid #E4DED1;border-radius:12px;margin-bottom:8px"><tr>
+  return `<div style="max-width:640px;margin:0 auto;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1712;padding:8px 4px">
+  <div style="font-size:13px;color:#6B655B;margin-bottom:12px">Nous · Revenue Intelligence Report</div>
+  ${scoreBlock}
+  <table style="width:100%;border-collapse:collapse;background:#FBFAF5;border:1px solid #E4DED1;border-radius:12px;margin-bottom:6px"><tr>
     ${stat(f.totals.accounts, 'Accounts')}${stat(f.totals.activities, 'Touchpoints')}${stat(f.totals.meetings, 'Meetings')}${stat(f.totals.highFit, 'High fit')}
   </tr></table>
+  <div style="font-size:14px;line-height:1.6;color:#3a352d;margin:14px 0">${mdInline(report.summary)}</div>
   ${sections}
-  <div style="margin-top:26px;font-size:12px;color:#6B655B;border-top:1px solid #E4DED1;padding-top:12px">Generated from your account graph in Nous. Open the app to work the accounts above.</div>
+  <div style="margin-top:26px;font-size:12px;color:#6B655B;border-top:1px solid #E4DED1;padding-top:12px">Generated from your account graph in Nous. It sharpens every time your team talks to an account.</div>
 </div>`;
 }
-
 function renderText(report, f) {
   const secs = (report.sections || []).map(s => `${s.title}\n${s.body}`).join('\n\n');
-  return `Nous revenue report\n\n${report.summary}\n\n${f.totals.accounts} accounts · ${f.totals.activities} touchpoints · ${f.totals.meetings} meetings · ${f.totals.highFit} high-fit\n\n${secs}\n\nGenerated from your account graph in Nous.`;
+  const hs = f.health.score == null ? '' : `Revenue Health: ${f.health.score}/100\n`;
+  return `Nous Revenue Intelligence Report\n${hs}\n${report.summary}\n\n${f.totals.accounts} accounts · ${f.totals.activities} touchpoints · ${f.totals.meetings} meetings · ${f.totals.highFit} high-fit\n\n${secs}\n\nGenerated from your account graph in Nous.`;
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
-export async function generateAndEmailRevenueReport(supabase, workspaceId, contactIds, payload, opts = {}) {
+export async function generateAndEmailRevenueReport(supabase, workspaceId, contactIds, _payload, opts = {}) {
   if (process.env.SELF_HOSTED === 'true' && !opts.recipient) return { sent: false, reason: 'self_hosted' };
   if (!process.env.ANTHROPIC_API_KEY) return { sent: false, reason: 'no_llm' };
 
-  // opts.recipient overrides the workspace owner (used for one-off / test sends).
-  const recipient = opts.recipient
-    ? { email: opts.recipient, firstName: opts.firstName || null }
-    : await resolveOwnerEmail(supabase, workspaceId);
+  const recipient = opts.recipient ? { email: opts.recipient, firstName: opts.firstName || null } : await resolveOwnerEmail(supabase, workspaceId);
   if (!recipient?.email) return { sent: false, reason: 'no_recipient' };
 
-  const gathered = await gatherAccounts(supabase, workspaceId, contactIds, payload);
-  if (!gathered.accounts?.length) return { sent: false, reason: 'no_accounts' };
+  const { accounts } = await gatherAccounts(supabase, workspaceId, contactIds);
+  if (!accounts?.length) return { sent: false, reason: 'no_accounts' };
 
-  const findings = computeFindings(gathered);
-  // Nothing to say if there's no history at all — don't email an empty report.
+  const findings = computeFindings({ accounts });
   if (findings.totals.activities === 0) return { sent: false, reason: 'no_activity' };
 
   const report = await synthesize(findings, recipient.firstName);
   const html = renderHtml(report, findings);
   const text = renderText(report, findings);
 
-  await sendEmail({
-    to: recipient.email,
-    subject: report.subject || 'Your Nous revenue report',
-    text, html, tag: 'REVENUE_REPORT',
-  });
-  console.log(`[REVENUE_REPORT] sent to ${recipient.email} — ${findings.totals.accounts} accounts, ${findings.totals.activities} touchpoints`);
-  return { sent: true, report, totals: findings.totals };
+  await sendEmail({ to: recipient.email, subject: report.subject || 'Your revenue intelligence report', text, html, tag: 'REVENUE_REPORT' });
+  console.log(`[REVENUE_REPORT] sent to ${recipient.email} — ${findings.totals.accounts} accounts, health ${findings.health.score}`);
+  return { sent: true, report, findings };
 }

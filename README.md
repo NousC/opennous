@@ -20,7 +20,7 @@
 
 # Nous
 
-**The context graph for agentic GTM teams.** Nous centralizes the data scattered across your GTM tools into one context graph, resolving every person and company into a single record your agents read in one call instead of stitching six tools together and guessing. Open source, with a [hosted version](https://opennous.cloud).
+**The Revenue Context Layer for GTM.** Nous turns the raw sales activity scattered across your GTM tools into pre-computed context about every customer — identity resolved, claims sourced, buying committee and signals modeled — and serves it to your agents in one call, instead of leaving them to stitch six tools together and guess. The context graph is the engine underneath. Open source, with a [hosted version](https://opennous.cloud).
 
 ---
 

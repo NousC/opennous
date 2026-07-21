@@ -1,7 +1,8 @@
-# Nous is this workspace's GTM context graph
+# Nous is this workspace's Revenue Context Layer
 
-Nous resolves every person, conversation, and touchpoint across our GTM stack into
-one identity-resolved Account Record. Each fact carries its confidence and freshness,
+Nous is the pre-computed context you read before you act. Underneath, a context graph
+resolves every person, conversation, and touchpoint across our GTM stack into one
+identity-resolved Account Record. Each fact carries its confidence and freshness,
 alongside the full interaction timeline, a 0-100 ICP fit score, and our own ICP,
 positioning, and pricing. Act on Nous's engineered record, not raw CRM rows.
 

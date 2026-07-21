@@ -1,6 +1,6 @@
 # The Context Graph
 
-Most GTM tools store the current state of a record for a human to read. Nous builds a context graph: a living, identity-resolved model of your market that an agent reads in one call and acts on. This document is the comprehensive picture, what the context graph is, why GTM agents need one, and how Nous actually builds it. It is precise rather than illustrative, and it points at the code. For the identity layer specifically, it refers out to [Identity Resolution](./identity-resolution.md); for scoring, to [ICP Scoring](./icp-scoring.md) and [Intent Score](./intent-score.md).
+Nous is the Revenue Context Layer for GTM: it turns raw sales activity into pre-computed context every agent can act on. The context graph is the engine underneath that layer. Most GTM tools store the current state of a record for a human to read; the context graph is instead a living, identity-resolved model of your market that an agent reads in one call and acts on. This document is the comprehensive picture, what the context graph is, why GTM agents need one, and how Nous actually builds it. It is precise rather than illustrative, and it points at the code. For the identity layer specifically, it refers out to [Identity Resolution](./identity-resolution.md); for scoring, to [ICP Scoring](./icp-scoring.md) and [Intent Score](./intent-score.md).
 
 ---
 
@@ -40,7 +40,7 @@ This is also our honest answer to "why can't I build this in Claude Code." You c
 
 A context graph represents your market the way a good rep reasons about it: as entities (this account, this buyer), relationships (champion, blocker, owner), claims (what is true, with how sure we are), and signals (what is happening right now). Not as tables and joins.
 
-Nous is the context graph for GTM specifically. The entities are accounts, people, and deals. The relationships are buying groups and employment. The claims run from structured properties like title, seniority, and deal stage to the durable intel extracted from conversations: a goal, a pain, an objection, who the champion is, the competitor they run today. The signals are hiring, funding, tech-stack moves, and intent. It is wired to the one job GTM teams actually run, which is why it ships the GTM model pre-built instead of handing you a blank graph to define.
+Nous's graph is built for GTM specifically. The entities are accounts, people, and deals. The relationships are buying groups and employment. The claims run from structured properties like title, seniority, and deal stage to the durable intel extracted from conversations: a goal, a pain, an objection, who the champion is, the competitor they run today. The signals are hiring, funding, tech-stack moves, and intent. It is wired to the one job GTM teams actually run, which is why it ships the GTM model pre-built instead of handing you a blank graph to define.
 
 One design stance matters and we hold it deliberately: the graph is **graph-first, not RAG-first.** The retrieval that serves an agent is a structured query over resolved entities and derived claims, not a vector similarity search over text chunks. Embeddings exist in the system as an optional convenience, but the load-bearing path is the graph. We say more on this in section 8.
 

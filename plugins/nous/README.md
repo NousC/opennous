@@ -1,6 +1,6 @@
 # Nous plugin for Claude Code (optional)
 
-Give Claude one MCP call to the full identity-resolved GTM account record — every tool unified, every claim with its epistemics.
+Nous is the Revenue Context Layer for GTM. This plugin gives Claude one MCP call to the pre-computed context on any account — every tool unified into one identity-resolved record, every claim carrying its source.
 
 > **You don't need the plugin to use Nous.** The front door is one command:
 >
@@ -24,7 +24,7 @@ You'll be prompted for your **Nous API key** at install (get one at <https://ope
 
 This is what the plugin adds over the bare MCP — hooks that route go-to-market work through Nous, no `CLAUDE.md` edits and no settings to touch:
 
-- **`SessionStart`** injects a concise standing instruction once per session (and after a compaction or `/clear`), so Claude treats Nous as the context graph by default.
+- **`SessionStart`** injects a concise standing instruction once per session (and after a compaction or `/clear`), so Claude treats Nous as the revenue context layer by default.
 - **`UserPromptSubmit`** adds a one-line nudge **only when a prompt looks like GTM work** (an email, or vocabulary like outreach / prospect / account / pipeline). It stays silent on everything else, so it never noises up a "fix this bug" turn.
 - **`PreToolUse`** is an **opt-in** advisory: when a raw CRM / call-intel tool (HubSpot, Salesforce, Gong, Apollo, …) is about to run, it allows the call but reminds Claude that Nous holds the resolved record on top. Off by default; set `NOUS_GUARD_COMPETITORS=1` to enable. It never blocks — your tools and your data stay yours.
 
