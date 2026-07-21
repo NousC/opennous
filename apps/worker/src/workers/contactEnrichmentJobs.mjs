@@ -62,6 +62,16 @@ export async function processContactEnrichmentJobs() {
         .update({ status: 'done', done: true, updated_at: new Date().toISOString() })
         .eq('job_id', job.job_id);
       console.log(`[CONTACT_ENRICH_JOB] done job=${job.job_id} contacts=${input.length}`);
+
+      // The onboarding "wow": now that the graph is filled, generate + email the revenue
+      // report. Best-effort and dynamically imported — it must never fail the job.
+      try {
+        const { generateAndEmailRevenueReport } = await import('../services/revenueReport.mjs');
+        const ids = payload.length ? payload.map(p => p.id).filter(Boolean) : contactIds;
+        await generateAndEmailRevenueReport(supabase, job.workspace_id, ids, payload);
+      } catch (e) {
+        console.error('[CONTACT_ENRICH_JOB] revenue report failed:', e?.message || e);
+      }
     } catch (e) {
       const giveUp = attempts >= MAX_ATTEMPTS;
       console.error(`[CONTACT_ENRICH_JOB] job=${job.job_id} failed (attempt ${attempts}${giveUp ? ', giving up' : ''}):`, e?.message || e);
