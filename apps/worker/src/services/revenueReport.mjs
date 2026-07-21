@@ -49,6 +49,38 @@ async function gatherAccounts(supabase, workspaceId, contactIds, payload) {
   }
   for (const id of contactIds) if (!byId.has(id)) byId.set(id, { id, name: 'Unknown', company: null, email: null });
 
+  // Fill names from the graph for anything the import payload didn't cover — this is
+  // what makes the report work on an EXISTING workspace (no payload), not just a fresh
+  // import. Engaged people are in the contacts view; cold leads only in claims.
+  const missing = () => [...byId.values()].filter(a => !a.name || a.name === 'Unknown');
+  if (missing().length) {
+    const ids = missing().map(a => a.id);
+    const { data: cv } = await supabase.from('contacts')
+      .select('id, first_name, last_name, company, email').in('id', ids);
+    for (const c of cv || []) {
+      const a = byId.get(c.id); if (!a) continue;
+      a.name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || a.name;
+      a.company = a.company || c.company || null;
+      a.email = a.email || c.email || null;
+    }
+  }
+  if (missing().length) {
+    const ids = missing().map(a => a.id);
+    const { data: claims } = await supabase.from('claims')
+      .select('entity_id, property, value').in('entity_id', ids).in('property', ['first_name', 'last_name', 'company']);
+    const nm = new Map();
+    for (const c of claims || []) {
+      const v = c.value;
+      const s = typeof v === 'string' ? v : (v && typeof v === 'object' ? (v.value ?? '') : (v == null ? '' : String(v)));
+      const e = nm.get(c.entity_id) || {}; e[c.property] = s; nm.set(c.entity_id, e);
+    }
+    for (const a of missing()) {
+      const e = nm.get(a.id); if (!e) continue;
+      a.name = [e.first_name, e.last_name].filter(Boolean).join(' ') || a.name;
+      a.company = a.company || e.company || null;
+    }
+  }
+
   // Activities.
   const { data: obs } = await supabase.from('observations')
     .select('entity_id, property, observed_at, source, value')
@@ -196,12 +228,15 @@ function renderText(report, f) {
 }
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
-export async function generateAndEmailRevenueReport(supabase, workspaceId, contactIds, payload) {
-  if (process.env.SELF_HOSTED === 'true') return { sent: false, reason: 'self_hosted' };
+export async function generateAndEmailRevenueReport(supabase, workspaceId, contactIds, payload, opts = {}) {
+  if (process.env.SELF_HOSTED === 'true' && !opts.recipient) return { sent: false, reason: 'self_hosted' };
   if (!process.env.ANTHROPIC_API_KEY) return { sent: false, reason: 'no_llm' };
 
-  const recipient = await resolveOwnerEmail(supabase, workspaceId);
-  if (!recipient) return { sent: false, reason: 'no_recipient' };
+  // opts.recipient overrides the workspace owner (used for one-off / test sends).
+  const recipient = opts.recipient
+    ? { email: opts.recipient, firstName: opts.firstName || null }
+    : await resolveOwnerEmail(supabase, workspaceId);
+  if (!recipient?.email) return { sent: false, reason: 'no_recipient' };
 
   const gathered = await gatherAccounts(supabase, workspaceId, contactIds, payload);
   if (!gathered.accounts?.length) return { sent: false, reason: 'no_accounts' };
