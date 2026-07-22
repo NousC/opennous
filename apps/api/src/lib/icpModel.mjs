@@ -155,10 +155,19 @@ export function renderIcpBlock(model, { syncedAt } = {}) {
   // soft loss-drivers the learning loop discovers.
   const exclusions = model.signals.filter(s => s.rule?.disqualify);
   const detractors = model.signals.filter(s => s.weight < 0 && !s.rule?.disqualify).sort((a, b) => a.weight - b.weight);
-  const n = model.calibration?.won != null ? (model.calibration.won + model.calibration.lost) : 0;
-  const dealsNote = model.has_outcomes ? `, ${n} closed deal${n === 1 ? '' : 's'}` : '';
+  // Describe the evidence honestly. Lift can only be LEARNED from wins (losses
+  // alone give nothing to contrast against), so a cohort of losses with zero wins
+  // is still seed estimates — don't call it "learned … N closed deals" as if the
+  // model trained on them. Split won/lost so the header can't overstate.
+  const won = model.calibration?.won ?? 0;
+  const lost = model.calibration?.lost ?? 0;
+  const n = won + lost;
+  const learned = won > 0;
+  const dealsNote = !model.has_outcomes ? ''
+    : learned ? `, ${n} closed deal${n === 1 ? '' : 's'} — ${won} won / ${lost} lost`
+    : `, ${lost} closed-lost (no wins yet — seed estimates)`;
 
-  lines.push(`## What predicts a win (learned by Nous${dealsNote}, synced ${date})`);
+  lines.push(`## What predicts a win (${learned ? 'learned by Nous' : 'seed estimates'}${dealsNote}, synced ${date})`);
   lines.push('_Read: weight feeds the 0-100 ICP score, lift = how much more often a deal wins when this is true, n = deals behind it._');
   lines.push('');
 

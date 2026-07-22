@@ -883,11 +883,24 @@ export default function Intelligence() {
                     : negative.map(s => renderSignal(s, "#b45309"))}
                 </div>
               </div>
+              {/* Seed-estimate notice. The model can only LEARN weights once it has
+                  wins to contrast against — losses alone can't compute lift. So gate
+                  on wins, but tell the truth about what's recorded: "no outcomes at all"
+                  vs "losses only" are different states and the old copy conflated them
+                  (it said "no closed outcomes yet" even when N losses were imported). */}
               {(substrate?.predictions.won ?? 0) === 0 && (
                 <div className="px-4 py-3 border-t border-border/60 bg-amber-500/[0.05] text-[12px] text-muted-foreground/80 leading-relaxed">
-                  No closed outcomes yet, so these weights are seed estimates.{" "}
-                  <button onClick={() => setCdOpen(true)} className="font-semibold text-foreground underline underline-offset-2 hover:text-foreground/80">Add your closed deals</button>{" "}
-                  and the model learns what actually predicts revenue.
+                  {(substrate?.predictions.lost ?? 0) > 0
+                    ? <>
+                        {substrate?.predictions.lost} closed-lost recorded, but no closed-won yet — so these weights
+                        stay seed estimates until wins show what actually predicts revenue.{" "}
+                        <button onClick={() => setCdOpen(true)} className="font-semibold text-foreground underline underline-offset-2 hover:text-foreground/80">Add your closed-won deals</button>.
+                      </>
+                    : <>
+                        No closed outcomes yet, so these weights are seed estimates.{" "}
+                        <button onClick={() => setCdOpen(true)} className="font-semibold text-foreground underline underline-offset-2 hover:text-foreground/80">Add your closed deals</button>{" "}
+                        and the model learns what actually predicts revenue.
+                      </>}
                 </div>
               )}
             </div>
