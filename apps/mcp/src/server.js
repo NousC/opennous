@@ -1211,9 +1211,15 @@ export function createServer() {
           "No ICP scoring model yet. Sync the user's ICP file with sync_icp first (or build one with " +
           "build_icp_model / train_icp_model), then call this to write it back." }] };
       }
-      const note = r.has_outcomes
+      // Lift can only be learned from WINS, so a win-less cohort (losses only) is
+      // still seed estimates — don't claim it's "trained on real closed deals".
+      const wonCount = r.calibration?.won ?? 0;
+      const lostCount = r.calibration?.lost ?? 0;
+      const note = wonCount > 0
         ? "This model is trained on real closed deals (lift + calibration shown)."
-        : "This model is seeded from the ICP only — add closed deals with train_icp_model to sharpen it.";
+        : lostCount > 0
+          ? `Still seed estimates — ${lostCount} closed-lost recorded but no closed-won yet to learn lift from. Add closed-won with train_icp_model to sharpen it.`
+          : "This model is seeded from the ICP only — add closed deals with train_icp_model to sharpen it.";
       return { content: [{ type: "text", text:
         `Write the block below into ${r.target_path} with your file editor — replace any existing block ` +
         `between the nous:icp markers, or append it if there's none (create the file/section if absent). ` +

@@ -165,7 +165,7 @@ export function renderIcpBlock(model, { syncedAt } = {}) {
   const learned = won > 0;
   const dealsNote = !model.has_outcomes ? ''
     : learned ? `, ${n} closed deal${n === 1 ? '' : 's'} — ${won} won / ${lost} lost`
-    : `, ${lost} closed-lost (no wins yet — seed estimates)`;
+    : `, ${lost} closed-lost, no wins yet`;
 
   lines.push(`## What predicts a win (${learned ? 'learned by Nous' : 'seed estimates'}${dealsNote}, synced ${date})`);
   lines.push('_Read: weight feeds the 0-100 ICP score, lift = how much more often a deal wins when this is true, n = deals behind it._');
