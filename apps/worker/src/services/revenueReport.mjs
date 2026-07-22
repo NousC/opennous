@@ -20,8 +20,14 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = 'claude-sonnet-5';
 
 const DAY = 86400000;
-const QUIET_DAYS = 21;
+const QUIET_DAYS = 21;       // momentum + at-risk window: an engaged account untouched this long has lost momentum
+const GOING_DARK_DAYS = 30;  // leakage scorecard's "going dark" bar — deliberately stricter than QUIET_DAYS, because "went dark" is a stronger claim than "lost momentum"
 const HIGH_FIT = 70;
+// A meeting counts two ways. HELD meetings actually happened, so they are the only ones
+// follow-through is measured against: a future or just-booked `meeting_scheduled` has no
+// follow-up owed yet, and counting it flagged healthy, actively-booking accounts as dropped.
+// SCHEDULED still counts as a real touchpoint in the activity tally and the meetings stat.
+const MEETING_HELD_PROP = 'interaction.meeting_held';
 const MEETING_PROPS = new Set(['interaction.meeting_held', 'interaction.meeting_scheduled']);
 const REPLY_PROPS   = new Set(['interaction.email_reply', 'interaction.email_received', 'interaction.linkedin_message']);
 
@@ -86,6 +92,7 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
     const t = o.observed_at ? new Date(o.observed_at).getTime() : 0;
     if (!a.lastActivity || t > a.lastActivity) a.lastActivity = t;
     if (MEETING_PROPS.has(o.property)) { a.meetings = (a.meetings || 0) + 1; if (!a.lastMeeting || t > a.lastMeeting) a.lastMeeting = t; }
+    if (o.property === MEETING_HELD_PROP) { a.heldMeetings = (a.heldMeetings || 0) + 1; if (!a.lastHeldMeeting || t > a.lastHeldMeeting) a.lastHeldMeeting = t; }
     if (REPLY_PROPS.has(o.property)) a.replies = (a.replies || 0) + 1;
   }
 
@@ -122,11 +129,13 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
 
   const accounts = [...byId.values()];
   for (const a of accounts) {
-    a.activities = a.activities || 0; a.meetings = a.meetings || 0; a.replies = a.replies || 0;
+    a.activities = a.activities || 0; a.meetings = a.meetings || 0; a.heldMeetings = a.heldMeetings || 0; a.replies = a.replies || 0;
     a.actionItems = a.actionItems || [];
     a.score = Number.isFinite(a.score) ? a.score : null;
     a.daysSinceTouch = a.lastActivity ? Math.floor((now - a.lastActivity) / DAY) : null;
-    a.meetingNoFollowup = a.meetings > 0 && a.lastMeeting && (!a.lastActivity || a.lastActivity <= a.lastMeeting);
+    // Follow-through is only owed on meetings that actually HAPPENED — key off held
+    // meetings so a future/just-booked scheduled meeting can't flag a healthy account.
+    a.meetingNoFollowup = a.heldMeetings > 0 && a.lastHeldMeeting && (!a.lastActivity || a.lastActivity <= a.lastHeldMeeting);
     // A commitment with no activity logged after it (the meeting is at `at`, so if the
     // last touch is at-or-before it, nothing happened since).
     a.unloggedCommitments = a.actionItems.filter(x => x.text && (!a.lastActivity || a.lastActivity <= x.at));
@@ -152,7 +161,7 @@ function computeFindings({ accounts }) {
   };
 
   // Revenue Health score — follow-through, high-fit coverage, momentum.
-  const withMeetings = accounts.filter(a => a.meetings > 0);
+  const withMeetings = accounts.filter(a => a.heldMeetings > 0);
   const followThrough = withMeetings.length ? 1 - withMeetings.filter(a => a.meetingNoFollowup).length / withMeetings.length : null;
   const highFitCoverage = highFit.length ? highFit.filter(a => a.activities > 0).length / highFit.length : null;
   const momentum = engaged.length ? engaged.filter(a => a.daysSinceTouch != null && a.daysSinceTouch <= QUIET_DAYS).length / engaged.length : null;
@@ -168,8 +177,8 @@ function computeFindings({ accounts }) {
   // At risk.
   const quietHighFit = highFit.filter(a => a.daysSinceTouch != null && a.daysSinceTouch >= QUIET_DAYS)
     .sort((a, b) => b.score - a.score).slice(0, 8).map(a => ({ name: nm(a), score: a.score, days: a.daysSinceTouch }));
-  const meetingsNoFollowup = accounts.filter(a => a.meetingNoFollowup).sort((a, b) => b.meetings - a.meetings)
-    .slice(0, 8).map(a => ({ name: nm(a), meetings: a.meetings, score: a.score }));
+  const meetingsNoFollowup = accounts.filter(a => a.meetingNoFollowup).sort((a, b) => b.heldMeetings - a.heldMeetings)
+    .slice(0, 8).map(a => ({ name: nm(a), meetings: a.heldMeetings, score: a.score }));
   const neverEngaged = accounts.filter(a => a.activities === 0).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 6).map(a => ({ name: nm(a), score: a.score }));
 
@@ -217,7 +226,7 @@ function computeFindings({ accounts }) {
   //    the identity + extraction layers catch up.
   const RISK_CATS = new Set(['competitor', 'objection', 'budget']);
   const riskAccounts = accounts.filter(a => a.intel.some(it => RISK_CATS.has(it.category)));
-  const staleAll = accounts.filter(a => a.activities > 0 && a.daysSinceTouch != null && a.daysSinceTouch >= 30);
+  const staleAll = accounts.filter(a => a.activities > 0 && a.daysSinceTouch != null && a.daysSinceTouch >= GOING_DARK_DAYS);
   const unloggedAll = accounts.filter(a => a.unloggedCommitments.length);
   const leakage = {
     total: riskAccounts.length + staleAll.length + unloggedAll.length,
