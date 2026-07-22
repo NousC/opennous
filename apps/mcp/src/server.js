@@ -1156,6 +1156,12 @@ export function createServer() {
           ...imp.map((s) => `  • ${s.section}${s.source_path ? `  ← ${s.source_path}` : ""}`),
         ];
         if (r.skipped?.length) lines.push("", `Skipped (unknown/empty): ${r.skipped.join(", ")}`);
+        // Section-check nudges from the server — the ICP file synced but is missing
+        // canonical sections (buyer, fit, triggers, …). Surface them so the agent
+        // rounds the file out and re-syncs, instead of the gaps passing silently.
+        for (const w of (r.warnings ?? [])) {
+          lines.push("", `⚠ ${w.message}`);
+        }
         const sig = r.signals ?? [];
         if (r.model_status === "created" && sig.length) {
           lines.push("", `Built the ICP scoring model — ${sig.length} signal${sig.length === 1 ? "" : "s"}.`);

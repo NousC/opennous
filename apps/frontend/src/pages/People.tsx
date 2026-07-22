@@ -90,7 +90,7 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
     finally { setLostMarking(false); }
   };
 
-  const { data, isPending: loading } = useQuery({
+  const { data, isPending: loading, refetch } = useQuery({
     queryKey: ["contact", contact.id],
     queryFn: async () => {
       const r = await fetch(`${apiUrl}/api/contacts/${contact.id}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -98,6 +98,24 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
     },
     enabled: !!contact.id && !!token,
   });
+
+  // Soft-delete a note/document (invalidates the claim server-side). Used to clear
+  // duplicate briefs from the Notes tab. Refetches so the row disappears.
+  const [deletingNote, setDeletingNote] = useState<string | null>(null);
+  const removeNote = async (noteId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (deletingNote) return;
+    if (!window.confirm("Delete this note? It's removed from the record but stays recoverable.")) return;
+    setDeletingNote(noteId);
+    try {
+      await fetch(`${apiUrl}/api/contacts/${contact.id}/memories/${noteId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await refetch();
+    } catch { /* refetch reconciles on next open */ }
+    finally { setDeletingNote(null); }
+  };
   const acts = useMemo(
     () => ((data?.activities ?? []) as any[]).filter((a: any) => a.activity_type !== "icp_scored"),
     [data],
@@ -257,7 +275,7 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
                       return (
                         <div key={m.id} onClick={() => window.open(`/note/${m.id}`, "_blank")}
                           title="Open note in a new tab"
-                          className="py-3 flex items-center gap-2.5 cursor-pointer hover:bg-muted/30 -mx-2 px-2 rounded-md transition-colors">
+                          className="group py-3 flex items-center gap-2.5 cursor-pointer hover:bg-muted/30 -mx-2 px-2 rounded-md transition-colors">
                           {isLinkedInScan
                             ? <Linkedin className="h-4 w-4 text-[#0A66C2] flex-shrink-0" />
                             : <DocIcon source={m.source} />}
@@ -267,6 +285,13 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
                               <span className="text-[12px] text-muted-foreground/70 ml-auto flex-shrink-0">{relTime(when)}</span>
                             </div>
                           </div>
+                          <button onClick={(e) => removeNote(m.id, e)} disabled={deletingNote === m.id}
+                            title="Delete note"
+                            className="flex-shrink-0 p-1 rounded text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100">
+                            {deletingNote === m.id
+                              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
+                          </button>
                         </div>
                       );
                     })}

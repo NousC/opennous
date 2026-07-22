@@ -22,6 +22,7 @@ import { resolveCrmTokenForProvider } from '../api/crm.mjs';
 import { runClosedDeals } from '../api/mind.mjs';
 import { writeWorkspaceFact, ALL_SECTIONS } from './workspaceFacts.mjs';
 import { computeIcpModel, renderIcpBlock, findIcpSourcePath } from '../../lib/icpModel.mjs';
+import { ICP_TEMPLATE, missingIcpSections } from '../../lib/icpTemplate.mjs';
 
 // ── Workspace status + onboarding — the agent's setup surface ──────────────────
 //
@@ -287,8 +288,11 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
         how: 'CLAUDE CODE: first SCAN the project for existing context — folders like context/, .claude/, gtm/ and files named icp*, positioning*, pricing*, competitors*, market*. '
           + 'If found, read them and call sync_icp with each file mapped to a section (and its source_path). '
           + 'If NONE exist, SCAFFOLD a context/ folder — icp.md, positioning.md, pricing.md, market.md, competitors.md, gtm-motion.md — filled from the profile research you already did plus a short interview, then call sync_icp on them. '
+          + 'For icp.md, use the CANONICAL ICP TEMPLATE below as the exact skeleton — keep every section heading (The buyer, Who is a fit, Who is NOT a fit, Trigger signals, Anchors) and the nous:icp block, and replace each <!-- guidance --> with the workspace\'s real answers. The buyer section is not optional: it is the qualitative context the scoring model and every agent read. '
           + 'sync_icp builds the scoring model on first sync, so after this accounts start getting scored. '
-          + 'OTHER CLIENTS (Codex / claude.ai, no repo): skip the files — the ICP you set in set_workspace_profile is enough to seed the model; build_icp_model from there.',
+          + 'OTHER CLIENTS (Codex / claude.ai, no repo): skip the files — the ICP you set in set_workspace_profile is enough to seed the model; build_icp_model from there.\n\n'
+          + '--- CANONICAL ICP TEMPLATE (context/icp.md) ---\n'
+          + ICP_TEMPLATE,
       });
     }
 
@@ -996,6 +1000,7 @@ workspaceStatusV2Router.post('/icp/import', async (req, res) => {
     const valid = new Set(ALL_SECTIONS);
     const imported = [];
     const skipped = [];
+    const warnings = [];        // non-blocking nudges (e.g. ICP missing a canonical section)
     const sourceFactIds = [];   // facts carrying a source_path, to stamp the model version
     for (const s of sections) {
       const name = String(s?.section || '').trim();
@@ -1021,6 +1026,20 @@ workspaceStatusV2Router.post('/icp/import', async (req, res) => {
           source: sourcePath ? 'claude_code' : 'nous',
           file_path: sourcePath,
         }));
+
+        // Section-check against the canonical template — a nudge, not a gate. A
+        // complete ICP names its buyer, its fit/not-fit, its triggers and anchors;
+        // a file missing those still syncs, but we tell the agent what to add so
+        // the file (and the model seeded from it) gets sharper next edit.
+        const missing = missingIcpSections(content);
+        if (missing.length) {
+          warnings.push({
+            section: 'ICP',
+            code: 'missing_canonical_sections',
+            missing,
+            message: `The ICP file synced, but it's missing ${missing.length} canonical section${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}. Add ${missing.length === 1 ? 'it' : 'them'} (see the canonical ICP template) and re-sync so the scoring model reads a complete definition.`,
+          });
+        }
       }
       imported.push({ section: name, source_path: sourcePath });
     }
@@ -1053,6 +1072,7 @@ workspaceStatusV2Router.post('/icp/import', async (req, res) => {
       ok: true,
       imported,
       skipped,
+      warnings,
       model_status: seed.status,
       signals: seed.signals ?? [],
       model_version: mv,

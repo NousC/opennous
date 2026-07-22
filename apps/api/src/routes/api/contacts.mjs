@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { getSupabaseClient, listNotes, saveNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames } from '@nous/core';
+import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames } from '@nous/core';
 import { fetchIcpByEntity, fetchIntentByEntity } from '../../lib/icpFit.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
@@ -693,6 +693,39 @@ contactsApiRouter.post('/:id/memories', verifySupabaseAuth, async (req, res) => 
     return res.json({ memory: mem });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// DELETE /api/contacts/:id/memories/:noteId — soft-delete one note/document on a
+// contact. Notes are asserted claims (property note.<uuid>); "delete" invalidates
+// via invalid_at per the v2 "never hard-delete" rule (see @nous/core deleteNote),
+// so it vanishes from the Notes tab but stays recoverable. Used to clear duplicate
+// briefs the meeting-brief skill appended.
+contactsApiRouter.delete('/:id/memories/:noteId', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const { id, noteId } = req.params;
+    const { user } = await ensureUserAndTeam(req.user);
+    if (!UUID.test(id)) return res.status(400).json({ error: 'invalid_contact_id' });
+    if (!UUID.test(noteId)) return res.status(400).json({ error: 'invalid_note_id' });
+
+    // Resolve the workspace off the entity so cold leads (not in the contacts view)
+    // still work — same reason the contact delete reads entities, not contacts.
+    const { data: ent } = await supabase.from('entities').select('workspace_id').eq('id', id).maybeSingle();
+    if (!ent) return res.status(404).json({ error: 'contact_not_found' });
+
+    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', ent.workspace_id).eq('user_id', user.id).maybeSingle();
+    if (!membership) return res.status(403).json({ error: 'unauthorized' });
+
+    // The note must exist in this workspace AND belong to THIS contact — so you
+    // can't invalidate a note hanging off another entity by guessing its id.
+    const note = await getNote(supabase, ent.workspace_id, noteId);
+    if (!note || note.entity_id !== id) return res.status(404).json({ error: 'note_not_found' });
+
+    await deleteNote(supabase, ent.workspace_id, noteId);
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
   }
 });
 
