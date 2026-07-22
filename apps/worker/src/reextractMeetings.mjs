@@ -9,7 +9,7 @@
 // use sweepWorkspace.mjs.
 //
 // Usage (worker container):
-//   docker compose exec -T worker node apps/worker/src/reextractMeetings.mjs [contactId] [--max N] [--apply]
+//   docker compose exec -T worker node apps/worker/src/reextractMeetings.mjs [contactId] [--max N] [--apply] [--include-research]
 
 import './bootEnv.mjs';
 import { getSupabaseClient, listNotes } from '@nous/core';
@@ -18,35 +18,48 @@ import { extractActivitySignals } from './signals/index.mjs';
 const DEFAULT_CONTACT = process.env.CONTACT_ID || '00000000-0000-0000-0000-000000000000'; // pass a contact id as the first arg, or set CONTACT_ID
 
 // Meeting source text is stored as note documents. Prefer the full transcript,
-// then the AI meeting-notes summary. Briefs are the agent's OWN research about
-// the person (not their words), so they're excluded.
-const SOURCE_TYPES = ['transcript', 'meeting_notes'];
+// then the AI meeting-notes summary — these are the CONTACT's own words.
+const MEETING_SOURCE_TYPES = ['transcript', 'meeting_notes'];
+
+// Research documents are the agent's OWN research about the person (their public
+// LinkedIn posts, their company site, prior context) — not their words. They were
+// historically excluded, which left real, durable intel (role, company, who they
+// know, what they're building) trapped in the document blob, never scored, never
+// read as claims. With --include-research they're mined too, under a research
+// provenance (extractActivitySignals type 'research_brief') that tells the model
+// this is second-hand so it frames the facts as such. Dry-run by default, like the
+// rest of this tool — an operator reviews before --apply writes anything.
+const RESEARCH_SOURCE_TYPES = ['meeting_brief', 'pre_meeting', 'research'];
 
 /**
- * Re-extract one contact's richest meeting source. Returns the array of result
- * facts ({content, category, action}) from that source, or [] if none.
+ * Re-extract one contact's richest source. Returns the array of result facts
+ * ({content, category, action}) from that source, or [] if none. Meeting sources
+ * are always considered; research/brief docs only when `includeResearch` is set.
  */
-export async function reextractContact({ supabase, workspaceId, contactId, apply, maxFacts = 8, all = false }) {
+export async function reextractContact({ supabase, workspaceId, contactId, apply, maxFacts = 8, all = false, includeResearch = false }) {
   const notes = await listNotes(supabase, workspaceId, { entityId: contactId, limit: 200 });
-  const sources = notes
-    .filter(n => SOURCE_TYPES.includes(n.metadata?.doc_type) && (n.content || '').trim())
-    .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0));
+  const pick = (types, extractionType) => notes
+    .filter(n => types.includes(n.metadata?.doc_type) && (n.content || '').trim())
+    .map(n => ({ doc: n, extractionType }));
+  const sources = [
+    ...pick(MEETING_SOURCE_TYPES, 'meeting_held'),
+    ...(includeResearch ? pick(RESEARCH_SOURCE_TYPES, 'research_brief') : []),
+  ].sort((a, b) => (b.doc.content?.length || 0) - (a.doc.content?.length || 0));
   if (!sources.length) return [];
 
-  // Default: mine the single richest source that yields facts (transcript first),
-  // to avoid cross-source duplicates. With `all`, mine EVERY meeting source — the
-  // dedup step (decideMerge) drops facts already captured from an earlier source,
-  // so covering all meetings is safe and captures per-meeting intel the richest
-  // single transcript would miss.
+  // Default: mine the single richest source that yields facts, to avoid cross-source
+  // duplicates. With `all`, mine EVERY source — the dedup step (decideMerge) drops
+  // facts already captured from an earlier source, so covering all of them is safe
+  // and captures per-source intel the richest single doc would miss.
   const collected = [];
-  for (const doc of sources) {
+  for (const { doc, extractionType } of sources) {
     const results = await extractActivitySignals({
       supabase,
       activityId:  doc.id,
       contactId,
       workspaceId,
-      type:        'meeting_held',
-      source:      'reextract',
+      type:        extractionType,
+      source:      extractionType === 'research_brief' ? 'brief_reextract' : 'reextract',
       summary:     doc.content,
       maxFactsOverride: maxFacts,
       dryRun:      !apply,
@@ -67,6 +80,7 @@ async function main() {
   const args = process.argv.slice(2);
   const apply = args.includes('--apply');
   const all = args.includes('--all');
+  const includeResearch = args.includes('--include-research');
   const maxIdx = args.indexOf('--max');
   const maxFacts = maxIdx !== -1 ? Number(args[maxIdx + 1]) : 8;
   const contactId = args.find(a => !a.startsWith('--') && !/^\d+$/.test(a)) || DEFAULT_CONTACT;
@@ -77,9 +91,10 @@ async function main() {
   if (!contact) { console.error(`contact ${contactId} not found`); process.exit(1); }
   const name = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contactId;
 
-  console.log(`\n${apply ? 'APPLY' : 'DRY-RUN'} — re-extract ${name} (${all ? 'ALL meetings' : 'richest meeting'}, up to ${maxFacts} facts each)\n`);
-  const results = await reextractContact({ supabase, workspaceId: contact.workspace_id, contactId, apply, maxFacts, all });
-  if (!results.length) console.log('  (no meeting transcript, or nothing cleared the bar)');
+  const scope = all ? 'ALL sources' : 'richest source';
+  console.log(`\n${apply ? 'APPLY' : 'DRY-RUN'} — re-extract ${name} (${scope}${includeResearch ? ' + research/briefs' : ''}, up to ${maxFacts} facts each)\n`);
+  const results = await reextractContact({ supabase, workspaceId: contact.workspace_id, contactId, apply, maxFacts, all, includeResearch });
+  if (!results.length) console.log('  (no eligible source, or nothing cleared the bar)');
   console.log('');
 }
 

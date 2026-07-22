@@ -92,11 +92,16 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     example: 'Currently on Clay and frustrated with its pricing at scale.',
   },
   {
+    // Key stays 'relationship' (existing claims are tagged with it); the label is
+    // "Connections" because this is the network layer — who they know, who they run
+    // with, the shared/mutual contacts that open a warm path. Named people captured
+    // here also feed the graph as KNOWS/WORKS_WITH edges (see extractGraphEdgesBatch),
+    // which is what turns "he mentioned Georgi" into "Georgi is a common connection".
     key: 'relationship',
-    label: 'Relationship',
+    label: 'Connections',
     about: 'person',
-    description: 'A durable connection to another person or org: reports-to, referred-by, knows.',
-    example: 'Reports to the VP of Growth, who holds final vendor sign-off.',
+    description: 'A durable connection to another person or org — reports-to, referred-by, a shared or mutual connection, a community they run or belong to, or a specific person they name knowing.',
+    example: 'Shares a mutual connection in Georgi; runs the Clay Club Amsterdam community.',
   },
   {
     key: 'general',
@@ -120,6 +125,12 @@ const ALIASES: Record<string, string> = {
   'objections': 'objection',
   'preferences': 'preference',
   'relationships': 'relationship',
+  'connection': 'relationship',
+  'connections': 'relationship',
+  'network': 'relationship',
+  'networking': 'relationship',
+  'knows': 'relationship',
+  'mutual': 'relationship',
   'budgets': 'budget',
   'timelines': 'timeline',
   'competitors': 'competitor',

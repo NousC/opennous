@@ -124,10 +124,13 @@ export async function autoCloseActionItems(supabase, workspaceId) {
     .limit(300);
   if (error || !rows?.length) return [];
 
-  // Only ours to close — a promise THEY made isn't closed by us acting.
+  // All open items with a title. Ownership is applied PER RULE below: a delivery
+  // promise ("I'll send X") is only ours to close (a promise THEY made isn't
+  // discharged by us acting), but a scheduling/meeting commitment is discharged for
+  // BOTH sides the moment the meeting objectively exists — whoever proposed it.
   const open = rows.filter(r => {
     const v = r.value || {};
-    return v.title && (v.status ?? 'open') === 'open' && (v.owner_kind ?? 'user') === 'user';
+    return v.title && (v.status ?? 'open') === 'open';
   });
   if (!open.length) return [];
 
@@ -154,8 +157,15 @@ export async function autoCloseActionItems(supabase, workspaceId) {
 
   for (const row of open) {
     const v = row.value || {};
+    const owner = v.owner_kind ?? 'user';
     const rule = COMPLETION_RULES.find(r => r.match.test(v.title));
-    if (!rule) { unjudged.push(row); continue; }
+    // No rule fits → the model reads the evidence, but only for OUR own freeform
+    // promises. A prospect's arbitrary commitment isn't ours to judge closed.
+    if (!rule) { if (owner === 'user') unjudged.push(row); continue; }
+    // Scheduling/meeting close for either side (a meeting existing is objective
+    // evidence); every other kind is a delivery only the promiser discharges → ours.
+    const ownerAgnostic = rule.kind === 'scheduling' || rule.kind === 'meeting';
+    if (!ownerAgnostic && owner !== 'user') continue;
 
     // The promise was made when the item was recorded. Evidence only counts if it
     // came AFTER — an email you sent last week doesn't discharge a promise you

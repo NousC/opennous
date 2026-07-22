@@ -108,7 +108,28 @@ export async function resolveEntity(
     .eq('value', value)
     .eq('status', 'active')
     .maybeSingle();
-  return data?.entity_id ?? null;
+  if (data?.entity_id) return data.entity_id;
+
+  // Fallback: the v1 `contacts` table is the source the UI trusts, and an email is
+  // often a guessed/imported field there (contacts.email) that was NEVER promoted
+  // to an entity_identifier. Resolving ONLY against identifiers made a real account
+  // unreachable by email (get_context/get_account 404) AND forked a duplicate on
+  // write (getOrCreateEntity created a new person because the email "didn't exist").
+  // entity_id == contact.id by the migration convention, so the contact row IS the
+  // entity. Only for email — LinkedIn/domain already resolve above, and callers that
+  // resolve here go on to attachIdentifiers, which self-heals the missing identifier.
+  if (identifier.kind === 'email') {
+    const { data: c } = await supabase
+      .from('contacts')
+      .select('id')
+      .eq('workspace_id', workspaceId)
+      .ilike('email', value)
+      .limit(1)
+      .maybeSingle();
+    if ((c as { id?: string } | null)?.id) return (c as { id: string }).id;
+  }
+
+  return null;
 }
 
 /** Attach identifiers to an entity, skipping any already registered. */
@@ -802,5 +823,36 @@ async function searchEntitiesByName(
       detail: company || (m.job_title ? String(m.job_title) : null),
     });
   }
+
+  // Same v1/v2 sync gap as resolveEntity: a contact whose name CLAIMS went missing
+  // or stale is invisible to the claim search above, even though the UI shows them
+  // straight from the `contacts` table. Union in contacts matches so a real account
+  // still resolves by name. Filter the query by the first token, then apply the same
+  // match rule in memory (entity_id == contact.id).
+  const token = needle.split(/\s+/)[0]?.replace(/[(),]/g, '') ?? '';
+  if (token) {
+    const seen = new Set(out.map(o => o.entity_id));
+    const { data: contacts } = await supabase
+      .from('contacts')
+      .select('id, first_name, last_name, company, job_title')
+      .eq('workspace_id', workspaceId)
+      .or(`first_name.ilike.%${token}%,last_name.ilike.%${token}%,company.ilike.%${token}%`)
+      .limit(50);
+    for (const c of (contacts as any[]) ?? []) {
+      if (seen.has(c.id)) continue;
+      const full = [c.first_name, c.last_name].filter(Boolean).join(' ');
+      const first = String(c.first_name ?? '').toLowerCase();
+      const last = String(c.last_name ?? '').toLowerCase();
+      const company = String(c.company ?? '').toLowerCase();
+      const matches =
+        (full && full.toLowerCase().includes(needle)) ||
+        first.startsWith(needle) || last.startsWith(needle) ||
+        (company && company.includes(needle));
+      if (!matches) continue;
+      seen.add(c.id);
+      out.push({ entity_id: c.id, name: full || null, detail: c.company || c.job_title || null });
+    }
+  }
+
   return out;
 }

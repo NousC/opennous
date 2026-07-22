@@ -156,20 +156,27 @@ async function extractGraphEdgesBatch(supabase, workspaceId, facts, context = {}
       feature: 'graph-edges-extract',
       model: 'claude-haiku-4-5-20251001',
       max_tokens: Math.min(1500, 120 * facts.length + 100),
-      messages: [{ role: 'user', content: `Extract relationship edges from these facts for a GTM knowledge graph. Only extract when two named entities have a clear directional relationship. A relationship may span two facts.
+      messages: [{ role: 'user', content: `Extract relationship edges from these facts for a GTM knowledge graph. A relationship may span two facts.
+
+Extract an edge in TWO cases:
+1. Two named entities have a clear directional relationship (reports-to, owns budget, champions, competes with, uses).
+2. The subject NAMES A SPECIFIC PERSON they are connected to — a shared or mutual connection, a friend, someone who introduced them, someone they mention knowing — even with no formal relationship. Use KNOWS, subject = the contact, object = the named person. This is what turns "he mentioned Georgi" into a common-connection node in the graph, so DON'T skip a named person just because the tie is informal.
+
+Only real, specific PEOPLE or ORGS — never a generic role, a topic, or a tool as a "known person".
 
 FACTS:
 ${factBlock}${contextHint ? `\n\nCONTEXT: ${contextHint}` : ''}
 
 Return a JSON array. Each edge, with "from" set to the number of the fact it came from:
-{"from":1,"subject_label":"name","subject_type":"contact|company|product|competitor|topic","relationship":"REPORTS_TO|DEFERS_TO_TECHNICAL|DEFERS_TO_BUDGET|DECISION_MAKER_AT|BUDGET_HOLDER_AT|CHAMPIONS|BLOCKS|EVALUATING|USES|WORKS_WITH|CHURNED_FROM|COMPETES_WITH","object_label":"name","object_type":"contact|company|product|competitor|topic"}
+{"from":1,"subject_label":"name","subject_type":"contact|company|product|competitor|topic","relationship":"REPORTS_TO|DEFERS_TO_TECHNICAL|DEFERS_TO_BUDGET|DECISION_MAKER_AT|BUDGET_HOLDER_AT|CHAMPIONS|BLOCKS|EVALUATING|USES|WORKS_WITH|KNOWS|CHURNED_FROM|COMPETES_WITH","object_label":"name","object_type":"contact|company|product|competitor|topic"}
 
 Examples:
 "Sarah defers to Marcus on technical decisions" → {"from":1,"subject_label":"Sarah","subject_type":"contact","relationship":"DEFERS_TO_TECHNICAL","object_label":"Marcus","object_type":"contact"}
 "Jennifer controls the budget at TechFlow" → {"from":2,"subject_label":"Jennifer","subject_type":"contact","relationship":"BUDGET_HOLDER_AT","object_label":"TechFlow","object_type":"company"}
+"Jack shares a mutual connection in Georgi" → {"from":1,"subject_label":"Jack","subject_type":"contact","relationship":"KNOWS","object_label":"Georgi","object_type":"contact"}
 "Mentioned Q2 budget" → nothing
 
-Return [] if no clear two-entity relationship anywhere. At most 4 edges per fact. ONLY valid JSON array, no other text.` }],
+Return [] only if no entity relationship AND no named person anywhere. At most 4 edges per fact. ONLY valid JSON array, no other text.` }],
     });
 
     const text = msg.content[0]?.text?.trim() ?? '[]';
@@ -303,24 +310,48 @@ export async function extractActivitySignals({ supabase, activityId, contactId, 
       ? [[contact.first_name, contact.last_name].filter(Boolean).join(' '), contact.company].filter(Boolean).join(' at ')
       : null;
     const contactName = (contact && [contact.first_name, contact.last_name].filter(Boolean).join(' ')) || 'the contact';
-    // Reaching here means the content is the contact's own words (outbound is
-    // filtered out in extractAfterActivity). State that explicitly so Haiku
-    // never mistakes the user's side of a thread for a fact about the contact.
-    const provenance = type === 'meeting_held'
-      ? `These are notes/transcript from a meeting with ${contactName}.`
-      : `This is a message that ${contactName} sent to you (the user) — these are ${contactName}'s own words, not yours.`;
+    // Reaching here means the content describes the contact, not the user's own
+    // words back at them — the caller guarantees it (outbound single messages are
+    // filtered out in extractAfterActivity; the thread/brief passes carry both
+    // sides but label them, and say so in the provenance). State the shape
+    // explicitly so Haiku never mistakes the user's side for a fact about the
+    // contact.
+    const provenance = {
+      meeting_held:
+        `These are notes/transcript from a meeting with ${contactName}.`,
+      // The full two-sided thread. Lines are labelled by speaker; only the
+      // contact's side (and what it reveals) describes the contact. This is the
+      // pass that catches relational intel a single short message can't carry on
+      // its own — a shared connection, their role, what they're building.
+      conversation_thread:
+        `This is the full back-and-forth of a conversation between you (the user) and ${contactName}. ` +
+        `Lines beginning "You:" are the user's own words; lines beginning "${contactName}:" are ${contactName}'s. ` +
+        `Record durable facts about ${contactName} drawn from the WHOLE exchange, including things that only become ` +
+        `clear across several messages (a shared connection, their role, their company, what they are building). ` +
+        `NEVER turn a "You:" line into a fact about ${contactName}.`,
+      // Research the user's OWN agent compiled about the contact (from public
+      // LinkedIn posts, their website, prior context) — not the contact's words.
+      // Real, durable intel, but second-hand, so it is framed as such.
+      research_brief:
+        `This is research the user's own agent compiled ABOUT ${contactName} (from their public LinkedIn posts, ` +
+        `their company website, and prior context) — not ${contactName}'s own words. Record the durable facts it ` +
+        `establishes about ${contactName} or their company.`,
+    }[type] ||
+      `This is a message that ${contactName} sent to you (the user) — these are ${contactName}'s own words, not yours.`;
 
     const channelLabel = {
-      slack_dm:         'Slack DM',
-      slack_message:    'Slack channel message',
-      email_reply:      'email reply',
-      email_received:   'inbound email',
-      linkedin_message: 'LinkedIn message',
-      linkedin_replied: 'LinkedIn reply',
-      linkedin_reply:   'LinkedIn reply',
-      reply:            'reply',
-      positive_reply:   'reply',
-      meeting_held:     'meeting notes/transcript',
+      slack_dm:            'Slack DM',
+      slack_message:       'Slack channel message',
+      email_reply:         'email reply',
+      email_received:      'inbound email',
+      linkedin_message:    'LinkedIn message',
+      linkedin_replied:    'LinkedIn reply',
+      linkedin_reply:      'LinkedIn reply',
+      reply:               'reply',
+      positive_reply:      'reply',
+      meeting_held:        'meeting notes/transcript',
+      conversation_thread: 'conversation thread',
+      research_brief:      'research brief',
     }[type] || type;
 
     // No fixed target — the content and the quality bar decide how many claims a
@@ -329,7 +360,11 @@ export async function extractActivitySignals({ supabase, activityId, contactId, 
     // guards), NOT goals; the prompt is explicit that the model must extract only
     // what clears the bar and must never pad to reach a count. A deliberate
     // re-extract pass can still raise the ceiling via override.
-    const maxFacts = maxFactsOverride ?? (type === 'meeting_held' ? 12 : 4);
+    const maxFacts = maxFactsOverride ?? ({
+      meeting_held:        12,
+      research_brief:      8,
+      conversation_thread: 6,
+    }[type] ?? 4);
 
     const msg = await anthropic.messages.create({
       feature: 'activity-signals-extract',
@@ -586,6 +621,69 @@ If nothing meaningful: []` }],
     });
   } catch (err) {
     console.warn('[MEETING_EXTRACTOR_ERROR]', err.message);
+    return [];
+  }
+}
+
+// ── Conversation-thread rollup (the whole back-and-forth, one pass) ───────────
+//
+// Per-message extraction judges each DM in isolation, so intel that only exists
+// ACROSS the thread never lands: a shared connection named in one line, a role in
+// another, "the one source of truth you talked about" three messages up. Each short
+// message reads as a pleasantry on its own and yields []. This pass loads the whole
+// two-sided conversation, labels each side, and mines durable facts from the
+// exchange as a unit.
+//
+// ADDITIVE and safe to re-run: persistFacts dedups against the notes the per-message
+// pass already saved (decideMergeBatch → SKIP), so overlap collapses and only
+// genuinely new relational facts are written.
+const THREAD_MIN_MESSAGES = 4;    // below this, per-message extraction already suffices
+const THREAD_MAX_MESSAGES = 60;   // cap the transcript sent to the model
+
+export async function extractConversationThread({
+  supabase, workspaceId, contactId, source = 'conversation_rollup',
+  maxFactsOverride, minMessages = THREAD_MIN_MESSAGES, dryRun = false,
+}) {
+  try {
+    // Full-access read (no ctx) — this is a system pass, not a member view.
+    const acts = await listActivities(supabase, {
+      contactId, types: ['linkedin_message'], limit: THREAD_MAX_MESSAGES,
+    });
+    // listActivities is newest-first; a transcript reads oldest-first.
+    const msgs = acts.filter(a => (a.summary || a.description || '').trim()).reverse();
+    if (msgs.length < minMessages) return [];
+
+    const { data: contact } = await supabase.from('contacts')
+      .select('first_name, last_name, company').eq('id', contactId).single();
+    const contactName =
+      (contact && [contact.first_name, contact.last_name].filter(Boolean).join(' ')) || 'the contact';
+
+    // Direction comes from raw_data (the writer stamps is_outbound on every
+    // message); the "You:" summary prefix is the fallback for older rows.
+    const toLine = (a) => {
+      const raw = a.raw_data || {};
+      const outbound =
+        raw.is_outbound === true || raw.is_sender === true || /^you:\s*/i.test(a.summary || '');
+      const text = (a.summary || a.description || '').replace(/^you:\s*/i, '').trim();
+      return `${outbound ? 'You' : contactName}: ${text}`;
+    };
+    const transcript = msgs.map(toLine).join('\n');
+
+    // Anchor the derived facts to the newest message so the claim's supporting
+    // observation points at a real activity row.
+    const anchorActivityId = acts[0]?.id ?? null;
+
+    return await extractActivitySignals({
+      supabase, workspaceId, contactId,
+      activityId: anchorActivityId,
+      type:       'conversation_thread',
+      source,
+      summary:    transcript,
+      maxFactsOverride,
+      dryRun,
+    });
+  } catch (err) {
+    console.warn('[THREAD_ROLLUP_ERROR]', err.message);
     return [];
   }
 }

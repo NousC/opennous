@@ -168,7 +168,17 @@ export async function assembleContext(
     .filter(n => !(n.metadata as { doc_type?: string })?.doc_type && n.content.trim())
     .map(n => ({ category: n.category, content: n.content, date: n.created_at }))
     .slice(0, 15);
-  const rankClaims = usefulClaims.filter(c => !c.property.startsWith('note.'));
+  const rankClaims = usefulClaims.filter(c => {
+    if (c.property.startsWith('note.')) return false;
+    // An action item that's been closed (a booked meeting discharged the "schedule
+    // a chat", the deck was sent) is no longer live work — don't surface it as an
+    // open task in a brief or context read. Only status:'open' items are current.
+    if (c.property.startsWith('action_item.')) {
+      const status = (c.value as { status?: string } | null)?.status ?? 'open';
+      return status === 'open';
+    }
+    return true;
+  });
 
   // rank claims: on-theme first, then confidence, then recency — then budget-cap
   const ranked = [...rankClaims].sort((a, b) => {

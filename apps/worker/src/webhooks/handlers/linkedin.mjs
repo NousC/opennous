@@ -3,6 +3,7 @@
 //   message_received — inbound/outbound LinkedIn messages
 //   new_relation     — new 1st-degree connection accepted
 
+import { createHash } from 'node:crypto';
 import {
   getSupabaseClient, countActivities,
   resolveEntity, getOrCreateEntity, upsertIdentifier, isMemberUrnLinkedInUrl,
@@ -68,6 +69,42 @@ function linkedinMessageContent(text, isOutbound, src) {
     description: media ? `${media} ${dir}` : (isOutbound ? 'LinkedIn message (sent)' : 'LinkedIn message (received)'),
     summary: null,
   };
+}
+
+// The stable provider id a LinkedIn message carries — the ONE field the live
+// webhook and the backfill REST object must agree on, or the same message logs
+// twice. Unipile exposes it under several names across the two payload shapes, and
+// the two ingest paths used to check DIFFERENT fallback chains — so a message that
+// only carried, say, `message_id` on the webhook but `provider_id` on the backfill
+// produced two different external_ids and slipped past the dedup index. Resolve it
+// in ONE place so both paths pick the same field. Works on a webhook body OR a
+// backfill message object.
+export function linkedinProviderMsgId(src) {
+  if (!src || typeof src !== 'object') return null;
+  return src.provider_message_id
+      || src.message?.provider_message_id
+      || src.provider_id
+      || src.message_id
+      || src.message?.id
+      || src.id
+      || null;
+}
+
+// The external_id used to dedup a logged message. Prefer the provider id (shared
+// across both ingest paths). When a payload carries NONE — some Unipile webhook
+// shapes don't — fall back to a deterministic key from chat + minute-bucketed time
+// + a hash of the text, so a reprocess or the backfill still collapses onto the
+// live row. Critically, this NEVER returns null: `observations_dedup` is a PARTIAL
+// unique index (WHERE external_id IS NOT NULL), so a null id skips dedup entirely,
+// which is exactly how every message ended up logged twice. Minute-bucketing the
+// time absorbs Z-vs-+00:00 / millisecond drift between the webhook timestamp and
+// the backfill's created_at for the same message.
+export function linkedinMessageExternalId(src, { chatId, occurredAt, text, isOutbound }) {
+  const provider = linkedinProviderMsgId(src);
+  if (provider) return `li_msg_${provider}`;
+  const minute = occurredAt ? Math.floor(new Date(occurredAt).getTime() / 60_000) : 0;
+  const hash = createHash('sha1').update(String(text || '')).digest('hex').slice(0, 12);
+  return `li_msg_f_${chatId || 'nochat'}_${minute}_${isOutbound ? 'o' : 'i'}_${hash}`;
 }
 
 // Flexible LinkedIn URL match — handles www/no-www, trailing slash, query params.
@@ -306,21 +343,19 @@ async function backfillLinkedInMessages(supabase, workspaceId, contactId, { link
     let logged = 0;
     let maxAt = null;
     for (const msg of messages) {
-      // provider_message_id is the ONE id both the backfill and the webhook payloads
-      // share for the same message. Key external_id on it (not msg.id, which differs
-      // between paths) so the unique index collapses the duplicate ingest. See dedup note.
-      const msgId = msg.provider_message_id || msg.provider_id || msg.id || msg.message_id;
-      if (!msgId) continue;
       const isOutbound  = !!(msg.is_sender);
       const text        = msg.text || msg.body || msg.content || '';
       const occurredAt  = msg.created_at || msg.timestamp || msg.date || msg.sent_at || new Date().toISOString();
       const content     = linkedinMessageContent(text, isOutbound, msg);
+      // Same id resolver as the live webhook path — provider id first, deterministic
+      // fallback otherwise, never null — so a message seen by both paths dedups to one.
+      const externalId  = linkedinMessageExternalId(msg, { chatId: resolvedChatId, occurredAt, text, isOutbound });
       await logActivity(supabase, {
         workspaceId,
         contactId,
         type:        'linkedin_message',
         source:      'linkedin',
-        externalId:  `li_msg_${msgId}`,
+        externalId,
         occurredAt,
         rawData:     { ...msg, text, is_outbound: isOutbound },
         description: content.description,
@@ -583,10 +618,13 @@ export async function handleLinkedIn(req, res, workspaceId) {
     }
 
     const messageText = body.message?.text || (typeof body.message === 'string' ? body.message : '') || body.text || '';
-    // provider_message_id FIRST — it's the stable id shared with the backfill path, so
-    // a message seen by both webhook + backfill produces ONE external_id, not two.
-    const msgId       = body.provider_message_id || body.message?.provider_message_id || body.message_id || body.message?.id;
+    const msgId       = linkedinProviderMsgId(body);
     const occurredAt  = body.timestamp ? new Date(body.timestamp).toISOString() : new Date().toISOString();
+    const chatId      = body.chat_id || body.provider_chat_id || null;
+    // Same resolver as the backfill path, and NEVER null — a null external_id skips
+    // the partial dedup index, so a reprocess or the history backfill would log the
+    // message a second time. See linkedinMessageExternalId.
+    const externalId  = linkedinMessageExternalId(body, { chatId, occurredAt, text: messageText, isOutbound: isSender });
 
     // Real text → the text; a text-less message (voice note, image, …) gets a media
     // label ("Voice memo received") so the timeline never shows a bare placeholder.
@@ -597,7 +635,7 @@ export async function handleLinkedIn(req, res, workspaceId) {
       companyId:   contact.company_id || null,
       type:        'linkedin_message',
       source:      'linkedin',
-      externalId:  msgId ? `li_msg_${msgId}` : null,
+      externalId,
       occurredAt,
       // is_outbound drives sent-vs-received fact extraction — a message WE sent
       // must never become a "fact" about the contact. body carries is_sender.
@@ -683,7 +721,6 @@ export async function handleLinkedIn(req, res, workspaceId) {
     // Self-guarding, so it's safe on every message and across creation paths.
     await enrichNewLinkedInContact(supabase, workspaceId, contact, { memberId, inlineHeadline });
 
-    const chatId = body.chat_id || body.provider_chat_id || null;
     if (created) {
       backfillLinkedInMessages(supabase, workspaceId, contact.id, { linkedinUrl, chatId, accountId: liAccountId }).catch(() => {});
     } else {

@@ -1,9 +1,19 @@
 // Wrapper around @nous/core logActivity that auto-fires signal extraction.
 // All worker webhook handlers import logActivity from here, not from @nous/core directly.
 
-import { logActivity as _logActivity, addSuppression, recordVerificationObservation, replySignalToSentiment } from '@nous/core';
+import { logActivity as _logActivity, addSuppression, recordVerificationObservation, replySignalToSentiment, closeActionItemsForActivity } from '@nous/core';
 import { extractAfterActivity } from '../signals/index.mjs';
 import { classifyReplySignal } from '../signals/replySentiment.mjs';
+
+// Activities that can DISCHARGE an open commitment the moment they land: a meeting
+// closes "schedule a chat", an outbound send closes "I'll follow up / send X". We
+// run the deterministic closer on these in real time, so a commitment closes at the
+// point in the conversation we know it's done — not only when the Tasks page opens.
+// (The fuzzy "thanks for the deck" cases still fall to the LLM tier on Tasks load.)
+const COMPLETION_EVIDENCE_TYPES = new Set([
+  'meeting_scheduled', 'meeting_held',
+  'email_sent', 'email_reply', 'linkedin_message', 'message_sent',
+]);
 
 // Inbound, content-rich replies we classify. The canonical signal + the derived
 // 3-way sentiment are stashed on rawData so they persist on the observation AND
@@ -87,6 +97,17 @@ export async function logActivity(supabase, params) {
   // Best-effort: never block ingestion on the bounce/suppression writes.
   if (result && params.type === 'email_bounced') {
     handleBounceOrUnsub(supabase, params).catch(() => {});
+  }
+
+  // Close any open commitment this activity discharges (a booking closes "schedule
+  // a chat"; our outbound touch closes "I'll follow up"). Deterministic + auditable,
+  // event-driven so it closes at the moment we know. Fire-and-forget.
+  if (result && params.contactId && COMPLETION_EVIDENCE_TYPES.has(params.type)) {
+    closeActionItemsForActivity(supabase, params.workspaceId, params.contactId, {
+      activityType: params.type,
+      isOutbound:   params.rawData?.is_outbound === true,
+    }).then(n => { if (n) console.log(`[ACTION_ITEMS] closed ${n} item(s) on ${params.type} — contact ${params.contactId}`); })
+      .catch(() => {});
   }
 
   if (result && !params.suppressExtraction) {
