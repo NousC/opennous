@@ -82,6 +82,10 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
       // Something is feeding the graph. Without this the ICP is set and nothing
       // ever arrives, which is a lonelier failure than not being set up at all.
       hasSource: (sources ?? 0) > 0,
+      // How MANY sources are connected. The guided tour's integration step wants at
+      // least three (email, meeting notes, LinkedIn) before import makes sense —
+      // one connection alone leaves the graph nearly empty.
+      sourceCount: sources ?? 0,
       // Guided-tour checkpoints. Additive — the gate above reads none of these.
       accountCount: accounts ?? 0,
       icpTrained: (trainedDeals ?? 0) > 0,

@@ -48,8 +48,8 @@ export const TOUR_STEPS: TourStep[] = [
     route: '/integrations',
     anchor: 'add-integration',
     checkpoint: 'integrationConnected',
-    title: 'Connect your data',
-    body: 'Click the plus to connect a source. Start with Gmail. Your CRM, notetaker and calendar make it richer.',
+    title: 'Connect your integrations',
+    body: 'Connect at least three — email, your notetaker and LinkedIn — so import has something to match against. One source alone leaves the graph empty. A calendar and your CRM make it richer.',
   },
   {
     id: 'accounts',

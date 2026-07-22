@@ -17,7 +17,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ArrowRight, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useTourProgress, type TourProgress } from '@/hooks/useTourProgress';
+import { useTourProgress, type TourProgress, REQUIRED_SOURCES } from '@/hooks/useTourProgress';
 import {
   TOUR_STEPS, loadTourState, saveTourState,
   type TourStep, type TourStatus,
@@ -205,6 +205,13 @@ export default function GuidedTour() {
   const isCenter = current.placement === 'center';
   const anchorMissing = current.placement === 'anchor' && !rect;
 
+  // The integration step wants at least REQUIRED_SOURCES sources before it lets you
+  // move on — one connection leaves import with nothing to match against. Show the
+  // X/3 progress and hold Next until it's met. Skip tour is always available.
+  const sourceGate = current.id === 'integration'
+    ? { have: Math.min(progress.sourceCount, REQUIRED_SOURCES), need: REQUIRED_SOURCES, blocked: progress.sourceCount < REQUIRED_SOURCES }
+    : null;
+
   // Position the coach card relative to the spotlight.
   let cardStyle: React.CSSProperties = {};
   if (rect) {
@@ -229,7 +236,7 @@ export default function GuidedTour() {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <img src="/nous-logo.svg" alt="" className="h-4 w-4 object-contain" />
+          <img src="/Nous.png" alt="" className="h-4 w-4 object-contain" />
           {stepNumber && (
             <span className="text-[11px] font-medium text-muted-foreground/70 tabular-nums">
               Step {stepNumber.n} of {stepNumber.total}
@@ -251,6 +258,22 @@ export default function GuidedTour() {
           : current.title}
       </h2>
       <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">{current.body}</p>
+
+      {sourceGate && (
+        <div className="mt-3 flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            {Array.from({ length: sourceGate.need }).map((_, i) => (
+              <span
+                key={i}
+                className={`h-1.5 w-6 rounded-full transition-colors ${i < sourceGate.have ? 'bg-emerald-500' : 'bg-border'}`}
+              />
+            ))}
+          </div>
+          <span className="text-[11.5px] font-medium tabular-nums text-muted-foreground">
+            {sourceGate.have}/{sourceGate.need} connected
+          </span>
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <button
@@ -284,12 +307,15 @@ export default function GuidedTour() {
               <Check className="h-3.5 w-3.5" /> Done
             </span>
           ) : (
-            // Always a manual Next — the user moves at their own pace. Gated steps ALSO
-            // auto-advance, but only on a fresh completion (see the effect above), so a
-            // pre-satisfied workspace never skips ahead on its own.
+            // Manual Next — the user moves at their own pace. The integration step is the
+            // one exception: it holds Next until at least REQUIRED_SOURCES are connected, so
+            // nobody lands on "import your accounts" with an empty graph. Skip tour still
+            // escapes. Gated steps also auto-advance on a fresh completion (effect above).
             <button
               onClick={next}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3.5 py-2 text-[12.5px] font-semibold text-background hover:opacity-90 transition-opacity"
+              disabled={!!sourceGate?.blocked}
+              title={sourceGate?.blocked ? `Connect ${sourceGate.need - sourceGate.have} more to continue` : undefined}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3.5 py-2 text-[12.5px] font-semibold text-background hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40"
             >
               {current.cta ?? 'Next'} <ArrowRight className="h-3.5 w-3.5" />
             </button>

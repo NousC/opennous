@@ -12,8 +12,15 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const apiUrl = import.meta.env.VITE_API_URL ?? '';
 
+// How many sources the integration step wants before import is worth doing.
+export const REQUIRED_SOURCES = 3;
+
 export interface TourProgress {
+  /** True once at least REQUIRED_SOURCES sources are connected — import needs a few
+   *  (email, meeting notes, LinkedIn) to have anything to match against. */
   integrationConnected: boolean;
+  /** How many sources are connected right now (for the "X/3" progress on the step). */
+  sourceCount: number;
   accountsImported: boolean;
   icpTrained: boolean;
   /** Server truth: the tour was already completed/dismissed for this workspace. */
@@ -22,6 +29,7 @@ export interface TourProgress {
 
 const NONE: TourProgress = {
   integrationConnected: false,
+  sourceCount: 0,
   accountsImported: false,
   icpTrained: false,
   tourCompleted: false,
@@ -42,8 +50,10 @@ export function useTourProgress(active: boolean): TourProgress & { loaded: boole
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (d) {
+          const sourceCount = d.sourceCount ?? (d.hasSource ? 1 : 0);
           setData({
-            integrationConnected: !!d.hasSource,
+            integrationConnected: sourceCount >= REQUIRED_SOURCES,
+            sourceCount,
             accountsImported: (d.accountCount ?? 0) > 0,
             icpTrained: !!d.icpTrained,
             tourCompleted: !!d.tourCompleted,

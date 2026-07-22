@@ -4,6 +4,7 @@ import { AdminRoute } from "@/components/AdminRoute";
 import { AppSidebar } from "@/components/AppSidebar";
 import { OpsLimitBanner } from "@/components/OpsLimitBanner";
 import { GlobalTabBar } from "@/components/GlobalTabBar";
+import GuidedTour from "@/components/tour/GuidedTour";
 import { TabsProvider } from "@/contexts/TabsContext";
 import ComingSoon from "@/pages/ComingSoon";
 import { useAuth } from "@/contexts/AuthContext";
@@ -149,8 +150,9 @@ function StandardLayout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
-      {/* Guided tour intentionally not mounted — new users land straight in the app after
-          setting their ICP, no three-step overlay. Re-add <GuidedTour /> to bring it back. */}
+      {/* First-run guided setup — walks new users through Integrations (connect ≥3 sources),
+          Accounts and the ICP model on the real pages. Skip tour is always available. */}
+      <GuidedTour />
     </div>
   );
 }
