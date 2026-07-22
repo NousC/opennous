@@ -41,6 +41,7 @@ export * from './services/crmProvenance.js';
 export * from './services/crmReconcile.js';
 export * from './services/crmApply.js';
 export * from './services/actionItems.js';
+export * from './services/mentions.js';
 export * from './integrations/crm/index.js';
 // The data audit, shared by the API route (`nous audit`) and the nightly worker sweep.
 export { runAudit } from './audit.mjs';

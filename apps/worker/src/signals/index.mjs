@@ -5,7 +5,7 @@
 
 import Anthropic, { setUser } from 'useleak';
 import { listNotes, saveNote, updateNote, searchClaims, listActivities, recordObservation,
-  isEntityInternal,
+  isEntityInternal, linkPersonMention, resolvePersonMention,
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS } from '@nous/core';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -487,6 +487,14 @@ async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun 
     if (newMem) {
       saved.push({ content: fact.content, memoryId: newMem.id });
       touchedContacts.add(fact.contactId);
+      // A Connections fact that names a person → turn that name into a graph node
+      // (resolve / stub / leave-ambiguous). Fire-and-forget; never blocks the save.
+      if (normalizeClaimCategory(fact.category) === 'relationship') {
+        linkMentionsFromClaim({
+          supabase, workspaceId, subjectEntityId: fact.contactId,
+          content: fact.content, sourceMemoryId: newMem.id,
+        }).catch(err => console.warn('[MENTIONS_HOOK]', err.message));
+      }
     }
     results.push({ ...fact, action });
   }
@@ -623,6 +631,66 @@ If nothing meaningful: []` }],
     console.warn('[MEETING_EXTRACTOR_ERROR]', err.message);
     return [];
   }
+}
+
+// ── People named in a Connections claim → graph nodes ─────────────────────────
+//
+// A Connections fact ("Jack shares a warm connection with Georgi") names a person.
+// This pulls those names out (NER) and hands each to the core mention resolver,
+// which turns it into a real, taggable graph node WITHOUT guessing identity —
+// resolve to a unique existing account, leave an ambiguous name for a human, or stub
+// a pending node. That is what makes "@Georgi" a traversable node and lets "what
+// warm connections can we use?" reach an account, not just read a name.
+//
+// Only runs on relationship/Connections facts — we don't want to stub every name
+// dropped in a pain or status fact.
+async function extractPersonNamesFromClaim(content, subjectName) {
+  try {
+    const msg = await anthropic.messages.create({
+      feature: 'mention-names-extract',
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      messages: [{ role: 'user', content: `From this fact, list the specific real PEOPLE named in it, OTHER than "${subjectName}". Only actual named individuals — never a company, tool, product, role, or place.
+
+Fact: "${content}"
+
+Return ONLY a JSON array of names, e.g. ["Georgi"]. Return [] if no other person is named.` }],
+    });
+    const t = msg.content[0]?.text ?? '[]';
+    const s = t.indexOf('['), e = t.lastIndexOf(']');
+    if (s === -1 || e === -1) return [];
+    const arr = JSON.parse(t.slice(s, e + 1));
+    return Array.isArray(arr)
+      ? [...new Set(arr.filter(n => typeof n === 'string' && n.trim().length > 1).map(n => n.trim()))]
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function linkMentionsFromClaim({
+  supabase, workspaceId, subjectEntityId, subjectName, content, sourceMemoryId, dryRun = false,
+}) {
+  let subj = subjectName;
+  if (!subj && subjectEntityId) {
+    const { data } = await supabase.from('contacts').select('first_name, last_name').eq('id', subjectEntityId).maybeSingle();
+    subj = data ? [data.first_name, data.last_name].filter(Boolean).join(' ') : null;
+  }
+  const names = await extractPersonNamesFromClaim(content, subj || 'the account');
+  const results = [];
+  for (const name of names) {
+    if (dryRun) {
+      results.push({ name, ...(await resolvePersonMention(supabase, workspaceId, name)) });
+      continue;
+    }
+    results.push(await linkPersonMention(supabase, workspaceId, {
+      subjectEntityId, subjectLabel: subj || 'the account', name, sourceMemoryId,
+    }));
+  }
+  if (results.length && !dryRun) {
+    console.log(`[MENTIONS] ${results.map(r => `${r.label}:${r.status}`).join(', ')} — from ${subjectEntityId}`);
+  }
+  return results;
 }
 
 // ── Conversation-thread rollup (the whole back-and-forth, one pass) ───────────
