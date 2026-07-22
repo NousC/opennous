@@ -1,5 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assertClaims } from './claims.js';
+import { VALID_PIPELINE_STAGES } from '../utils/identity.js';
+
+// The sales funnel — the only stages that are a DEAL. `client` (a paying customer,
+// set by the Stripe webhook) and `churned` live here. A signup lands in a product
+// stage instead (default_signup_stage, e.g. "Free User"), which is NOT in this set.
+const SALES_STAGES = new Set<string>(VALID_PIPELINE_STAGES.map(s => s.toLowerCase()));
 
 // Relationship classification, orthogonal to pipeline activity. A contact is not
 // automatically a lead: a LinkedIn connection you accepted, or a friend you talk to,
@@ -45,6 +51,31 @@ export async function getPersonalEntityIds(
   const ids = new Set<string>();
   for (const row of (data as { entity_id: string; value: unknown }[]) ?? []) {
     if (row.value === true) ids.add(row.entity_id);
+  }
+  return ids;
+}
+
+/** Entity ids whose current pipeline_stage is a PRODUCT-USER stage — a signup like
+ *  "Free User" / "User", i.e. any stage that is not one of the sales-funnel stages.
+ *  These are users of the product, not deals: they're counted, but excluded from
+ *  pipeline analysis. A paying customer is `client` (a sales stage), so they are NOT
+ *  here — only free/product signups are. Derived from stage, so it needs no manual tag. */
+export async function getProductUserEntityIds(
+  supabase: SupabaseClient,
+  workspaceId: string,
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('claims')
+    .select('entity_id, value')
+    .eq('workspace_id', workspaceId)
+    .eq('property', 'pipeline_stage')
+    .is('invalid_at', null);
+  if (error) throw new Error(`failed to load product-user entities: ${error.message}`);
+  const ids = new Set<string>();
+  for (const row of (data as { entity_id: string; value: unknown }[]) ?? []) {
+    const v = row.value;
+    const stage = typeof v === 'string' ? v : (v && typeof v === 'object' ? String((v as any).value ?? '') : '');
+    if (stage && !SALES_STAGES.has(stage.toLowerCase())) ids.add(row.entity_id);
   }
   return ids;
 }

@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { searchObservations, searchClaims } from './db/search.js';
 import { rawVisible, type ReadContext } from './db/readContext.js';
 import { getInternalEntityIds } from './db/teamMembers.js';
-import { getPersonalEntityIds } from './db/relationship.js';
+import { getPersonalEntityIds, getProductUserEntityIds } from './db/relationship.js';
 
 // runQuery() — the corpus-query engine behind POST /v2/query.
 //
@@ -328,19 +328,20 @@ export async function runQuery(
     matched = rows.length;
   }
 
-  // ── 2.5 Drop non-deal records (internal team members + personal contacts) ──
-  // Co-founders / colleagues (is_internal) and friends / personal connections
-  // (is_personal) are recognised records, not deals. On agent /MCP surfaces —
-  // pipeline reports, stage rollups, "who's in evaluating", cross-account
-  // pattern analysis — they must never be counted as pipeline. Both are dropped
-  // under the same flag, so a pipeline query never confuses them for prospects.
+  // ── 2.5 Drop non-deal records ────────────────────────────────────────────
+  // Three kinds of record are not a deal and must never be counted as pipeline on
+  // agent /MCP surfaces (pipeline reports, stage rollups, "who's in evaluating",
+  // cross-account pattern analysis): team members (is_internal), personal / network
+  // contacts (is_personal), and PRODUCT USERS — signups in a non-sales stage like
+  // "Free User". A paying customer is `client` (a sales stage), so they stay in.
   if (options.excludeInternal) {
-    const [internal, personal] = await Promise.all([
+    const [internal, personal, productUsers] = await Promise.all([
       getInternalEntityIds(supabase, workspaceId),
       getPersonalEntityIds(supabase, workspaceId),
+      getProductUserEntityIds(supabase, workspaceId),
     ]);
-    if (internal.size || personal.size) {
-      rows = rows.filter(r => !internal.has(r.entity_id) && !personal.has(r.entity_id));
+    if (internal.size || personal.size || productUsers.size) {
+      rows = rows.filter(r => !internal.has(r.entity_id) && !personal.has(r.entity_id) && !productUsers.has(r.entity_id));
       matched = rows.length;
     }
   }

@@ -13,7 +13,7 @@
 //   2. LLM synthesis (synthesize) — writes the diagnosis-first narrative FROM those
 //      findings only.
 
-import { getSupabaseClient, sendEmail } from '@nous/core';
+import { getSupabaseClient, sendEmail, getProductUserEntityIds } from '@nous/core';
 import Anthropic from 'useleak';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -135,6 +135,10 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
     .in('property', ['is_internal', 'is_personal'])
     .is('invalid_at', null);
   const excluded = new Set((relClaims || []).filter(c => c.value === true || c.value === 'true').map(c => c.entity_id));
+  // Product users (Free User signups, any non-sales stage) are not deals — drop them
+  // too. A paying customer is `client` (a sales stage), so they stay in the report.
+  const productUsers = await getProductUserEntityIds(supabase, workspaceId);
+  for (const id of productUsers) excluded.add(id);
 
   const accounts = [...byId.values()].filter(a => !excluded.has(a.id));
   for (const a of accounts) {

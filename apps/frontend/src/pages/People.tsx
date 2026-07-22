@@ -13,6 +13,10 @@ import { RecordOverview } from "@/components/RecordOverview";
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 const PAGE_SIZE = 100;
 const PIPELINE_STAGES = ["identified", "aware", "connected", "interested", "evaluating", "client", "lost", "disqualified", "churned"];
+// A "Free User" signup lands in a stage that is NOT one of the sales stages above.
+// Those are product users, not deals: tagged, excluded from pipeline, counted separately.
+const SALES_STAGE_SET = new Set(PIPELINE_STAGES);
+const isProductUserStage = (s?: string | null) => !!s && !SALES_STAGE_SET.has(s.toLowerCase());
 
 // Default widths for the resizable columns. "Last Int." is the elastic flex-1
 // column and the action "Enrich" cell is fixed, so neither is listed here.
@@ -934,6 +938,24 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
               </button>
             )}
             <span className="text-[12px] text-muted-foreground/70 ml-1 tabular-nums">{sorted.length} of {contacts.length}</span>
+            {(() => {
+              // Deal vs user counts. Team + personal are excluded; a paying customer is
+              // `client`, a signup is a product user. So you always know the real numbers.
+              const active = new Set(["identified", "aware", "connected", "interested", "evaluating"]);
+              let pipeline = 0, clients = 0, users = 0;
+              for (const c of contacts) {
+                if (c.isInternal || c.isPersonal) continue;
+                const s = (c.pipelineStage || "").toLowerCase();
+                if (s === "client") clients++;
+                else if (isProductUserStage(c.pipelineStage)) users++;
+                else if (active.has(s)) pipeline++;
+              }
+              return (
+                <span className="text-[12px] text-muted-foreground/50 tabular-nums hidden md:inline">
+                  · {pipeline} in pipeline · {clients} client{clients === 1 ? "" : "s"} · {users} user{users === 1 ? "" : "s"}
+                </span>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -998,6 +1020,11 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                     {c.isPersonal && (
                       <span className="flex-shrink-0 inline-flex items-center h-4 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-muted text-muted-foreground/80 border border-border">
                         Personal
+                      </span>
+                    )}
+                    {!c.isInternal && !c.isPersonal && isProductUserStage(c.pipelineStage) && (
+                      <span className="flex-shrink-0 inline-flex items-center h-4 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-sky-500/15 text-sky-600 border border-sky-500/25">
+                        User
                       </span>
                     )}
                   </div>

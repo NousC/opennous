@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ReadContext } from './db/readContext.js';
 import { getInternalEntityIds } from './db/teamMembers.js';
-import { getPersonalEntityIds } from './db/relationship.js';
+import { getPersonalEntityIds, getProductUserEntityIds } from './db/relationship.js';
 
 // getAttention() — the proactive endpoint. Scans the substrate for what an
 // agent should look at and returns ranked decisions. v1 detectors: accounts
@@ -211,15 +211,16 @@ export async function getAttention(
     }
   }
 
-  // ── Drop non-deal records (internal team members + personal contacts) ───────
-  // A teammate or a personal contact going quiet is not a pipeline concern, so
-  // they never surface as "needs attention". Filter every detector list in place.
-  const [internalIds, personalIds] = await Promise.all([
+  // ── Drop non-deal records (team, personal, product users) ───────────────────
+  // A teammate, a personal contact, or a product user (a "Free User" signup) going
+  // quiet is not a pipeline concern, so none of them surface as "needs attention".
+  const [internalIds, personalIds, productUserIds] = await Promise.all([
     getInternalEntityIds(supabase, workspaceId),
     getPersonalEntityIds(supabase, workspaceId),
+    getProductUserEntityIds(supabase, workspaceId),
   ]);
-  if (internalIds.size || personalIds.size) {
-    const drop = (id: string) => internalIds.has(id) || personalIds.has(id);
+  if (internalIds.size || personalIds.size || productUserIds.size) {
+    const drop = (id: string) => internalIds.has(id) || personalIds.has(id) || productUserIds.has(id);
     for (const arr of [upcoming, commitments, goingDark, decayed]) {
       for (let i = arr.length - 1; i >= 0; i--) if (drop(arr[i].entity_id)) arr.splice(i, 1);
     }
