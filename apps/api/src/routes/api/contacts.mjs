@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, getPersonalEntityIds, markEntityPersonal, isEntityPersonal, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames } from '@nous/core';
+import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, getPersonalEntityIds, markEntityPersonal, isEntityPersonal, setEntityInternalManual, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames } from '@nous/core';
 import { fetchIcpByEntity, fetchIntentByEntity } from '../../lib/icpFit.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
@@ -695,6 +695,29 @@ contactsApiRouter.post('/bulk-personal', verifySupabaseAuth, async (req, res) =>
 
     for (const entityId of valid) await markEntityPersonal(supabase, workspaceId, entityId, on);
     return res.json({ success: true, updated: valid.length, is_personal: on });
+  } catch (err) {
+    return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
+  }
+});
+
+// POST /api/contacts/bulk-internal { workspaceId, ids, internal } — multi-select mark
+// (or unmark) as a team member. Team members stay in the graph and the list (tagged)
+// but are excluded from pipeline/deal analysis, scoring, and outreach.
+contactsApiRouter.post('/bulk-internal', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const { workspaceId, ids, internal } = req.body || {};
+    const on = internal !== false; // default true; pass { internal: false } to unmark
+    const { user } = await ensureUserAndTeam(req.user);
+    if (!workspaceId || !Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'workspace_and_ids_required' });
+    const valid = ids.filter(x => UUID.test(String(x)));
+    if (!valid.length) return res.status(400).json({ error: 'no_valid_ids' });
+
+    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', workspaceId).eq('user_id', user.id).maybeSingle();
+    if (!membership) return res.status(403).json({ error: 'unauthorized' });
+
+    for (const entityId of valid) await setEntityInternalManual(supabase, workspaceId, entityId, on);
+    return res.json({ success: true, updated: valid.length, is_internal: on });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
   }

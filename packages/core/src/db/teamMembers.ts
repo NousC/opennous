@@ -162,6 +162,21 @@ export async function markEntityInternal(
   });
 }
 
+/** Manually mark (on=true) or unmark (on=false) a person as a team member. The
+ *  human-set counterpart to recogniseTeamMembers' automatic flagging — used by the
+ *  Accounts "Mark as team member" action. Sticky asserted claim; unmark invalidates it. */
+export async function setEntityInternalManual(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  entityId: string,
+  on = true,
+): Promise<void> {
+  await assertClaims(supabase, workspaceId, entityId, {
+    values: { [IS_INTERNAL]: on ? true : null },
+    source: 'manual',
+  });
+}
+
 /** The entity ids on this workspace currently flagged internal. Used to exclude
  *  team members from scoring, lead lists, and outreach. */
 export async function getInternalEntityIds(

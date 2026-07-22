@@ -434,16 +434,17 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
 
   // Team members (co-founders / colleagues) are hidden from Accounts by default —
   // they're recognised records, not leads. Toggle to bring them into view.
-  const [showTeam, setShowTeam] = useState(false);
+  // Team members are always shown now (tagged with a TEAM badge), never hidden behind
+  // a toggle — same treatment as personal contacts.
 
   const queryClient = useQueryClient();
-  const contactsKey = useMemo(() => ["contacts", workspaceId, showTeam] as const, [workspaceId, showTeam]);
+  const contactsKey = useMemo(() => ["contacts", workspaceId] as const, [workspaceId]);
   // The account list is cached (React Query): returning to it is instant instead of
   // re-fetching up to 2,000 rows every time. refetch() replaces the old load().
   const { data: contacts = [], isPending: loading, refetch } = useQuery({
     queryKey: contactsKey,
     queryFn: async () => {
-      const res = await fetch(`${apiUrl}/api/contacts?workspaceId=${workspaceId}&limit=2000${showTeam ? "&include_team=1" : ""}`, {
+      const res = await fetch(`${apiUrl}/api/contacts?workspaceId=${workspaceId}&limit=2000&include_team=1`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = res.ok ? await res.json() : {};
@@ -537,6 +538,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [bulkPersonaling, setBulkPersonaling] = useState(false);
+  const [bulkTeaming, setBulkTeaming] = useState(false);
   const toggleSel = (cid: string) => setSelected(prev => {
     const s = new Set(prev); s.has(cid) ? s.delete(cid) : s.add(cid); return s;
   });
@@ -575,6 +577,26 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     } catch { /* optimistic; refetch reconciles */ }
     setSelected(new Set());
     setBulkPersonaling(false);
+    refetch();
+  };
+
+  // Multi-select mark-team. Same idea as personal: a teammate stays in the graph and
+  // this list (tagged), just excluded from pipeline/deal analysis, scoring, and outreach.
+  const doBulkTeam = async (on: boolean) => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkTeaming(true);
+    queryClient.setQueryData(contactsKey, (prev: ContactInfo[] = []) =>
+      prev.map(c => selected.has(c.id) ? { ...c, isInternal: on } : c));
+    try {
+      await fetch(`${apiUrl}/api/contacts/bulk-internal`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, ids, internal: on }),
+      });
+    } catch { /* optimistic; refetch reconciles */ }
+    setSelected(new Set());
+    setBulkTeaming(false);
     refetch();
   };
 
@@ -804,13 +826,6 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
           title={embedded ? "Accounts" : "People"}
           actions={
             <>
-              <button onClick={() => { setShowTeam(t => !t); setPage(0); }}
-                title={showTeam ? "Hide team members from the list" : "Show team members (co-founders / colleagues) in the list"}
-                aria-label={showTeam ? "Hide team members from the list" : "Show team members in the list"}
-                aria-pressed={showTeam}
-                className={`inline-flex items-center justify-center h-9 w-9 rounded-lg border transition-colors ${showTeam ? "bg-foreground text-background border-foreground" : "bg-background border-border text-foreground/80 hover:bg-muted/50"}`}>
-                <Users className="h-4 w-4" />
-              </button>
               <button onClick={handleExport}
                 className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-background border border-border text-foreground/80 text-[13px] font-semibold hover:bg-muted/50 transition-colors">
                 <Download className="h-3.5 w-3.5" /> Export
@@ -894,6 +909,20 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                   className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-background border border-border text-foreground/80 hover:bg-accent transition-colors disabled:opacity-50">
                   {bulkPersonaling && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                   {allPersonal ? "Unmark personal" : "Mark personal"}
+                </button>
+              );
+            })()}
+            {selected.size > 0 && (() => {
+              // Same pattern for team members — mark/unmark from the one bar.
+              const allTeam = contacts.filter(c => selected.has(c.id)).every(c => c.isInternal);
+              return (
+                <button onClick={() => doBulkTeam(!allTeam)} disabled={bulkTeaming || bulkDeleting}
+                  title={allTeam
+                    ? "Unmark team member — count these as deals again"
+                    : "Mark as team member — kept in the graph, excluded from deals"}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-background border border-border text-foreground/80 hover:bg-accent transition-colors disabled:opacity-50">
+                  {bulkTeaming && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                  {allTeam ? "Unmark team" : "Mark team"}
                 </button>
               );
             })()}
