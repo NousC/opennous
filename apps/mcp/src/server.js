@@ -308,6 +308,25 @@ export function createServer() {
         }
         lines.push("");
       }
+      // The buying committee — who else is at the account, their role, whether we've
+      // engaged them, and how they relate. Same structure get_context surfaces.
+      if (rec.stakeholders?.length) {
+        const c = rec.committee;
+        lines.push(c?.company ? `BUYING COMMITTEE — ${c.company}:` : "STAKEHOLDERS:");
+        for (const s of rec.stakeholders) {
+          if (s.role === "company") continue;
+          const bits = [];
+          if (s.committee_role && s.committee_role !== "contact") bits.push(s.committee_role.replace(/_/g, " "));
+          if (s.role) bits.push(s.role);
+          bits.push(s.engaged ? "engaged" : "not yet engaged");
+          if (s.confirmed === false) bits.push("mentioned, unconfirmed");
+          const rel = s.relationships?.length ? ` — ${s.relationships.join("; ")}` : "";
+          lines.push(`  ${s.name ?? "—"} (${bits.join(", ")})${rel}`);
+        }
+        if (c?.champion) lines.push(`  champion: ${c.champion}`);
+        if (c?.gaps?.length) for (const g of c.gaps) lines.push(`  ⚠ ${g}`);
+        lines.push("");
+      }
       const claims = Object.values(rec.claims ?? {});
       if (claims.length) {
         lines.push(`ATTRIBUTES (${claims.length}):`);

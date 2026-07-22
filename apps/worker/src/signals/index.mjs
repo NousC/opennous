@@ -647,25 +647,37 @@ If nothing meaningful: []` }],
 //
 // Only runs on relationship/Connections facts — we don't want to stub every name
 // dropped in a pain or status fact.
+const MENTION_ROLES = new Set(['champion', 'blocker', 'budget_holder', 'decision_maker', 'none']);
+
 async function extractPersonNamesFromClaim(content, subjectName) {
   try {
     const msg = await anthropic.messages.create({
       feature: 'mention-names-extract',
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
-      messages: [{ role: 'user', content: `From this fact, list the specific real PEOPLE named in it, OTHER than "${subjectName}". Only actual named individuals — never a company, tool, product, role, or place.
+      max_tokens: 300,
+      messages: [{ role: 'user', content: `From this fact, list the specific real PEOPLE named in it, OTHER than "${subjectName}", each with the buying role the fact states about them IF any. Only actual named individuals — never a company, tool, product, role, or place.
 
 Fact: "${content}"
 
-Return ONLY a JSON array of names, e.g. ["Georgi"]. Return [] if no other person is named.` }],
+For each person: {"name": "...", "role": "champion|blocker|budget_holder|decision_maker|none"}. Use a role ONLY when the fact clearly states it — champions/supports us (champion), blocks/opposes (blocker), owns/controls the budget (budget_holder), makes the final call (decision_maker). Otherwise "none".
+
+Return ONLY a JSON array, e.g. [{"name":"Paul","role":"budget_holder"}]. Return [] if no other person is named.` }],
     });
     const t = msg.content[0]?.text ?? '[]';
     const s = t.indexOf('['), e = t.lastIndexOf(']');
     if (s === -1 || e === -1) return [];
     const arr = JSON.parse(t.slice(s, e + 1));
-    return Array.isArray(arr)
-      ? [...new Set(arr.filter(n => typeof n === 'string' && n.trim().length > 1).map(n => n.trim()))]
-      : [];
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const p of arr) {
+      const name = typeof p?.name === 'string' ? p.name.trim() : (typeof p === 'string' ? p.trim() : '');
+      if (name.length < 2 || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      const role = MENTION_ROLES.has(p?.role) ? p.role : 'none';
+      out.push({ name, role });
+    }
+    return out;
   } catch {
     return [];
   }
@@ -694,16 +706,16 @@ export async function linkMentionsFromClaim({
     }
   }
 
-  const names = await extractPersonNamesFromClaim(content, subj || 'the account');
+  const people = await extractPersonNamesFromClaim(content, subj || 'the account');
   const results = [];
-  for (const name of names) {
+  for (const { name, role } of people) {
     if (dryRun) {
-      results.push({ name, ...(await resolvePersonMention(supabase, workspaceId, name)) });
+      results.push({ name, role, ...(await resolvePersonMention(supabase, workspaceId, name)) });
       continue;
     }
     results.push(await linkPersonMention(supabase, workspaceId, {
       subjectEntityId, subjectLabel: subj || 'the account', name, sourceMemoryId,
-      companyId, companyLabel,
+      companyId, companyLabel, role,
     }));
   }
   if (!dryRun && sourceMemoryId && results.length) {

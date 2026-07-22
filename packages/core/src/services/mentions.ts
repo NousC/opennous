@@ -143,6 +143,9 @@ export async function linkPersonMention(
     // company (MENTIONED_AT) so they show up on the account's committee, not just as
     // a floating person↔person link. Soft/unconfirmed until enrichment confirms it.
     companyId?: string | null; companyLabel?: string | null;
+    // A buying role the fact states about the mentioned person ("Paul owns the
+    // budget") → a typed committee edge, so the committee read gives them a role.
+    role?: 'champion' | 'blocker' | 'budget_holder' | 'decision_maker' | 'none' | null;
   },
 ): Promise<{ label: string; entity_id: string | null; status: string; candidates?: unknown }> {
   const res = await resolvePersonMention(supabase, workspaceId, p.name);
@@ -175,6 +178,23 @@ export async function linkPersonMention(
       objectId: p.companyId, objectLabel: p.companyLabel ?? 'their company',
       sourceMemoryId: p.sourceMemoryId, status, confidence: 0.5,
     });
+
+    // A stated buying role → a typed committee edge, so the committee read shows them
+    // AS an economic buyer / champion / etc., not just a member. Low confidence — it's
+    // from a mention, and the edge extractor upgrades it when the person is confirmed.
+    const ROLE_REL: Record<string, string> = {
+      champion: 'CHAMPIONS', blocker: 'BLOCKS',
+      budget_holder: 'BUDGET_HOLDER_AT', decision_maker: 'DECISION_MAKER_AT',
+    };
+    const rel = p.role && ROLE_REL[p.role];
+    if (rel) {
+      await upsertEdge(supabase, workspaceId, {
+        relationship: rel, objectType: 'company',
+        subjectEntityId: objectId, subjectLabel: p.name,
+        objectId: p.companyId, objectLabel: p.companyLabel ?? 'their company',
+        sourceMemoryId: p.sourceMemoryId, status, confidence: 0.5,
+      });
+    }
   }
 
   return { label: p.name, entity_id: objectId, status, candidates };

@@ -5,6 +5,7 @@ import { collapseMeetingDupes } from './activities.js';
 import { fireClaimTransitionTriggers } from './triggers.js';
 import { listNotes } from './notes.js';
 import type { ReadContext } from './readContext.js';
+import { loadBuyingCommittee, type Stakeholder, type Committee } from '../services/committee.js';
 
 // Claims are the derived layer — the current best belief about
 // (entity, property), with calibrated confidence, provenance, and decay.
@@ -54,6 +55,8 @@ export interface AccountRecord {
   recent_observations: Observation[];
   facts: AccountFact[];                    // atomic memory, newest first
   documents: DocumentPreview[];            // saved briefs/notes/transcripts (preview only), newest first
+  stakeholders: Stakeholder[];             // the buying committee (people at the account)
+  committee: Committee | null;             // committee structure + health (who relates how, gaps)
 }
 
 // Reconcile needs the provenance chain (supporting_observation_ids) that the
@@ -270,10 +273,16 @@ export async function getAccountRecord(
 
   // ctx scopes the raw layers (timeline observations + document facts) to the
   // viewer; claims (derived intel) stay shared. See PRIVACY_MODEL.md.
-  const [claims, recent, notes] = await Promise.all([
+  const [claims, recent, notes, committeeResult] = await Promise.all([
     getClaims(supabase, workspaceId, entityId),
     getObservations(supabase, workspaceId, entityId, { limit: 50 }, ctx),
     listNotes(supabase, workspaceId, { entityId, limit: 50 }, ctx),
+    // The buying committee — same structure get_context builds, so the full account
+    // record carries who else is at the account and how they relate. Person entities
+    // only; a company entity resolves to no committee (returns empty).
+    entity.type === 'person'
+      ? loadBuyingCommittee(supabase, workspaceId, entityId, 'buying_group')
+      : Promise.resolve({ stakeholders: [] as Stakeholder[], committee: null as Committee | null }),
   ]);
 
   // Atomic facts = asserted note.* claims minus long-form documents. Surface them
@@ -314,6 +323,8 @@ export async function getAccountRecord(
     recent_observations: collapseMeetingDupes(recent),
     facts,
     documents,
+    stakeholders: committeeResult.stakeholders,
+    committee: committeeResult.committee,
   };
 }
 
