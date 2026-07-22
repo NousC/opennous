@@ -151,3 +151,34 @@ export async function linkPersonMention(
 
   return { label: p.name, entity_id: objectId, status, candidates };
 }
+
+/**
+ * Resolve an AMBIGUOUS mention to the account a human picked. Upserts the KNOWS edge
+ * as `resolved` to that entity, and — if the source claim is given — tags the pick
+ * onto the claim's `metadata.mentions` so the Intel card can render @<name> linking
+ * to the account. This is the human-in-the-loop completion: the system never guessed,
+ * the human chose, and now the graph carries a confident link.
+ */
+export async function resolveMentionToEntity(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  p: { subjectEntityId: string; subjectLabel: string; objectEntityId: string; objectLabel: string; sourceClaimId?: string | null },
+): Promise<void> {
+  await upsertKnowsEdge(supabase, workspaceId, {
+    subjectEntityId: p.subjectEntityId, subjectLabel: p.subjectLabel,
+    objectId: p.objectEntityId, objectLabel: p.objectLabel,
+    sourceMemoryId: p.sourceClaimId ?? null, status: 'resolved',
+  });
+
+  if (!p.sourceClaimId) return;
+  // Tag the pick onto the claim (read-modify-write the jsonb value's metadata.mentions).
+  const { data: claim } = await supabase.from('claims').select('value').eq('id', p.sourceClaimId).maybeSingle();
+  const value = (claim?.value ?? {}) as Record<string, unknown>;
+  const metadata = (value.metadata ?? {}) as Record<string, unknown>;
+  const mentions = Array.isArray(metadata.mentions) ? (metadata.mentions as unknown[]) : [];
+  const next = mentions.filter(m => (m as { entity_id?: string })?.entity_id !== p.objectEntityId);
+  next.push({ label: p.objectLabel, entity_id: p.objectEntityId, status: 'resolved' });
+  await supabase.from('claims').update({
+    value: { ...value, metadata: { ...metadata, mentions: next } },
+  }).eq('id', p.sourceClaimId);
+}

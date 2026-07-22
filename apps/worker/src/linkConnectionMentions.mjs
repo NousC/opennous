@@ -77,7 +77,7 @@ async function main() {
       : r.status === 'ambiguous'     ? `? ambiguous (${(r.candidates || []).length} candidates — needs a human)`
       : r.status === 'new'           ? '+ would stub new node'
       : r.status;
-      console.log(`  ${r.label}  ${tag}${r.entity_id ? `  [${r.entity_id}]` : ''}`);
+      console.log(`  ${r.label || r.name}  ${tag}${r.entity_id ? `  [${r.entity_id}]` : ''}`);
       if (r.status === 'resolved') linked++;
       else if (r.status === 'resolved_stub' || r.status === 'new') stubbed++;
       else if (r.status === 'ambiguous') ambiguous++;
