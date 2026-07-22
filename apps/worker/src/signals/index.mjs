@@ -487,9 +487,12 @@ async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun 
     if (newMem) {
       saved.push({ content: fact.content, memoryId: newMem.id });
       touchedContacts.add(fact.contactId);
-      // A Connections fact that names a person → turn that name into a graph node
-      // (resolve / stub / leave-ambiguous). Fire-and-forget; never blocks the save.
-      if (normalizeClaimCategory(fact.category) === 'relationship') {
+      // A person named in a Connections fact → a graph node. And a person named in a
+      // MEETING's authority fact ("Paul owns the budget") → a buying-committee member
+      // on the account. Both flow through the same resolver (resolve / stub / leave
+      // ambiguous). Fire-and-forget; never blocks the save.
+      const factCat = normalizeClaimCategory(fact.category);
+      if (factCat === 'relationship' || (type === 'meeting_held' && factCat === 'authority')) {
         linkMentionsFromClaim({
           supabase, workspaceId, subjectEntityId: fact.contactId,
           content: fact.content, sourceMemoryId: newMem.id,
@@ -676,6 +679,21 @@ export async function linkMentionsFromClaim({
     const { data } = await supabase.from('contacts').select('first_name, last_name').eq('id', subjectEntityId).maybeSingle();
     subj = data ? [data.first_name, data.last_name].filter(Boolean).join(' ') : null;
   }
+
+  // The subject's company — so a colleague they name joins THIS account's buying
+  // committee (MENTIONED_AT), not just a floating person↔person link.
+  let companyId = null, companyLabel = null;
+  if (subjectEntityId) {
+    const { data: rel } = await supabase.from('relationships')
+      .select('to_entity_id').eq('workspace_id', workspaceId)
+      .eq('from_entity_id', subjectEntityId).eq('type', 'works_at').is('valid_to', null).limit(1);
+    companyId = rel?.[0]?.to_entity_id ?? null;
+    if (companyId) {
+      const { data: co } = await supabase.from('companies').select('name, domain').eq('id', companyId).maybeSingle();
+      companyLabel = co?.name || co?.domain || null;
+    }
+  }
+
   const names = await extractPersonNamesFromClaim(content, subj || 'the account');
   const results = [];
   for (const name of names) {
@@ -685,6 +703,7 @@ export async function linkMentionsFromClaim({
     }
     results.push(await linkPersonMention(supabase, workspaceId, {
       subjectEntityId, subjectLabel: subj || 'the account', name, sourceMemoryId,
+      companyId, companyLabel,
     }));
   }
   if (!dryRun && sourceMemoryId && results.length) {

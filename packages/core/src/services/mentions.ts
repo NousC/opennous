@@ -92,23 +92,24 @@ export async function createMentionStub(
   return entityId;
 }
 
-async function upsertKnowsEdge(
+async function upsertEdge(
   supabase: SupabaseClient,
   workspaceId: string,
   p: {
+    relationship: string;
     subjectEntityId: string | null; subjectLabel: string;
-    objectId: string | null; objectLabel: string;
-    sourceMemoryId?: string | null; status: string; candidates?: unknown;
+    objectId: string | null; objectLabel: string; objectType?: 'contact' | 'company';
+    sourceMemoryId?: string | null; status: string; candidates?: unknown; confidence?: number;
   },
 ): Promise<void> {
-  const confidence = p.status === 'resolved' ? 0.9 : p.status === 'resolved_stub' ? 0.6 : 0.3;
+  const confidence = p.confidence ?? (p.status === 'resolved' ? 0.9 : p.status === 'resolved_stub' ? 0.6 : 0.3);
   await supabase.from('workspace_graph_edges').upsert({
     workspace_id:     workspaceId,
     subject_type:     'contact',
     subject_id:       p.subjectEntityId,
     subject_label:    p.subjectLabel,
-    relationship:     KNOWS,
-    object_type:      'contact',
+    relationship:     p.relationship,
+    object_type:      p.objectType ?? 'contact',
     object_id:        p.objectId,
     object_label:     p.objectLabel,
     source:           'mention',
@@ -117,6 +118,12 @@ async function upsertKnowsEdge(
     metadata:         { resolution: p.status, ...(p.candidates ? { candidates: p.candidates } : {}) },
   }, { onConflict: 'workspace_id,subject_label,relationship,object_label', ignoreDuplicates: false });
 }
+
+const upsertKnowsEdge = (
+  supabase: SupabaseClient,
+  workspaceId: string,
+  p: { subjectEntityId: string | null; subjectLabel: string; objectId: string | null; objectLabel: string; sourceMemoryId?: string | null; status: string; candidates?: unknown },
+) => upsertEdge(supabase, workspaceId, { ...p, relationship: KNOWS });
 
 /**
  * Public entry point. Given a person named in a claim, resolve them → (stub if new,
@@ -128,7 +135,15 @@ async function upsertKnowsEdge(
 export async function linkPersonMention(
   supabase: SupabaseClient,
   workspaceId: string,
-  p: { subjectEntityId: string; subjectLabel: string; name: string; sourceMemoryId?: string | null; allowStub?: boolean },
+  p: {
+    subjectEntityId: string; subjectLabel: string; name: string;
+    sourceMemoryId?: string | null; allowStub?: boolean;
+    // When the subject belongs to a company, a person they name in that context is
+    // likely part of the SAME buying committee — tie the mentioned person to the
+    // company (MENTIONED_AT) so they show up on the account's committee, not just as
+    // a floating person↔person link. Soft/unconfirmed until enrichment confirms it.
+    companyId?: string | null; companyLabel?: string | null;
+  },
 ): Promise<{ label: string; entity_id: string | null; status: string; candidates?: unknown }> {
   const res = await resolvePersonMention(supabase, workspaceId, p.name);
   let objectId: string | null = null;
@@ -148,6 +163,19 @@ export async function linkPersonMention(
     subjectEntityId: p.subjectEntityId, subjectLabel: p.subjectLabel,
     objectId, objectLabel: p.name, sourceMemoryId: p.sourceMemoryId, status, candidates,
   });
+
+  // Committee membership: the named person → the subject's company. Only when we have
+  // a real person node to attach (resolved or stub); an ambiguous name has nowhere to
+  // land. Confidence stays low — a mention is a lead on the committee, not a confirmed
+  // employee, so the account read flags it as "mentioned, unconfirmed".
+  if (p.companyId && objectId) {
+    await upsertEdge(supabase, workspaceId, {
+      relationship: 'MENTIONED_AT', objectType: 'company',
+      subjectEntityId: objectId, subjectLabel: p.name,
+      objectId: p.companyId, objectLabel: p.companyLabel ?? 'their company',
+      sourceMemoryId: p.sourceMemoryId, status, confidence: 0.5,
+    });
+  }
 
   return { label: p.name, entity_id: objectId, status, candidates };
 }

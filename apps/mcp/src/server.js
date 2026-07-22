@@ -222,8 +222,23 @@ export function createServer() {
         lines.push("");
       }
       if (ctx.stakeholders?.length) {
-        lines.push("STAKEHOLDERS:");
-        for (const s of ctx.stakeholders) lines.push(`  ${s.name ?? "—"} — ${s.role ?? ""}`);
+        // The buying committee as a STRUCTURE: who's at the account, their role,
+        // whether we've engaged them, and how they relate — so the agent works the
+        // whole committee, not one person.
+        const c = ctx.committee;
+        lines.push(c?.company ? `BUYING COMMITTEE — ${c.company}:` : "STAKEHOLDERS:");
+        for (const s of ctx.stakeholders) {
+          if (s.role === "company") continue; // the company is the header
+          const bits = [];
+          if (s.committee_role && s.committee_role !== "contact") bits.push(s.committee_role.replace(/_/g, " "));
+          if (s.role) bits.push(s.role);
+          bits.push(s.engaged ? "engaged" : "not yet engaged");
+          if (s.confirmed === false) bits.push("mentioned, unconfirmed");
+          const rel = s.relationships?.length ? ` — ${s.relationships.join("; ")}` : "";
+          lines.push(`  ${s.name ?? "—"} (${bits.join(", ")})${rel}`);
+        }
+        if (c?.champion) lines.push(`  champion: ${c.champion}`);
+        if (c?.gaps?.length) for (const g of c.gaps) lines.push(`  ⚠ ${g}`);
         lines.push("");
       }
       if (ctx.predictions?.length) {
