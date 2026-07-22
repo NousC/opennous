@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames } from '@nous/core';
+import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, getPersonalEntityIds, markEntityPersonal, isEntityPersonal, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames } from '@nous/core';
 import { fetchIcpByEntity, fetchIntentByEntity } from '../../lib/icpFit.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
@@ -112,6 +112,11 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     const internal = await getInternalEntityIds(supabase, workspaceId);
     if (!includeTeam && internal.size) rows = rows.filter(c => !internal.has(c.id));
 
+    // Personal/network contacts (friends, connections you don't sell to) stay VISIBLE
+    // on the Accounts page but are badged so they're never mistaken for a deal. We tag
+    // every row; the UI shows the badge and pipeline surfaces exclude them.
+    const personal = await getPersonalEntityIds(supabase, workspaceId);
+
     const ids = rows.map(c => c.id);
     const icpMap = await fetchIcpByEntity(supabase, workspaceId, ids);
     const intentMap = await fetchIntentByEntity(supabase, workspaceId, ids);
@@ -131,6 +136,7 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
       return {
         ...c,
         is_internal: internal.has(c.id),
+        is_personal: personal.has(c.id),
         owner_user_id: rel?.primary ?? null,
         owner_name: rel?.primary ? (memberNames.get(rel.primary) ?? null) : null,
         owner_members: (rel?.members ?? []).map(m => ({
@@ -459,6 +465,10 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
         .filter(d => d.key),
     } : null;
 
+    // Relationship flag — so the record drawer can show the "Not a deal" state and
+    // toggle. A personal/network contact is one you've marked as a friend, never a lead.
+    contact.is_personal = await isEntityPersonal(supabase, workspaceId, id);
+
     return res.json({ contact, activities, company, memories, signals, prediction });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
@@ -759,6 +769,32 @@ contactsApiRouter.post('/:id/mark-lost', verifySupabaseAuth, async (req, res) =>
     return res.json({ ok: true });
   } catch (err) {
     console.error('[POST /api/contacts/:id/mark-lost]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// POST /api/contacts/:id/personal — mark (or unmark) a contact as personal/network,
+// not a deal. Sets a sticky is_personal claim so no deal-risk, lost-deal, or going-dark
+// logic ever applies to them. Body: { personal?: boolean } (defaults to true).
+contactsApiRouter.post('/:id/personal', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const { id } = req.params;
+    const on = req.body?.personal !== false; // default true; pass { personal: false } to unmark
+    const { user } = await ensureUserAndTeam(req.user);
+    if (!UUID.test(id)) return res.status(400).json({ error: 'invalid_contact_id' });
+
+    const { data: contact } = await supabase.from('contacts').select('workspace_id').eq('id', id).maybeSingle();
+    const workspaceId = contact?.workspace_id
+      || (await supabase.from('leads').select('workspace_id').eq('id', id).maybeSingle()).data?.workspace_id;
+    if (!workspaceId) return res.status(404).json({ error: 'contact_not_found' });
+    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', workspaceId).eq('user_id', user.id).single();
+    if (!membership) return res.status(403).json({ error: 'unauthorized' });
+
+    await markEntityPersonal(supabase, workspaceId, id, on);
+    return res.json({ ok: true, is_personal: on });
+  } catch (err) {
+    console.error('[POST /api/contacts/:id/personal]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });

@@ -115,13 +115,17 @@ type F = { label: string; key: string; val: string | null; type?: "select" | "nu
 
 export function RecordOverview({
   contact, company, prediction, activities, pipelineStages, onPatch, onMarkLost, lostState,
+  onTogglePersonal, personalSaving,
 }: {
   contact: any; company: any; prediction: any; activities: any[];
   pipelineStages: string[];
   onPatch: (key: string, value: string) => void;
   onMarkLost?: () => void;
   lostState?: { marking: boolean; marked: boolean };
+  onTogglePersonal?: (on: boolean) => void;
+  personalSaving?: boolean;
 }) {
+  const isPersonal = !!contact?.is_personal;
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const c = contact ?? {};
@@ -156,7 +160,14 @@ export function RecordOverview({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 max-w-[1180px]">
       <div>
-        <h3 className="text-[12px] font-medium text-muted-foreground uppercase tracking-wider mb-2">Record</h3>
+        <h3 className="text-[12px] font-medium text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-2">
+          Record
+          {isPersonal && (
+            <span className="normal-case tracking-normal inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium bg-muted text-muted-foreground/80">
+              Personal · not a deal
+            </span>
+          )}
+        </h3>
 
         {/* Read-only, because the model owns it. A score you can type over is not a score. */}
         <Row label="ICP">
@@ -225,15 +236,28 @@ export function RecordOverview({
           </Row>
         ))}
 
-        {onMarkLost && (
-          <button
-            onClick={onMarkLost}
-            disabled={lostState?.marking || lostState?.marked}
-            className="mt-5 text-[12px] text-muted-foreground/50 hover:text-red-600 disabled:hover:text-muted-foreground/50 transition-colors"
-          >
-            {lostState?.marked ? "Marked closed-lost" : lostState?.marking ? "Marking…" : "Mark closed-lost"}
-          </button>
-        )}
+        <div className="mt-5 flex items-center gap-4">
+          {onMarkLost && (
+            <button
+              onClick={onMarkLost}
+              disabled={lostState?.marking || lostState?.marked}
+              className="text-[12px] text-muted-foreground/50 hover:text-red-600 disabled:hover:text-muted-foreground/50 transition-colors"
+            >
+              {lostState?.marked ? "Marked closed-lost" : lostState?.marking ? "Marking…" : "Mark closed-lost"}
+            </button>
+          )}
+          {onTogglePersonal && (
+            // Not every contact is a deal. Marking a friend/connection personal keeps them
+            // on the record but pulls them out of pipeline, scoring, and deal-risk.
+            <button
+              onClick={() => onTogglePersonal(!isPersonal)}
+              disabled={personalSaving}
+              className="text-[12px] text-muted-foreground/50 hover:text-foreground/70 disabled:opacity-50 transition-colors"
+            >
+              {personalSaving ? "Saving…" : isPersonal ? "Mark as a deal" : "Not a deal (personal)"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div>
