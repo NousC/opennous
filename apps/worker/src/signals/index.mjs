@@ -5,7 +5,7 @@
 
 import Anthropic, { setUser } from 'useleak';
 import { listNotes, saveNote, updateNote, searchClaims, listActivities, recordObservation,
-  isEntityInternal, linkPersonMention, resolvePersonMention,
+  isEntityInternal, linkPersonMention, resolvePersonMention, tagClaimMentions,
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS } from '@nous/core';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -686,6 +686,10 @@ export async function linkMentionsFromClaim({
     results.push(await linkPersonMention(supabase, workspaceId, {
       subjectEntityId, subjectLabel: subj || 'the account', name, sourceMemoryId,
     }));
+  }
+  if (!dryRun && sourceMemoryId && results.length) {
+    // Persist the linked mentions onto the claim so the Intel card renders the @tags.
+    await tagClaimMentions(supabase, sourceMemoryId, results).catch(() => {});
   }
   if (results.length && !dryRun) {
     console.log(`[MENTIONS] ${results.map(r => `${r.label}:${r.status}`).join(', ')} — from ${subjectEntityId}`);

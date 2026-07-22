@@ -72,6 +72,7 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
   const [localOverrides, setLocalOverrides] = useState<Record<string, string | null>>({});
   const [lostMarking, setLostMarking] = useState(false);
   const [lostMarked, setLostMarked] = useState(false);
+  const [personalSaving, setPersonalSaving] = useState(false);
 
   // Record an explicit closed-lost — a real negative the Mind learns from,
   // unlike a contact that simply goes quiet.
@@ -98,6 +99,22 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
     },
     enabled: !!contact.id && !!token,
   });
+
+  // Mark this contact personal/network — not a deal. Keeps the record but pulls them
+  // out of pipeline, scoring, and deal-risk. Toggle: pass the desired next state.
+  const togglePersonal = async (on: boolean) => {
+    if (personalSaving) return;
+    setPersonalSaving(true);
+    try {
+      await fetch(`${apiUrl}/api/contacts/${contact.id}/personal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ personal: on }),
+      });
+      await refetch();
+    } catch { /* silent */ }
+    finally { setPersonalSaving(false); }
+  };
 
   // Soft-delete a note/document (invalidates the claim server-side). Used to clear
   // duplicate briefs from the Notes tab. A real in-app dialog (not the browser's
@@ -265,6 +282,8 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
                 onPatch={patchContact}
                 onMarkLost={markLost}
                 lostState={{ marking: lostMarking, marked: lostMarked }}
+                onTogglePersonal={togglePersonal}
+                personalSaving={personalSaving}
               />
             )}
             {(tab !== "overview" && tab !== "memory" && tab !== "notes" && tab !== "signals") && (
@@ -345,6 +364,22 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
                           <span className="text-[12px] text-muted-foreground/70 ml-auto">{relTime(m.created_at)}</span>
                         </div>
                         <p className="text-[13px] text-foreground/80 leading-relaxed">{m.content}</p>
+                        {Array.isArray(m.metadata?.mentions) && m.metadata.mentions.some((x: any) => x?.entity_id) && (
+                          <div className="flex flex-wrap gap-1.5 mt-1.5">
+                            {m.metadata.mentions
+                              .filter((x: any) => x?.entity_id && (x.status === "resolved" || x.status === "resolved_stub"))
+                              .map((x: any) => (
+                                <button
+                                  key={x.entity_id}
+                                  onClick={() => navigate(`/people/${x.entity_id}`)}
+                                  title={x.status === "resolved_stub" ? "Pending identity — click to open" : "Open account"}
+                                  className="inline-flex items-center rounded-full bg-secondary/60 hover:bg-secondary px-2 py-0.5 text-[11px] font-medium text-foreground/80 transition-colors"
+                                >
+                                  @{x.label}
+                                </button>
+                              ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

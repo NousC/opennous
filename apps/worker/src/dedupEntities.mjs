@@ -32,12 +32,21 @@ async function main() {
   if (!workspaceId) { console.error('pass --workspace <uuid>'); process.exit(1); }
   const supabase = getSupabaseClient();
 
-  // Active person entities in the workspace.
-  const { data: ents, error } = await supabase
-    .from('entities').select('id, created_at')
-    .eq('workspace_id', workspaceId).eq('type', 'person').eq('status', 'active');
-  if (error) { console.error('list entities failed:', error.message); process.exit(1); }
-  const ids = (ents || []).map(e => e.id);
+  // Active person entities in the workspace. PostgREST caps a response at 1000 rows
+  // regardless of .limit(), so page through — a large workspace has far more, and the
+  // duplicates we're hunting are often past the first page.
+  const PAGE = 1000;
+  const ids = [];
+  for (let from = 0; from < 200_000; from += PAGE) {
+    const { data, error } = await supabase
+      .from('entities').select('id')
+      .eq('workspace_id', workspaceId).eq('type', 'person').eq('status', 'active')
+      .range(from, from + PAGE - 1);
+    if (error) { console.error('list entities failed:', error.message); process.exit(1); }
+    if (!data?.length) break;
+    ids.push(...data.map(e => e.id));
+    if (data.length < PAGE) break;
+  }
   if (!ids.length) { console.log('no person entities'); return; }
 
   // Their active identifiers → group entities that share a (kind, value).
