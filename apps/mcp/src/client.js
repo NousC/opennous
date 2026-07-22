@@ -71,8 +71,8 @@ function currentApiUrl() {
 export function validateConfig() {
   if (!resolvedEnv("NOUS_API_KEY") && !fileApiKey()) {
     throw new Error(
-      "No Nous API key found. Run the /nous-login command (or `npx @opennous/cli login`) to sign in, " +
-      "or set NOUS_API_KEY."
+      "No Nous API key found. Run `npx @opennous/cli login` to sign in (or `npx @opennous/cli init` " +
+      "to set up from scratch), or set NOUS_API_KEY."
     );
   }
 }

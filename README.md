@@ -79,13 +79,13 @@ Every signal becomes immutable evidence against a resolved entity. Nous derives 
 
 ## Quick start
 
-Connect Nous to your agent over MCP:
+One command — it signs you in, connects Nous to your coding agent, and hands off. The same command on macOS, Linux, and Windows (needs [Node 18+](https://nodejs.org)):
 
 ```bash
-claude mcp add nous -- npx -y @opennous/mcp
+npx @opennous/cli@latest init
 ```
 
-On self-host, point it at your own instance by adding `-e NOUS_API_URL=https://api.yourdomain.com`.
+On self-host, point it at your own instance by adding `--url https://api.yourdomain.com`.
 
 Your agent now has `get_context`, `get_account`, and `query`. The examples below show the REST API and its JSON; over MCP your agent gets the same data as a token-budgeted summary.
 
@@ -168,9 +168,15 @@ curl -X POST https://api.opennous.cloud/v2/query \
 
 ## Run Nous from your agent
 
-Nous is operated by your **agent**, not by clicking through an app. Point any MCP host at it in one step:
+Nous is operated by your **agent**, not by clicking through an app. The one command above (`npx @opennous/cli@latest init`) opens your browser, mints a workspace key to `~/.nous/config.json` so there's no key to paste, and registers the Nous MCP server with the agent on your machine — it finds the Claude Code CLI and registers with it directly, or writes a `.mcp.json` any other MCP host reads.
 
-- **Claude Code**: `/plugin marketplace add NousC/opennous` then `/plugin install nous@nous-plugins`
+Prefer to wire the MCP server up by hand? Add it to your host's config, then sign in once with `npx @opennous/cli login` (add `--url https://api.yourdomain.com` on self-host):
+
+- **Claude Code**: `claude mcp add nous -- npx -y @opennous/mcp`
+- **Claude Desktop**: Settings → Developer → **Edit Config** opens `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`). Add the block below and restart Claude Desktop:
+  ```json
+  { "mcpServers": { "nous": { "command": "npx", "args": ["-y", "@opennous/mcp"] } } }
+  ```
 - **Codex**: add to `~/.codex/config.toml`:
   ```toml
   [mcp_servers.nous]
@@ -181,12 +187,6 @@ Nous is operated by your **agent**, not by clicking through an app. Point any MC
   ```json
   { "mcpServers": { "nous": { "command": "npx", "args": ["-y", "@opennous/mcp"] } } }
   ```
-
-Then sign in once. It opens your browser, mints a workspace key, and saves it to `~/.nous/config.json`, so there is no key to paste:
-
-```bash
-npx @opennous/cli login    # on self-host, add --url https://api.yourdomain.com
-```
 
 Now hand your agent the setup itself. Tell it **"Set me up, onboard my workspace and build my playbook,"** and it walks setup in order: profile, connect Gmail / LinkedIn / a note-taker, enrichment, import your CRM contacts.
 
@@ -224,16 +224,10 @@ docker compose --env-file nous.env up -d --build
 
 Open `https://app.yourdomain.com` and create the first account, and it becomes the **owner**. To close public registration afterward, set `DISABLE_SIGNUPS=true` in `nous.env` and re-run `./update.sh`. Update any time with `./update.sh` (it pulls the latest, rebuilds, and flags new DB migrations).
 
-**Point your agent at your instance.** On self-host the MCP connect command takes your **own API URL**, so pass it as an env var and the agent talks to your server, not the cloud:
+**Point your agent at your instance.** On self-host, pass your **own API URL** to the same one command — it signs you in against your server, registers the MCP pointed at it, and saves the key (plus the URL) to `~/.nous/config.json`, which the MCP reads automatically:
 
 ```bash
-claude mcp add nous -e NOUS_API_URL=https://api.yourdomain.com -- npx -y @opennous/mcp
-```
-
-Then sign in against your instance. It mints a workspace key and saves it (plus the URL) to `~/.nous/config.json`, which the MCP reads automatically:
-
-```bash
-npx @opennous/cli login --url https://api.yourdomain.com
+npx @opennous/cli@latest init --url https://api.yourdomain.com
 ```
 
 → Full walkthrough in the **[self-host guide](https://docs.opennous.cloud/installation/docker-compose)**.

@@ -8,7 +8,7 @@
 import { program, Command } from "commander";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from "fs";
 import { homedir } from "os";
-import { join, resolve } from "path";
+import { join, resolve, dirname } from "path";
 import { createInterface } from "readline";
 import { spawn, spawnSync } from "child_process";
 
@@ -831,7 +831,7 @@ program
 // ---------------------------------------------------------------------------
 // Browser sign-in (device authorization). Opens the browser, you approve, and a
 // freshly minted API key is saved to ~/.nous/config.json. No copy-paste. Shared
-// by `nous login`, `nous init`, and the plugin's /nous-login command.
+// by `nous login` and `nous init`.
 // ---------------------------------------------------------------------------
 async function browserLogin(url) {
   const apiUrl = url || process.env.NOUS_API_URL || readConfig().apiUrl || "https://api.opennous.cloud";
@@ -894,10 +894,11 @@ program
 // ---------------------------------------------------------------------------
 // MCP registration — connect Nous to whatever agent is on this machine.
 //
-// We deliberately DO NOT use the Claude Code plugin/marketplace here. Two commands
-// (`/plugin marketplace add`, `/plugin install`), Claude-Code-only, with a marketplace
-// standing between a new user and the product — it's too much for a first run. The MCP
-// server is the whole integration, and `claude mcp add` registers it in one line.
+// There is deliberately no Claude Code plugin/marketplace. A plugin would be Claude-Code-only
+// and put a marketplace between a new user and the product — too much for a first run, and it
+// wouldn't work for Cursor, Codex, or any other host. The MCP server is the whole integration,
+// so registration is one cross-platform step: `claude mcp add` if the Claude CLI is here, else
+// a `.mcp.json` any MCP host reads.
 //
 // The MCP resolves its key from ~/.nous/config.json on every call, so we never bake the
 // key into any of these configs — sign-in already wrote it there.
@@ -927,7 +928,7 @@ function writeJsonMcp(path, apiUrl) {
     // Only pin a non-default API URL (self-host). Cloud reads the key from the config file.
     ...(apiUrl && apiUrl !== "https://api.opennous.cloud" ? { env: { NOUS_API_URL: apiUrl } } : {}),
   };
-  const dir = path.slice(0, path.lastIndexOf("/"));
+  const dir = dirname(path);
   if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(path, JSON.stringify(cfg, null, 2) + "\n");
 }

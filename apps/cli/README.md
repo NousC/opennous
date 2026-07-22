@@ -4,17 +4,13 @@ Nous CLI — set Nous up, connect it to your coding agent, and read the Context 
 
 ## Get started
 
-```bash
-curl -fsSL https://api.opennous.cloud/install | sh
-```
-
-That installs the CLI and runs `nous init`, which signs you in (creating your account if you don't have one), registers the Nous MCP server with the agent on your machine, and hands off. Then tell your agent *"set up my Nous workspace"* — it reads your project, finds your ICP (or drafts one), and syncs it.
-
-Prefer to run it yourself:
+One command. It signs you in (creating your account if you don't have one), registers the Nous MCP server with the agent on your machine, and hands off. The same command on macOS, Linux, and Windows (needs [Node 18+](https://nodejs.org)):
 
 ```bash
-npx -y @opennous/cli@latest init
+npx @opennous/cli@latest init
 ```
+
+Then tell your agent *"set up my Nous workspace"* — it reads your project, finds your ICP (or drafts one), and syncs it. On self-host, add `--url https://api.yourdomain.com`.
 
 ## Event tracking
 
