@@ -144,6 +144,7 @@ export interface CompressedAccount {
   type: string;
   claims: unknown;
   facts: unknown;
+  documents: unknown;   // saved briefs/notes/transcripts (previews), carried through unchanged
   key_activity: EvidenceItem[];
   activity_summary: {
     total_observations: number;
@@ -205,6 +206,10 @@ export function compressAccount(
     type: acc.type,
     claims: acc.claims,
     facts: acc.facts,
+    // Carry document previews through the compressor untouched — the in-app agent
+    // returns compressAccount() straight to the model, so anything dropped here is
+    // invisible to it (this is why a saved brief never reached the agent).
+    documents: Array.isArray(acc.documents) ? acc.documents : [],
     key_activity: ranked,
     activity_summary: {
       total_observations: obs.length,
