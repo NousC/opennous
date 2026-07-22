@@ -536,6 +536,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [bulkPersonaling, setBulkPersonaling] = useState(false);
   const toggleSel = (cid: string) => setSelected(prev => {
     const s = new Set(prev); s.has(cid) ? s.delete(cid) : s.add(cid); return s;
   });
@@ -554,6 +555,26 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     setSelected(new Set());
     setBulkDeleting(false);
     setConfirmDelete(false);
+    refetch();
+  };
+
+  // Multi-select mark-personal. A personal contact is a friend/connection, not a deal:
+  // it stays in the graph and this list, just excluded from pipeline/deal logic.
+  const doBulkPersonal = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkPersonaling(true);
+    queryClient.setQueryData(contactsKey, (prev: ContactInfo[] = []) =>
+      prev.map(c => selected.has(c.id) ? { ...c, isPersonal: true } : c));
+    try {
+      await fetch(`${apiUrl}/api/contacts/bulk-personal`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceId, ids, personal: true }),
+      });
+    } catch { /* optimistic; refetch reconciles */ }
+    setSelected(new Set());
+    setBulkPersonaling(false);
     refetch();
   };
 
@@ -862,6 +883,14 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
               )}
             </div>
             {selected.size > 0 && (
+              <button onClick={doBulkPersonal} disabled={bulkPersonaling || bulkDeleting}
+                title="Mark as personal/network — kept in the graph, excluded from deals"
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-background border border-border text-foreground/80 hover:bg-accent transition-colors disabled:opacity-50">
+                {bulkPersonaling && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                Mark personal
+              </button>
+            )}
+            {selected.size > 0 && (
               <button onClick={() => setConfirmDelete(true)} disabled={bulkDeleting}
                 className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50">
                 {bulkDeleting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
@@ -928,6 +957,11 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                     {c.isInternal && (
                       <span className="flex-shrink-0 inline-flex items-center gap-1 h-4 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-orange-500/15 text-orange-600 border border-orange-500/25">
                         <Users className="h-2.5 w-2.5" /> Team
+                      </span>
+                    )}
+                    {c.isPersonal && (
+                      <span className="flex-shrink-0 inline-flex items-center h-4 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-muted text-muted-foreground/80 border border-border">
+                        Personal
                       </span>
                     )}
                   </div>

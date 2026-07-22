@@ -677,6 +677,29 @@ contactsApiRouter.post('/bulk-delete', verifySupabaseAuth, async (req, res) => {
   }
 });
 
+// POST /api/contacts/bulk-personal { workspaceId, ids, personal } — multi-select mark
+// (or unmark) as personal/network. Sets a sticky is_personal claim on each selected
+// contact; they stay in the graph and the list but drop out of deal/pipeline logic.
+contactsApiRouter.post('/bulk-personal', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const { workspaceId, ids, personal } = req.body || {};
+    const on = personal !== false; // default true; pass { personal: false } to unmark
+    const { user } = await ensureUserAndTeam(req.user);
+    if (!workspaceId || !Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'workspace_and_ids_required' });
+    const valid = ids.filter(x => UUID.test(String(x)));
+    if (!valid.length) return res.status(400).json({ error: 'no_valid_ids' });
+
+    const { data: membership } = await supabase.from('workspace_members').select('workspace_id').eq('workspace_id', workspaceId).eq('user_id', user.id).maybeSingle();
+    if (!membership) return res.status(403).json({ error: 'unauthorized' });
+
+    for (const entityId of valid) await markEntityPersonal(supabase, workspaceId, entityId, on);
+    return res.json({ success: true, updated: valid.length, is_personal: on });
+  } catch (err) {
+    return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
+  }
+});
+
 // POST /api/contacts/:id/memories
 contactsApiRouter.post('/:id/memories', verifySupabaseAuth, async (req, res) => {
   try {

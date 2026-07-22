@@ -34,6 +34,9 @@ export interface ContactInfo {
   department: string | null;
   createdAt: string | null;
   isInternal: boolean;
+  /** Marked personal/network — a friend or connection, not a deal. Stays in the
+   *  graph and the list; excluded from pipeline/deal logic. */
+  isPersonal: boolean;
   /** The rep currently carrying this account (most recent to touch it). */
   ownerUserId: string | null;
   ownerName: string | null;
@@ -263,6 +266,7 @@ export function mapContact(c: any): ContactInfo {
     department: c.department ?? null,
     createdAt: c.created_at ?? null,
     isInternal: c.is_internal === true,
+    isPersonal: c.is_personal === true,
     ownerUserId: c.owner_user_id ?? null,
     ownerName: c.owner_name ?? null,
     ownerMembers: Array.isArray(c.owner_members) ? c.owner_members : [],
