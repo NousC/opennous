@@ -560,17 +560,17 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
 
   // Multi-select mark-personal. A personal contact is a friend/connection, not a deal:
   // it stays in the graph and this list, just excluded from pipeline/deal logic.
-  const doBulkPersonal = async () => {
+  const doBulkPersonal = async (on: boolean) => {
     const ids = [...selected];
     if (!ids.length) return;
     setBulkPersonaling(true);
     queryClient.setQueryData(contactsKey, (prev: ContactInfo[] = []) =>
-      prev.map(c => selected.has(c.id) ? { ...c, isPersonal: true } : c));
+      prev.map(c => selected.has(c.id) ? { ...c, isPersonal: on } : c));
     try {
       await fetch(`${apiUrl}/api/contacts/bulk-personal`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspaceId, ids, personal: true }),
+        body: JSON.stringify({ workspaceId, ids, personal: on }),
       });
     } catch { /* optimistic; refetch reconciles */ }
     setSelected(new Set());
@@ -882,14 +882,21 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                 </>
               )}
             </div>
-            {selected.size > 0 && (
-              <button onClick={doBulkPersonal} disabled={bulkPersonaling || bulkDeleting}
-                title="Mark as personal/network — kept in the graph, excluded from deals"
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-background border border-border text-foreground/80 hover:bg-accent transition-colors disabled:opacity-50">
-                {bulkPersonaling && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-                Mark personal
-              </button>
-            )}
+            {selected.size > 0 && (() => {
+              // If every selected row is already personal, the action flips to unmark —
+              // so mark and unmark both live in this one bar. Mixed selection marks all.
+              const allPersonal = contacts.filter(c => selected.has(c.id)).every(c => c.isPersonal);
+              return (
+                <button onClick={() => doBulkPersonal(!allPersonal)} disabled={bulkPersonaling || bulkDeleting}
+                  title={allPersonal
+                    ? "Unmark personal — count these as deals again"
+                    : "Mark as personal/network — kept in the graph, excluded from deals"}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-background border border-border text-foreground/80 hover:bg-accent transition-colors disabled:opacity-50">
+                  {bulkPersonaling && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                  {allPersonal ? "Unmark personal" : "Mark personal"}
+                </button>
+              );
+            })()}
             {selected.size > 0 && (
               <button onClick={() => setConfirmDelete(true)} disabled={bulkDeleting}
                 className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-[12px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50">
