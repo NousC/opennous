@@ -84,10 +84,11 @@ export async function runOnboardingAgent(supabase, workspaceId, answers = {}) {
     `- **Firmographics**: industry, company size, stage/funding, geography, revenue band — derived from the common pattern across their best customers.\n` +
     `- **Buying committee**: the 2-3 roles involved (economic buyer, champion/user, potential blocker) and what each one cares about.\n` +
     `- **Top pains → cost**: the 3 pains this offer removes, each with the concrete cost of NOT solving it.\n` +
-    `- **Trigger signals**: 3-4 observable events that mean "reach out now" (hiring, funding, tooling change, growth, launches).\n` +
+    `- **Trigger signals**: 3-4 observable events that mean "reach out now", mapped to the signal classes the scorer reads (friction, hiring, momentum/funding/launch, stack/tooling change, intent/posted-pain).\n` +
     `- **Where to find them**: the channels / communities / data sources where these buyers actually are.\n` +
     `- **Common objections → counter**: 2-3 likely objections, each with a one-line rebuttal.\n` +
-    `- **Disqualifiers**: who is clearly NOT a fit.\n` +
+    `- **Disqualifiers (each with a one-line description)**: who is clearly NOT a fit, and a short description of each so a website read can judge it — e.g. "Pure branding agency: site sells logo/visual identity work, no revenue/outbound systems." Described exclusions become hard disqualifiers that cap the wrong accounts below Not-ICP.\n` +
+    `- **Anchor examples (for the scoring model to learn from)**: name 1-2 real BEST-FIT customers and, if known, 1 clear NOT-A-FIT, each one line. These are the labels the ICP model trains against.\n` +
     `- **Value delivered**: the success metric / ROI the customer gets.\n\n` +
     `## POSITIONING\n` +
     `- **One-liner**, **category**, and **core value proposition**.\n` +

@@ -111,12 +111,25 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
     if (content) a.intel.push({ category: cat, content });
   }
 
+  // Action items (commitments made on calls) — the "unlogged commitments" gap.
+  const { data: acts } = await supabase.from('observations')
+    .select('entity_id, observed_at, value').eq('workspace_id', workspaceId)
+    .in('entity_id', contactIds).like('property', 'action_item.%').limit(4000);
+  for (const ai of acts || []) {
+    const a = byId.get(ai.entity_id); if (!a) continue;
+    (a.actionItems ||= []).push({ text: String(ai.value?.description || ai.value?.summary || ai.value?.content || '').slice(0, 200), at: ai.observed_at ? new Date(ai.observed_at).getTime() : 0 });
+  }
+
   const accounts = [...byId.values()];
   for (const a of accounts) {
     a.activities = a.activities || 0; a.meetings = a.meetings || 0; a.replies = a.replies || 0;
+    a.actionItems = a.actionItems || [];
     a.score = Number.isFinite(a.score) ? a.score : null;
     a.daysSinceTouch = a.lastActivity ? Math.floor((now - a.lastActivity) / DAY) : null;
     a.meetingNoFollowup = a.meetings > 0 && a.lastMeeting && (!a.lastActivity || a.lastActivity <= a.lastMeeting);
+    // A commitment with no activity logged after it (the meeting is at `at`, so if the
+    // last touch is at-or-before it, nothing happened since).
+    a.unloggedCommitments = a.actionItems.filter(x => x.text && (!a.lastActivity || a.lastActivity <= x.at));
   }
   return { accounts };
 }
@@ -198,7 +211,31 @@ function computeFindings({ accounts }) {
   const winLoss = { won: won.length, lost: lost.length, enough: won.length + lost.length >= 3,
     wonShare: catShare(won), lostShare: catShare(lost) };
 
-  return { totals, health, quietHighFit, meetingsNoFollowup, neverEngaged, aboutToSlip, nextBest, mostActive, overWorkedLowFit, intel, winLoss };
+  // ── Leakage scorecard: gaps between what the CRM says and what the calls/emails
+  //    say. Same shape every time (record vs. reality). Three are computable from the
+  //    graph today; missing-stakeholders, missed-expansion and contradictions come as
+  //    the identity + extraction layers catch up.
+  const RISK_CATS = new Set(['competitor', 'objection', 'budget']);
+  const riskAccounts = accounts.filter(a => a.intel.some(it => RISK_CATS.has(it.category)));
+  const staleAll = accounts.filter(a => a.activities > 0 && a.daysSinceTouch != null && a.daysSinceTouch >= 30);
+  const unloggedAll = accounts.filter(a => a.unloggedCommitments.length);
+  const leakage = {
+    total: riskAccounts.length + staleAll.length + unloggedAll.length,
+    hiddenRisks: {
+      count: riskAccounts.length,
+      items: riskAccounts.slice(0, 8).map(a => { const r = a.intel.find(it => RISK_CATS.has(it.category)); return { name: nm(a), category: CAT_LABEL[r.category] || r.category, quote: r.content.slice(0, 200) }; }),
+    },
+    staleAccounts: {
+      count: staleAll.length,
+      items: [...staleAll].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 8).map(a => ({ name: nm(a), days: a.daysSinceTouch, score: a.score })),
+    },
+    unloggedCommitments: {
+      count: unloggedAll.length,
+      items: unloggedAll.slice(0, 8).map(a => ({ name: nm(a), commitment: a.unloggedCommitments[0].text })),
+    },
+  };
+
+  return { totals, health, leakage, quietHighFit, meetingsNoFollowup, neverEngaged, aboutToSlip, nextBest, mostActive, overWorkedLowFit, intel, winLoss };
 }
 
 // ── LLM synthesis (diagnosis-first) ──────────────────────────────────────────
@@ -207,26 +244,28 @@ async function synthesize(findings, firstName) {
 
 Write FROM THE FINDINGS BELOW ONLY. Never invent an account, number, quote, or pattern that isn't here. Name accounts. Quote buyers verbatim from the intel quotes. Warm, direct, no fluff, no marketing, no em dashes.
 
+The core idea: you found GAPS between what their CRM says and what their conversations actually say. Report those gaps.
+
 Format EXACTLY as markdown:
-Subject: <one-line subject that states the single most important finding>
+Subject: <one-line subject stating the single biggest gap you found, with the number>
 
 ## The diagnosis
-<2 to 4 sentences. Name the ONE thing constraining revenue and the evidence for it. This is a verdict, not a summary.>
+<2 to 4 sentences. Name the ONE constraint and cite leakage.total as "N gaps between your CRM and your conversations." A verdict, not a summary.>
 
-## What it's costing you
-<The revenue at risk, in concrete named accounts. Quantify in accounts/pipeline. Bullet the specific accounts.>
+## Hidden risks in your conversations
+<From leakage.hiddenRisks. For each, name the account, the risk type, and the buyer's VERBATIM quote. This is a competitor/objection/budget signal sitting in a call that the CRM doesn't reflect.>
 
-## What's about to happen
-<Two short blocks if the data supports them: accounts about to slip (high fit, gone quiet), and your next-best untapped high-fit accounts to prioritize. Name them.>
+## Accounts going dark
+<From leakage.staleAccounts. Named accounts that had real activity and then went quiet 30+ days. One line each.>
 
-## What your market is telling you
-<The cross-account intel synthesis. For each strong category, one line on the pattern, then 1-2 VERBATIM quotes from the findings, attributed. This is the part no dashboard can produce.>
+## Commitments made and never logged
+<From leakage.unloggedCommitments. Named accounts where a next step was promised on a call with no follow-up after. Quote the commitment.>
 
-## Why you win and lose
-<Only if there are enough closed deals: what won accounts share vs lost accounts. If not enough, say the model is still learning and what it will surface.>
+## Your next best deals
+<From nextBest: high-fit accounts barely touched. Name them, this is found pipeline.>
 
 ## Do this now
-<3 to 5 ranked, specific actions, each tied to a named account or a clear process fix.>
+<3 to 5 ranked, specific actions, each tied to a named account or a process fix.>
 
 Skip any section whose findings are empty. Recipient first name: ${firstName || 'there'}
 
@@ -284,12 +323,21 @@ function renderHtml(report, f) {
     <div style="font-size:40px;font-weight:800;color:${healthColor(h.score)};line-height:1.1">${h.score}<span style="font-size:18px;color:#6B655B">/100</span></div>
     <div style="font-size:11px;color:#6B655B">Follow-through ${h.followThroughPct ?? '—'}% · High-fit coverage ${h.highFitCoveragePct ?? '—'}% · Momentum ${h.momentumPct ?? '—'}%</div>
   </div>`;
+  const lk = f.leakage || { total: 0 };
+  const gapCell = (n, l) => `<td style="padding:12px 8px;text-align:center;border:1px solid #E4DED1;background:#fff;width:33%"><div style="font-size:24px;font-weight:800;color:${n > 0 ? '#b45309' : '#6B655B'}">${n}</div><div style="font-size:10.5px;color:#6B655B;line-height:1.25">${l}</div></td>`;
+  const scorecard = lk.total ? `<div style="margin:0 0 18px">
+    <div style="font-size:15.5px;font-weight:700;color:#1A1712;text-align:center;margin-bottom:8px">Nous found ${lk.total} gap${lk.total === 1 ? '' : 's'} between your CRM and your conversations</div>
+    <table style="width:100%;border-collapse:collapse;border-radius:12px;overflow:hidden"><tr>
+      ${gapCell(lk.hiddenRisks.count, 'Hidden risks')}${gapCell(lk.staleAccounts.count, 'Accounts going dark')}${gapCell(lk.unloggedCommitments.count, 'Unlogged commitments')}
+    </tr></table>
+  </div>` : '';
   const sections = (report.sections || []).map(s =>
     `<div style="margin:22px 0"><div style="font-size:15px;font-weight:700;color:#1A1712;margin-bottom:4px">${mdInline(s.title)}</div><div style="font-size:14px;line-height:1.6;color:#3a352d">${mdBlock(s.body)}</div></div>`
   ).join('');
   return `<div style="max-width:640px;margin:0 auto;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#1A1712;padding:8px 4px">
   <div style="font-size:13px;color:#6B655B;margin-bottom:12px">Nous · Revenue Intelligence Report</div>
   ${scoreBlock}
+  ${scorecard}
   <table style="width:100%;border-collapse:collapse;background:#FBFAF5;border:1px solid #E4DED1;border-radius:12px;margin-bottom:6px"><tr>
     ${stat(f.totals.accounts, 'Accounts')}${stat(f.totals.activities, 'Touchpoints')}${stat(f.totals.meetings, 'Meetings')}${stat(f.totals.highFit, 'High fit')}
   </tr></table>

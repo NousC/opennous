@@ -199,9 +199,18 @@ export async function assembleContext(
   const MIN_TIMELINE_EVENTS = 8;
   const cutoff   = Date.now() - recipe.timelineWindowDays * DAY;
   const inWindow = observations.filter(o => +new Date(o.observed_at) >= cutoff);
-  const events   = inWindow.length >= MIN_TIMELINE_EVENTS
+  const windowed = inWindow.length >= MIN_TIMELINE_EVENTS
     ? inWindow
     : observations.slice(0, Math.max(inWindow.length, MIN_TIMELINE_EVENTS));
+  // High-signal lifecycle events (meetings, calls, demos, signups, connection,
+  // positive replies) must ALWAYS surface — even outside the window or crowded out by
+  // a burst of chat. A meeting held last month is exactly what the next reply needs to
+  // know, yet a naive window drops it. Merge them in, dedupe by id, keep newest-first.
+  const NOTABLE_EVENT = /meeting|call|demo|sign(ed)?_?up|invite_accepted|linkedin_connected|positive_reply|welcome/i;
+  const notable = observations.filter(o => NOTABLE_EVENT.test(String(o.property || '')));
+  const byId = new Map<string, typeof observations[number]>();
+  for (const o of [...notable, ...windowed]) if (o?.id) byId.set(o.id, o);
+  const events = [...byId.values()].sort((a, b) => +new Date(b.observed_at) - +new Date(a.observed_at));
   // Collapse one meeting seen by two connectors (webhook + calendar mirror).
   const timeline = compressTimeline(collapseMeetingDupes(events));
 

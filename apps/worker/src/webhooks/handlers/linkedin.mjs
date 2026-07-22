@@ -306,7 +306,10 @@ async function backfillLinkedInMessages(supabase, workspaceId, contactId, { link
     let logged = 0;
     let maxAt = null;
     for (const msg of messages) {
-      const msgId = msg.id || msg.provider_id || msg.message_id;
+      // provider_message_id is the ONE id both the backfill and the webhook payloads
+      // share for the same message. Key external_id on it (not msg.id, which differs
+      // between paths) so the unique index collapses the duplicate ingest. See dedup note.
+      const msgId = msg.provider_message_id || msg.provider_id || msg.id || msg.message_id;
       if (!msgId) continue;
       const isOutbound  = !!(msg.is_sender);
       const text        = msg.text || msg.body || msg.content || '';
@@ -580,7 +583,9 @@ export async function handleLinkedIn(req, res, workspaceId) {
     }
 
     const messageText = body.message?.text || (typeof body.message === 'string' ? body.message : '') || body.text || '';
-    const msgId       = body.message?.id   || body.message_id || body.provider_message_id;
+    // provider_message_id FIRST — it's the stable id shared with the backfill path, so
+    // a message seen by both webhook + backfill produces ONE external_id, not two.
+    const msgId       = body.provider_message_id || body.message?.provider_message_id || body.message_id || body.message?.id;
     const occurredAt  = body.timestamp ? new Date(body.timestamp).toISOString() : new Date().toISOString();
 
     // Real text → the text; a text-less message (voice note, image, …) gets a media

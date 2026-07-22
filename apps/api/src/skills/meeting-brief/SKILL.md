@@ -4,7 +4,7 @@ description: Write a pre-meeting brief on one person before a call. Pulls what N
 summary: Reads the record, their posts and their site, then writes the brief and saves it back.
 category: AEs
 requires-providers: [apify]
-allowed-tools: [calendar, get_account, get_playbook, search, scrape_linkedin_posts, read_website, save_note]
+allowed-tools: [calendar, get_account, get_playbook, search, scrape_linkedin_posts, read_website, save_note, record_signal]
 est-cost-usd: 0.30
 ---
 
@@ -98,6 +98,29 @@ Now **audit** what comes back. Not a list — a read:
 
 Every post you cite becomes a clickable markdown link to its `url`. Quote only
 what is actually in a post.
+
+### Record the intent signal (don't just read it, score it)
+
+You are already reading this prospect's posts, so capture the intent while you
+have it. If the posts show them in-market for what we sell — posting about the
+problem we solve, evaluating tools in our space, naming a competitor they're
+frustrated with, hiring for the role our product supports — record it so the
+intent score updates and the prospect rises in the work-list on their own.
+
+- **`record_signal`** a person `signal.intent` (0–10 strength) when the posts show
+  them thinking about our problem space. Strength scales with how direct it is:
+  a post naming the exact pain we remove is a 9; a general theme in our lane is a
+  5; a passing mention is a 3. The scorer turns `signal.intent ≥ 6` into a
+  `posted_pain` intent event (weight 20, 21-day half-life), so it decays on its
+  own and lifts the prospect only while it's fresh.
+- Also record a `signal.intent` (or note the competitor) if they engaged with or
+  called out a **named competitor** — that's a `competitor_engaged` trigger.
+- Quote the exact line that justifies the strength in the signal's evidence, so
+  the outreach can open with it later.
+
+This is what makes the brief compound: the read feeds the score, not just the
+call. Fit says this prospect belongs; the intent signal you just recorded says
+whether now is the moment.
 
 ## 4. Profile their company
 
