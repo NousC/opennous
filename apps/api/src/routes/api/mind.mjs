@@ -113,11 +113,15 @@ mindRouter.get('/substrate', async (req, res) => {
     // is large and positive.
     const preds = predSampleRes.data || [];
     const byKind = {};
-    let open = 0, resolved = 0, won = 0, lost = 0;
+    let open = 0, resolved = 0, won = 0, lost = 0, fit = 0;
     const high = [], low = [];
     const byWeek = new Map();
     for (const p of preds) {
       byKind[p.kind] = (byKind[p.kind] || 0) + 1;
+      // Fit accounts = the current qualified list: icp_fit predictions scoring >= 70,
+      // open OR resolved. Counted from the same 2000-row sample as open/resolved/won/
+      // lost so the tile is consistent with its neighbours.
+      if (p.kind === 'icp_fit' && Number(p.predicted_value?.score) >= 70) fit++;
       if (!p.resolved_at) { open++; continue; }
       resolved++;
       const disp = p.outcome_value?.disposition;
@@ -300,7 +304,7 @@ mindRouter.get('/substrate', async (req, res) => {
       },
       claims: { total: claimsTotal, freshness, epistemic },
       recompute: { pending: jobsRes.count ?? 0 },
-      predictions: { total: predictionsTotal, open, resolved, won, lost, by_kind: byKind },
+      predictions: { total: predictionsTotal, open, resolved, won, lost, fit, by_kind: byKind },
       calibration: {
         resolved: high.length + low.length,
         gap,

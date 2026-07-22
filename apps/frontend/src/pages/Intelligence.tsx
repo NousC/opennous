@@ -26,7 +26,7 @@ interface Substrate {
   observations: { total: number; last_7d: number; by_source: { source: string; count: number }[] };
   claims: { total: number; freshness: Record<string, number>; epistemic: Record<string, number> };
   recompute: { pending: number };
-  predictions: { total: number; open: number; resolved: number; won?: number; lost?: number; by_kind: Record<string, number> };
+  predictions: { total: number; open: number; resolved: number; won?: number; lost?: number; fit?: number; by_kind: Record<string, number> };
   calibration: {
     resolved: number;
     gap: number | null;
@@ -835,7 +835,7 @@ export default function Intelligence() {
         {hasModel && (
           <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-border/70 rounded-xl border border-border mb-4 bg-background">
             {[
-              { label: "Accounts analyzed", value: predictionsMade, pending: substrateLoading, color: undefined as string | undefined, info: "Accounts the ICP model has scored for fit (0–100)." },
+              { label: "Fit accounts", value: substrate?.predictions.fit ?? 0, pending: substrateLoading, color: undefined as string | undefined, info: "Accounts the model scores 70+ — your qualified list right now (of " + predictionsMade + " scored)." },
               { label: "Closed-won", value: substrate?.predictions.won ?? 0, pending: substrateLoading, color: "#15803d", info: "Scored accounts that converted — the wins the model learns from." },
               { label: "Closed-lost", value: substrate?.predictions.lost ?? 0, pending: substrateLoading, color: "#b45309", info: "Scored accounts that entered a real buying motion but didn't close." },
               { label: "Signals", value: active.length, pending: false, color: undefined, info: "The weighted attributes the model scores fit on. Click to see how they evolved.", onClick: () => setModelOpen(true) },
