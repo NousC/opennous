@@ -961,6 +961,42 @@ function registerMcp(apiUrl) {
   return `Wrote ${path} — your agent will pick up Nous from it.`;
 }
 
+// Install the ICP auto-sync hook into the project's Claude Code config. Once in place,
+// editing a Nous context file (context/**/icp.md, etc.) reminds the agent to call
+// sync_icp that turn — because an edited ICP file is INERT until synced into the graph.
+// Copies our packaged hook script into .claude/hooks/ and merges the PostToolUse entry
+// into .claude/settings.json WITHOUT clobbering any existing hooks or settings.
+// Returns true if it was already installed. Uses the exec (args) form so there's no
+// shell/quoting difference between Windows PowerShell and macOS/Linux bash.
+function installIcpSyncHook() {
+  const claudeDir = join(process.cwd(), ".claude");
+  const hooksDir = join(claudeDir, "hooks");
+  const scriptPath = join(hooksDir, "icp-sync-reminder.mjs");
+  const settingsPath = join(claudeDir, "settings.json");
+
+  const src = readFileSync(new URL("./hooks/icp-sync-reminder.mjs", import.meta.url), "utf8");
+  mkdirSync(hooksDir, { recursive: true });
+  writeFileSync(scriptPath, src);
+
+  let settings = {};
+  if (existsSync(settingsPath)) {
+    try { settings = JSON.parse(readFileSync(settingsPath, "utf8")) || {}; } catch { settings = {}; }
+  }
+  settings.hooks = settings.hooks || {};
+  const post = settings.hooks.PostToolUse = settings.hooks.PostToolUse || [];
+  const already = post.some((e) => (e.hooks || []).some((h) =>
+    (Array.isArray(h.args) && h.args.some((a) => String(a).includes("icp-sync-reminder"))) ||
+    String(h.command || "").includes("icp-sync-reminder")));
+  if (!already) {
+    post.push({
+      matcher: "Write|Edit|MultiEdit",
+      hooks: [{ type: "command", command: "node", args: [scriptPath], timeout: 10 }],
+    });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  }
+  return already;
+}
+
 // nous init — the one-line "get started": sign in, register the MCP, hand off to the agent.
 // This is the command the install script and the marketing site point to.
 program
@@ -980,6 +1016,14 @@ program
         console.log("\nCouldn't register the MCP automatically. Add it with:");
         console.log(`  claude mcp add nous -- ${MCP_CMD} ${MCP_ARGS.join(" ")}`);
       }
+
+      // Auto-sync the ICP: a Claude Code hook so editing your ICP file reminds the
+      // agent to sync it into Nous (the file is inert until synced). Best-effort —
+      // a convenience, never a reason to fail setup.
+      try {
+        const already = installIcpSyncHook();
+        if (!already) console.log("Installed the ICP auto-sync hook — edits to your ICP file now sync to Nous automatically.");
+      } catch { /* non-fatal */ }
     }
 
     console.log("\nYou're set. Tell your agent:\n");
