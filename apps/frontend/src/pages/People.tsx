@@ -100,21 +100,22 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
   });
 
   // Soft-delete a note/document (invalidates the claim server-side). Used to clear
-  // duplicate briefs from the Notes tab. Refetches so the row disappears.
-  const [deletingNote, setDeletingNote] = useState<string | null>(null);
-  const removeNote = async (noteId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (deletingNote) return;
-    if (!window.confirm("Delete this note? It's removed from the record but stays recoverable.")) return;
-    setDeletingNote(noteId);
+  // duplicate briefs from the Notes tab. A real in-app dialog (not the browser's
+  // native confirm) collects intent; confirmDeleteNote does the delete + refetch.
+  const [noteToDelete, setNoteToDelete] = useState<{ id: string; title: string } | null>(null);
+  const [deletingNote, setDeletingNote] = useState(false);
+  const confirmDeleteNote = async () => {
+    if (!noteToDelete || deletingNote) return;
+    setDeletingNote(true);
     try {
-      await fetch(`${apiUrl}/api/contacts/${contact.id}/memories/${noteId}`, {
+      await fetch(`${apiUrl}/api/contacts/${contact.id}/memories/${noteToDelete.id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
       await refetch();
+      setNoteToDelete(null);
     } catch { /* refetch reconciles on next open */ }
-    finally { setDeletingNote(null); }
+    finally { setDeletingNote(false); }
   };
   const acts = useMemo(
     () => ((data?.activities ?? []) as any[]).filter((a: any) => a.activity_type !== "icp_scored"),
@@ -183,6 +184,44 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
 
   return (
     <div className="flex flex-col h-full bg-background">
+      {/* Note delete confirmation — a real in-app dialog, not the browser's native
+          confirm. Matches the account-delete modal in the list view. */}
+      {noteToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => !deletingNote && setNoteToDelete(null)} />
+          <div className="relative z-10 w-full max-w-[420px] rounded-2xl border border-border bg-background shadow-2xl p-6">
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-full bg-red-500/10 text-red-500">
+                <Trash2 className="h-4.5 w-4.5" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-[16px] font-semibold tracking-tight text-foreground">Delete this note?</h2>
+                <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+                  <span className="font-medium text-foreground/80">{noteToDelete.title}</span> is removed from the
+                  record but stays recoverable.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setNoteToDelete(null)}
+                disabled={deletingNote}
+                className="h-9 px-4 rounded-lg border border-border bg-background text-[13px] font-medium text-foreground/80 hover:bg-muted/50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteNote}
+                disabled={deletingNote}
+                className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-red-500 text-white text-[13px] font-semibold hover:bg-red-600 transition-colors disabled:opacity-50"
+              >
+                {deletingNote ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex-shrink-0 px-8 pt-7 pb-0">
         {/* No back button. An account opens as a TAB now — the thing you came from is
@@ -285,12 +324,10 @@ function PeopleDetail({ contact, token, onBack }: { contact: ContactInfo; token:
                               <span className="text-[12px] text-muted-foreground/70 ml-auto flex-shrink-0">{relTime(when)}</span>
                             </div>
                           </div>
-                          <button onClick={(e) => removeNote(m.id, e)} disabled={deletingNote === m.id}
+                          <button onClick={(e) => { e.stopPropagation(); setNoteToDelete({ id: m.id, title: m.metadata?.title || m.category || "this note" }); }}
                             title="Delete note"
-                            className="flex-shrink-0 p-1 rounded text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-100">
-                            {deletingNote === m.id
-                              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                              : <Trash2 className="h-3.5 w-3.5" />}
+                            className="flex-shrink-0 p-1 rounded text-muted-foreground/50 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       );
