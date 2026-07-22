@@ -80,7 +80,7 @@ Setup tools (agent-driven, the agent runs the workspace):
 - `sync_playbook` — push an edited playbook file into the graph
 - `connect_integration` · `configure_crm_sync` · `sync_crm_now` · `set_trigger` · `list_triggers` · `get_routing_preferences`
 
-Still ship, not in the daily docs: lead-list tools (`lead_list_operations`, `coverage`, `enrich_leads`, `verify_leads`), plus `record_signal`, `get_action_items`, `verify`, `scrape_engagers`.
+Still ship, not in the daily docs: `record_signal`, `get_action_items`, `verify`, `scrape_engagers`.
 
 ## REST API routes (apps/api)
 
@@ -98,7 +98,7 @@ The public surface is the `/v2` Context API (key-authed via `verifyApiKey`). The
 
 Workspace setup/operate routes (back the operate + status tools): `GET /v2/workspace/status`, `POST /v2/workspace/onboarding`, `POST /v2/workspace/scoring-model`, `POST /v2/workspace/integrations`, `POST /v2/workspace/crm-sync`, `GET|POST /v2/workspace/triggers`.
 
-Cloud-only routes also mounted under `/v2` include `/v2/people`, `/v2/leads`, `/v2/signals`, and `/v2/dedup` (the last two back the `coverage` tool — `/v2/dedup` for the exact identifier check, `/v2/people/coverage` for the attribute estimate). The browser app's own routes live under `/api/*` and are session-authed, not part of the agent-facing surface.
+Cloud-only routes also mounted under `/v2` include `/v2/people`, `/v2/leads`, `/v2/signals`, and `/v2/dedup`. These back the web app; they are no longer exposed as agent-facing MCP tools (the `attach_list` / `lead_list_operations` / `get_coverage` / `enrich_leads` / `verify_leads` lead-list tools were removed 2026-07-22). The browser app's own routes live under `/api/*` and are session-authed, not part of the agent-facing surface.
 
 ## Documentation
 
@@ -112,6 +112,7 @@ Recent substrate + surface work (2026-06-30):
 - **Controlled claim taxonomy** in `packages/core/src/db/claimCategories.ts` (status_quo, goal, pain, objection, authority, budget, timeline, preference, competitor, relationship, general), each tagged `about: person|company`, enforced at extraction (`apps/worker/src/signals/index.mjs`) and the manual write path so claims roll up into cross-account patterns.
 - **Structural evidence chain**: each extracted claim now sets `supporting_observation_ids` back to the source observation (`saveNote` in `packages/core/src/db/notes.ts`).
 - **MCP surface refactor**: renamed `get_icp → sync_icp` and `get_icp_model → export_icp_model`; removed `get_gtm_profile` (read our GTM via `get_playbook`); docs split into Overview vs Setup. Breaking change to `@opennous/mcp` (needs a version bump + republish).
+- **Lead-list tools removed (2026-07-22)**: dropped the five agent-facing lead-list tools (`attach_list`, `lead_list_operations`, `get_coverage`, `enrich_leads`, `verify_leads`) from `@opennous/mcp`. The lead-list layer moved to direct SQL over the `gtm` store, so these had no remaining usage. The backing `/v2` routes (`/v2/lead-lists/*`, `/v2/dedup`, `/v2/people/coverage`) stay for the web app. Breaking change; `@opennous/mcp` bumped to 0.45.0, needs republish.
 
 ## Plans & feature gating
 
