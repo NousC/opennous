@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { searchObservations, searchClaims } from './db/search.js';
 import { rawVisible, type ReadContext } from './db/readContext.js';
 import { getInternalEntityIds } from './db/teamMembers.js';
+import { getPersonalEntityIds } from './db/relationship.js';
 
 // runQuery() — the corpus-query engine behind POST /v2/query.
 //
@@ -327,13 +328,19 @@ export async function runQuery(
     matched = rows.length;
   }
 
-  // ── 2.5 Drop internal team members ───────────────────────────────────────
-  // Co-founders / colleagues are recognised records, not leads. On agent /MCP
-  // surfaces they must never come back as prospects in a cross-account query.
+  // ── 2.5 Drop non-deal records (internal team members + personal contacts) ──
+  // Co-founders / colleagues (is_internal) and friends / personal connections
+  // (is_personal) are recognised records, not deals. On agent /MCP surfaces —
+  // pipeline reports, stage rollups, "who's in evaluating", cross-account
+  // pattern analysis — they must never be counted as pipeline. Both are dropped
+  // under the same flag, so a pipeline query never confuses them for prospects.
   if (options.excludeInternal) {
-    const internal = await getInternalEntityIds(supabase, workspaceId);
-    if (internal.size) {
-      rows = rows.filter(r => !internal.has(r.entity_id));
+    const [internal, personal] = await Promise.all([
+      getInternalEntityIds(supabase, workspaceId),
+      getPersonalEntityIds(supabase, workspaceId),
+    ]);
+    if (internal.size || personal.size) {
+      rows = rows.filter(r => !internal.has(r.entity_id) && !personal.has(r.entity_id));
       matched = rows.length;
     }
   }

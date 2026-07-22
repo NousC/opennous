@@ -127,7 +127,16 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
     (a.actionItems ||= []).push({ text: String(ai.value?.description || ai.value?.summary || ai.value?.content || '').slice(0, 200), at: ai.observed_at ? new Date(ai.observed_at).getTime() : 0 });
   }
 
-  const accounts = [...byId.values()];
+  // Drop non-deal records — teammates (is_internal) and personal/network contacts
+  // (is_personal) are not pipeline, so they never appear in the revenue report.
+  const { data: relClaims } = await supabase.from('claims')
+    .select('entity_id, value')
+    .in('entity_id', contactIds)
+    .in('property', ['is_internal', 'is_personal'])
+    .is('invalid_at', null);
+  const excluded = new Set((relClaims || []).filter(c => c.value === true || c.value === 'true').map(c => c.entity_id));
+
+  const accounts = [...byId.values()].filter(a => !excluded.has(a.id));
   for (const a of accounts) {
     a.activities = a.activities || 0; a.meetings = a.meetings || 0; a.heldMeetings = a.heldMeetings || 0; a.replies = a.replies || 0;
     a.actionItems = a.actionItems || [];
