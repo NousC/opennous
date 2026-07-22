@@ -347,58 +347,13 @@ async function unsubscribeInstantly(apiKey, creds) {
 
 // ── Fathom ──────────────────────────────────────────────────────────────────
 //
-// Fathom DOES let a third party create a webhook with nothing but the user's API key,
-// so the manual paste we were asking for was never necessary.
-//
-// Two things about their API shape:
-//   - at least one include_* flag must be true or the create is rejected. We take the
-//     transcript, because a meeting with no transcript adds nothing to the graph.
-//   - the 201 hands back a svix-style secret (whsec_…) that WE do not choose. It is
-//     per-connection, so the worker has to read it off the connection rather than out
-//     of the environment — see the fallback in apps/worker/src/webhooks/handlers/fathom.mjs.
-//
-// Keys are USER-scoped, not workspace-scoped: this only ever sees meetings that this
-// user recorded or that were shared with them. Connecting a second rep means a second
-// key, which is the same shape as our LinkedIn connections.
-async function subscribeFathom(apiKey, workspaceId) {
-  try {
-    const res = await fetch('https://api.fathom.ai/external/v1/webhooks', {
-      method: 'POST',
-      headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        destination_url:    inboundUrl('fathom', workspaceId),
-        triggered_for:      ['my_recordings'],
-        include_transcript: true,
-      }),
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      return { error: `fathom_subscribe_failed_${res.status}`, detail };
-    }
-    const body = await res.json().catch(() => ({}));
-    const id = body?.id ?? null;
-    if (!id) return { error: 'fathom_webhook_id_missing', detail: body };
-    return {
-      plain:  { webhook_id: String(id) },
-      secret: { webhook_signing_key: body.secret || '' },
-    };
-  } catch (err) {
-    return { error: 'fathom_subscribe_exception', message: err.message };
-  }
-}
-
-async function unsubscribeFathom(apiKey, creds) {
-  const id = creds?.webhook_id;
-  if (!apiKey || !id) return;
-  try {
-    await fetch(`https://api.fathom.ai/external/v1/webhooks/${encodeURIComponent(id)}`, {
-      method:  'DELETE',
-      headers: { 'X-Api-Key': apiKey },
-    });
-  } catch (err) {
-    console.warn('[WEBHOOK/fathom] unsubscribe:', err.message);
-  }
-}
+// No auto-subscribe. Fathom's webhook-create API (POST /external/v1/webhooks) did not
+// reliably register a destination for us — connections came back with an api_key but no
+// webhook_id, and Fathom's own UI showed no webhook — so 'auto' reported success while
+// nothing was wired up and no meeting ever arrived. Fathom is therefore webhook: 'manual'
+// in the catalogue: the connect form shows the inbound URL and the user pastes it into
+// Fathom's own Add Webhook form. The worker still verifies signatures when a secret is
+// present — see the FATHOM_WEBHOOK_SECRET fallback in apps/worker/src/webhooks/handlers/fathom.mjs.
 
 /**
  * The registry. A provider here is `webhook: 'auto'` in the catalogue; the two must
@@ -408,16 +363,16 @@ async function unsubscribeFathom(apiKey, creds) {
  * The worker serves no /inbound route for any of them, so registering would point a
  * live webhook at a 404 and call it success. Add the handler first, then the entry.
  *
- * Cannot be here, because the provider offers no way: fireflies, hubspot and
- * millionverifier have no webhook-creation API at all. Those are webhook: 'manual' in
- * the catalogue, and the connect form shows the URL to paste and a link to the page to
- * paste it on. That is the ceiling, not an oversight.
+ * Cannot be here, because the provider offers no working way: fireflies, hubspot and
+ * millionverifier have no webhook-creation API at all, and fathom's create API did not
+ * reliably register a destination (see the Fathom note above). Those are webhook:
+ * 'manual' in the catalogue, and the connect form shows the URL to paste and a link to
+ * the page to paste it on. That is the ceiling, not an oversight.
  */
 export const WEBHOOK_HANDLERS = {
   calendly:  { subscribe: subscribeCalendly,  unsubscribe: unsubscribeCalendly  },
   cal_com:   { subscribe: subscribeCalCom,    unsubscribe: unsubscribeCalCom    },
   heyreach:  { subscribe: subscribeHeyReach,  unsubscribe: unsubscribeHeyReach  },
   lemlist:   { subscribe: subscribeLemlist,   unsubscribe: unsubscribeLemlist   },
-  fathom:    { subscribe: subscribeFathom,    unsubscribe: unsubscribeFathom    },
   instantly: { subscribe: subscribeInstantly, unsubscribe: unsubscribeInstantly },
 };
