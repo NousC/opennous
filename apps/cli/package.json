@@ -1,6 +1,6 @@
 {
   "name": "@opennous/cli",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Nous CLI — set up Nous, connect it to your coding agent, and read the Context API from your terminal",
   "type": "module",
   "bin": {

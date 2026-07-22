@@ -190,6 +190,16 @@ Rules:
     return res.json({ draft, website });
   } catch (err) {
     console.error('[POST /api/onboarding/icp/draft]', err);
+    // The site read fine (that path returns 422 above) — this catch means the LLM
+    // call failed: a usage cap, a rate limit, an overload. Never tell the user
+    // "couldn't read that site" for that; it sends them chasing their own website.
+    // Anthropic SDK errors carry an HTTP `status`; a plain crash doesn't.
+    if (typeof err?.status === 'number') {
+      return res.status(503).json({
+        error: 'draft_unavailable',
+        message: "Auto-drafting is unavailable right now. Write a couple of lines about who you sell to and we'll take it from there.",
+      });
+    }
     return res.status(500).json({ error: 'internal_error' });
   }
 });

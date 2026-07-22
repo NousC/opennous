@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { Copy, CheckCircle2, Loader2, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { invalidateOnboarding } from "@/hooks/useOnboarding";
-import { installCommand } from "@/lib/install";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -48,11 +47,7 @@ const API_URL = import.meta.env.VITE_API_URL ?? "";
 // The gate is still just hasIcp: a user who ends up with only icp.md still onboards. The
 // other three docs are upside, not a new requirement — we widen the invitation, not the bar.
 // raw/ and wiki/ are recommended but never built or synced here (context-only for now).
-const ONBOARD_PROMPT =
-  "Set up my revenue context layer and sync it to Nous.\n\n" +
-  "First look through my repo (context/, .claude/, docs/, CLAUDE.md) for anything about who we sell to (ICP), how we position, our pricing, and our competitors. Tell me what you found and where.\n\n" +
-  "Then get it into context/icp.md, context/positioning.md, context/pricing.md, and context/competitors.md. Keep what's already good as it is, don't rewrite it. For anything missing, ask me for my website, research it, draft it, show me, and once I approve, save it and sync it to Nous.\n\n" +
-  "Show me the plan before you create any files.";
+const ONBOARD_PROMPT = "Set up my Nous workspace and walk me through onboarding.";
 
 type Step = { caption: string; code: string };
 
@@ -87,13 +82,9 @@ export default function ConnectGate() {
   const token = session?.access_token;
   const workspaceId = (userData as { workspace?: { id?: string } })?.workspace?.id;
   const email = (userData as { user?: { email?: string } })?.user?.email;
-  const selfHosted = (userData as { self_hosted?: boolean })?.self_hosted === true;
 
   const [road, setRoad] = useState<null | "agent" | "app">(null);
   const [celebrating, setCelebrating] = useState(false);
-
-  // Self-host: the login and the MCP must point at THIS instance, not Nous Cloud.
-  const apiBase = API_URL || (selfHosted ? window.location.origin : "");
 
   // First-run activation: welcome email, free-plan backstop, dogfood. Idempotent.
   useEffect(() => {
@@ -138,11 +129,6 @@ export default function ConnectGate() {
     return () => clearTimeout(t);
   }, [celebrating, refreshUserData, navigate]);
 
-  const skip = () => {
-    try { if (workspaceId) localStorage.setItem(`nous_connect_skipped:${workspaceId}`, "1"); } catch { /* ignore */ }
-    navigate("/accounts", { replace: true });
-  };
-
   if (celebrating) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-background animate-in fade-in duration-300">
@@ -167,7 +153,7 @@ export default function ConnectGate() {
       <div className="w-full max-w-[600px]">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <img src="/nous-logo.svg" alt="" className="w-5 h-5 object-contain" />
+            <img src="/Nous.png" alt="" className="w-5 h-5 object-contain" />
             <span className="font-bold text-[14px] tracking-[-0.02em] text-foreground">nous</span>
           </div>
           {email && (
@@ -183,20 +169,16 @@ export default function ConnectGate() {
           {road === "app" && (
             <AppRoad
               token={token}
-              apiBase={apiBase}
               workspaceId={workspaceId}
               onBack={() => setRoad(null)}
               onDone={() => setCelebrating(true)}
             />
           )}
 
-          <div className="mt-6 flex items-center justify-between gap-3 border-t border-border/60 pt-4">
+          <div className="mt-6 flex items-center gap-3 border-t border-border/60 pt-4">
             <p className="text-[11.5px] text-muted-foreground/60">
               Stuck? See the <a href="https://docs.opennous.cloud/mcp/introduction" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-foreground">docs</a>.
             </p>
-            <button onClick={skip} className="text-[11.5px] text-muted-foreground/60 hover:text-foreground transition-colors whitespace-nowrap">
-              Skip for now →
-            </button>
           </div>
         </div>
       </div>
@@ -251,10 +233,6 @@ function Fork({ onPick }: { onPick: (r: "agent" | "app") => void }) {
   return (
     <>
       <h1 className="text-[19px] font-semibold tracking-tight text-foreground">Let's set up your workspace</h1>
-      <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
-        One thing to do: tell Nous who you sell to. Everything else — scoring, what needs
-        attention, the account briefs — reads it.
-      </p>
 
       <div className="mt-6 grid gap-3">
         <button
@@ -267,8 +245,8 @@ function Fork({ onPick }: { onPick: (r: "agent" | "app") => void }) {
           <AgentLogos />
           <span className="text-[14px] font-medium text-foreground">I work in a coding agent</span>
           <p className="mt-1.5 text-[12.5px] text-muted-foreground leading-relaxed">
-            Connect it and your agent does the setup — it audits the GTM context already in
-            your project, fills in what's missing, and syncs it to Nous.
+            Let your agent handle setup — it builds your context layer here, wires up ICP
+            scoring, and syncs it to Nous.
           </p>
         </button>
 
@@ -278,8 +256,8 @@ function Fork({ onPick }: { onPick: (r: "agent" | "app") => void }) {
         >
           <span className="text-[14px] font-medium text-foreground">Set it up here</span>
           <p className="mt-1.5 text-[12.5px] text-muted-foreground leading-relaxed">
-            Give us your website and we'll draft your ICP for you. No terminal, nothing to
-            install. Takes a minute.
+            Set up everything inside the app — your context files and your ICP — and get
+            started right here. No terminal.
           </p>
         </button>
       </div>
@@ -328,19 +306,18 @@ function AgentRoad({ onBack }: { onBack: () => void }) {
 // The whole point: a non-technical signup has no coding agent AND no in-app agent
 // (Threads is Custom). Without this road they cannot set the product up at all.
 
-function AppRoad({ token, apiBase, workspaceId, onBack, onDone }: {
+function AppRoad({ token, workspaceId, onBack, onDone }: {
   token?: string;
-  apiBase: string;
   workspaceId?: string;
   onBack: () => void;
   onDone: () => void;
 }) {
   const [website, setWebsite] = useState("");
   const [icp, setIcp] = useState("");
-  // ask (website) → review (edit the ICP) → connect (a source, then finish). The ICP is the
-  // finish line for the GATE, but a workspace with an ICP and no source never fills in, so
-  // the flow doesn't end until we've offered to connect one.
-  const [phase, setPhase] = useState<"ask" | "review" | "connect">("ask");
+  // ask (website) → review (edit the ICP). Saving the ICP opens the gate and drops
+  // them straight into the app — no intermediate "connect Gmail" step. Sources are
+  // one click away in Integrations whenever they want them.
+  const [phase, setPhase] = useState<"ask" | "review">("ask");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -385,9 +362,9 @@ function AppRoad({ token, apiBase, workspaceId, onBack, onDone }: {
         setErr(d?.error === "icp_too_short" ? "A little more detail — a sentence or two." : "Couldn't save that.");
         return;
       }
-      // ICP saved — the gate is open. Move to the source step rather than leaving; the
-      // parent no longer auto-navigates the app road for exactly this reason.
-      setPhase("connect");
+      // ICP saved — the gate is open. Drop straight into the app; no "connect Gmail"
+      // detour. They can connect sources anytime from Integrations.
+      onDone();
     } catch {
       setErr("Couldn't save that.");
     } finally {
@@ -395,80 +372,16 @@ function AppRoad({ token, apiBase, workspaceId, onBack, onDone }: {
     }
   };
 
-  // Gmail + Calendar in one grant. Opens the Google authorize flow in this tab; on return
-  // the callback lands us back in the app. We connect a source but never block on it — the
-  // ICP already opened the gate.
-  const connectGoogle = () => {
-    if (!workspaceId) return;
-    const name = encodeURIComponent("Gmail");
-    window.location.href = `${apiBase}/api/oauth/google/gmail/authorize?workspaceId=${workspaceId}&connectionName=${name}`;
-  };
-
   return (
     <>
-      {phase !== "connect" && (
-        <button
-          onClick={() => (phase === "review" ? setPhase("ask") : onBack())}
-          className="mb-3 inline-flex items-center gap-1 text-[12px] text-muted-foreground/70 hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="h-3 w-3" /> Back
-        </button>
-      )}
+      <button
+        onClick={() => (phase === "review" ? setPhase("ask") : onBack())}
+        className="mb-3 inline-flex items-center gap-1 text-[12px] text-muted-foreground/70 hover:text-foreground transition-colors"
+      >
+        <ArrowLeft className="h-3 w-3" /> Back
+      </button>
 
-      {phase === "connect" ? (
-        <>
-          <div className="flex items-center gap-2">
-            <span className="grid h-5 w-5 place-items-center rounded-full bg-emerald-500/10 text-emerald-600">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            </span>
-            <span className="text-[12.5px] font-medium text-emerald-600">ICP saved</span>
-          </div>
-          <h1 className="mt-3 text-[19px] font-semibold tracking-tight text-foreground">One more thing: connect Gmail</h1>
-          <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
-            Your ICP is set, but the graph is still empty. Connect Gmail and your calendar and
-            it starts filling itself in from the conversations you're already having. This is
-            the difference between a workspace that works and one that just sits there.
-          </p>
-
-          <button
-            onClick={connectGoogle}
-            disabled={!workspaceId}
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-[13.5px] font-medium text-background disabled:opacity-40 transition-opacity"
-          >
-            <img src="/provider-logos/gemini.svg" alt="" className="h-4 w-4" />
-            Connect Gmail &amp; Calendar
-          </button>
-
-          <button
-            onClick={onDone}
-            className="mt-3 inline-flex w-full items-center justify-center rounded-lg border border-border px-4 py-2.5 text-[13px] font-medium text-muted-foreground hover:text-foreground hover:border-foreground/25 transition-colors"
-          >
-            Skip — open my workspace
-          </button>
-
-          {/* Even here, the agent is the best way to finish setup (it builds the Vault from
-              your repo). So we hand the terminal command to Google users too. */}
-          <div className="mt-4 rounded-lg border border-border/60 bg-muted/30 p-3">
-            <p className="text-[11.5px] font-medium text-foreground">Work in a coding agent? Connect it for the full setup.</p>
-            <div className="mt-2 flex items-stretch gap-2">
-              <code className="flex-1 min-w-0 rounded-md border border-border bg-background px-2.5 py-1.5 text-[11.5px] text-foreground font-mono overflow-x-auto whitespace-nowrap">
-                {installCommand()}
-              </code>
-              <button
-                onClick={() => { navigator.clipboard?.writeText(installCommand()); }}
-                title="Copy"
-                className="flex-shrink-0 grid place-items-center w-9 rounded-md border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-
-          <p className="mt-3 text-[11.5px] text-muted-foreground/60 leading-relaxed">
-            You can connect Gmail, meeting tools, Slack and more anytime from Integrations.
-          </p>
-        </>
-      ) : phase === "ask" ? (
+      {phase === "ask" ? (
         <>
           <h1 className="text-[19px] font-semibold tracking-tight text-foreground">Who do you sell to?</h1>
           <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
@@ -531,11 +444,11 @@ function AppRoad({ token, apiBase, workspaceId, onBack, onDone }: {
             className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-foreground px-4 py-2.5 text-[13.5px] font-medium text-background disabled:opacity-40 transition-opacity"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-            Save and continue
+            Save and open my workspace
           </button>
 
           <p className="mt-3 text-[11.5px] text-muted-foreground/60 leading-relaxed">
-            Next: connect Gmail or your calendar and the graph starts filling itself in.
+            You can connect Gmail, your calendar, meeting tools and more anytime from Integrations.
           </p>
         </>
       )}

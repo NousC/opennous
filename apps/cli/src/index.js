@@ -978,8 +978,8 @@ program
       }
     }
 
-    console.log('\nYou\'re set. Tell your agent: "set up my GTM context layer and connect it to');
-    console.log("Nous\" — it audits your project's context, drafts what's missing, and syncs it.\n");
+    console.log("\nYou're set. Tell your agent:\n");
+    console.log('  "set up my Nous workspace and walk me through onboarding"\n');
     console.log(dim("Docs: https://docs.opennous.cloud/mcp/introduction"));
   });
 
