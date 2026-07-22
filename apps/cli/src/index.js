@@ -32,12 +32,16 @@ function openBrowser(url) {
   if (process.platform === "darwin") {
     cmd = "open"; args = [url];
   } else if (process.platform === "win32") {
-    // cmd.exe /c start "" "<url>". The empty "" is start's title argument (else a
-    // quoted URL is taken as the window title). windowsVerbatimArguments keeps the
-    // quotes we add, so an & in the auth URL's query string stays inside them and
-    // isn't parsed by cmd as a command separator.
+    // cmd.exe /c start "" "<url>". `start` reads a lone quoted arg as the window
+    // TITLE, so it needs an explicit empty title before the URL — otherwise it just
+    // opens a shell titled with the URL and never launches the browser.
+    // CRITICAL: the title must be a LITERAL `""` string, not JS's zero-length "".
+    // With windowsVerbatimArguments the args are joined by spaces as-is, so a
+    // zero-length string collapses to nothing and the title is lost (the URL then
+    // becomes the title). Verbatim also keeps our quotes, so an & in the auth URL's
+    // query string stays inside them and isn't parsed by cmd as a command separator.
     cmd = process.env.ComSpec || "cmd.exe";
-    args = ["/c", "start", "", `"${url}"`];
+    args = ["/c", "start", '""', `"${url}"`];
     opts.windowsVerbatimArguments = true;
   } else {
     cmd = "xdg-open"; args = [url];
