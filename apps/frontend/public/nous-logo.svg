@@ -1,14 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Nous">
   <title>Nous</title>
-  <rect x="2" y="2" width="116" height="116" rx="28" fill="#1B1A16"/>
-  <circle cx="60" cy="60" r="40" fill="none" stroke="#F2F0E9" stroke-opacity="0.14" stroke-width="1.8"/>
-  <circle cx="60" cy="20" r="6.4" fill="#F2F0E9"/>
-  <circle cx="88.28" cy="31.72" r="5.9" fill="#DCD8CE"/>
-  <circle cx="100" cy="60" r="5.3" fill="#C7C3B8"/>
-  <circle cx="88.28" cy="88.28" r="4.7" fill="#B0AC9F"/>
-  <circle cx="60" cy="100" r="4.1" fill="#98948A"/>
-  <circle cx="31.72" cy="88.28" r="3.6" fill="#827E74"/>
-  <circle cx="20" cy="60" r="3.2" fill="#6E6A62"/>
-  <circle cx="31.72" cy="31.72" r="2.9" fill="#5C594F"/>
-  <rect x="47" y="47" width="26" height="26" rx="8" fill="#F2F0E9"/>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .n-ring { stroke: rgba(242,240,233,.30); }
+      .n-orbit circle { fill: #CBC7BC; }
+    }
+  </style>
+  <circle class="n-ring" cx="60" cy="60" r="40" fill="none" stroke="#E6E2D8" stroke-width="1.8"/>
+  <g class="n-orbit">
+    <circle cx="60" cy="20" r="6.4" fill="#514E46"/>
+    <circle cx="88.28" cy="31.72" r="5.9" fill="#656156"/>
+    <circle cx="100" cy="60" r="5.3" fill="#7B766B"/>
+    <circle cx="88.28" cy="88.28" r="4.7" fill="#8F8A7E"/>
+    <circle cx="60" cy="100" r="4.1" fill="#A29D91"/>
+    <circle cx="31.72" cy="88.28" r="3.6" fill="#B4AFA3"/>
+    <circle cx="20" cy="60" r="3.2" fill="#C3BEB2"/>
+    <circle cx="31.72" cy="31.72" r="2.9" fill="#CFCABE"/>
+  </g>
+  <circle class="n-core" cx="60" cy="60" r="13" fill="#FF5C00"/>
 </svg>
