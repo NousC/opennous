@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { normaliseLinkedInUrl, isUUID, isMemberUrnLinkedInUrl } from '../utils/identity.js';
+import { normaliseLinkedInUrl, isUUID, isMemberUrnLinkedInUrl, normalizeEmailLocalPart, pickLocalPartMatch } from '../utils/identity.js';
 
 // LinkedIn URL variants we'll accept as equivalent on lookup. Covers the
 // historical inconsistency where the write path stored URLs raw (with/without
@@ -273,6 +273,42 @@ async function resolvePersonByNameFallback(
 }
 
 /**
+ * Normalised email local-part fallback (docs/identity-resolution.md §Planned).
+ * Runs AFTER the name fallback and, unlike it, needs no name hint — it catches
+ * the bare-email fork the name tier structurally cannot: a person who signs up
+ * as `sarahwig9@gmail.com` while an outbound record already exists under
+ * `sarahwig15@gmail.com` (different email, no shared LinkedIn, and — in the real
+ * case that motivated this — the signup put the name in `company`, so there is
+ * no first_name to anchor Step 2 on).
+ *
+ * Matches on (normalised local part, domain). The heavy lifting and the "unique
+ * candidate only" safety live in the pure `pickLocalPartMatch`; this wrapper only
+ * fetches the workspace's active email identifiers (bounded — hundreds, not
+ * millions) scoped to ACTIVE entities so a merged tombstone can never be chosen.
+ */
+async function resolvePersonByEmailLocalPart(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  identifiers: Identifier[],
+): Promise<string | null> {
+  const incoming = identifiers.filter(i => i.kind === 'email').map(i => i.value);
+  if (!incoming.some(e => normalizeEmailLocalPart(e))) return null; // nothing distinctive to match on
+
+  const { data } = await supabase
+    .from('entity_identifiers')
+    .select('entity_id, value, entities!inner(status)')
+    .eq('workspace_id', workspaceId)
+    .eq('kind', 'email')
+    .eq('status', 'active')
+    .eq('entities.status', 'active')
+    .limit(20000);
+
+  const existing = ((data as { entity_id: string; value: string }[] | null) ?? [])
+    .map(r => ({ entity_id: r.entity_id, email: r.value }));
+  return pickLocalPartMatch(incoming, existing);
+}
+
+/**
  * Resolve an entity by any of its identifiers; create one if none match.
  * The entry point for ingestion — every observation needs an entity.
  *
@@ -297,12 +333,22 @@ export async function getOrCreateEntity(
   }
 
   // No identifier matched. Before forking a new person, try the corroborated
-  // name fallback — this prevents the duplicate that merge_contacts would later fix.
-  if (type === 'person' && opts?.nameHint) {
-    const matched = await resolvePersonByNameFallback(supabase, workspaceId, identifiers, opts.nameHint);
-    if (matched) {
-      await attachIdentifiers(supabase, workspaceId, matched, identifiers);
-      return matched;
+  // fallbacks — these prevent the duplicate that merge_contacts would later fix.
+  if (type === 'person') {
+    // 1) Name fallback: exact first name + surname corroboration (needs a name hint).
+    if (opts?.nameHint) {
+      const matched = await resolvePersonByNameFallback(supabase, workspaceId, identifiers, opts.nameHint);
+      if (matched) {
+        await attachIdentifiers(supabase, workspaceId, matched, identifiers);
+        return matched;
+      }
+    }
+    // 2) Normalised email local-part: catches the nameless bare-email fork the
+    //    name tier can't (sarahwig9 vs sarahwig15). Needs no name hint.
+    const byLocal = await resolvePersonByEmailLocalPart(supabase, workspaceId, identifiers);
+    if (byLocal) {
+      await attachIdentifiers(supabase, workspaceId, byLocal, identifiers);
+      return byLocal;
     }
   }
 
