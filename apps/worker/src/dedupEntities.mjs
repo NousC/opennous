@@ -82,7 +82,30 @@ async function main() {
     contacts.push(...(data || []));
   }
   const cById = new Map(contacts.map(c => [c.id, c]));
-  const nm = (id) => { const c = cById.get(id); return c ? ([c.first_name, c.last_name].filter(Boolean).join(' ') || id) : id; };
+
+  // Some entities carry their name as first_name/last_name CLAIMS (LinkedIn-scraped)
+  // with no contacts row — contacts alone misses them. Pull claim-names too and merge.
+  const claimName = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from('claims')
+      .select('entity_id, property, value')
+      .eq('workspace_id', workspaceId).in('property', ['first_name', 'last_name']).is('invalid_at', null)
+      .in('entity_id', ids.slice(i, i + 200));
+    for (const c of (data || [])) {
+      const m = claimName.get(c.entity_id) || {};
+      if (c.property === 'first_name') m.first = String(c.value ?? '');
+      else m.last = String(c.value ?? '');
+      claimName.set(c.entity_id, m);
+    }
+  }
+  const nameOf = (id) => {
+    const c = cById.get(id);
+    if (c && (c.first_name || c.last_name)) return [c.first_name, c.last_name].filter(Boolean).join(' ');
+    const m = claimName.get(id);
+    if (m && (m.first || m.last)) return [m.first, m.last].filter(Boolean).join(' ');
+    return '';
+  };
+  const nm = (id) => nameOf(id) || id;
 
   console.log(`\n${apply ? 'APPLY' : 'DRY-RUN'} — ${ids.length} people, ${dupGroups.length} shared-identifier dup group(s)\n`);
 
@@ -111,8 +134,7 @@ async function main() {
   const byName = new Map();
   for (const id of ids) {
     if (inGroup.has(id)) continue;
-    const c = cById.get(id);
-    const n = [c?.first_name, c?.last_name].filter(Boolean).join(' ').trim().toLowerCase();
+    const n = nameOf(id).trim().toLowerCase();
     if (n.length < 3) continue;
     if (!byName.has(n)) byName.set(n, []);
     byName.get(n).push(id);
