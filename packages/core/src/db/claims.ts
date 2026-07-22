@@ -36,12 +36,24 @@ export interface AccountFact {
   date: string;
 }
 
+/** A compact preview of a long-form document kept on an account (meeting brief,
+ *  transcript, notes) — never its full body. Surfaced inline so an agent KNOWS a
+ *  brief exists and can pull it with search_notes, instead of concluding there
+ *  are no notes on file. */
+export interface DocumentPreview {
+  type: string;
+  title: string | null;
+  date: string | null;
+  snippet: string;
+}
+
 export interface AccountRecord {
   entity_id: string;
   type: string;
   claims: Record<string, Claim>;          // property -> claim
   recent_observations: Observation[];
   facts: AccountFact[];                    // atomic memory, newest first
+  documents: DocumentPreview[];            // saved briefs/notes/transcripts (preview only), newest first
 }
 
 // Reconcile needs the provenance chain (supporting_observation_ids) that the
@@ -273,6 +285,25 @@ export async function getAccountRecord(
     .slice(0, 15)
     .map(n => ({ category: n.category, content: n.content, date: n.created_at }));
 
+  // Long-form documents = notes WITH a doc_type (meeting_brief, transcript, …).
+  // These were previously loaded and then dropped — filtered out of `facts` and
+  // never surfaced anywhere — so a saved brief was invisible on the record. Emit
+  // them as compact previews (the body is pulled on demand via search_notes).
+  const documents = notes
+    .filter(n => n.metadata?.doc_type && n.content.trim())
+    .map(n => {
+      const text = n.content.replace(/\s+/g, ' ').trim();
+      const date = (n.metadata?.date as string) ?? n.created_at ?? null;
+      return {
+        type: String(n.metadata!.doc_type),
+        title: (n.metadata?.title as string) ?? null,
+        date,
+        snippet: text.length > 200 ? text.slice(0, 200) + '…' : text,
+      };
+    })
+    .sort((a, b) => +new Date(b.date ?? 0) - +new Date(a.date ?? 0))
+    .slice(0, 8);
+
   return {
     entity_id: entity.id,
     type: entity.type,
@@ -282,6 +313,7 @@ export async function getAccountRecord(
     // collapse one meeting reported by two connectors into a single row
     recent_observations: collapseMeetingDupes(recent),
     facts,
+    documents,
   };
 }
 

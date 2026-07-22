@@ -8,6 +8,7 @@ import {
   resolveFocus,
   rawVisible,
   readContextFromReq,
+  listNotes,
 } from '@nous/core';
 
 export const notesV2Router = Router();
@@ -109,7 +110,34 @@ notesV2Router.post('/search', async (req, res) => {
       })
       .slice(0, max);
 
-    return res.json({ documents, count: documents.length });
+    // Recency fallback. Semantic search is embeddings-backed, so a note saved
+    // seconds ago (not yet embedded) matches nothing — the exact case where a
+    // brief you just wrote comes back empty. When the search is scoped to a
+    // contact, union in that contact's newest documents (listNotes applies the
+    // same per-member visibility via ctx) so a fresh brief is always found.
+    if (entityId) {
+      const recent = (await listNotes(supabase, workspaceId, { entityId, limit: max }, ctx))
+        .filter(n => n.metadata?.doc_type && String(n.content ?? '').trim())
+        .map(n => {
+          const text = String(n.content ?? '').replace(/\s+/g, ' ').trim();
+          return {
+            entity_id: n.entity_id,
+            type: n.metadata.doc_type,
+            title: n.metadata.title ?? null,
+            date: n.metadata.date ?? null,
+            similarity: null, // matched by recency, not similarity
+            snippet: text.length > 400 ? text.slice(0, 400) + '…' : text,
+          };
+        });
+      const seen = new Set(documents.map(d => `${d.title}|${d.date}`));
+      for (const d of recent) {
+        const key = `${d.title}|${d.date}`;
+        if (!seen.has(key)) { seen.add(key); documents.push(d); }
+      }
+    }
+
+    const out = documents.slice(0, max);
+    return res.json({ documents: out, count: out.length });
   } catch (err) {
     console.error('[POST /v2/notes/search]', err);
     return res.status(500).json({ error: 'internal_error' });

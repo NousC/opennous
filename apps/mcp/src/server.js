@@ -284,6 +284,19 @@ export function createServer() {
         for (const f of rec.facts) lines.push(`  [${f.category}] ${f.content}${f.date ? `  (${relAge(f.date)})` : ""}`);
         lines.push("");
       }
+      const docs = rec.documents ?? [];
+      if (docs.length) {
+        // Saved briefs / notes / transcripts kept on the contact — previews only.
+        // The agent needs to KNOW these exist so it never reports "no brief on
+        // file" when one is saved; the full body is read with search_notes.
+        lines.push(`DOCUMENTS (${docs.length} — saved notes & meeting records, read with search_notes):`);
+        for (const d of docs) {
+          const when = d.date ? `  (${relAge(d.date)})` : "";
+          lines.push(`  ${d.type.replace(/_/g, " ")}${d.title ? ` · ${d.title}` : ""}${when}`);
+          if (d.snippet) lines.push(`      ${d.snippet}`);
+        }
+        lines.push("");
+      }
       const claims = Object.values(rec.claims ?? {});
       if (claims.length) {
         lines.push(`ATTRIBUTES (${claims.length}):`);
@@ -851,7 +864,10 @@ export function createServer() {
       const lines = [`Documents matching "${question}":`, ""];
       for (const d of r.documents) {
         const when = d.date ? `  [${relAge(d.date)}]` : "";
-        lines.push(`  ${d.type.replace(/_/g, " ")}${d.title ? ` · ${d.title}` : ""}  (${pct(d.similarity)})${when}`);
+        // similarity is null for recency-matched hits (a note too fresh to be
+        // embedded yet) — label those "recent" instead of a bogus 0%.
+        const match = d.similarity == null ? "recent" : pct(d.similarity);
+        lines.push(`  ${d.type.replace(/_/g, " ")}${d.title ? ` · ${d.title}` : ""}  (${match})${when}`);
         if (d.snippet) lines.push(`    ${d.snippet}`);
         lines.push(`    (entity_id: ${d.entity_id})`);
       }
