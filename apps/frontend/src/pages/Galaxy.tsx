@@ -93,6 +93,9 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   const E_CLAIM = LIGHT ? 'rgba(124,92,240,0.28)' : 'rgba(168,146,247,0.32)';
   const E_LINK  = LIGHT ? 'rgba(20,24,32,0.10)'  : 'rgba(200,208,222,0.11)';
   const E_DM    = LIGHT ? 'rgba(224,160,58,0.55)' : 'rgba(245,196,81,0.4)';
+  // Person↔person KNOWS/connection links — a distinct rose so a "who knows whom"
+  // edge reads differently from employment (grey) and shared-claim (violet).
+  const E_KNOWS = LIGHT ? 'rgba(224,90,140,0.48)' : 'rgba(240,130,170,0.42)';
   const CATCOL: Record<string, string> = LIGHT
     ? { stack: '#7c5cf0', pain: '#e05a4e', intent: '#2aa8a0', segment: '#dd9a3e', theme: '#9aa0ad' }
     : { stack: '#a78bfa', pain: '#f0665c', intent: '#4fd1c5', segment: '#f2b263', theme: '#8a8fa0' };
@@ -571,7 +574,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     // from `mode` alone and never consult it — which is why every Show toggle changed the
     // counts in the panel, changed the simulation, and changed nothing you could see.
     // The switches worked. The renderer was not listening.
-    for (const e of edges) { if (!F(e.a.x) || !F(e.b.x)) continue; if (!vis(e.a) || !vis(e.b)) continue; if (!eOn(e)) continue; const on = !S || (S.has(e.a.i) && S.has(e.b.i)); let col, w; if (!on) { col = E_DIM; w = 0.5; } else if (e.k === 2) { col = E_CLAIM; w = 0.8; } else { col = e.a.dm ? E_DM : E_LINK; w = e.a.dm ? 0.9 : 0.55; } ctx.strokeStyle = col; ctx.lineWidth = (w * disp.link) / scale; ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke(); }
+    for (const e of edges) { if (!F(e.a.x) || !F(e.b.x)) continue; if (!vis(e.a) || !vis(e.b)) continue; if (!eOn(e)) continue; const on = !S || (S.has(e.a.i) && S.has(e.b.i)); let col, w; if (!on) { col = E_DIM; w = 0.5; } else if (e.k === 2) { col = E_CLAIM; w = 0.8; } else if (e.k === 3) { col = E_KNOWS; w = 0.9; } else { col = e.a.dm ? E_DM : E_LINK; w = e.a.dm ? 0.9 : 0.55; } ctx.strokeStyle = col; ctx.lineWidth = (w * disp.link) / scale; ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke(); }
     // ── HUB SPOKES ───────────────────────────────────────────────────────────
     //
     // The line from the hub to each member. This is the single thing that makes

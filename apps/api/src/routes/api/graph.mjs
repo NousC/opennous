@@ -257,6 +257,22 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
 
     const edges = [];
     for (const n of nodes) if (n.t === 0 && n.co) edges.push({ s: n.i, t: n.co, k: 0 });
+
+    // Person↔person KNOWS/connection edges — the "who knows whom" layer, drawn in the
+    // DEFAULT graph (k:3, no filter needed). If both ends are nodes we render, draw the
+    // link. This is what makes a shared connection (e.g. a Georgi known by two of your
+    // accounts) show up as a visible bridge between them, right on the default view.
+    const personCompanyIds = new Set(nodes.filter(n => n.t === 0 || n.t === 1).map(n => n.i));
+    const seenKnows = new Set();
+    for (const g of gedges) {
+      if (g.relationship !== 'KNOWS' || !g.object_id || g.subject_id === g.object_id) continue;
+      if (!personCompanyIds.has(g.subject_id) || !personCompanyIds.has(g.object_id)) continue;
+      const key = g.subject_id < g.object_id ? `${g.subject_id}|${g.object_id}` : `${g.object_id}|${g.subject_id}`;
+      if (seenKnows.has(key)) continue;      // one line per pair, direction-agnostic
+      seenKnows.add(key);
+      edges.push({ s: g.subject_id, t: g.object_id, k: 3 });
+    }
+
     clusters.forEach((cl, i) => {
       const node = `cl${i}`; cl.node = node;
       nodes.push({ i: node, t: 3, l: cl.label, sz: cl.ids.length, cat: cl.cat });
