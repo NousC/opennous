@@ -1015,11 +1015,12 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
 
   const [show, setShow] = useState<Show>({ people: true, companies: true, claims: true, orphans: false });
   const [search, setSearch] = useState("");
-  // The graph arrives ALREADY CUT BY TIER. An uncoloured graph asks you to do the work of
-  // deciding what to look at before it has shown you anything; a graph that opens as four
-  // tiers has already answered the first question you were going to ask.
-  const [groupBy, setGroupBy] = useState<GroupBy>("tier");
-  const [groups, setGroups] = useState<Group[]>(() => buildGroups("tier", {}));
+  // The graph is a CLAIMS graph, so it arrives already cut by the claim-patterns —
+  // the semantic clusters of what accounts actually said. That is the one axis that
+  // is native to this product (raw data -> reasoning -> claims -> patterns); tier,
+  // signal and activity were other lenses we removed to keep the graph honest to it.
+  const [groupBy, setGroupBy] = useState<GroupBy>("pattern");
+  const [groups, setGroups] = useState<Group[]>(() => buildGroups("pattern", {}));
   const [filter, setFilter] = useState("");
   // Display and Forces are the user's own tuning of THEIR graph, so they persist. Group
   // by / filter / search are questions you ask in the moment and reset when you leave;
@@ -1041,11 +1042,14 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
   };
   // Choosing an axis REBUILDS the buckets. Custom is the exception: it is the axis you
   // are writing yourself, so it must not be overwritten under you.
+  // Rebuild the buckets when the axis changes OR when the facets first arrive — the
+  // pattern buckets come from the loaded graph (facets.patterns), so on first paint
+  // they are empty and must repopulate the moment the data lands. Idempotent.
   useEffect(() => {
     if (groupBy === "custom") return;
     const f = ctl.current?.counts() ?? counts;
     setGroups(buildGroups(groupBy, { signals: f.signals, patterns: f.patterns }));
-  }, [groupBy]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [groupBy, counts.patterns?.length, counts.signals?.length]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { sync(c => c.setShow(show)); }, [show]);       // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setFilter(filter)); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps

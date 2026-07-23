@@ -19,7 +19,7 @@
 // Every control shows its consequence. A filter that will not tell you how much it just
 // removed is a filter you cannot trust.
 import { useState } from "react";
-import { Search, X, Plus, RotateCcw, ChevronRight } from "lucide-react";
+import { Search, X, RotateCcw, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type Show = { people: boolean; companies: boolean; claims: boolean; orphans: boolean };
@@ -128,18 +128,11 @@ export function GraphFilters({
     setShow({ people: true, companies: true, claims: true, orphans: true });
     setSearch("");
     setFilter("");
-    setGroupBy("tier");
+    setGroupBy("pattern");
     setDisplay({ node: 1, label: 1, link: 1 });
     setForces({ repel: 1, dist: 1, center: 1 });
     onFit();
   };
-
-  const AXES: { id: GroupBy; label: string }[] = [
-    { id: "tier",     label: "ICP tier" },
-    { id: "pattern",  label: "Pattern" },
-    { id: "signal",   label: "Signal" },
-    { id: "activity", label: "Activity" },
-  ];
 
   return (
     <aside className={cn(
@@ -188,24 +181,7 @@ export function GraphFilters({
         {/* ── GROUP BY — the axis you are colouring along. This is the whole point of the
             panel: not "highlight one thing", but "cut the graph up and show me the
             shape". Tier is the default because it is the cut you always want first. */}
-        <Section title="Group by" note="colours the whole graph">
-          <div className="grid grid-cols-2 gap-1">
-            {AXES.map(a => (
-              <button
-                key={a.id}
-                onClick={() => setGroupBy(a.id)}
-                className={cn(
-                  "rounded-md px-2 py-1.5 text-[12px] transition-colors text-left",
-                  groupBy === a.id
-                    ? "bg-foreground text-background font-medium"
-                    : "bg-muted/50 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {a.label}
-              </button>
-            ))}
-          </div>
-
+        <Section title="Patterns" note="shared claims across accounts">
           {/* The buckets the axis produced, with what each one caught. A bucket that says
               0 is telling you something true about the data, and it should say it out
               loud rather than quietly not existing. */}
@@ -262,30 +238,6 @@ export function GraphFilters({
             </p>
           )}
 
-          {groupBy === "custom" ? (
-            <button
-              onClick={() => setGroups([...groups, { q: "", color: SWATCHES[groups.length % SWATCHES.length] }])}
-              className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-1.5 text-[12px] text-muted-foreground/60 hover:text-foreground hover:border-foreground/25 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={2} /> Add bucket
-            </button>
-          ) : (
-            <button
-              onClick={() => setGroupBy("custom")}
-              className="mt-2 text-[11.5px] text-muted-foreground/45 hover:text-foreground transition-colors"
-            >
-              Cut it my own way…
-            </button>
-          )}
-
-          {groupBy === "custom" && (
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/40">
-              <span className="font-mono">icp&gt;=85</span> · <span className="font-mono">icp:70-84</span> ·{" "}
-              <span className="font-mono">quiet&gt;30</span> · <span className="font-mono">people&gt;=3</span> ·{" "}
-              <span className="font-mono">tier:t1</span> · <span className="font-mono">sig:&lt;key&gt;</span> ·{" "}
-              <span className="font-mono">single</span> · <span className="font-mono">dm</span>. Terms AND together.
-            </p>
-          )}
         </Section>
 
         {/* One filter. The panel is for CUTTING the graph (Group by), not for hunting a
