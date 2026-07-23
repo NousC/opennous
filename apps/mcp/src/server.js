@@ -264,7 +264,7 @@ export function createServer() {
     "confidence and freshness, plus what they actually SAID and did, ranked by how much it tells you. " +
     "Pass an email or entity UUID, and the intent you're working toward so the record is shaped for it.",
     {
-      id: z.string().describe("Email address or entity UUID"),
+      id: z.string().describe("Who to look up — an email, an entity UUID, or a name. A name may match several people; you'll get candidates to choose from."),
       intent: z
         .enum(["meeting_prep", "call_prep", "account_review", "follow_up", "draft_email"])
         .optional()
@@ -282,6 +282,17 @@ export function createServer() {
       // so the model reads what was actually said instead of a list of event names.
       const q = new URLSearchParams({ intent: intent ?? "account_review", compress: "1" });
       const rec = await get(`/v2/accounts/${encodeURIComponent(id)}?${q}`);
+
+      // A name matched several people — surface the candidates to choose from.
+      // Without this, the header line below reads `rec.type`/`rec.entity_id` off the
+      // ambiguous response (which carries neither) and prints "undefined · undefined".
+      if (rec.status === "ambiguous") {
+        const opts = (rec.candidates ?? []).map(c =>
+          `  • ${c.name ?? "(unnamed)"}${c.detail ? ` — ${c.detail}` : ""}  [${c.entity_id}]`).join("\n");
+        return { content: [{ type: "text", text:
+          `"${id}" matches several people. Call get_account again with one of these entity ids:\n${opts}` }] };
+      }
+
       const lines = [`${rec.type} · ${rec.entity_id}`, ""];
 
       if (rec.icp) {

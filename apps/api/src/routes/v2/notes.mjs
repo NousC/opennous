@@ -80,11 +80,19 @@ notesV2Router.post('/search', async (req, res) => {
     }
 
     // Optional entity scope — resolve without creating (a search shouldn't mint
-    // entities). If focus can't be resolved, fall back to a workspace-wide search.
-    let entityId = null;
+    // entities). A resolved name scopes to that one entity; an AMBIGUOUS name (a
+    // duplicate contact, say) scopes to ALL its candidates instead of silently
+    // widening to the whole workspace — and, importantly, still runs the recency
+    // fallback below (which only fires when a scope exists), so a just-saved note on
+    // any candidate is still found. An unresolvable name falls back to workspace-wide.
+    let scopeIds = null;
     if (focus) {
       const r = await resolveFocus(supabase, workspaceId, String(focus)).catch(() => null);
-      if (r?.entity_id) entityId = r.entity_id;
+      if (r?.entity_id) scopeIds = new Set([r.entity_id]);
+      else if (r?.status === 'ambiguous' && Array.isArray(r.candidates)) {
+        const ids = r.candidates.map(c => c.entity_id).filter(Boolean);
+        if (ids.length) scopeIds = new Set(ids);
+      }
     }
 
     const max = Math.min(Math.max(Number(limit) || 8, 1), 20);
@@ -92,7 +100,7 @@ notesV2Router.post('/search', async (req, res) => {
     const hits = await searchClaims(supabase, workspaceId, String(question), { limit: 40, threshold: 0.2 });
     const documents = hits
       .filter(h => typeof h.property === 'string' && h.property.startsWith('note.') && h.value?.metadata?.doc_type)
-      .filter(h => !entityId || h.entity_id === entityId)
+      .filter(h => !scopeIds || scopeIds.has(h.entity_id))
       // Per-member privacy: a raw document is visible only to its owning rep +
       // admins (owner is stamped in metadata.owner_user_id). See PRIVACY_MODEL.md.
       .filter(h => rawVisible(h.value?.metadata?.owner_user_id, ctx))
@@ -112,27 +120,29 @@ notesV2Router.post('/search', async (req, res) => {
 
     // Recency fallback. Semantic search is embeddings-backed, so a note saved
     // seconds ago (not yet embedded) matches nothing — the exact case where a
-    // brief you just wrote comes back empty. When the search is scoped to a
-    // contact, union in that contact's newest documents (listNotes applies the
-    // same per-member visibility via ctx) so a fresh brief is always found.
-    if (entityId) {
-      const recent = (await listNotes(supabase, workspaceId, { entityId, limit: max }, ctx))
-        .filter(n => n.metadata?.doc_type && String(n.content ?? '').trim())
-        .map(n => {
-          const text = String(n.content ?? '').replace(/\s+/g, ' ').trim();
-          return {
-            entity_id: n.entity_id,
-            type: n.metadata.doc_type,
-            title: n.metadata.title ?? null,
-            date: n.metadata.date ?? null,
-            similarity: null, // matched by recency, not similarity
-            snippet: text.length > 400 ? text.slice(0, 400) + '…' : text,
-          };
-        });
-      const seen = new Set(documents.map(d => `${d.title}|${d.date}`));
-      for (const d of recent) {
-        const key = `${d.title}|${d.date}`;
-        if (!seen.has(key)) { seen.add(key); documents.push(d); }
+    // brief you just wrote comes back empty. When the search is scoped to one or
+    // more contacts, union in each contact's newest documents (listNotes applies
+    // the same per-member visibility via ctx) so a fresh brief is always found.
+    if (scopeIds) {
+      const seen = new Set(documents.map(d => `${d.entity_id}|${d.title}|${d.date}`));
+      for (const eid of scopeIds) {
+        const recent = (await listNotes(supabase, workspaceId, { entityId: eid, limit: max }, ctx))
+          .filter(n => n.metadata?.doc_type && String(n.content ?? '').trim())
+          .map(n => {
+            const text = String(n.content ?? '').replace(/\s+/g, ' ').trim();
+            return {
+              entity_id: n.entity_id,
+              type: n.metadata.doc_type,
+              title: n.metadata.title ?? null,
+              date: n.metadata.date ?? null,
+              similarity: null, // matched by recency, not similarity
+              snippet: text.length > 400 ? text.slice(0, 400) + '…' : text,
+            };
+          });
+        for (const d of recent) {
+          const key = `${d.entity_id}|${d.title}|${d.date}`;
+          if (!seen.has(key)) { seen.add(key); documents.push(d); }
+        }
       }
     }
 

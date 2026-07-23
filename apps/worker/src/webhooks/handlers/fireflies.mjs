@@ -170,6 +170,18 @@ export async function reprocessFireflies(supabase, workspaceId, body) {
   // than falling back to a title-only string that yields zero facts.
   const meetingSummary = digest
     || (transcriptText ? transcriptText.slice(0, 12000) : await extractMeetingFacts(title, allParticipants));
+  // What the EXTRACTOR reads is not the display digest. The digest is a lossy AI
+  // overview that drops exactly the relationship-direction signal we most want —
+  // how they found us, what they offered us, the objection they raised — and, when
+  // Fireflies has generated it, it would otherwise be ALL the extractor ever sees.
+  // Worse, the empty-digest fallback above hard-cuts the transcript at 12k chars,
+  // so a 30-min call lost its back half (that is how a "connect me with YC founders"
+  // offer at char 24k never reached the model). Feed the verbatim transcript,
+  // bounded generously — Haiku's context dwarfs even a long call — and keep the
+  // digest for display only.
+  const extractionText = (transcriptText && transcriptText.length >= 40)
+    ? transcriptText.slice(0, 60000)
+    : meetingSummary;
   // Fireflies `date` is an epoch-ms timestamp (or an ISO string on enriched bodies).
   let occurredAt = new Date().toISOString();
   if (meetingDate != null) {
@@ -273,7 +285,7 @@ export async function reprocessFireflies(supabase, workspaceId, body) {
       supabase,
       workspaceId,
       participants: externals,
-      summary:      meetingSummary,
+      summary:      extractionText,
       source:       'fireflies',
     }).catch(err => console.warn('[fireflies] meeting extraction failed', err.message));
   }

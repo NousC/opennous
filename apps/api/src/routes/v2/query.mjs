@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import { getSupabaseClient, runQuery, readContextFromReq } from '@nous/core';
+import { getSupabaseClient, runQuery, readContextFromReq, resolveFocus } from '@nous/core';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const queryV2Router = Router();
 
@@ -25,7 +27,20 @@ export const queryV2Router = Router();
 queryV2Router.post('/', async (req, res) => {
   try {
     const supabase = getSupabaseClient();
-    const { scope = {}, without, return: returnMode, question } = req.body;
+    let { scope = {}, without, return: returnMode, question } = req.body;
+
+    // scope.entity_id is documented as a pre-resolved id, but callers (and agents)
+    // routinely pass a bare name. Resolve it here so a name scopes the query instead
+    // of silently matching nothing. An ambiguous name returns its candidates rather
+    // than picking one arbitrarily.
+    if (scope?.entity_id && !UUID_RE.test(String(scope.entity_id))) {
+      const r = await resolveFocus(supabase, req.workspaceId, String(scope.entity_id)).catch(() => null);
+      if (r?.status === 'ambiguous') {
+        return res.json({ status: 'ambiguous', candidates: r.candidates, question: question ?? null });
+      }
+      if (r?.entity_id) scope = { ...scope, entity_id: r.entity_id };
+    }
+
     const result = await runQuery(supabase, req.workspaceId, scope, question, {
       return: returnMode,
       without,
