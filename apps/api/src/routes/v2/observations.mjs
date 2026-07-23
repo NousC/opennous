@@ -47,8 +47,19 @@ observationsV2Router.post('/', async (req, res) => {
       entityId = await getOrCreateEntity(supabase, workspaceId, 'company',
         [{ kind: 'domain', value: ident.value }]);
     } else {
+      // Pull the name out of the incoming observations so the resolver can run its
+      // name-fallback tier and attach to an existing same-person record instead of
+      // forking. Without this, a same-batch LinkedIn import (name in the payload,
+      // only an identifier here) creates a duplicate before the name is ever seen.
+      const nameOf = (p) => {
+        const o = observations.find(x => x?.kind === 'state' && x?.property === p && x?.value);
+        return o ? String(o.value) : null;
+      };
+      const first_name = nameOf('first_name');
+      const last_name = nameOf('last_name');
+      const nameHint = (first_name || last_name) ? { first_name, last_name } : undefined;
       entityId = await getOrCreateEntity(supabase, workspaceId, 'person',
-        [{ kind: ident.kind, value: ident.value }]);
+        [{ kind: ident.kind, value: ident.value }], { nameHint });
     }
 
     // Append every observation to the immutable spine.

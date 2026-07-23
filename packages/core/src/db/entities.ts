@@ -252,6 +252,35 @@ async function resolvePersonByNameFallback(
     byEntity.set(c.entity_id, m);
   }
 
+  // Race guard for same-batch imports. Name CLAIMS are derived asynchronously
+  // (~30s after ingest), but a concurrent same-person row is created within
+  // milliseconds — so at decision time the twin has no queryable claim yet and we
+  // fork a duplicate (the "why is there always an empty account" bug). The name
+  // OBSERVATIONS, however, are written synchronously at ingest. Fold in recent
+  // name observations on ACTIVE entities to see twins whose claims haven't
+  // derived yet; bounded to the last 15 min because anything older already has a
+  // claim above. Claims win when present.
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data: recentObs } = await supabase
+    .from('observations')
+    .select('entity_id, property, value, entities!inner(status)')
+    .eq('workspace_id', workspaceId)
+    .eq('kind', 'state')
+    .in('property', ['first_name', 'last_name'])
+    .eq('entities.status', 'active')
+    .gte('ingested_at', since)
+    .order('ingested_at', { ascending: false })
+    .limit(5000);
+  for (const o of (recentObs as { entity_id: string; property: string; value: unknown }[]) ?? []) {
+    const m = byEntity.get(o.entity_id) ?? {};
+    const v = String(o.value ?? '').trim().toLowerCase();
+    if (!v) continue;
+    // order is newest-first; only fill a gap the claim didn't already provide
+    if (o.property === 'first_name') { if (!m.first) m.first = v; }
+    else if (!m.last) m.last = v;
+    byEntity.set(o.entity_id, m);
+  }
+
   const strong: string[] = [];   // surname appears in the incoming email — safe even if they have an email
   const weak: string[] = [];     // name-prefix only — gated below to email-less (lossless) candidates
   for (const [id, m] of byEntity) {

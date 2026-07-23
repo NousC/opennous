@@ -257,7 +257,14 @@ peopleV2Router.post('/', async (req, res) => {
       });
     }
 
-    const entityId = await getOrCreateEntity(supabase, workspaceId, 'person', identifiers);
+    // Pass the incoming name as a resolution hint so the name-fallback tier can
+    // attach to an existing same-person record instead of forking a duplicate.
+    // Without this the name only becomes a claim AFTER creation (below), too late
+    // to prevent the fork — the root cause of same-batch LinkedIn import dupes.
+    const nameHint = (claimValues.first_name || claimValues.last_name)
+      ? { first_name: claimValues.first_name ?? null, last_name: claimValues.last_name ?? null }
+      : undefined;
+    const entityId = await getOrCreateEntity(supabase, workspaceId, 'person', identifiers, { nameHint });
     if (Object.keys(claimValues).length > 0) {
       await assertClaims(supabase, workspaceId, entityId, { values: claimValues });
     }
