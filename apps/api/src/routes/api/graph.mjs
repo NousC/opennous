@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient, scoreTier } from '@nous/core';
+import { getSupabaseClient, scoreTier, getInternalEntityIds } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 
 // GET /api/graph?workspaceId=... — the workspace context graph as a war-room:
@@ -81,7 +81,7 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     if (!UUID.test(workspaceId)) return res.status(400).json({ error: 'invalid_workspace_id' });
     if (req.workspaceId !== workspaceId) return res.status(403).json({ error: 'workspace_not_found_or_unauthorized' });
 
-    const [contacts, companies, rels, gedges] = await Promise.all([
+    const [contactsRaw, companies, rels, gedges, internalIds] = await Promise.all([
       pageAll((a, b) => supabase.from('contacts')
         .select('id,first_name,last_name,job_title,icp_score,last_activity_at').eq('workspace_id', workspaceId).range(a, b)),
       pageAll((a, b) => supabase.from('companies')
@@ -90,7 +90,12 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
         .eq('type', 'works_at').is('valid_to', null).then(r => r.data || []),
       supabase.from('workspace_graph_edges').select('subject_id,object_id,object_label,relationship')
         .eq('workspace_id', workspaceId).not('subject_id', 'is', null).then(r => r.data || []),
+      getInternalEntityIds(supabase, workspaceId),
     ]);
+    // Team members (teammates flagged is_internal) are NOT accounts — a co-founder or
+    // colleague must never appear in the context graph as a prospect. Drop them up
+    // front so they vanish from nodes, committees, and every concept they'd anchor.
+    const contacts = contactsRaw.filter(c => !internalIds.has(c.id));
 
     const contactIds = new Set(contacts.map(c => c.id));
     // contact → employer (first works_at) + set of companies that employ a contact
@@ -208,13 +213,18 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
       .then(r => r.data || []);
     const latestGen = patRows.length ? patRows[0].generation : null;
     const nodeIds = new Set(nodes.filter(n => n.t === 0 || n.t === 1).map(n => n.i));
+    // Revenue-substance beats commodity. "Everyone uses Clay" is a shallow tag; a
+    // shared OBJECTION or PAIN is why a deal is won or lost. Rank the substantive
+    // types first so the graph (and the panel's top hubs) lead with why-they-buy /
+    // why-they-won't / what-they're-doing — not the stack everyone already has.
+    const TYPE_RANK = { objection: 6, pain: 6, competitor: 5, play: 5, person: 4, connection: 4, channel: 2, tool: 1, segment: 1 };
     const clusters = patRows
       .filter(p => p.generation === latestGen)
       // `cat` carries the revenue TYPE (pain/tool/objection/…) so the node colours
       // itself by what KIND of thing it is — the type is the action.
       .map(p => ({ label: p.label, cat: p.type || 'theme', ids: (p.entity_ids || []).filter(id => nodeIds.has(id)) }))
       .filter(c => c.ids.length >= 2)
-      .sort((a, b) => b.ids.length - a.ids.length)
+      .sort((a, b) => ((TYPE_RANK[b.cat] || 3) - (TYPE_RANK[a.cat] || 3)) || (b.ids.length - a.ids.length))
       .slice(0, 28);   // concepts are finer than the old whole-claim clusters, so allow more hubs
 
     const patByEntity = new Map();
