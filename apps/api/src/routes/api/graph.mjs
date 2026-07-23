@@ -201,19 +201,21 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     // from that person's conversations, so the pattern belongs to them, and the person
     // is the only node you can actually act on. An account is rarely one pattern; the
     // interesting ones sit in an overlap nobody had noticed.
-    const patRows = await supabase.from('claim_patterns')
-      .select('label,kind,quality,entity_ids,generation')
+    const patRows = await supabase.from('graph_concepts')
+      .select('label,type,entity_ids,generation')
       .eq('workspace_id', workspaceId)
       .order('generation', { ascending: false })
       .then(r => r.data || []);
     const latestGen = patRows.length ? patRows[0].generation : null;
     const nodeIds = new Set(nodes.filter(n => n.t === 0 || n.t === 1).map(n => n.i));
     const clusters = patRows
-      .filter(p => p.generation === latestGen && p.quality !== 'noise')
-      .map(p => ({ label: p.label, cat: p.kind || 'theme', ids: (p.entity_ids || []).filter(id => nodeIds.has(id)) }))
+      .filter(p => p.generation === latestGen)
+      // `cat` carries the revenue TYPE (pain/tool/objection/…) so the node colours
+      // itself by what KIND of thing it is — the type is the action.
+      .map(p => ({ label: p.label, cat: p.type || 'theme', ids: (p.entity_ids || []).filter(id => nodeIds.has(id)) }))
       .filter(c => c.ids.length >= 2)
       .sort((a, b) => b.ids.length - a.ids.length)
-      .slice(0, 16);
+      .slice(0, 28);   // concepts are finer than the old whole-claim clusters, so allow more hubs
 
     const patByEntity = new Map();
     for (const cl of clusters) for (const id of cl.ids) {

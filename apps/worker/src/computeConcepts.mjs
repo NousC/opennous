@@ -53,7 +53,7 @@ async function extractBatch(batch) {
 - channel: how they found us or a distribution channel ("YouTube", "LinkedIn post")
 - segment: their industry / company type ("agency", "fintech", "e-commerce")
 
-label = a SHORT canonical name (2-5 words), normalized so the SAME thing phrased differently gets the SAME label across claims. Extract ONLY what is genuinely present — a claim may yield 0, 1, or several entities. Never invent; skip generic filler ("software", "business", "AI").
+label = a SHORT canonical name (2-5 words), normalized so the SAME thing phrased differently gets the SAME label across claims. Extract ONLY what is genuinely present — a claim may yield 0, 1, or several entities. Never invent; skip generic filler ("software", "business", "AI"). Never extract OUR own side (the user, "Bennet", "Bennet Glinder", "Nous") as a person, connection, tool, or competitor — only the account's world.
 
 Claims:
 ${JSON.stringify(batch.map(b => ({ i: b.i, category: b.cat, content: b.content })))}
@@ -156,7 +156,7 @@ async function computeWorkspace(supabase, workspaceId, { dry }) {
 async function main() {
   const args = process.argv.slice(2);
   const dry = args.includes('--dry');
-  const wsArg = args.find(a => !a.startsWith('--') && !/^\d/.test(a));
+  const wsArg = args.find(a => !a.startsWith('--'));
   const supabase = getSupabaseClient();
   let workspaceIds;
   if (wsArg) workspaceIds = [wsArg];

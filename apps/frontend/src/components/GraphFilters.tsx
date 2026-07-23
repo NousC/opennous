@@ -65,11 +65,22 @@ const pretty = (k: string) =>
 // A pattern is coloured by WHAT KIND of thing it is, not by its position in a palette.
 // Stack, pain, intent and segment are four different reasons to care about an account, and
 // the colour should say which one you are looking at before you read the label.
+// Revenue types — the colour says the ACTION before you read the label:
+// pain=wedge, objection=friction, tool=stack, competitor=win/loss, play=timing,
+// person=who-signs, connection=warm-path, channel=attribution, segment=lookalike.
 const CAT_COLOR: Record<string, string> = {
+  pain:       "#d4574c",
+  objection:  "#c2410c",
+  tool:       "#7c5cf0",
+  competitor: "#0891b2",
+  play:       "#2aa8a0",
+  person:     "#2fa36b",
+  connection: "#4a7fd4",
+  channel:    "#e0a03a",
+  segment:    "#9aa0ad",
+  // legacy fallbacks (old whole-claim cluster kinds)
   stack:   "#7c5cf0",
-  pain:    "#d4574c",
   intent:  "#2aa8a0",
-  segment: "#e0a03a",
   theme:   "#9aa0ad",
 };
 
