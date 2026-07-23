@@ -883,7 +883,7 @@ async function searchEntitiesByName(
     byEntity.set(c.entity_id, m);
   }
 
-  const out: FocusCandidate[] = [];
+  let out: FocusCandidate[] = [];
   for (const [id, m] of byEntity) {
     const full = m.name
       ? String(m.name)
@@ -909,6 +909,26 @@ async function searchEntitiesByName(
       name: full || null,
       detail: company || (m.job_title ? String(m.job_title) : null),
     });
+  }
+
+  // The claims scan above is status-BLIND, but a merge leaves conflicting name
+  // claims on the tombstone ("conflicts stay on the drop") and a parked lead keeps
+  // its name claims too — so without this, a merged duplicate or a parked lead
+  // still surfaces here and the agent reports a "duplicate" that no longer exists
+  // (the Rayyan-appears-twice bug). Drop any candidate whose entity is not active.
+  if (out.length) {
+    const ids = out.map(o => o.entity_id);
+    const active = new Set<string>();
+    for (let i = 0; i < ids.length; i += PAGE) {
+      const { data: ents } = await supabase
+        .from('entities')
+        .select('id')
+        .eq('workspace_id', workspaceId)
+        .eq('status', 'active')
+        .in('id', ids.slice(i, i + PAGE));
+      for (const e of (ents as { id: string }[] | null) ?? []) active.add(e.id);
+    }
+    out = out.filter(o => active.has(o.entity_id));
   }
 
   // Same v1/v2 sync gap as resolveEntity: a contact whose name CLAIMS went missing
