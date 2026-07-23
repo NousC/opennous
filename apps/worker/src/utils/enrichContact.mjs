@@ -142,7 +142,7 @@ async function extractRoleFromHeadline(workspaceId, headline) {
 // ICP. job_title alone clears scoreICP's gate, so a LinkedIn-only contact becomes
 // scoreable without ever spending on email enrichment. Only fills empty fields —
 // never overwrites data a paid provider or the user already set.
-export async function applyLinkedInProfile(supabase, contact, { jobTitle, company, companyDomain, photoUrl, email, phone, headline, publicIdentifier } = {}) {
+export async function applyLinkedInProfile(supabase, contact, { jobTitle, company, companyDomain, photoUrl, email, emails, phone, headline, publicIdentifier } = {}) {
   if (!contact?.id || !contact?.workspace_id) return;
   const workspaceId = contact.workspace_id;
   const updates = {};
@@ -186,14 +186,21 @@ export async function applyLinkedInProfile(supabase, contact, { jobTitle, compan
     await upsertIdentifier(supabase, workspaceId, contact.id, 'linkedin_url', vanity);
   }
 
-  // Email from the LinkedIn profile (contact_info.emails) — register it as an
-  // identity so resolution keys on it, then fill the column. Done separately from
+  // Emails from the LinkedIn profile (contact_info.emails) — a profile can list
+  // BOTH a work and a personal address. Register EVERY one as an identifier so
+  // resolution keys on any of them, not just the primary. Done separately from
   // the enrichment-observation set because email is an identifier, not just a claim.
-  const cleanEmail = email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email.toLowerCase().trim() : null;
-  if (cleanEmail && !contact.email) {
-    // Attach the email as an active identifier — this is what the contacts view
-    // shows (it reads email from entity_identifiers, not the claim). upsertIdentifier
-    // works against the partial active index; the old swallowed .upsert never landed.
+  // upsertIdentifier is idempotent and refuses to steal an email already active on
+  // another entity, so attaching all discovered emails is always safe.
+  const candidateEmails = [...new Set(
+    [email, ...(Array.isArray(emails) ? emails : [])]
+      .filter(e => typeof e === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
+      .map(e => e.toLowerCase().trim()),
+  )];
+  for (const cleanEmail of candidateEmails) {
+    // Attach as an active identifier — this is also what the contacts view shows
+    // (it reads email from entity_identifiers, not the claim). Not gated on the
+    // record already having an email: an alternate is additive, never a swap.
     await upsertIdentifier(supabase, workspaceId, contact.id, 'email', cleanEmail);
     await recordObservation(supabase, {
       workspaceId, entityId: contact.id, kind: 'state', property: 'email',

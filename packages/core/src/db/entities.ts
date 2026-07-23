@@ -52,6 +52,7 @@ export function normaliseIdentifier(kind: string, value: string): string {
 /** Build the v2 Identifier[] list from a v1-style contact data blob. */
 export function identifiersFromContactData(data: {
   email?: string | null;
+  emails?: (string | null)[] | null;
   linkedin_url?: string | null;
   linkedin_member_id?: string | null;
   hubspot_id?: string | null;
@@ -61,7 +62,18 @@ export function identifiersFromContactData(data: {
   attio_id?: string | null;
 }): Identifier[] {
   const out: Identifier[] = [];
-  if (data.email)              out.push({ kind: 'email',              value: data.email });
+  // A person can have several emails (work + personal). Attach EVERY one as an
+  // identifier so future resolution matches on any of them, not just the primary.
+  // De-duped case-insensitively; the primary `email` is kept first.
+  const seenEmail = new Set<string>();
+  for (const e of [data.email, ...(data.emails ?? [])]) {
+    const v = typeof e === 'string' ? e.trim() : '';
+    if (!v) continue;
+    const key = v.toLowerCase();
+    if (seenEmail.has(key)) continue;
+    seenEmail.add(key);
+    out.push({ kind: 'email', value: v });
+  }
   // Member-URN URLs (/in/ACoAA…) are not real public handles — keep them out of
   // the identifier set so they never resolve or surface as a scrapeable URL.
   if (data.linkedin_url && !isMemberUrnLinkedInUrl(data.linkedin_url))

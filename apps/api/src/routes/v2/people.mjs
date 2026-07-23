@@ -82,13 +82,32 @@ function parseDuration(input) {
   return n * ms;
 }
 
+// Fields (besides `email`) that carry an additional email for the same person.
+// Each becomes its own `email` identifier so resolution matches on any of them.
+const EXTRA_EMAIL_FIELDS = ['emails', 'personal_email', 'work_email', 'secondary_email', 'other_email'];
+
 function splitBody(body) {
   // identifiers → entity_identifiers via attachIdentifiers
   // everything else → claims via assertClaims
   const identifiers = [];
   const claimValues = {};
+  const seenEmail = new Set();
+  const addEmail = (v) => {
+    for (const raw of Array.isArray(v) ? v : [v]) {
+      const s = typeof raw === 'string' ? raw.trim() : (raw ? String(raw) : '');
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (seenEmail.has(key)) continue;
+      seenEmail.add(key);
+      identifiers.push({ kind: 'email', value: s });
+    }
+  };
   for (const [k, v] of Object.entries(body ?? {})) {
-    if (k in IDENTIFIER_KIND_BY_FIELD) {
+    if (k === 'email') {
+      addEmail(v);                                   // string OR array of emails
+    } else if (EXTRA_EMAIL_FIELDS.includes(k)) {
+      addEmail(v);                                   // secondary email fields → more email identifiers
+    } else if (k in IDENTIFIER_KIND_BY_FIELD) {
       if (v) identifiers.push({ kind: IDENTIFIER_KIND_BY_FIELD[k], value: String(v) });
     } else {
       claimValues[k] = v;

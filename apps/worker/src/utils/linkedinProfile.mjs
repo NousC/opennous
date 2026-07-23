@@ -43,9 +43,17 @@ export async function fetchLinkedInProfile(accountId, memberId) {
       ? d.websites[0].replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '').toLowerCase() || null
       : null;
     const phone = d.contact_info?.phones?.[0] || null;
-    // First-degree connections often expose their real email in the profile itself —
-    // the reliable source, no Gmail name-matching needed. Take the first valid one.
-    const email = (d.contact_info?.emails || []).find(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e || '')) || null;
+    // First-degree connections often expose their real email(s) in the profile —
+    // the reliable source, no Gmail name-matching needed. A profile can list BOTH
+    // a work and a personal address; keep ALL valid ones (deduped) so every one
+    // becomes an identifier downstream, not just the first. `email` stays the
+    // first for back-compat; `emails` carries the full set.
+    const emails = [...new Set(
+      (d.contact_info?.emails || [])
+        .filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e || ''))
+        .map(e => e.toLowerCase().trim()),
+    )];
+    const email = emails[0] || null;
     const location = d.location || null;
     // The real public vanity handle (e.g. "jordan-lee"). This is what makes a
     // contact scrapeable/enrichable — unlike the member-URN we usually start with.
@@ -53,7 +61,7 @@ export async function fetchLinkedInProfile(accountId, memberId) {
     const rawId = d.public_identifier || null;
     const publicIdentifier = rawId && !/^acoaa/i.test(rawId) ? rawId : null;
 
-    return { headline, jobTitle, company, companyDomain, photoUrl, phone, email, location, publicIdentifier };
+    return { headline, jobTitle, company, companyDomain, photoUrl, phone, email, emails, location, publicIdentifier };
   } catch (e) {
     console.warn('[LINKEDIN_PROFILE] fetch failed (non-fatal):', e.message);
     return null;
