@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { AuthenticateWithRedirectCallback } from "@clerk/react";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AppRoutes } from "@/components/AppRoutes";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -64,6 +65,12 @@ const PageLoader = () => (
   </div>
 );
 
+// Finalizes a Clerk OAuth redirect and forwards to the redirectUrlComplete that
+// was set when the flow started. Shows the spinner while Clerk does its thing.
+const SsoCallback = () => (
+  <AuthenticateWithRedirectCallback signInFallbackRedirectUrl="/" signUpFallbackRedirectUrl="/" />
+);
+
 function PostHogPageView() {
   const location = useLocation();
   usePostHog();
@@ -94,6 +101,11 @@ const App = () => (
               <Route path="/login" element={<Suspense fallback={<PageLoader />}><Login /></Suspense>} />
               <Route path="/signup" element={<Suspense fallback={<PageLoader />}><Signup /></Suspense>} />
               <Route path="/accept-invitation" element={<Suspense fallback={<PageLoader />}><AcceptInvitation /></Suspense>} />
+
+              {/* Clerk OAuth (Google) return leg. authenticateWithRedirect sends the
+                  browser here; the callback finalizes the session and forwards to the
+                  redirectUrlComplete we set (e.g. back to /cli-login). */}
+              <Route path="/sso-callback" element={<SsoCallback />} />
 
               {/* Onboarding moved to the agent — /onboarding now redirects to Install. */}
               <Route path="/onboarding" element={<Navigate to="/" replace />} />

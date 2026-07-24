@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseClient } from '@nous/core';
+import { clerkClient } from '../../../lib/clerk.mjs';
 
 export const adminUsersRouter = Router();
 
@@ -61,7 +62,7 @@ adminUsersRouter.delete('/:userId', async (req, res) => {
     if (userId === adminUser.id) return res.status(400).json({ error: 'cannot_delete_self' });
 
     const { data: targetUser, error: userError } = await supabase.from('users')
-      .select('id, email, name, team_id, supabase_user_id')
+      .select('id, email, name, team_id, clerk_user_id')
       .eq('id', userId).single();
     if (userError || !targetUser) return res.status(404).json({ error: 'user_not_found' });
 
@@ -82,9 +83,9 @@ adminUsersRouter.delete('/:userId', async (req, res) => {
 
     await supabase.from('users').delete().eq('id', userId);
 
-    if (targetUser.supabase_user_id) {
+    if (targetUser.clerk_user_id) {
       try {
-        await supabase.auth.admin.deleteUser(targetUser.supabase_user_id);
+        await clerkClient.users.deleteUser(targetUser.clerk_user_id);
       } catch (_) {}
     }
 
@@ -107,25 +108,28 @@ adminUsersRouter.post('/impersonate/:userId', async (req, res) => {
     if (!UUID.test(userId)) return res.status(400).json({ error: 'invalid_user_id' });
 
     const { data: targetUser, error: userError } = await supabase.from('users')
-      .select('id, email, name, supabase_user_id').eq('id', userId).single();
+      .select('id, email, name, clerk_user_id').eq('id', userId).single();
     if (userError || !targetUser) return res.status(404).json({ error: 'user_not_found' });
 
-    if (targetUser.supabase_user_id) {
-      const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(targetUser.supabase_user_id);
-      if (authError || !authUser) return res.status(404).json({ error: 'user_not_in_auth' });
+    if (!targetUser.clerk_user_id) return res.status(404).json({ error: 'user_not_in_auth' });
+
+    // Clerk's equivalent of a magic link is a short-lived sign-in token consumed
+    // as a "ticket" on the sign-in page: the frontend calls
+    // signIn.create({ strategy: 'ticket', ticket }) when it sees ?__clerk_ticket=.
+    let signInToken;
+    try {
+      const created = await clerkClient.signInTokens.createSignInToken({
+        userId: targetUser.clerk_user_id,
+        expiresInSeconds: 60 * 60,
+      });
+      signInToken = created.token;
+    } catch (e) {
+      return res.status(500).json({ error: 'link_generation_failed', message: e?.message });
     }
+    if (!signInToken) return res.status(500).json({ error: 'link_generation_failed' });
 
     const redirectUrl = process.env.VITE_APP_URL || 'http://localhost:8080';
-    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
-      type: 'magiclink',
-      email: targetUser.email,
-      options: { redirectTo: redirectUrl },
-    });
-
-    if (linkError) return res.status(500).json({ error: 'link_generation_failed', message: linkError.message });
-
-    const magicLink = linkData.properties?.action_link;
-    if (!magicLink) return res.status(500).json({ error: 'link_generation_failed' });
+    const magicLink = `${redirectUrl}/login?__clerk_ticket=${encodeURIComponent(signInToken)}`;
 
     return res.json({
       magic_link: magicLink,

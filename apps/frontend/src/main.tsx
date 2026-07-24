@@ -1,7 +1,14 @@
+import {ClerkProvider} from "@clerk/react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import { initPostHog } from "./lib/posthog";
+
+const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+
+if (!PUBLISHABLE_KEY) {
+  throw new Error("Missing VITE_CLERK_PUBLISHABLE_KEY environment variable");
+}
 
 // Ensure root element exists before rendering
 const rootElement = document.getElementById("root");
@@ -22,7 +29,14 @@ initPostHog();
 // Render the app with error boundary
 try {
   const root = createRoot(rootElement);
-  root.render(<App />);
+  root.render(<ClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      afterSignOutUrl="/login"
+      signInUrl="/login"
+      signUpUrl="/signup"
+    >
+      <App />
+    </ClerkProvider>);
 } catch (error) {
   console.error("Failed to render React app:", error);
   rootElement.innerHTML = `

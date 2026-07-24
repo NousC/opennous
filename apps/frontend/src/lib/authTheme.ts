@@ -30,3 +30,23 @@ export const BOX_SHADOW = {
     "0 18px 50px -22px rgba(70,58,34,0.28), " +
     "0 6px 18px -12px rgba(150,96,31,0.16)",
 } as const;
+
+// Shared theming for Clerk's <SignIn> / <SignUp> widgets so they wear the same
+// warm-paper Nous palette as the rest of the auth shell.
+export const CLERK_APPEARANCE = {
+  variables: {
+    colorPrimary: AUTH.amber,
+    colorText: AUTH.ink,
+    colorTextSecondary: AUTH.muted,
+    colorBackground: AUTH.panel,
+    colorInputBackground: AUTH.panel,
+    colorInputText: AUTH.ink,
+    borderRadius: "0.5rem",
+  },
+  elements: {
+    rootBox: "w-full",
+    card: "border border-[#E4DED1] bg-[#FBFAF5]",
+    headerTitle: "font-fraunces",
+    formButtonPrimary: "bg-[#E0912B] hover:brightness-105 text-[#1a1000] normal-case",
+  },
+} as const;

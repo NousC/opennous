@@ -85,20 +85,15 @@ export async function runRoutine(routine, { dedupeKey, meeting = null } = {}) {
     // The thread. Titled for the routine (and the call, when there is one) so the
     // Threads list reads like a diary of what the agent did while you were away.
     //
-    // Threads are keyed by the SUPABASE AUTH id, while routines (like every other
-    // workspace object) are keyed by the internal users.id. Two different id spaces
-    // for the same person, so the routine's owner has to be translated or the
-    // insert fails its foreign key.
-    const { data: owner } = routine.user_id
-      ? await supabase.from('users').select('supabase_user_id').eq('id', routine.user_id).maybeSingle()
-      : { data: null };
-
+    // playground_threads.user_id references the internal users.id (same id space
+    // as routines and every other workspace object), so the routine's owner id
+    // goes straight in — no auth-id translation needed.
     const title = meeting ? `${routine.name}: ${meeting.title}`.slice(0, 120) : routine.name;
     const { data: thread, error: threadErr } = await supabase
       .from('playground_threads')
       .insert({
         workspace_id: routine.workspace_id,
-        user_id: owner?.supabase_user_id ?? null,
+        user_id: routine.user_id ?? null,
         title,
       })
       .select('id')

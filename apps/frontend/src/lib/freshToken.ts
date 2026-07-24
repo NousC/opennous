@@ -1,9 +1,14 @@
-import { supabase } from './supabase';
-
-// Returns a valid access token, refreshing the Supabase session if it has
-// expired (or is about to). Prevents the 401-then-TOKEN_REFRESHED race where
-// React state still holds the previous token at fetch time.
+// Returns a valid, freshly-minted access token, or null when signed out.
+// Clerk's session tokens are short-lived; getToken() transparently refreshes,
+// so this avoids the stale-token race where React state still holds a rotated-out
+// token at fetch time. Reads the Clerk singleton off `window` (set by clerk-js)
+// so non-React callers outside the provider tree can still get a token.
 export async function freshAccessToken(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
+  const clerk = (window as any).Clerk;
+  if (!clerk?.session) return null;
+  try {
+    return await clerk.session.getToken();
+  } catch {
+    return null;
+  }
 }

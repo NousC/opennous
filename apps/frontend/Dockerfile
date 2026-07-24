@@ -12,6 +12,7 @@ RUN pnpm install --frozen-lockfile
 COPY apps/frontend ./apps/frontend
 
 # Build args become VITE_* env vars at build time
+ARG VITE_CLERK_PUBLISHABLE_KEY
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
 ARG VITE_API_URL
