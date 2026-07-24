@@ -207,7 +207,7 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     // is the only node you can actually act on. An account is rarely one pattern; the
     // interesting ones sit in an overlap nobody had noticed.
     const patRows = await supabase.from('graph_concepts')
-      .select('label,type,entity_ids,generation')
+      .select('label,type,entity_ids,claim_ids,generation')
       .eq('workspace_id', workspaceId)
       .order('generation', { ascending: false })
       .then(r => r.data || []);
@@ -218,19 +218,40 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     // types first so the graph (and the panel's top hubs) lead with why-they-buy /
     // why-they-won't / what-they're-doing — not the stack everyone already has.
     const TYPE_RANK = { objection: 6, pain: 6, competitor: 5, play: 5, person: 4, connection: 4, channel: 2, tool: 1, segment: 1 };
-    const clusters = patRows
+    const conceptRows = patRows
       .filter(p => p.generation === latestGen)
-      // `cat` carries the revenue TYPE (pain/tool/objection/…) so the node colours
-      // itself by what KIND of thing it is — the type is the action.
-      .map(p => ({ label: p.label, cat: p.type || 'theme', ids: (p.entity_ids || []).filter(id => nodeIds.has(id)) }))
+      .map(p => ({ label: p.label, cat: p.type || 'theme', claimIds: p.claim_ids || [],
+                   ids: (p.entity_ids || []).filter(id => nodeIds.has(id)) }))
       .filter(c => c.ids.length >= 2)
       .sort((a, b) => ((TYPE_RANK[b.cat] || 3) - (TYPE_RANK[a.cat] || 3)) || (b.ids.length - a.ids.length))
       .slice(0, 28);   // concepts are finer than the old whole-claim clusters, so allow more hubs
+    // `cat` carries the revenue TYPE (pain/tool/objection/…) so the hub colours itself
+    // by what KIND of thing it is — the type is the action.
+    const clusters = conceptRows.map(c => ({ label: c.label, cat: c.cat, ids: c.ids }));
+
+    // EVIDENCE — the Obsidian "why is this linked" made visible. A concept node is the
+    // abstraction; what grounds each account in it is the SPECIFIC thing that account
+    // said. Pull the source-claim text so every account→concept membership carries the
+    // account's own words (e.g. the pain "Fragmented account data" is grounded on Ramp
+    // by "runs a seven-tool stack with no unified view").
+    const allClaimIds = [...new Set(conceptRows.flatMap(c => c.claimIds))];
+    const claimById = new Map();
+    for (let i = 0; i < allClaimIds.length; i += 300) {
+      const { data } = await supabase.from('claims').select('id,entity_id,value').in('id', allClaimIds.slice(i, i + 300));
+      for (const c of (data || [])) claimById.set(c.id, { entity: c.entity_id, content: c.value?.content || '' });
+    }
 
     const patByEntity = new Map();
-    for (const cl of clusters) for (const id of cl.ids) {
-      if (!patByEntity.has(id)) patByEntity.set(id, []);
-      patByEntity.get(id).push({ label: cl.label, cat: cl.cat });
+    for (const c of conceptRows) {
+      const ev = new Map();   // entity_id -> its own claim text for THIS concept
+      for (const cid of c.claimIds) {
+        const cl = claimById.get(cid);
+        if (cl && !ev.has(cl.entity)) ev.set(cl.entity, cl.content);
+      }
+      for (const id of c.ids) {
+        if (!patByEntity.has(id)) patByEntity.set(id, []);
+        patByEntity.get(id).push({ label: c.label, cat: c.cat, evidence: ev.get(id) || null });
+      }
     }
     for (const n of nodes) {
       if (n.t !== 0 && n.t !== 1) continue;

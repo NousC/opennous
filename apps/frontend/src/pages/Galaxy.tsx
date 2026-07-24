@@ -69,6 +69,9 @@ function layout(nodes: any[], edges: any[]) {
 //          the model guessing).
 function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", embedded = false, onOpen?: (n: any) => void): any {
   const cv = root.querySelector('#gx-c') as HTMLCanvasElement;
+  const tip = root.querySelector('#gx-tip') as HTMLElement | null;
+  // Claim text is user data — escape before it touches innerHTML.
+  const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, (c: string) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c]));
   const ctx = cv.getContext('2d', { alpha: false })!;
   let W = 0, H = 0; const DPR = Math.min(1.6, window.devicePixelRatio || 1);
   const RAIL = 0;   // the filter panel is a sibling element now, not an overlay
@@ -655,9 +658,11 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
       const faded = !!(S && !S.has(n.i));
       ctx.globalAlpha = faded ? 0.14 : 1;
       if (n.t === 3) { const r = n.r * disp.node, cc = groupColor(n) ?? (CATCOL[n.cat] || CLA); ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(0.785); if (!fast && !faded && !LIGHT) { ctx.shadowColor = cc; ctx.shadowBlur = 13; } ctx.fillStyle = cc; ctx.fillRect(-r, -r, 2 * r, 2 * r); ctx.shadowBlur = 0; ctx.restore(); ctx.globalAlpha = 1; continue; }
-      const gc = gcPre;
-      const col = gc ?? (n.t === 1 ? COMPANY(n) : fillP(n));
-      const lit = !faded && (col === GREEN || col === GOLD || (n.t === 1 && n.look));
+      // A category lens is about the pattern, not the ICP — so accounts drop their tier
+      // colour and go neutral, letting the (type-coloured) hubs carry the meaning.
+      const gc = focusCat ? null : gcPre;
+      const col = focusCat ? SLATE : (gc ?? (n.t === 1 ? COMPANY(n) : fillP(n)));
+      const lit = !faded && !focusCat && (col === GREEN || col === GOLD || (n.t === 1 && n.look));
       if (!fast && lit && !LIGHT) { ctx.shadowColor = (n.t === 1 && n.look) ? GOLD : col; ctx.shadowBlur = n.t === 1 ? 12 : 9; } else ctx.shadowBlur = 0;
       // A node in a group is drawn larger and ringed. Colour alone is not enough at this
       // scale, and the whole point of a group is that you can find it without hunting.
@@ -730,9 +735,23 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
       alphaTarget = 0.3; reheat(0.3);
       return;
     }
-    if (drag) { tx += e.clientX - lx; ty += e.clientY - ly; ttx = tx; tty = ty; lx = e.clientX; ly = e.clientY; moved++; fast = true; req(); return; }
+    if (drag) { tx += e.clientX - lx; ty += e.clientY - ly; ttx = tx; tty = ty; lx = e.clientX; ly = e.clientY; moved++; fast = true; if (tip) tip.style.display = 'none'; req(); return; }
     // Cursor only. Nothing on the canvas reacts to the pointer — see fset().
-    cv.style.cursor = pick(e.clientX, e.clientY) ? 'pointer' : 'grab';
+    const under: any = pick(e.clientX, e.clientY);
+    cv.style.cursor = under ? 'pointer' : 'grab';
+    // In a category lens (a sparse view), hovering an account reveals its OWN words that
+    // ground it in the focused pattern — the thing Obsidian shows you. Off in the dense
+    // overview, where a hover would strobe.
+    if (tip) {
+      const ev = focusCat && under && under.t === 0 ? (under.pat || []).find((p: any) => p.cat === focusCat && p.evidence) : null;
+      if (ev) {
+        const rb = root.getBoundingClientRect();
+        tip.style.left = (e.clientX - rb.left + 14) + 'px';
+        tip.style.top = (e.clientY - rb.top + 14) + 'px';
+        tip.innerHTML = `<b>${esc(under.l || 'account')}</b><em>${esc(ev.label)}</em><span>“${esc(ev.evidence)}”</span>`;
+        tip.style.display = 'block';
+      } else tip.style.display = 'none';
+    }
   };
   const onDown = (e: MouseEvent) => {
     moved = 0;
@@ -762,6 +781,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   const onDbl = () => { sel = null; hi = null; clearActive(); reheat(0.7); fit(); };
   const onResize = () => { size(); fit(); req(); };
   cv.addEventListener('mousemove', onMove); cv.addEventListener('mousedown', onDown); window.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', () => { if (tip) tip.style.display = 'none'; });
   cv.addEventListener('wheel', onWheel, { passive: false }); cv.addEventListener('dblclick', onDbl); window.addEventListener('resize', onResize);
   (root.querySelector('#gx-zin') as HTMLElement).onclick = () => zoomAt((W - RAIL) / 2, H / 2, 1.4);
   (root.querySelector('#gx-zout') as HTMLElement).onclick = () => zoomAt((W - RAIL) / 2, H / 2, 1 / 1.4);
@@ -786,7 +806,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     setMode(m: string)          { toMode(m); },
     // Focus the graph on one revenue category (or null for the ICP overview). Re-derives
     // the accounts on that type's hubs, then reheats so they cluster around them.
-    setFocus(cat: string | null) { focusCat = cat || null; computeFocus(); toMode(cat ? 'patterns' : 'accounts'); },
+    setFocus(cat: string | null) { focusCat = cat || null; computeFocus(); if (tip) tip.style.display = 'none'; toMode(cat ? 'patterns' : 'accounts'); },
     fit()                       { sel = null; hi = null; clearActive(); reheat(0.6); fit(); },
     // What is actually on the canvas right now. The panel shows these counts, because a
     // filter that does not tell you how much it removed is a filter you cannot trust.
@@ -1140,6 +1160,9 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
     <div ref={rootRef} className={embedded ? "gx-root gx-light" : "gx-root"}>
       <style>{embedded ? CSS_EMBEDDED : CSS}</style>
       <canvas id="gx-c" />
+      {/* Evidence tooltip — only used in a category lens (a sparse view), where hovering
+          an account reveals the account's OWN words that ground it in the pattern. */}
+      <div id="gx-tip" />
       {/* Back only exists on the full-screen route. Embedded, there is nowhere to go
           back to — you are already on the page. */}
       {!embedded && (
