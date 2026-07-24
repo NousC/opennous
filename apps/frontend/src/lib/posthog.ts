@@ -12,8 +12,17 @@ export const initPostHog = () => {
 
   posthog.init(apiKey, {
     api_host: apiHost,
+    // Don't track until the user has opted in (see CookieConsent). Capturing stays
+    // off until opt_in_capturing() — which CookieConsent calls on "Accept all", and
+    // which we re-apply below for a returning visitor who already consented.
+    opt_out_capturing_by_default: true,
     // Enable automatic pageview tracking
     loaded: (posthog) => {
+      try {
+        const stored = localStorage.getItem('nous_cookie_consent');
+        const consent = stored ? JSON.parse(stored)?.consent : null;
+        if (consent === 'all') posthog.opt_in_capturing();
+      } catch { /* no consent yet — stay opted out */ }
       if (import.meta.env.DEV) {
         console.log('PostHog initialized:', posthog);
       }
@@ -22,9 +31,13 @@ export const initPostHog = () => {
     capture_pageview: true,
     // Capture pageleaves automatically
     capture_pageleave: true,
-    // Enable session recording (optional - can be disabled for privacy)
+    // Session recording MUST mask everything — this is a CRM/transcript app, so
+    // replays would otherwise ship customer emails, phone numbers, and meeting
+    // transcript text to a third party.
     session_recording: {
       recordCrossOriginIframes: false,
+      maskAllInputs: true,
+      maskTextSelector: '*',
     },
     // Disable in development by default (set to true to test)
     disable_session_recording: import.meta.env.DEV,

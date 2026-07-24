@@ -125,7 +125,9 @@ export async function verifyClerkAuth(req, res, next) {
     const { data: byEmail } = await supabase
       .from('users')
       .select('id, clerk_user_id')
-      .ilike('email', user.email)
+      // Escape LIKE metachars (%/_/\) so a Clerk email like "a_min@x.com" can't
+      // wildcard-match a different user's row and bind onto it.
+      .ilike('email', user.email.replace(/[\\%_]/g, '\\$&'))
       .maybeSingle();
     if (byEmail) {
       internalUserId = byEmail.id;

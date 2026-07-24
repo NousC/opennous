@@ -24,7 +24,8 @@ export async function ensureUserAndTeam(authUser, skipTeamCreation = false) {
     const { data: byEmail } = await supabase
       .from('users')
       .select('*, team:team_id(*)')
-      .ilike('email', email)
+      // Escape LIKE metachars so a crafted email can't wildcard-match another row.
+      .ilike('email', email.replace(/[\\%_]/g, '\\$&'))
       .maybeSingle();
 
     if (byEmail) {

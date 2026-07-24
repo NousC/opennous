@@ -15,9 +15,10 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   ? Buffer.from(process.env.ENCRYPTION_KEY.slice(0, 64).padEnd(64, '0'), 'hex')
   : null;
 
-/** Encrypt one value. Returns it untouched when no key is configured (dev). */
+/** Encrypt one value. Fails CLOSED when no key is configured — never stores plaintext. */
 export function encryptValue(value) {
-  if (!ENCRYPTION_KEY || value == null) return value;
+  if (value == null) return value;
+  if (!ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEY is not configured — refusing to store a credential unencrypted');
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
   return iv.toString('hex') + ':' + cipher.update(String(value), 'utf8', 'hex') + cipher.final('hex');
@@ -25,7 +26,7 @@ export function encryptValue(value) {
 
 export function encryptCredentials(credentials) {
   const out = {};
-  if (credentials && ENCRYPTION_KEY) {
+  if (credentials) {
     for (const [key, val] of Object.entries(credentials)) out[key] = encryptValue(val);
   }
   return out;

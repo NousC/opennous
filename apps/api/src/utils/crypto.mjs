@@ -5,7 +5,11 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
   : null;
 
 export function encrypt(value) {
-  if (!ENCRYPTION_KEY || !value) return value;
+  if (!value) return value;
+  // Fail CLOSED: never silently store a secret in plaintext because the key is
+  // missing. Prod sets ENCRYPTION_KEY; a misconfigured deploy now errors loudly
+  // at the point of storing a credential instead of writing it unencrypted.
+  if (!ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEY is not configured — refusing to store a credential unencrypted');
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
   return iv.toString('hex') + ':' + cipher.update(String(value), 'utf8', 'hex') + cipher.final('hex');

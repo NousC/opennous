@@ -27,6 +27,11 @@ export async function verifyApiKey(req, res, next) {
 
   req.workspaceId = keyRow.workspace_id;
   req.apiKeyId = keyRow.id;
+  // getAuthContext() branches on these to enforce the API-key workspace scope;
+  // without them that guard was dead code (and it would call ensureUserAndTeam
+  // with an undefined user).
+  req.isApiKeyAuth = true;
+  req.apiKeyWorkspaceId = keyRow.workspace_id;
   // Per-member privacy (PRIVACY_MODEL.md): a member key acts AS that member, so
   // raw content is scoped to them; an admin/workspace key (no owner_user_id) sees
   // all raw. This is the ONLY point the agent gets a viewer identity, since the
