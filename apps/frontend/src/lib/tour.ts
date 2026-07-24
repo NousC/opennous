@@ -49,7 +49,7 @@ export const TOUR_STEPS: TourStep[] = [
     anchor: 'add-integration',
     checkpoint: 'integrationConnected',
     title: 'Connect your integrations',
-    body: 'Connect at least three — email, your notetaker and LinkedIn — so import has something to match against. One source alone leaves the graph empty. A calendar and your CRM make it richer.',
+    body: 'Connect at least three, like email, your notetaker and LinkedIn, so import has something to match against, since one source alone leaves the graph empty while a calendar and your CRM make it richer.',
   },
   {
     id: 'accounts',

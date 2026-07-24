@@ -36,8 +36,13 @@ const NONE: TourProgress = {
 };
 
 export function useTourProgress(active: boolean): TourProgress & { loaded: boolean; refetch: () => void } {
-  const { session } = useAuth();
+  const { session, userData } = useAuth();
   const token = session?.access_token ?? '';
+  // Scope the status call to the ACTIVE workspace. Without this the endpoint resolves
+  // the user's default-team workspace, so a user who switched workspaces (or has more
+  // than one) sees 0 connected even after connecting sources in the workspace they're
+  // looking at. verifySupabaseAuth validates membership on this param before honoring it.
+  const wsId = (userData as { workspace?: { id?: string } } | null)?.workspace?.id;
   const [data, setData] = useState<TourProgress>(NONE);
   // True once the first status fetch has resolved. The tour uses this to tell
   // "already done before the tour" (baseline) apart from "just done during it" — so
@@ -46,7 +51,10 @@ export function useTourProgress(active: boolean): TourProgress & { loaded: boole
 
   const refetch = useCallback(() => {
     if (!token) return;
-    fetch(`${apiUrl}/api/onboarding/status`, { headers: { Authorization: `Bearer ${token}` } })
+    const url = wsId
+      ? `${apiUrl}/api/onboarding/status?workspaceId=${encodeURIComponent(wsId)}`
+      : `${apiUrl}/api/onboarding/status`;
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (d) {
@@ -62,7 +70,7 @@ export function useTourProgress(active: boolean): TourProgress & { loaded: boole
         setLoaded(true);
       })
       .catch(() => { setLoaded(true); /* keep last known */ });
-  }, [token]);
+  }, [token, wsId]);
 
   useEffect(() => {
     if (!token) return;

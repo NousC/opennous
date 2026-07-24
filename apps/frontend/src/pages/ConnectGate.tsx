@@ -153,7 +153,7 @@ export default function ConnectGate() {
       <div className="w-full max-w-[600px]">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <img src="/Nous.png" alt="" className="w-5 h-5 object-contain" />
+            <img src="/nous-logo.svg" alt="" className="w-5 h-5 object-contain" />
             <span className="font-bold text-[14px] tracking-[-0.02em] text-foreground">nous</span>
           </div>
           {email && (
