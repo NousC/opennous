@@ -184,19 +184,16 @@ export function SidebarWorkspaceSelector({ collapsed = false }: SidebarWorkspace
       });
 
       if (response.ok) {
-        const selectedWorkspace = workspaces.find(w => w.id === workspaceId);
-
-        await refreshUserData();
-
-        lastFetchRef.current = 0;
-        await fetchWorkspaces();
-
-        await fetchUsageData(workspaceId);
-
-        toast({
-          title: 'Workspace switched',
-          description: `Switched to ${selectedWorkspace?.name || 'workspace'}`,
-        });
+        // A workspace switch is a HARD context boundary — different accounts, a different
+        // graph, a different plan and home. Soft-swapping the data under the current view
+        // left the previous workspace's page and its open tabs in place, so it looked
+        // like nothing happened but the name. Instead: clear the open tabs (they belong to
+        // the old workspace) and do a full reload to the new workspace's home. `/` is
+        // HomeRoute, which picks the right landing page by plan; selectedWorkspaceId is
+        // already persisted above, so the reload boots straight into the new workspace.
+        try { localStorage.removeItem('nous.tabs.v1'); } catch { /* ignore */ }
+        window.location.href = '/';
+        return;
       } else {
         const errorData = await response.json().catch(() => ({}));
         console.error('[WORKSPACE_SWITCH] Error:', response.status, errorData);
