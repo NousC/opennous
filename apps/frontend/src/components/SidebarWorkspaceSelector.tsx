@@ -161,64 +161,19 @@ export function SidebarWorkspaceSelector({ collapsed = false }: SidebarWorkspace
     }
   };
 
-  const switchWorkspace = async (workspaceId: string) => {
-    if (currentWorkspace?.id === workspaceId) {
-      return;
-    }
-
-    if (loading) {
-      return;
-    }
-
+  const switchWorkspace = (workspaceId: string) => {
+    if (currentWorkspace?.id === workspaceId) return;
+    // A workspace switch is a HARD context boundary — different accounts, graph, plan and
+    // home. Persist the choice and reload into it SYNCHRONOUSLY on the first click. The
+    // old path pre-fetched /me behind a `loading` guard before reloading, so a slow or
+    // failed fetch left `loading` stuck and swallowed the next clicks (which is why it
+    // took 3-4). The reload re-fetches everything for the new workspace on boot and
+    // validates access there, so none of that pre-work is needed here.
     try {
-      setLoading(true);
-
       localStorage.setItem('selectedWorkspaceId', workspaceId);
-      window.dispatchEvent(new CustomEvent('nous:workspace-changed', { detail: { workspaceId } }));
-
-      const apiUrl = import.meta.env.VITE_API_URL ?? '';
-      const response = await fetch(`${apiUrl}/me?workspace_id=${workspaceId}`, {
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
-        },
-      });
-
-      if (response.ok) {
-        // A workspace switch is a HARD context boundary — different accounts, a different
-        // graph, a different plan and home. Soft-swapping the data under the current view
-        // left the previous workspace's page and its open tabs in place, so it looked
-        // like nothing happened but the name. Instead: clear the open tabs (they belong to
-        // the old workspace) and do a full reload to the new workspace's home. `/` is
-        // HomeRoute, which picks the right landing page by plan; selectedWorkspaceId is
-        // already persisted above, so the reload boots straight into the new workspace.
-        try { localStorage.removeItem('nous.tabs.v1'); } catch { /* ignore */ }
-        window.location.href = '/';
-        return;
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('[WORKSPACE_SWITCH] Error:', response.status, errorData);
-        if (currentWorkspace?.id) {
-          localStorage.setItem('selectedWorkspaceId', currentWorkspace.id);
-        }
-        toast({
-          title: 'Error',
-          description: errorData.message || 'Failed to switch workspace',
-          variant: 'destructive',
-        });
-      }
-    } catch (error) {
-      console.error('[WORKSPACE_SWITCH] Exception:', error);
-      if (currentWorkspace?.id) {
-        localStorage.setItem('selectedWorkspaceId', currentWorkspace.id);
-      }
-      toast({
-        title: 'Error',
-        description: 'Failed to switch workspace',
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
+      localStorage.removeItem('nous.tabs.v1');   // open tabs belong to the old workspace
+    } catch { /* ignore */ }
+    window.location.href = '/';                    // HomeRoute → the plan-appropriate home
   };
 
   const createWorkspace = async (confirmBilling = false) => {
