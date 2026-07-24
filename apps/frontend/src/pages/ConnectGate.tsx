@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Copy, CheckCircle2, Loader2, ArrowLeft } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { invalidateOnboarding } from "@/hooks/useOnboarding";
+import { installCommand } from "@/lib/install";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "";
 
@@ -282,12 +283,17 @@ function AgentRoad({ onBack }: { onBack: () => void }) {
 
       <h1 className="text-[19px] font-semibold tracking-tight text-foreground">Connect your agent</h1>
 
-      <div className="mt-5">
-        <Cmd caption="Paste this into your coding agent to get started" code={ONBOARD_PROMPT} />
+      <div className="mt-5 space-y-4">
+        {/* Step 1 installs the CLI and connects the MCP — instance-aware, so on
+            self-host it points at the operator's own server, not our cloud. Users
+            who arrived via `nous init` already ran this; showing it is harmless
+            (it's idempotent) and covers the direct-signup path. */}
+        <Cmd caption="1. Run this in your terminal — installs the CLI and connects the MCP" code={installCommand()} />
+        <Cmd caption="2. Then paste this into your coding agent" code={ONBOARD_PROMPT} />
       </div>
 
       <p className="mt-4 text-[12px] text-muted-foreground/80 leading-relaxed">
-        Haven't connected Nous to your agent yet?{" "}
+        Prefer to wire it up manually?{" "}
         <a
           href="https://docs.opennous.cloud/mcp/introduction"
           target="_blank"
