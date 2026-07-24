@@ -1,7 +1,7 @@
 import { useSearchParams } from "react-router-dom";
 import { SignIn } from "@clerk/react";
 import GraphField from "@/components/GraphField";
-import { PAGE_STYLE } from "@/lib/authTheme";
+import { PAGE_STYLE, CLERK_APPEARANCE } from "@/lib/authTheme";
 import { safeRedirect } from "@/lib/authRedirect";
 
 // Sign-in keeps the branded Nous background but hands the actual credential flow
@@ -28,24 +28,7 @@ const Login = () => {
           routing="virtual"
           signUpUrl={`/signup${redirectQuery}`}
           forceRedirectUrl={redirectTo}
-          appearance={{
-            variables: {
-              colorPrimary: "#E0912B",
-              colorText: "#1A1712",
-              colorTextSecondary: "#6B655B",
-              colorBackground: "#FBFAF5",
-              colorInputBackground: "#FBFAF5",
-              colorInputText: "#1A1712",
-              borderRadius: "0.5rem",
-            },
-            elements: {
-              rootBox: "w-full",
-              card: "border border-[#E4DED1] bg-[#FBFAF5]",
-              headerTitle: "font-fraunces",
-              formButtonPrimary:
-                "bg-[#E0912B] hover:brightness-105 text-[#1a1000] normal-case",
-            },
-          }}
+          appearance={CLERK_APPEARANCE}
         />
       </div>
     </div>
