@@ -58,8 +58,7 @@ Tag each insight with:
 Categories:
 ${insightCategoryPromptBlock()}
 
-Example of a thesis-validation insight you must NOT miss:
-- market — "Individual contributors on tools like Claude Code scale themselves, but without a unified company layer it does not scale into the company, and when they leave the knowledge walks out the door — the market is arriving at the exact context-layer bet we are built on." quote: "a lot of ICs are now moving to Claude code ... that's a really good way to scale one person's efforts, but still without a unified company layer, that does not scale into the company. Because if they leave all that Information goes"
+THESIS-VALIDATION is the most commonly missed category, so hunt for it explicitly. Whenever an attendee independently describes a structural problem, a market shift, or a "why now" that our product is built to solve — even in passing, even as their own philosophy rather than advice to us — that is a high-value insight. Do not skip it because it merely agrees with us; external validation of our bet is exactly what we want to capture. Illustrative pattern (NOT from this call, do not copy it — find the real equivalents in the transcript above): an operator saying "teams keep rebuilding the same customer context from scratch every quarter" would be a market insight validating a persistent-context product. Now find every such moment ACTUALLY present in this transcript and record it with its real quote.
 
 Rules:
 - Extract EVERY insight that clears all three bars — there is no target number. A thin call yields zero; a rich discovery call can yield several. When a statement is a genuine thesis/market/buyer signal, err toward capturing it rather than dropping it. NEVER pad, NEVER restate the same insight twice.
