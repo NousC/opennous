@@ -54,12 +54,14 @@ insightsApiRouter.post('/extract', verifySupabaseAuth, async (req, res) => {
         const msg = await anthropic.messages.create({
           feature: 'call-insights-extract',
           // Sonnet — see apps/worker/src/signals/insights.mjs for why (founder-critical,
-          // once per call, must catch thesis-validation insights Haiku drops).
+          // once per call, must catch thesis-validation insights Haiku drops). Sonnet
+          // reasons first (thinking block), so budget covers thinking + output and the
+          // JSON is in the text block, not content[0].
           model: 'claude-sonnet-5',
-          max_tokens: 1400,
+          max_tokens: 6000,
           messages: [{ role: 'user', content: buildInsightExtractionPrompt(call.content) }],
         });
-        const items = parseInsightsJson(msg.content[0]?.text ?? '[]');
+        const items = parseInsightsJson(msg.content.find(b => b.type === 'text')?.text ?? '[]');
         if (items.length) {
           const sourceLabel = (call.metadata?.title || call.metadata?.contact_name || 'a call');
           written += await appendInsights(supabase, workspaceId, items.slice(0, 8), { sourceLabel });

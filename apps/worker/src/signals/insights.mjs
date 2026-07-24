@@ -31,12 +31,16 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
       // Sonnet, not Haiku: insight extraction runs ONCE per call (not per fact) and is
       // founder-critical — it must catch abstract thesis-validation insights that Haiku
       // reliably drops in favour of concrete items. The claim extractor stays on Haiku.
+      // Sonnet is a reasoning model: it emits a `thinking` block first, so the budget
+      // must cover thinking + output (1400 was all consumed by thinking → empty text),
+      // and the JSON lives in the `text` block, not content[0].
       model: 'claude-sonnet-5',
-      max_tokens: 1400,
+      max_tokens: 6000,
       messages: [{ role: 'user', content: buildInsightExtractionPrompt(transcript) }],
     });
 
-    const items = parseInsightsJson(msg.content[0]?.text ?? '[]');
+    const textBlock = msg.content.find(b => b.type === 'text')?.text ?? '[]';
+    const items = parseInsightsJson(textBlock);
     if (items.length === 0) return 0;
 
     return await appendInsights(supabase, workspaceId, items.slice(0, 8), { sourceLabel });
