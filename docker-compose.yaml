@@ -50,6 +50,7 @@ services:
       context: .
       dockerfile: apps/frontend/Dockerfile
       args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
         # Leave empty when using same-domain nginx proxy (self-hosted, no Caddy).
