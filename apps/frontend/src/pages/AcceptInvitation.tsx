@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import { SignUp } from "@clerk/react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/components/ui/sonner";
-import { Loader2, Lock } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import GraphField from "@/components/GraphField";
-import { PAGE_STYLE, BOX_SHADOW } from "@/lib/authTheme";
+import { PAGE_STYLE, BOX_SHADOW, CLERK_APPEARANCE } from "@/lib/authTheme";
 
 // Match the branded auth aesthetic (see Login.tsx / opennous.cloud): peach
 // canvas + constellation field, cream terminal card with ● ● ● titlebar, mono
 // type, coral accent.
-// The card chrome (titlebar + logo header) shared by every state.
+// The card chrome (titlebar + logo header) shared by every non-auth state.
 function Shell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div
@@ -44,22 +44,16 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
 export default function AcceptInvitation() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isAuthenticated, session, signIn, signUp, signInWithGoogle, refreshUserData } = useAuth();
+  const { isAuthenticated, session, refreshUserData } = useAuth();
   const token = searchParams.get("token");
+  // Return here after Clerk auth (Google redirect, or the "sign in instead" link
+  // going out to /login) so the auto-accept effect fires with the invite in hand.
+  const invitePath = token ? `/accept-invitation?token=${encodeURIComponent(token)}` : "/accept-invitation";
 
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [invitation, setInvitation] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Sign up/login form state
-  const [showEmailForm, setShowEmailForm] = useState(false);
-  const [isSignUp, setIsSignUp] = useState(true); // Default to sign up
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
-  const [pendingAccept, setPendingAccept] = useState(false);
   const acceptingRef = useRef(false);
 
   // Load invitation details
@@ -78,11 +72,6 @@ export default function AcceptInvitation() {
         if (response.ok) {
           const data = await response.json();
           setInvitation(data.invitation);
-          
-          // Pre-fill email from invitation
-          if (data.invitation?.email) {
-            setEmail(data.invitation.email);
-          }
         } else {
           const errorData = await response.json().catch(() => ({ error: "Invitation not found" }));
           setError(errorData.detail || errorData.error || "Invitation not found");
@@ -103,17 +92,11 @@ export default function AcceptInvitation() {
       setError("Invalid invitation token");
       return;
     }
+    if (!session?.access_token) return;
 
-    // If no session, show auth form
-    if (!session?.access_token) {
-      setShowEmailForm(true);
-      setIsSignUp(true);
-      return;
-    }
-
-    // Guard against a double network call — the auto-accept effect, the OAuth
-    // return, and the button can all trigger this. The server is idempotent too,
-    // but firing once keeps it clean.
+    // Guard against a double network call — the auto-accept effect and the button
+    // can both trigger this. The server is idempotent too, but firing once keeps
+    // it clean.
     if (acceptingRef.current) return;
     acceptingRef.current = true;
     setAccepting(true);
@@ -132,7 +115,6 @@ export default function AcceptInvitation() {
         const data = await response.json();
         toast.success(`You've joined ${data.team?.name || "the team"}!`);
 
-        // Refresh user data to update onboarding status
         if (refreshUserData) {
           await refreshUserData();
         }
@@ -171,122 +153,26 @@ export default function AcceptInvitation() {
   const handleAcceptRef = useRef(handleAccept);
   handleAcceptRef.current = handleAccept;
 
-  // Auto-accept invitation when session becomes available after auth
-  useEffect(() => {
-    if (pendingAccept && session?.access_token && invitation && !accepting && !error) {
-      // Session is now available, accept the invitation
-      const acceptInvitation = async () => {
-        setPendingAccept(false);
-        // Small delay to ensure everything is ready
-        await new Promise(resolve => setTimeout(resolve, 500));
-        if (refreshUserData) {
-          await refreshUserData();
-        }
-        await new Promise(resolve => setTimeout(resolve, 300));
-        handleAccept();
-      };
-      acceptInvitation();
-    }
-  }, [pendingAccept, session, invitation, accepting, error, handleAccept, refreshUserData]);
-
-  // Frictionless path: when the user lands back on this page already
-  // authenticated (e.g. returning from Google sign-in, where the pendingAccept
-  // flag was wiped by the full-page redirect), auto-accept — but ONLY when the
-  // signed-in email matches the invite, so a wrong-account visitor still sees the
-  // mismatch screen instead of a silent failed accept. One less click.
+  // Frictionless path: once the invited person is authenticated (having completed
+  // Clerk sign-up/sign-in on this page, or returned from Google), auto-accept —
+  // but ONLY when the signed-in email matches the invite, so a wrong-account
+  // visitor still sees the mismatch screen instead of a silent failed accept.
   const autoFired = useRef(false);
   useEffect(() => {
     if (autoFired.current) return;
-    if (accepting || error || pendingAccept) return;
+    if (accepting || error) return;
     if (!isAuthenticated || !session?.access_token || !invitation) return;
     const sameEmail = invitation.email?.toLowerCase() === session.user?.email?.toLowerCase();
     if (!sameEmail) return;
     autoFired.current = true;
     // Provision the user row first (lazily created by /me), then accept — otherwise
-    // accept can race ahead of provisioning and flash a transient error. Mirrors
-    // the pendingAccept effect.
+    // accept can race ahead of provisioning and flash a transient error.
     (async () => {
       if (refreshUserData) { try { await refreshUserData(); } catch { /* best-effort */ } }
       await new Promise(r => setTimeout(r, 400));
       handleAccept();
     })();
-  }, [isAuthenticated, session, invitation, accepting, error, pendingAccept, handleAccept, refreshUserData]);
-
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim() || !password.trim() || !name.trim()) {
-      toast.error("Please fill in all fields");
-      return;
-    }
-
-    setAuthLoading(true);
-    try {
-        const { error, data } = await signUp(email, password, name);
-        if (error) {
-          toast.error(error.message || "Failed to sign up");
-        setAuthLoading(false);
-          return;
-        }
-      
-      // If signup created a session immediately, set flag to auto-accept when session is ready
-      if (data?.session) {
-        toast.success("Account created!");
-        setPendingAccept(true);
-        setShowEmailForm(false);
-        setAuthLoading(false);
-      } else {
-        // Email confirmation required
-        toast.success("Account created! Please check your email to confirm your account, then sign in.");
-        setIsSignUp(false);
-        setAuthLoading(false);
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Authentication failed");
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim() || !password.trim()) {
-      toast.error("Please fill in all fields");
-      return;
-    }
-
-    setAuthLoading(true);
-    try {
-        const { error } = await signIn(email, password);
-        if (error) {
-          toast.error(error.message || "Failed to sign in");
-        setAuthLoading(false);
-          return;
-        }
-        toast.success("Signed in successfully!");
-      setPendingAccept(true);
-      setShowEmailForm(false);
-      setAuthLoading(false);
-    } catch (err: any) {
-      toast.error(err.message || "Authentication failed");
-      setAuthLoading(false);
-    }
-  };
-
-  const handleGoogleSignIn = async () => {
-    setAuthLoading(true);
-    // Come back to THIS invite page (token in the URL) after Google, so the
-    // accept can auto-fire on return — otherwise the redirect lands on the
-    // dashboard and the invite is forgotten.
-    const returnPath = token ? `/accept-invitation?token=${encodeURIComponent(token)}` : "/accept-invitation";
-    const { error } = await signInWithGoogle(returnPath);
-
-    if (error) {
-      toast.error(error.message || "Failed to sign up with Google");
-      setAuthLoading(false);
-    }
-    // On success the browser redirects to Google, then back to returnPath; the
-    // auto-accept effect below fires once the session is live. No local flag
-    // needed (a full-page redirect would wipe it anyway).
-  };
+  }, [isAuthenticated, session, invitation, accepting, error, handleAccept, refreshUserData]);
 
   if (loading) {
     return (
@@ -317,8 +203,8 @@ export default function AcceptInvitation() {
     return null;
   }
 
-  // If authenticated, show accept (or the email-mismatch guard).
-  if (isAuthenticated && session && !showEmailForm) {
+  // Authenticated: either accept (email matches) or show the mismatch guard.
+  if (isAuthenticated && session) {
     if (invitation.email.toLowerCase() !== session.user?.email?.toLowerCase()) {
       return (
         <Shell title="invitation">
@@ -357,77 +243,38 @@ export default function AcceptInvitation() {
     );
   }
 
-  // Invite / create-account screen — branded terminal card.
+  // Not signed in: invite context + Clerk <SignUp>, prefilled to the invited
+  // email. Clerk handles Google, email + email-code, and password. On completion
+  // (or return from Google) the auto-accept effect above fires. Existing users
+  // use the widget's "Sign in" link, which routes through /login and back here.
   const inviter = invitation.invited_by?.name || invitation.invited_by?.email || "Someone";
   return (
-    <Shell title="invitation">
-      <h1 className="mt-4 font-fraunces text-[26px] font-semibold tracking-[-0.02em] text-[#1A1712]">You're invited</h1>
-      <p className="mt-1 text-xs text-[#6B655B] leading-relaxed">
-        {inviter} invited you to join <span className="font-semibold text-[#1A1712]">{invitation.team?.name || "the team"}</span> as {invitation.role}. Create your account to join.
-      </p>
+    <div
+      className="relative overflow-hidden min-h-screen flex items-center justify-center px-4 py-10 font-geist-mono text-[#1A1712]"
+      style={PAGE_STYLE}
+    >
+      <GraphField />
+      <div className="relative z-10 w-full max-w-[400px] flex flex-col items-center gap-4">
+        <div className="w-full overflow-hidden rounded-lg border border-[#E4DED1] bg-[#FBFAF5] p-5" style={BOX_SHADOW}>
+          <div className="flex items-center gap-2">
+            <img src="/nous-logo.svg" alt="" className="w-5 h-5 object-contain" />
+            <span className="font-fraunces font-semibold text-[16px] tracking-[-0.01em] text-[#1A1712]">nous</span>
+          </div>
+          <h1 className="mt-3 font-fraunces text-[24px] font-semibold tracking-[-0.02em] text-[#1A1712]">You're invited</h1>
+          <p className="mt-1 text-xs text-[#6B655B] leading-relaxed">
+            {inviter} invited you to join <span className="font-semibold text-[#1A1712]">{invitation.team?.name || "the team"}</span> as {invitation.role}. Create your account as <span className="font-semibold text-[#1A1712]">{invitation.email}</span> to join.
+          </p>
+        </div>
 
-      <div className="mt-5 space-y-3">
-        {/* Google — the frictionless path */}
-        <Button
-          type="button"
-          onClick={handleGoogleSignIn}
-          variant="outline"
-          className="w-full h-11 rounded-lg flex items-center justify-center gap-2.5 font-medium text-sm border-[#E4DED1] bg-[#FBFAF5] hover:bg-[#EFEBE2] text-[#1A1712]"
-          disabled={authLoading}
-        >
-          <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24">
-            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-          </svg>
-          Continue with Google
-        </Button>
-
-        {!showEmailForm ? (
-          <button
-            type="button"
-            onClick={() => setShowEmailForm(true)}
-            className="w-full flex items-center justify-center gap-2 text-xs text-[#6B655B] hover:text-[#96601f] py-1"
-          >
-            <Lock className="h-3.5 w-3.5" /> or create an account with email
-          </button>
-        ) : (
-          <>
-            <div className="relative py-1">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-[#E4DED1]" /></div>
-              <div className="relative flex justify-center"><span className="px-3 text-[10px] uppercase tracking-[0.12em] text-[#6B655B] bg-[#FBFAF5]">or</span></div>
-            </div>
-            <form onSubmit={handleSignup} className="space-y-3">
-              <Input
-                type="text" placeholder="Full name" value={name}
-                onChange={(e) => setName(e.target.value)} required autoFocus disabled={authLoading}
-                className="h-11 rounded-lg text-sm border-[#E4DED1] bg-[#FBFAF5] text-[#1A1712] placeholder:text-[#6B655B] focus-visible:ring-[#96601f] focus-visible:border-[#96601f]"
-              />
-              <Input
-                type="email" value={email} readOnly disabled
-                className="h-11 rounded-lg text-sm border-[#E4DED1] bg-[#EFEBE2] text-[#6B655B]"
-              />
-              <Input
-                type="password" placeholder="Choose a password" value={password}
-                onChange={(e) => setPassword(e.target.value)} required minLength={6} disabled={authLoading}
-                className="h-11 rounded-lg text-sm border-[#E4DED1] bg-[#FBFAF5] text-[#1A1712] placeholder:text-[#6B655B] focus-visible:ring-[#96601f] focus-visible:border-[#96601f]"
-              />
-              <Button
-                type="submit" disabled={authLoading}
-                className="w-full h-12 rounded-lg pl-5 pr-1.5 flex items-center justify-between gap-2 font-medium text-sm bg-[#E0912B] hover:brightness-105 text-[#1a1000] transition-transform hover:scale-[1.005] disabled:opacity-60 disabled:hover:scale-100"
-              >
-                <span>{authLoading ? "Creating account…" : "Create account & join"}</span>
-                <span className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-[#1a1000] text-[#E0912B]" aria-hidden="true">→</span>
-              </Button>
-            </form>
-          </>
-        )}
+        <SignUp
+          routing="virtual"
+          initialValues={{ emailAddress: invitation.email }}
+          signInUrl={`/login?redirect=${encodeURIComponent(invitePath)}`}
+          forceRedirectUrl={invitePath}
+          signInForceRedirectUrl={invitePath}
+          appearance={CLERK_APPEARANCE}
+        />
       </div>
-
-      <p className="mt-4 text-center text-[11px] text-[#6B655B]/80">
-        Joining as {invitation.email}
-      </p>
-    </Shell>
+    </div>
   );
 }
