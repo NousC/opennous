@@ -1,8 +1,26 @@
+# Shared security headers. HSTS + nosniff everywhere; the app also refuses to be
+# framed (clickjacking) and trims the referrer. A tuned Content-Security-Policy is
+# a deliberate follow-up (it needs allow-lists for Clerk/Stripe/PostHog origins).
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
+
 {$APP_DOMAIN} {
+    import security_headers
+    header {
+        X-Frame-Options "DENY"
+        Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+    }
     reverse_proxy frontend:80
 }
 
 {$API_DOMAIN} {
+    import security_headers
     handle /inbound/* {
         reverse_proxy worker:3001
     }
@@ -10,5 +28,6 @@
 }
 
 {$MCP_DOMAIN} {
+    import security_headers
     reverse_proxy mcp:3002
 }

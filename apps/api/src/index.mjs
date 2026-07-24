@@ -1,6 +1,7 @@
 import './bootEnv.mjs'; // first — normalizes APP_URL/API_URL from domains before any module reads them
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { registerCrmPushHandler, pushActivityToAllCrms, getSupabaseClient } from '@nous/core';
 import { stripeWebhookHandler } from './routes/stripeWebhook.mjs';
 import { registerLinkedInRoutes } from './services/linkedin.mjs';
@@ -106,9 +107,15 @@ const app = express();
 // Needed for IP-based country geolocation (see lib/geo.mjs).
 app.set('trust proxy', 1);
 
+// Default-DENY cross-origin. Previously an unset CORS_ORIGINS reflected any
+// origin with credentials; now it blocks cross-origin instead of failing open.
+// Set CORS_ORIGINS to the app origin(s) in the deploy env.
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
-  : true;
+  : false;
+if (allowedOrigins === false) {
+  console.warn('[cors] CORS_ORIGINS is not set — cross-origin requests are blocked. Set it to your app origin(s).');
+}
 
 app.use(cors({
   origin: allowedOrigins,
@@ -127,8 +134,34 @@ app.post('/slack/commands', express.raw({ type: 'application/x-www-form-urlencod
 
 app.use(express.json({ limit: '10mb' }));
 
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Generous per-IP ceiling so normal dashboard bursts are unaffected, but a single
+// IP can't flood auth, LLM, enrichment, or public endpoints. trust proxy is set,
+// so this keys on the real client IP behind Caddy. Health is exempt.
+const generalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limited' },
+});
+// Tighter bucket for unauthenticated public surfaces (device-login, auth config,
+// install) where abuse/enumeration is cheapest.
+const publicLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'rate_limited' },
+});
+
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+app.use('/api/cli/auth', publicLimiter);
+app.use('/api/auth', publicLimiter);
+app.use('/install', publicLimiter);
+app.use(generalLimiter);
 
 // ── Public auth config ────────────────────────────────────────────────────────
 // Read by the login/signup UI before auth. Lets a self-host hide the

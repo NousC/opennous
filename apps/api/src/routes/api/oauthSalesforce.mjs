@@ -98,7 +98,7 @@ oauthSalesforceRouter.get('/callback', async (req, res) => {
 
     const tokenData = await tokenRes.json();
     if (!tokenRes.ok || tokenData.error) {
-      console.error('[SALESFORCE_OAUTH] Token exchange failed:', tokenData);
+      console.error('[SALESFORCE_OAUTH] Token exchange failed:', tokenData?.error || 'unknown_error');
       return msg(false, { error: tokenData.error_description || tokenData.error || 'token_exchange_failed' });
     }
 

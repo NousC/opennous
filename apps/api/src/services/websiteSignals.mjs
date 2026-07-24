@@ -9,6 +9,7 @@
 
 import Anthropic from 'useleak';
 import { recordObservation, recomputeClaim } from '@nous/core';
+import { assertPublicUrl } from '../lib/ssrf.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -36,6 +37,11 @@ async function fetchWithTimeout(url, opts = {}, ms = 8000) {
 // Static fetch + HTML→text. Fast and free; works for most marketing sites.
 async function fetchPage(url) {
   try {
+    // SSRF guard — never let a user-supplied domain point our fetch at an
+    // internal/metadata address. (Residual: a public host that 3xx-redirects to
+    // an internal one isn't re-checked mid-chain — tracked for a follow-up that
+    // does per-hop validation.)
+    await assertPublicUrl(url);
     const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA } }, 8000);
     if (!res.ok) return '';
     const html = await res.text();
