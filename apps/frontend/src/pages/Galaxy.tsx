@@ -418,7 +418,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   }
   function qmass(q: Q | null): void {
     if (!q) return;
-    if (!q.kids) { if (q.n) { q.m = q.n.q0 * forces.repel; q.cx = q.n.x; q.cy = q.n.y; } return; }
+    if (!q.kids) { if (q.n) { q.m = q.n.q0 * forces.repel * (focusCat ? 1.9 : 1); q.cx = q.n.x; q.cy = q.n.y; } return; }
     let m = 0, cx = 0, cy = 0;
     for (const k of q.kids) { if (!k) continue; qmass(k); if (!k.m) continue; m += k.m; cx += k.cx * k.m; cy += k.cy * k.m; }
     q.m = m; if (m) { q.cx = cx / m; q.cy = cy / m; }
@@ -522,7 +522,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     }
 
     // gravity
-    for (const n of live) { const g = n.g * forces.center; n.vx -= n.x * g * alpha; n.vy -= n.y * g * alpha; }
+    for (const n of live) { const g = n.g * forces.center * (focusCat ? 0.4 : 1); n.vx -= n.x * g * alpha; n.vy -= n.y * g * alpha; }
 
     // integrate
     for (const n of live) {
@@ -677,7 +677,9 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (const n of nodes) {
       if (!F(n.x) || !vis(n)) continue; const near = S && S.has(n.i);
-      const showLbl = near || (n.t === 3 && scale > 0.4) || (n.t === 1 && scale > 0.75) || scale > 1.7; if (!showLbl) continue;
+      // In a category lens the view is sparse, so name the accounts — telling person
+      // from person is the whole point there. In the dense overview, labels stay lazy.
+      const showLbl = near || (n.t === 3 && scale > 0.4) || (n.t === 1 && scale > 0.75) || (focusCat && n.t === 0 && scale > 0.45) || scale > 1.7; if (!showLbl) continue;
       let lb = n.l || (n.t === 1 ? 'company' : 'person'); if (!lb) continue; if (lb.length > 26) lb = lb.slice(0, 25) + '…';
       const big = n.t === 3 || n.t === 1; const fs = ((near ? 12 : (big ? 11 : 10)) * disp.label) / scale;
       ctx.font = (big ? '600 ' : '500 ') + fs + 'px ui-sans-serif,system-ui,sans-serif';
@@ -1104,7 +1106,12 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
   useEffect(() => { sync(c => c.setFilter(filter)); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setSearch(search)); }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setGroups(groups)); }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { sync(c => c.setFocus(lens === "icp" ? null : lens)); }, [lens]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A category lens is NOT about ICP tier — so drop the tier grouping entirely (its
+  // anchors and colours) when one is active, and restore it on the ICP overview.
+  useEffect(() => {
+    sync(c => c.setFocus(lens === "icp" ? null : lens));
+    setGroups(lens === "icp" ? buildGroups("tier", {}) : []);
+  }, [lens]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setDisplay(display)); }, [display]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setForces(forces)); }, [forces]);    // eslint-disable-line react-hooks/exhaustive-deps
 
