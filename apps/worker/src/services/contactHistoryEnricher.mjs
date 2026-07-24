@@ -1443,6 +1443,49 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
       });
     };
 
+    // ── Bridge email → linkedin_url BEFORE the LinkedIn lane ──────────────────
+    // LinkedIn history is keyed by profile URL / member id (LinkedIn never exposes
+    // an email), so an email-only contact matches NOTHING on LinkedIn. For those,
+    // run data-enrichment (Prospeo/Apollo) to DISCOVER their linkedin_url — it's a
+    // real /in/<slug>, persisted on the contact (and attached as an identifier by the
+    // view trigger, which also links future LinkedIn messages to this person). We then
+    // feed the discovered URL into the LinkedIn scan below. Gated on LinkedIn actually
+    // being connected (no point paying for a lookup otherwise) and capped so a huge
+    // import can't run away on credits. Best-effort — never fails the job.
+    if (connections.linkedin?.account_id) {
+      const needUrl = contacts.filter(c => c.email && !c.linkedin_url && !c.linkedin_member_id);
+      const RESOLVE_CAP = 250;
+      const toResolve = needUrl.slice(0, RESOLVE_CAP);
+      if (needUrl.length > RESOLVE_CAP) {
+        console.log(`[ENRICH_LI_RESOLVE] ${needUrl.length} email-only contacts; capping linkedin_url discovery at ${RESOLVE_CAP}`);
+      }
+      if (toResolve.length) {
+        let resolved = 0;
+        for (const c of toResolve) setSource(c.id, 'linkedin', 'scanning');
+        await persist();
+        try {
+          const { enrichContact } = await import('../utils/enrichContact.mjs');
+          await pool(toResolve, LANES.linkedin, async (contact) => {
+            try {
+              await enrichContact(supabase, {
+                id: contact.id, workspace_id: workspaceId, email: contact.email,
+                first_name: contact.first_name, last_name: contact.last_name,
+                company: contact.company, company_id: contact.company_id,
+                domain: (contact.email.split('@')[1] || null),
+              });
+              // enrichContact persists linkedin_url on the contacts row — read it back
+              // so scanLinkedIn (which reads contact.linkedin_url in-memory) can match.
+              const { data } = await supabase.from('contacts')
+                .select('linkedin_url, linkedin_member_id').eq('id', contact.id).maybeSingle();
+              if (data?.linkedin_url) { contact.linkedin_url = data.linkedin_url; resolved++; }
+              if (data?.linkedin_member_id) contact.linkedin_member_id = data.linkedin_member_id;
+            } catch (e) { /* per-contact best-effort */ }
+          });
+        } catch (e) { console.error('[ENRICH_LI_RESOLVE]', e?.message || e); }
+        if (resolved) console.log(`[ENRICH_LI_RESOLVE] discovered ${resolved}/${toResolve.length} linkedin_url from email`);
+      }
+    }
+
     await Promise.all([
       runLane('calendly',  !!(calendlyPat && calendlyUserUri), LANES.calendly, c => scanCalendly(supabase, workspaceId, c, calendlyPat, calendlyUserUri)),
       runLane('cal_com',   !!calComPat,   LANES.cal_com,   c => scanCalCom(supabase, workspaceId, c, calComPat)),
