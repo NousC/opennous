@@ -8,6 +8,7 @@ import { getSupabaseClient } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { nextRunAt, describeTrigger } from '../../lib/routineSchedule.mjs';
 import { runRoutine, tickRoutines } from '../../lib/routineRunner.mjs';
+import { isWorkspaceMember } from '../../lib/authz.mjs';
 
 export const routinesRouter = Router();
 
@@ -134,6 +135,9 @@ routinesRouter.patch('/:id', verifySupabaseAuth, async (req, res) => {
     const { data: current } = await supabase
       .from('agent_routines').select('*').eq('id', req.params.id).single();
     if (!current) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, current.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     // Changing the KIND of trigger has to clear the other kind's fields.
     //
@@ -169,7 +173,7 @@ routinesRouter.patch('/:id', verifySupabaseAuth, async (req, res) => {
     }
 
     const { data, error } = await supabase
-      .from('agent_routines').update(patch).eq('id', req.params.id).select('*').single();
+      .from('agent_routines').update(patch).eq('id', req.params.id).eq('workspace_id', current.workspace_id).select('*').single();
     if (error) throw error;
     return res.json(present(data));
   } catch (err) {
@@ -181,7 +185,12 @@ routinesRouter.patch('/:id', verifySupabaseAuth, async (req, res) => {
 routinesRouter.delete('/:id', verifySupabaseAuth, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
-    const { error } = await supabase.from('agent_routines').delete().eq('id', req.params.id);
+    const { data: current } = await supabase.from('agent_routines').select('workspace_id').eq('id', req.params.id).single();
+    if (!current) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, current.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    const { error } = await supabase.from('agent_routines').delete().eq('id', req.params.id).eq('workspace_id', current.workspace_id);
     if (error) throw error;
     return res.status(204).end();
   } catch (err) {
@@ -199,6 +208,9 @@ routinesRouter.post('/:id/run', verifySupabaseAuth, async (req, res) => {
     const { data: routine } = await supabase
       .from('agent_routines').select('*').eq('id', req.params.id).single();
     if (!routine) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, routine.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     const out = await runRoutine(routine, { dedupeKey: `manual|${new Date().toISOString()}` });
     return res.json(out);
@@ -212,8 +224,13 @@ routinesRouter.post('/:id/run', verifySupabaseAuth, async (req, res) => {
 routinesRouter.post('/runs/:runId/seen', verifySupabaseAuth, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
+    const { data: run } = await supabase.from('agent_routine_runs').select('workspace_id').eq('id', req.params.runId).single();
+    if (!run) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, run.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
     await supabase.from('agent_routine_runs')
-      .update({ seen_at: new Date().toISOString() }).eq('id', req.params.runId);
+      .update({ seen_at: new Date().toISOString() }).eq('id', req.params.runId).eq('workspace_id', run.workspace_id);
     return res.status(204).end();
   } catch (err) {
     console.error('[POST /api/routines/runs/:runId/seen]', err);
