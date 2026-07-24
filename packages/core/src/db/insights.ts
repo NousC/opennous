@@ -32,14 +32,21 @@ export interface ExtractedInsight {
 // The one prompt both extractors share (the worker's auto-hook and the API's
 // manual "extract" button), so the two never drift.
 export function buildInsightExtractionPrompt(transcript: string): string {
-  return `You are mining a sales/discovery call for insights about OUR OWN company — the side running the call (referred to as "we"/"us"/"our product"). This is the OPPOSITE of recording facts about the other attendees.
+  return `You are mining a sales/discovery call for insights about OUR OWN company — the side running the call (referred to as "we"/"us"/"our product"). This is the OPPOSITE of recording facts about the other attendees; those are captured elsewhere. Read the WHOLE transcript before deciding.
 
-Capture ONLY things that teach us something about our own product, positioning, market, or buyer — advice they gave us, a gap they exposed, a market or wedge they revealed, a reframing of who buys and why. IGNORE everything that is purely a fact about the attendee or their company (that is captured elsewhere). If they were just describing their own situation with no lesson for us, skip it.
+CAPTURE anything that teaches us about our own product, positioning, market, or buyer. This includes, and you must not miss:
+- Direct advice they gave us (what to build, how to message, who to sell to).
+- A gap, objection, or friction they exposed in what we do.
+- A market shift, wedge, segment, or channel they revealed — including WHY-NOW observations about where the market is going.
+- The underlying pain that makes someone buy — the bottleneck they feel.
+- A general truth or thesis they state that VALIDATES or CHALLENGES our core bet — even when it is framed as a broad observation and not as advice aimed at us. If a well-informed operator independently arrives at the thesis our product is built on, that is a high-value insight, not small talk. Capture it.
+
+Do NOT capture: pure facts about the attendee/their company, logistics, or generic pleasantries.
 
 Transcript: "${transcript}"
 
 An insight is worth recording ONLY if it passes ALL THREE bars:
-1. ABOUT US — it changes how WE should build, message, sell, or target, not merely a fact about them.
+1. ABOUT US — it informs how WE build, message, sell, or target, OR it confirms/challenges our thesis. Not merely a fact about them.
 2. DURABLE — a lesson still useful weeks from now, not a one-off logistic.
 3. SPECIFIC — it carries the concrete point or reason, not a vague platitude.
 
@@ -51,9 +58,12 @@ Tag each insight with:
 Categories:
 ${insightCategoryPromptBlock()}
 
+Example of a thesis-validation insight you must NOT miss:
+- market — "Individual contributors on tools like Claude Code scale themselves, but without a unified company layer it does not scale into the company, and when they leave the knowledge walks out the door — the market is arriving at the exact context-layer bet we are built on." quote: "a lot of ICs are now moving to Claude code ... that's a really good way to scale one person's efforts, but still without a unified company layer, that does not scale into the company. Because if they leave all that Information goes"
+
 Rules:
-- Extract EVERY insight that clears all three bars — there is no target number. Most calls yield zero, one, or two. NEVER pad, NEVER restate the same insight twice.
-- Hard ceiling of 6 insights — a safety limit, not a goal.
+- Extract EVERY insight that clears all three bars — there is no target number. A thin call yields zero; a rich discovery call can yield several. When a statement is a genuine thesis/market/buyer signal, err toward capturing it rather than dropping it. NEVER pad, NEVER restate the same insight twice.
+- Hard ceiling of 8 insights — a safety limit, not a goal.
 
 Output ONLY valid JSON: [{"category":"<key>","content":"...","quote":"..."}]
 If nothing meaningful: []`;

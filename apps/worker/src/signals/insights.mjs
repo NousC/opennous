@@ -36,7 +36,7 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
     const items = parseInsightsJson(msg.content[0]?.text ?? '[]');
     if (items.length === 0) return 0;
 
-    return await appendInsights(supabase, workspaceId, items.slice(0, 6), { sourceLabel });
+    return await appendInsights(supabase, workspaceId, items.slice(0, 8), { sourceLabel });
   } catch (err) {
     console.warn('[INSIGHT_EXTRACTOR_ERROR]', err.message);
     return 0;

@@ -44,7 +44,13 @@ function resolveTabTitle(pathname: string): string | null {
   if (STATIC[pathname]) return STATIC[pathname];
   if (pathname.startsWith("/vault/")) {
     const slug = pathname.slice("/vault/".length);
-    return VAULT_DOC_TITLES[slug] ?? "Vault";
+    if (VAULT_DOC_TITLES[slug]) return VAULT_DOC_TITLES[slug];
+    // Insight docs route as `insights-<category>` — label the tab with the file name.
+    if (slug.startsWith("insights-")) {
+      const cat = slug.slice("insights-".length);
+      return cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : "Vault";
+    }
+    return "Vault";
   }
   if (pathname.startsWith("/people/"))    return "Person";
   if (pathname.startsWith("/companies/")) return "Company";

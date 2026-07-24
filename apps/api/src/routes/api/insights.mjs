@@ -60,7 +60,7 @@ insightsApiRouter.post('/extract', verifySupabaseAuth, async (req, res) => {
         const items = parseInsightsJson(msg.content[0]?.text ?? '[]');
         if (items.length) {
           const sourceLabel = (call.metadata?.title || call.metadata?.contact_name || 'a call');
-          written += await appendInsights(supabase, workspaceId, items.slice(0, 6), { sourceLabel });
+          written += await appendInsights(supabase, workspaceId, items.slice(0, 8), { sourceLabel });
         }
       } catch (e) {
         console.warn('[POST /api/insights/extract] one call failed', e.message);

@@ -110,7 +110,6 @@ export default function Vault() {
   const [ctxOpen, setCtxOpen] = useState(true);
   const [insOpen, setInsOpen] = useState(true);
   const [editing, setEditing] = useState(false);
-  const [extracting, setExtracting] = useState(false);
   const [bufs, setBufs] = useState<Record<string, Buf>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const ta = useRef<HTMLTextAreaElement | null>(null);
@@ -169,28 +168,6 @@ export default function Vault() {
     timers.current[key] = setTimeout(() => save(key, body), 900);
   };
 
-  // The "Extract insights from calls" button — re-run the extractor over recent
-  // transcripts, then reload the insight docs and drop the stale buffers so the
-  // freshly-appended bullets show.
-  const extractInsights = useCallback(async () => {
-    if (extracting || !token || !workspaceId) return;
-    setExtracting(true);
-    try {
-      await fetch(`${apiUrl}/api/insights/extract?workspaceId=${workspaceId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({}),
-      });
-      setBufs(b => {
-        const next = { ...b };
-        for (const k of Object.keys(next)) if (k.startsWith("ins:")) delete next[k];
-        return next;
-      });
-      load();
-    } finally {
-      setExtracting(false);
-    }
-  }, [extracting, token, workspaceId, load]);
 
   // Leaving edit mode whenever the open doc changes (you navigated to another tab).
   useEffect(() => { setEditing(false); }, [active]);
@@ -285,17 +262,6 @@ export default function Vault() {
                     </li>
                   );
                 })}
-                <li>
-                  <button
-                    onClick={extractInsights}
-                    disabled={extracting}
-                    title="Mine your recent call transcripts for insights"
-                    className="mt-0.5 w-full flex items-center gap-1.5 text-left rounded-md px-2 py-[6px] text-[12.5px] text-muted-foreground/55 hover:text-foreground hover:bg-accent/50 transition-colors disabled:opacity-60"
-                  >
-                    <Sparkles className={cn("h-3.5 w-3.5 flex-shrink-0", extracting && "animate-pulse")} strokeWidth={1.75} />
-                    <span>{extracting ? "Extracting…" : "Extract from calls"}</span>
-                  </button>
-                </li>
               </ul>
             )}
 
@@ -386,19 +352,11 @@ export default function Vault() {
                 <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center">
                   <Sparkles className="h-5 w-5 mx-auto text-muted-foreground/25 mb-3" strokeWidth={1.5} />
                   <p className="text-[14px] text-foreground/70 mb-1.5">Nothing learned yet.</p>
-                  <p className="text-[13px] text-muted-foreground/50 max-w-[420px] mx-auto leading-relaxed mb-5">
+                  <p className="text-[13px] text-muted-foreground/50 max-w-[420px] mx-auto leading-relaxed">
                     This fills itself from your calls. Every transcript is mined for what it
-                    taught us about our {specOf(active).title.toLowerCase()}. Run it over your
-                    recent calls, or wait for the next one.
+                    taught us about our {specOf(active).title.toLowerCase()}. After your next
+                    call, it appears here.
                   </p>
-                  <button
-                    onClick={extractInsights}
-                    disabled={extracting}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[13px] text-foreground/75 hover:bg-accent/40 transition-colors disabled:opacity-60"
-                  >
-                    <Sparkles className={cn("h-3.5 w-3.5", extracting && "animate-pulse")} strokeWidth={1.75} />
-                    {extracting ? "Extracting…" : "Extract from calls"}
-                  </button>
                 </div>
               ) : (
                 <button onClick={startEditing} className="w-full text-left group">
