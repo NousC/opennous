@@ -28,7 +28,8 @@ import { verifyV2Router } from './routes/v2/verify.mjs';
 import { dedupV2Router } from './routes/v2/dedup.mjs';
 import { workspaceFactsV2Router } from './routes/v2/workspaceFacts.mjs';
 import { workspaceStatusV2Router } from './routes/v2/workspaceStatus.mjs';
-import { playbooksV2Router } from './routes/v2/playbooks.mjs';
+import { foundationsV2Router } from './routes/v2/foundations.mjs';
+import { insightsV2Router } from './routes/v2/insights.mjs';
 import { notesV2Router } from './routes/v2/notes.mjs';
 import { signalsV2Router } from './routes/v2/signals.mjs';
 import { peopleV2Router } from './routes/v2/people.mjs';
@@ -55,7 +56,8 @@ import { contactsApiRouter } from './routes/api/contacts.mjs';
 // Reports hidden from the Nous UI (niche-down), but the backend stays mounted —
 // it's the private engine the Partner OS reuses via the API. Do not delete.
 import { reportsApiRouter } from './routes/api/reports.mjs';
-import { playbooksApiRouter } from './routes/api/playbooks.mjs';
+import { foundationsApiRouter } from './routes/api/foundations.mjs';
+import { insightsApiRouter } from './routes/api/insights.mjs';
 import { companiesApiRouter } from './routes/api/companies.mjs';
 import { graphApiRouter } from './routes/api/graph.mjs';
 import { signalsRouter, publicSignalsRouter } from './routes/api/signals.mjs';
@@ -179,7 +181,8 @@ app.use('/v2/workspace/triggers', blockOnSelfHost('triggers'));
 // Mounted AFTER /v2/workspace/facts so the more specific facts route wins; this
 // handles /v2/workspace/status (GET) and /v2/workspace/onboarding (POST).
 app.use('/v2/workspace',       verifyApiKey,     requireOpsBalance, logV2Op, workspaceStatusV2Router);
-app.use('/v2/playbooks',       verifyApiKey,     playbooksV2Router);
+app.use('/v2/foundations',       verifyApiKey,     foundationsV2Router);
+app.use('/v2/insights',        verifyApiKey,     insightsV2Router);
 app.use('/v2/lead-lists',      verifyApiKey,     leadListsV2Router);
 app.use('/v2/notes',           verifyApiKey,     requireOpsBalance, logV2Op, notesV2Router);
 app.use('/v2/signals',         verifyApiKey,     requireOpsBalance, logV2Op, signalsV2Router);
@@ -253,7 +256,8 @@ app.use('/api/lead-lists',            verifyAuthEither, requireFeature('leadList
 app.use('/api/campaign-messages',     verifyAuthEither, requireFeature('leadLists'), campaignMessagesRouter);
 app.use('/api/triggers',              verifyAuthEither, blockOnSelfHost('triggers'), triggersRouter);
 app.use('/api/reports',               blockOnSelfHost('reports'), reportsApiRouter);
-app.use('/api/playbooks',             playbooksApiRouter);
+app.use('/api/foundations',             foundationsApiRouter);
+app.use('/api/insights',              insightsApiRouter);
 app.use('/api/webhooks',              verifySupabaseAuth, webhooksRouter);
 // Slack OAuth MUST be mounted BEFORE the generic /api/workflow-providers mount.
 // Slack's callback redirect carries no JWT; if the authed generic mount matched

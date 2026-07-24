@@ -1051,8 +1051,8 @@ program
   .option("--force", "Overwrite files that already exist", false)
   .action(async ({ dir, force }) => {
     const api = apiClient();
-    const { playbooks } = await api.get("/v2/playbooks");
-    const docs = (playbooks || []).filter((p) => PULL_KINDS[p.kind] && (p.body_md || "").trim());
+    const { foundations } = await api.get("/v2/foundations");
+    const docs = (foundations || []).filter((p) => PULL_KINDS[p.kind] && (p.body_md || "").trim());
     if (!docs.length) {
       console.log("Nothing to pull — your Vault has no context docs yet. Set one up in the app first.");
       return;
@@ -1075,14 +1075,14 @@ program
       console.log(`  write ${rel}`);
       // Re-sync WITH the path so the graph now knows the repo is the author.
       try {
-        await api.post(`/v2/playbooks/${p.kind}`, { body_md: p.body_md, file_path: rel });
+        await api.post(`/v2/foundations/${p.kind}`, { body_md: p.body_md, file_path: rel });
         synced++;
       } catch { /* the file is written; a failed authorship flip is non-fatal, re-run pull */ }
     }
 
     console.log(`\n✓ ${written} written${skipped ? `, ${skipped} skipped` : ""}. Your repo now owns your context.`);
     if (synced < written) console.log(dim("  (some didn't sync back — re-run `nous pull` to finish)"));
-    console.log(dim("Edit these files and your agent syncs them with sync_playbook. Nous mirrors them."));
+    console.log(dim("Edit these files and your agent syncs them with sync_foundation. Nous mirrors them."));
   });
 
 // nous logout — top-level alias of `auth logout`. Removes the saved API key.

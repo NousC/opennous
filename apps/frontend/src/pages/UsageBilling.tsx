@@ -270,7 +270,7 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
               <p className="text-[13px] text-muted-foreground">
                 Nous Cloud adds the managed layer — CRM sync, lead lists, and the ICP
                 model that learns from your won and lost deals — with the model bill on
-                us. Beyond that, the team layer (the in-app agent, Adoption, Playbooks,
+                us. Beyond that, the team layer (the in-app agent, Adoption, Foundations,
                 Tasks, Skills) is a separate product for teams who don't have an agent
                 of their own.
               </p>

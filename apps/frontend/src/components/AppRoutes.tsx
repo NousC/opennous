@@ -256,12 +256,12 @@ export function AppRoutes() {
             <Route path="/integrations"  element={<Suspense fallback={<MinimalLoader />}><Integrations /></Suspense>} />
             {/* Lists (lead database) now lives in Partner OS — routes removed from the graph app. */}
             {/* Split: the ICP model (numbers, what predicts a win) and the
-                playbooks (prose the agent obeys) are different objects. */}
+                foundations (prose the agent obeys) are different objects. */}
             <Route path="/icp"           element={<Suspense fallback={<MinimalLoader />}><Intelligence /></Suspense>} />
             {/* The Vault — the four documents every agent reads before it acts.
-                Replaces the Playbooks page: same records, same API, but they are
+                Replaces the Foundations page: same records, same API, but they are
                 files now instead of settings rows, because that is what they are.
-                The old /playbooks paths redirect so nothing 404s. */}
+                The old /foundations paths redirect so nothing 404s. */}
             {/* The Vault is ungated: it holds the ICP, which is the one thing setup exists
                 to produce, so every plan can see and edit it. See internal/ONBOARDING.md §1. */}
             {/* Each Vault document is its own URL, so it rides the workspace tab bar
@@ -269,7 +269,7 @@ export function AppRoutes() {
                 the first doc. */}
             <Route path="/vault"         element={<Navigate to="/vault/positioning" replace />} />
             <Route path="/vault/:doc"    element={<Suspense fallback={<MinimalLoader />}><Vault /></Suspense>} />
-            <Route path="/playbooks"     element={<Navigate to="/vault/positioning" replace />} />
+            <Route path="/foundations"     element={<Navigate to="/vault/positioning" replace />} />
             <Route path="/playbook"      element={<Navigate to="/vault/positioning" replace />} />
             <Route path="/intelligence"  element={<Navigate to="/icp" replace />} />
             <Route path="/settings/*" element={<Navigate to="/settings" replace />} />

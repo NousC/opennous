@@ -42,7 +42,7 @@ export interface PlanFeatures {
    * layer is the product, and serving it is a deterministic Postgres read — the same
    * argument that makes retrieval free.
    */
-  playbooks: boolean;
+  foundations: boolean;
   /** Ungated 2026-07-14 alongside the Vault. Reads over the customer's own data. */
   adoption: boolean;
 
@@ -91,7 +91,7 @@ const GRAPH = {
   icpScoring: true,
   linkedinEngagement: true,
   publicSignalExtraction: true,
-  playbooks: true,   // the Vault
+  foundations: true,   // the Vault
   adoption: true,
   // Headless — on everywhere, but not product surface. See PlanFeatures.
   leadLists: true,

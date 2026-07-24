@@ -10,7 +10,7 @@ import { watchOAuthPopup } from "@/lib/oauthPopup";
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
 // Lightweight setup for a teammate who JOINED an existing workspace (role member).
-// The workspace itself (ICP, playbook, data, positioning) is already set up by the
+// The workspace itself (ICP, foundation, data, positioning) is already set up by the
 // owner and shared — a member must NOT redo that. All a member needs is to connect
 // THEIR OWN accounts (so their touches attribute to them and stay private to them)
 // and mint THEIR member-scoped agent key. See PRIVACY_MODEL.md.

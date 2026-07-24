@@ -377,15 +377,15 @@ export default function Intelligence() {
   const [addSection, setAddSection] = useState<string | null>(null);
   const [sectionDraft, setSectionDraft] = useState("");
 
-  // Playbooks — the policy files every agent reads before acting (voice, outreach,
+  // Foundations — the policy files every agent reads before acting (voice, outreach,
   // icp, positioning). Each opens as a raw .md page; the badge says whether it's
   // mirrored from a Claude Code file or stored in Nous.
   const PB_ORDER = ["voice", "outreach", "icp", "positioning"];
-  const [playbooks, setPlaybooks] = useState<any[]>([]);
+  const [foundations, setFoundations] = useState<any[]>([]);
   useEffect(() => {
     if (!token || !workspaceId) return;
-    fetch(`${apiUrl}/api/playbooks?workspaceId=${workspaceId}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => (r.ok ? r.json() : null)).then(d => { if (d?.playbooks) setPlaybooks(d.playbooks); }).catch(() => {});
+    fetch(`${apiUrl}/api/foundations?workspaceId=${workspaceId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null)).then(d => { if (d?.foundations) setFoundations(d.foundations); }).catch(() => {});
   }, [token, workspaceId]);
 
   // Collapsed by default — the page leads with the "getting smarter" story;
@@ -591,18 +591,18 @@ export default function Intelligence() {
   const negative = active.filter(s => s.weight < 0).sort((a, b) => a.weight - b.weight);
   const hasModel = active.length > 0;
 
-  // Has the playbook actually been built? Either the in-app wizard ran (facts
+  // Has the foundation actually been built? Either the in-app wizard ran (facts
   // with source 'playbook') OR the agent wrote real GTM context across the
   // sections (source 'agent') — agent-operated onboarding is first-class and must
   // unlock the page. A lone onboarding-seeded ICP line (source 'onboarding') does
   // NOT count, so a bare new workspace stays on the cold-start screen: hence the
   // >= 2 threshold rather than "any built fact".
   const builtFacts = icpFacts.filter(f => f.source === "playbook" || f.source === "agent");
-  const playbookDone = builtFacts.length >= 2;
+  const foundationDone = builtFacts.length >= 2;
   // Only conclude "not set up" once the core fetches have actually returned —
   // otherwise the empty initial state paints the cold-start "Set up your ICP"
   // screen for the seconds the load takes, even on a fully-configured workspace.
-  const needsSetup = hasLoaded && !playbookDone && !hasModel;
+  const needsSetup = hasLoaded && !foundationDone && !hasModel;
 
   // Does the ICP live in the user's own repo? When any section was synced from a
   // file (sync_icp records source_path), the file is the source of truth and this
@@ -861,7 +861,7 @@ export default function Intelligence() {
         <div className="space-y-4">
 
           {/* What predicts a win — straight under the numbers, because it's the
-              answer the numbers are asking about. The playbooks moved to their own
+              answer the numbers are asking about. The foundations moved to their own
               page: prose the agent obeys is a different object from a model that
               scores fit, and mixing them was the confusion. */}
           {!needsSetup && hasModel && (
@@ -906,7 +906,7 @@ export default function Intelligence() {
             </div>
           )}
 
-          {/* ─── Your context — only when NOT file-synced; the Playbooks page covers file-backed policies ─── */}
+          {/* ─── Your context — only when NOT file-synced; the Foundations page covers file-backed policies ─── */}
           {!fileSynced && (
           <div className="rounded-xl border border-border bg-background overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 bg-muted/50 border-b border-border">

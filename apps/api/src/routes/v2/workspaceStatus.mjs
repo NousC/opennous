@@ -30,7 +30,7 @@ import { ICP_TEMPLATE, missingIcpSections } from '../../lib/icpTemplate.mjs';
 //
 //   GET  /v2/workspace/status      — the "one main call". Returns the whole
 //                                    state of the workspace in one shot: is it
-//                                    onboarded, is the GTM playbook built, which
+//                                    onboarded, is the GTM foundation built, which
 //                                    integrations are connected, is CRM sync
 //                                    configured, are webhooks/triggers live —
 //                                    plus a ranked next_steps list so the agent
@@ -135,39 +135,39 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
     if (!workspace?.business_type) profileMissing.push('business_type');
     const onboardingDone = !!(workspace?.website && workspace?.business_type);
 
-    // ── Playbooks — the four policy slots (voice, outreach, icp, positioning).
+    // ── Foundations — the four policy slots (voice, outreach, icp, positioning).
     // Report per-slot state so onboarding knows exactly what to set up, and resumes
     // a half-finished setup instead of restarting. Runtime-agnostic: a slot can be
     // mirrored from a file (source 'claude_code') or stored in Nous (source 'nous').
     const PB_KINDS = ['voice', 'outreach', 'icp', 'positioning'];
-    const playbookRows = await safe(async () => {
-      const { data } = await supabase.from('playbooks')
+    const foundationRows = await safe(async () => {
+      const { data } = await supabase.from('foundations')
         .select('kind, source, file_path, updated_at').eq('workspace_id', workspaceId);
       return data ?? [];
     }, []);
-    const playbooks = PB_KINDS.map((k) => {
-      const r = (playbookRows || []).find((x) => x.kind === k);
+    const foundations = PB_KINDS.map((k) => {
+      const r = (foundationRows || []).find((x) => x.kind === k);
       return { kind: k, exists: !!r, source: r?.source ?? null, file_path: r?.file_path ?? null };
     });
-    const playbooksMissing = playbooks.filter((p) => !p.exists).map((p) => p.kind);
-    const playbooksComplete = playbooksMissing.length === 0;
+    const foundationsMissing = foundations.filter((p) => !p.exists).map((p) => p.kind);
+    const foundationsComplete = foundationsMissing.length === 0;
 
     // THE GATE. A workspace is set up when it has an ICP — that is the one artifact every
-    // other part of the product reads (scoring, attention, the briefs, get_playbook), and
+    // other part of the product reads (scoring, attention, the briefs, get_foundation), and
     // it is the same question /api/onboarding/status answers. Same row, same answer.
-    const icpSlot = playbooks.find((p) => p.kind === 'icp');
+    const icpSlot = foundations.find((p) => p.kind === 'icp');
     const icpDone = !!icpSlot?.exists;
 
-    // ── GTM playbook ──
+    // ── GTM foundation ──
     // "Built" = the in-app wizard ran (source 'playbook') OR the agent wrote real
     // GTM context (source 'agent'). Agent-operated onboarding is first-class — it
     // must count. A lone onboarding-seeded ICP line (source 'onboarding') does NOT,
     // so a bare new workspace still gets the setup prompt: hence the >= 2 threshold.
-    const playbookFacts = (notes || []).filter((n) => n.source === 'playbook' || n.source === 'agent');
+    const foundationFacts = (notes || []).filter((n) => n.source === 'playbook' || n.source === 'agent');
     const icpNotes      = (notes || []).filter((n) => n.category === 'ICP');
     const hasModel      = signalCount > 0;
-    const playbookDone  = playbookFacts.length >= 2 || hasModel;
-    const staleFacts    = playbookFacts.filter((n) => {
+    const foundationDone  = foundationFacts.length >= 2 || hasModel;
+    const staleFacts    = foundationFacts.filter((n) => {
       const a = ageDays(n.reaffirmed_at || n.created_at);
       return a != null && a >= 90;
     }).length;
@@ -254,7 +254,7 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
           'WHAT: files named icp*, positioning*, voice*, tone*, brand*, messaging*, outreach*, pricing*, competitors*.',
           'ALSO INSIDE: read CLAUDE.md and README.md — an ICP is often a heading in there ("## Who we sell to", "## Ideal customer") rather than a file of its own.',
           'THEN MAP what you found onto the four kinds Nous keeps: icp, positioning, voice, outreach.',
-          '(a) EXACT MATCH — context/icp.md exists and is real: sync it AS-IS with sync_playbook(kind, body, file_path). DO NOT REWRITE IT. It is already the thing we wanted; your job is to mirror it, not to improve it. Their repo stays the author.',
+          '(a) EXACT MATCH — context/icp.md exists and is real: sync it AS-IS with sync_foundation(kind, body, file_path). DO NOT REWRITE IT. It is already the thing we wanted; your job is to mirror it, not to improve it. Their repo stays the author.',
           '(b) DIFFERENT SHAPE — it lives in a CLAUDE.md heading, or docs/who-we-sell-to.md: extract it, write the canonical context/<kind>.md in THEIR repo, sync that, and TELL THEM what you moved and where from. Never silently.',
           '(c) NOTHING FOUND — say so, then go to the profile step and draft from their website.',
           'REPORT when you are done: what you found, what you moved, what you drafted, what is still empty. A user who watches you discover their own file trusts everything you do next.',
@@ -270,7 +270,7 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
         id: 'onboarding',
         title: 'Finish onboarding the workspace',
         why: `Missing: ${profileMissing.join(', ')}. Everything else builds on the workspace knowing who you are and who you sell to.`,
-        how: 'FIRST use whatever you learned in discover_context — if their files already name the company, the site, or who they sell to, do not ask again. For what is genuinely missing: ask for the company name + website, then RESEARCH the company from its website yourself (home, product, pricing, about, customers/case studies) so you can pre-fill instead of interrogating the user. Confirm service-or-software and a first cut of the ideal customer, then call set_workspace_profile. Treat this research as the groundwork for the GTM playbook next — dig in now, do not just collect a one-liner.',
+        how: 'FIRST use whatever you learned in discover_context — if their files already name the company, the site, or who they sell to, do not ask again. For what is genuinely missing: ask for the company name + website, then RESEARCH the company from its website yourself (home, product, pricing, about, customers/case studies) so you can pre-fill instead of interrogating the user. Confirm service-or-software and a first cut of the ideal customer, then call set_workspace_profile. Treat this research as the groundwork for the GTM foundation next — dig in now, do not just collect a one-liner.',
       });
     }
 
@@ -280,7 +280,7 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
     // files, the agent scaffolds a context/ folder. Comes right after the profile
     // because the scoring model is seeded from this. Claude Code only — other
     // clients have no filesystem, so the ICP is captured in set_workspace_profile.
-    if (onboardingDone && !icpSync && !playbookDone) {
+    if (onboardingDone && !icpSync && !foundationDone) {
       next_steps.push({
         id: 'context_files',
         title: 'Sync the ICP & GTM context from the user\'s files (or scaffold them)',
@@ -296,23 +296,23 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
       });
     }
 
-    // 2b. Playbooks — the policy layer. Make sure all four exist (voice, outreach,
+    // 2b. Foundations — the policy layer. Make sure all four exist (voice, outreach,
     // icp, positioning), gathered WITH the user, mirrored to files where the runtime
     // has them. Only the missing slots are listed — a half-finished setup resumes here.
-    if (onboardingDone && !playbooksComplete) {
+    if (onboardingDone && !foundationsComplete) {
       next_steps.push({
-        id: 'setup_playbooks',
-        title: `Set up the playbooks (${PB_KINDS.length - playbooksMissing.length}/4 done — missing: ${playbooksMissing.join(', ')})`,
-        why: 'Playbooks are the rules every agent obeys before it acts — voice, outreach, ICP, positioning. Set them up ONCE, with the user, and every agent (here, Claude Desktop, Codex, your own) reads the same versioned policy via get_playbook.',
+        id: 'setup_foundations',
+        title: `Set up the foundations (${PB_KINDS.length - foundationsMissing.length}/4 done — missing: ${foundationsMissing.join(', ')})`,
+        why: 'Foundations are the rules every agent obeys before it acts — voice, outreach, ICP, positioning. Set them up ONCE, with the user, and every agent (here, Claude Desktop, Codex, your own) reads the same versioned policy via get_foundation.',
         how: [
-          'FRAME IT FIRST: tell the user you are setting up their playbooks — the four rule-docs every agent obeys (voice, outreach, ICP, positioning) — that you will handle voice + outreach yourself, and need a little from them on ICP + positioning.',
+          'FRAME IT FIRST: tell the user you are setting up their foundations — the four rule-docs every agent obeys (voice, outreach, ICP, positioning) — that you will handle voice + outreach yourself, and need a little from them on ICP + positioning.',
           'DETECT THE ENVIRONMENT: check your OWN tools. Can you read/write files? If yes, look for a context/ folder + files (icp*, positioning*, voice*, outreach*). No file tools (Claude Desktop / claude.ai) = store in Nous only, no files.',
           'THEN, FOR EACH MISSING SLOT, pick a posture by how much content already exists:',
-          '(a) CONTENT EXISTS — a real file, or a doc the user pastes: MIRROR it. Read it, confirm with the user ("found your ICP, bringing it in as-is, good?"), then sync_playbook(kind, body, file_path). If it looks stale/thin or conflicts with their recent deals, FLAG it — do not blindly copy.',
-          '(b) INFERABLE — no doc but a website / a few customers: DRAFT from research, then CONFIRM. "I read your site, here is a draft ICP and positioning, two things to check: ..." then sync_playbook.',
-          '(c) BLANK — nothing to go on: INTERVIEW. Ask together: ICP (industry, size, buyer role, the trigger), positioning (your category, your wedge, your competitors). Co-create, then sync_playbook.',
+          '(a) CONTENT EXISTS — a real file, or a doc the user pastes: MIRROR it. Read it, confirm with the user ("found your ICP, bringing it in as-is, good?"), then sync_foundation(kind, body, file_path). If it looks stale/thin or conflicts with their recent deals, FLAG it — do not blindly copy.',
+          '(b) INFERABLE — no doc but a website / a few customers: DRAFT from research, then CONFIRM. "I read your site, here is a draft ICP and positioning, two things to check: ..." then sync_foundation.',
+          '(c) BLANK — nothing to go on: INTERVIEW. Ask together: ICP (industry, size, buyer role, the trigger), positioning (your category, your wedge, your competitors). Co-create, then sync_foundation.',
           'PER-KIND GATHERING: voice = infer from the user\'s REAL writing (their LinkedIn posts / sent emails), NEVER ask "what is your voice". outreach = start from the proven situation/insight/inquisition method, let them tweak. icp + positioning + competitors = interview or infer as above.',
-          'WRITE IT: file-capable runtime -> write the file in that runtime\'s convention (Claude Code: context/...; Codex: AGENTS.md; else a nous/ folder) AND sync_playbook with file_path. No filesystem -> sync_playbook with NO file_path (stored in Nous).',
+          'WRITE IT: file-capable runtime -> write the file in that runtime\'s convention (Claude Code: context/...; Codex: AGENTS.md; else a nous/ folder) AND sync_foundation with file_path. No filesystem -> sync_foundation with NO file_path (stored in Nous).',
           'RULES: never silently create — always confirm the draft with the user first. Set up ONLY the missing slots; finished slots stay. When all four exist, you are done.',
         ].join(' '),
       });
@@ -390,10 +390,10 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
           });
     }
 
-    // 6. GTM playbook — once the context is synced, turn it into a scoring model
+    // 6. GTM foundation — once the context is synced, turn it into a scoring model
     // and sharpen it on real outcomes. The context itself comes from the files
     // synced in step 2 (sync_icp); this step is the model on top of it.
-    if (onboardingDone && !playbookDone) {
+    if (onboardingDone && !foundationDone) {
       next_steps.push({
         id: 'gtm_playbook',
         title: 'Build the ICP scoring model and sharpen it on real outcomes',
@@ -421,7 +421,7 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
     // 6b. Routing preferences — Claude Code only, optional finishing touch once
     // the workspace is set up. (No done-signal exists, so it's surfaced as the
     // last optional step.)
-    if (onboardingDone && playbookDone) {
+    if (onboardingDone && foundationDone) {
       next_steps.push({
         id: 'routing_preferences',
         title: 'Set routing preferences (Claude Code, optional)',
@@ -484,14 +484,14 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
         },
         onboarding: { done: onboardingDone, missing: profileMissing },
         gtm_playbook: {
-          done: playbookDone,
-          facts: playbookFacts.length,
+          done: foundationDone,
+          facts: foundationFacts.length,
           icp_facts: icpNotes.length,
           model: hasModel,
           stale_facts: staleFacts,
         },
         icp_sync: icpSync,
-        playbooks: { complete: playbooksComplete, missing: playbooksMissing, slots: playbooks },
+        foundations: { complete: foundationsComplete, missing: foundationsMissing, slots: foundations },
         integrations: { count: verified.length, connected: connectedList },
         // The recommended onboarding integrations, in priority order.
         recommended: {
@@ -590,7 +590,7 @@ workspaceStatusV2Router.post('/onboarding', async (req, res) => {
 // ── POST /v2/workspace/scoring-model ─────────────────────────────────────────
 // Agent-callable: build (or rebuild) the ICP scoring model from the GTM context
 // the workspace has recorded. This is the second half of building the GTM
-// playbook — the agent syncs the context from the user's files with sync_icp, then
+// foundation — the agent syncs the context from the user's files with sync_icp, then
 // calls this to turn it into a weighted scoring model. Pass force:true to rebuild over
 // an existing model. Shares its implementation with the human web route.
 workspaceStatusV2Router.post('/scoring-model', requireFeature('icpScoring'), async (req, res) => {
@@ -629,7 +629,7 @@ workspaceStatusV2Router.post('/scoring-model', requireFeature('icpScoring'), asy
 // Mirrors the web connect route: tests the credentials, then stores them
 // encrypted exactly the same way.
 // GET /v2/workspace/scorecard — the ICP scorecard summary + win/loss drivers,
-// for external surfaces (Partner OS Playbooks page). accounts_analyzed = scored
+// for external surfaces (Partner OS Foundations page). accounts_analyzed = scored
 // predictions; closed_won/lost = decided outcomes; signals = the weighted
 // drivers (positive = win, negative = loss), highest weight first.
 workspaceStatusV2Router.get('/scorecard', async (req, res) => {
@@ -1016,8 +1016,8 @@ workspaceStatusV2Router.post('/icp/import', async (req, res) => {
       });
       if (sourcePath && r?.fact?.id) sourceFactIds.push(r.fact.id);
 
-      // The ICP section ALSO goes through the one ICP write path (playbook + note + cache),
-      // because that playbook row IS the onboarding gate and what the Vault / get_playbook
+      // The ICP section ALSO goes through the one ICP write path (foundation + note + cache),
+      // because that foundation row IS the onboarding gate and what the Vault / get_foundation
       // serve. Without this, sync_icp populates the scoring facts but the gate stays closed
       // and ConnectGate never unlocks. source claude_code when it came from a repo file.
       if (name === 'ICP') {

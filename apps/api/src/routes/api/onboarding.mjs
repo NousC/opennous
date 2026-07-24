@@ -30,11 +30,11 @@ async function resolveWorkspaceId(supabase, reqUser, fallback = null) {
 // that answers "is this workspace set up". The router asks this. The setup screen asks
 // this. There is no second opinion.
 //
-// onboarded = the workspace has an ICP **in the Vault** (a playbooks row, kind='icp').
+// onboarded = the workspace has an ICP **in the Vault** (a foundations row, kind='icp').
 //
 // It used to be `business_type`, which the agent happened to set on its way past — a
 // label, where the ICP is the thing every other part of the product actually reads:
-// scoring, attention, the briefs, get_playbook. A workspace with a business_type and no
+// scoring, attention, the briefs, get_foundation. A workspace with a business_type and no
 // ICP is not set up, it just looks like it is.
 //
 // It was then briefly `workspaces.icp_text`, which was worse: that column feeds NOTHING.
@@ -70,7 +70,7 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
         .not('resolved_at', 'is', null)
         .in('outcome_value->>disposition', ['won', 'lost'])
         .then(r => r, () => ({ count: 0 })),
-      // The playbook row, and only the playbook row. This is the whole gate.
+      // The foundation row, and only the foundation row. This is the whole gate.
       hasIcp(supabase, workspaceId),
     ]);
 
@@ -216,7 +216,7 @@ Rules:
 // It writes through lib/icp.mjs, which puts the ICP in all three places that need it:
 // the Vault (the authority), the ICP note (the only thing the scoring model learns from),
 // and the icp_text cache. This route used to write the cache ALONE, which meant the gate
-// opened onto a workspace where the Vault was empty, get_playbook returned nothing, and
+// opened onto a workspace where the Vault was empty, get_foundation returned nothing, and
 // the scorecard had never been seeded.
 //
 // source is 'nous' here: there is no repo on this road, so the Vault is the author.

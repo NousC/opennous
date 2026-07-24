@@ -137,7 +137,7 @@ function greeting() {
 
 // A tool name → what the agent is doing, in words a person would use.
 const TOOL_VERBS: Record<string, string> = {
-  get_playbook: "Reading our playbook",
+  get_foundation: "Reading our foundation",
   get_context:  "Assembling context",
   get_account:  "Pulling the account record",
   query:        "Searching across accounts",

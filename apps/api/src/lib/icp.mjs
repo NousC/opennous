@@ -3,8 +3,8 @@
 // Before this file existed the ICP could land in any of these, depending on which road
 // the user walked in on:
 //
-//   playbooks (kind='icp')  — what the Vault renders and what get_playbook serves to an
-//                             agent before it acts. Written by sync_playbook and the
+//   foundations (kind='icp')  — what the Vault renders and what get_foundation serves to an
+//                             agent before it acts. Written by sync_foundation and the
 //                             partner onboarding agent.
 //   notes (category='ICP')  — what seedScorecardFromMemory reads. It is the ONLY input to
 //                             the scoring model. Written by set_workspace_profile.
@@ -12,10 +12,10 @@
 //                             except the gate that asked whether onboarding was done.
 //
 // So a human who finished the in-app road wrote `icp_text`, which meant: the Vault showed
-// nothing, their agent got nothing from get_playbook, and the scoring model was never
+// nothing, their agent got nothing from get_foundation, and the scoring model was never
 // seeded. The gate flipped to "onboarded" and the workspace was exactly as empty as before.
 //
-// Hence: ONE function. Every road calls it, it writes every home, and the playbook is the
+// Hence: ONE function. Every road calls it, it writes every home, and the foundation is the
 // authority. An ICP that doesn't reach the scorecard is decoration, so writing the note is
 // not optional and not a separate step someone can forget.
 //
@@ -32,7 +32,7 @@ async function safe(fn) {
 }
 
 /**
- * Write the workspace's ICP. The playbook row is the authority; the note is what the
+ * Write the workspace's ICP. The foundation row is the authority; the note is what the
  * scoring model learns from; `icp_text` is kept as a cache for the surfaces that still
  * read it (GET /api/mind/icp).
  *
@@ -51,17 +51,17 @@ export async function writeIcp(supabase, workspaceId, { body_md, source = 'nous'
   if (!workspaceId) throw new Error('writeIcp: workspaceId required');
   if (!text) throw new Error('writeIcp: body_md required');
 
-  // 1. The playbook. This is the ICP — the Vault reads it, get_playbook serves it, and
+  // 1. The foundation. This is the ICP — the Vault reads it, get_foundation serves it, and
   //    /api/onboarding/status gates on its existence.
   const { data: existing } = await supabase
-    .from('playbooks')
+    .from('foundations')
     .select('version')
     .eq('workspace_id', workspaceId)
     .eq('kind', 'icp')
     .maybeSingle();
 
   const now = new Date().toISOString();
-  const { error } = await supabase.from('playbooks').upsert({
+  const { error } = await supabase.from('foundations').upsert({
     workspace_id: workspaceId,
     kind: 'icp',
     title: 'ICP',
@@ -73,7 +73,7 @@ export async function writeIcp(supabase, workspaceId, { body_md, source = 'nous'
     synced_at: now,
     updated_at: now,
   }, { onConflict: 'workspace_id,kind' });
-  if (error) throw new Error(`writeIcp: playbook upsert failed — ${error.message}`);
+  if (error) throw new Error(`writeIcp: foundation upsert failed — ${error.message}`);
 
   // 2. The note. seedScorecardFromMemory reads THIS and nothing else, so an ICP that skips
   //    it never reaches scoring — which is the whole reason this function exists.
@@ -94,14 +94,14 @@ export async function writeIcp(supabase, workspaceId, { body_md, source = 'nous'
 /**
  * Does this workspace have an ICP? The single definition of "onboarded".
  *
- * The playbook row, and only the playbook row. Not business_type (a label the agent happened
+ * The foundation row, and only the foundation row. Not business_type (a label the agent happened
  * to set on its way past), not icp_text (which fed nothing). A workspace with a business_type
  * and no ICP is not set up, it just looks like it is.
  */
 export async function hasIcp(supabase, workspaceId) {
   if (!workspaceId) return false;
   const { data } = await supabase
-    .from('playbooks')
+    .from('foundations')
     .select('body_md')
     .eq('workspace_id', workspaceId)
     .eq('kind', 'icp')

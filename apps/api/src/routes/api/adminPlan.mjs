@@ -95,7 +95,7 @@ adminPlanRouter.get('/', async (req, res) => {
  * POST /api/admin/plan  { email, plan }
  *
  * Flip a team onto a plan. The real use is 'custom' after a sales call: it turns on
- * the agent, Adoption, Playbooks, Tasks, Skills, Salesforce/HubSpot/Slack, and drops
+ * the agent, Adoption, Foundations, Tasks, Skills, Salesforce/HubSpot/Slack, and drops
  * the active-account cap.
  */
 adminPlanRouter.post('/', async (req, res) => {

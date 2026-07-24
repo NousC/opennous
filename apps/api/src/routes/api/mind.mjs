@@ -59,7 +59,7 @@ mindRouter.get('/substrate', async (req, res) => {
     // queries at 1000 server-side, so .length of a fetched array LIES about
     // total count. Use head:true count queries for the headline numbers and
     // separate (capped) sample queries for breakdowns.
-    // The Playbooks page reads only predictions + calibration + top_signals +
+    // The Foundations page reads only predictions + calibration + top_signals +
     // recent_predictions from this endpoint, so we skip the two 2000-row
     // observations/claims SAMPLE fetches (their by-source / freshness / epistemic
     // breakdowns are unused) and keep only the cheap head-count totals. That trims
@@ -97,7 +97,7 @@ mindRouter.get('/substrate', async (req, res) => {
     const predictionsTotal = predTotalRes.count ?? 0;
 
     // ── 1. evidence ──────────────────────────────────────────────
-    // by-source breakdown intentionally omitted — the Playbooks page shows totals
+    // by-source breakdown intentionally omitted — the Foundations page shows totals
     // only, so we don't pay for the 2000-row sample fetch.
     const sources = [];
 
@@ -292,7 +292,7 @@ mindRouter.get('/substrate', async (req, res) => {
       .slice(0, 10);
 
     // Attention feed intentionally not computed here — it's unused by the
-    // Playbooks page and lives behind its own endpoint. Skipping it removes an
+    // Foundations page and lives behind its own endpoint. Skipping it removes an
     // extra multi-query helper from this hot path.
     const attention = [];
 
@@ -510,11 +510,11 @@ mindRouter.put('/icp', async (req, res) => {
     const value = typeof icp_text === 'string' ? icp_text.trim() : '';
 
     // Clearing it is a different operation from setting it — there is no "empty ICP"
-    // playbook, so drop the row rather than upserting a blank one that would keep the
+    // foundation, so drop the row rather than upserting a blank one that would keep the
     // onboarding gate open on nothing.
     if (!value) {
       const supabase = getSupabaseClient();
-      await supabase.from('playbooks').delete().eq('workspace_id', workspaceId).eq('kind', 'icp');
+      await supabase.from('foundations').delete().eq('workspace_id', workspaceId).eq('kind', 'icp');
       await supabase.from('workspaces').update({ icp_text: null }).eq('id', workspaceId);
       return res.json({ icp_text: null });
     }

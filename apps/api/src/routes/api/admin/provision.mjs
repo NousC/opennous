@@ -71,7 +71,7 @@ provisionRouter.post('/account', requirePartnerSecret, async (req, res) => {
 // workspace under its own team; when the client wants their own Nous (e.g. to
 // connect their personal mailbox), we create/reuse an account for the client's
 // REAL email and REASSIGN the existing workspace to that team — so all data
-// (contacts, claims, playbooks, history) moves with it (the rows reference
+// (contacts, claims, foundations, history) moves with it (the rows reference
 // workspace_id, which is unchanged). The agency owner is kept as a member so it
 // stays a delegated collaborator. The client claims the login via password reset.
 //   body: { workspace_id, email, name?, agency_owner_user_id? }
@@ -127,11 +127,11 @@ provisionRouter.post('/graduate', requirePartnerSecret, async (req, res) => {
 
 // POST /api/admin/provision/onboard — the server-side onboarding AGENT for Partner
 // OS form submissions. A Haiku routine reads the client's website + intake answers,
-// drafts the ICP/positioning/voice playbooks, seeds the ICP scoring model, and marks
+// drafts the ICP/positioning/voice foundations, seeds the ICP scoring model, and marks
 // the workspace onboarded. Only runs for agency form submissions; direct Nous users
 // onboard via their own Claude Code.
 //   body: { workspace_id, company_name?, website?, offer?, icp?, positioning?, voice? }
-//   → 200 { ok, built: { playbooks, scorecard, business_type, errors } }
+//   → 200 { ok, built: { foundations, scorecard, business_type, errors } }
 provisionRouter.post('/onboard', requirePartnerSecret, async (req, res) => {
   try {
     const { workspace_id, company_name, website, offer, icp, positioning, voice, example_customers } = req.body || {};

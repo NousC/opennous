@@ -7,6 +7,7 @@ import Anthropic, { setUser } from 'useleak';
 import { listNotes, saveNote, updateNote, searchClaims, listActivities, recordObservation,
   isEntityInternal, linkPersonMention, resolvePersonMention, tagClaimMentions,
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS } from '@nous/core';
+import { extractCallInsights } from './insights.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -543,6 +544,20 @@ export async function extractMeetingSignals({
     if (!summary || summary.length < 20) return [];
     if (!participants?.length) return [];
     setUser({ id: String(workspaceId) });
+
+    // Insights about US, mined from this call, in parallel with the facts about
+    // THEM. Runs once per call regardless of attendee count (so it sits above the
+    // 1:1 branch below), never blocks the fact extraction, and lands in the
+    // workspace Insights docs, not on any contact. Skipped on dry runs.
+    if (!dryRun) {
+      const sourceLabel = [...new Set(
+        participants.map(p => p.company || p.name).filter(Boolean),
+      )].join(', ') || null;
+      setImmediate(() =>
+        extractCallInsights({ supabase, workspaceId, transcript: summary, sourceLabel })
+          .catch(err => console.warn('[INSIGHT_HOOK_ERROR]', err.message)),
+      );
+    }
 
     // A 1:1 call is the common case, and the single-person prompt is sharper for
     // it (it can say "these are Sarah's own words" rather than hedging across a
