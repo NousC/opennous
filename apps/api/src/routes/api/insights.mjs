@@ -51,6 +51,7 @@ insightsApiRouter.post('/extract', verifySupabaseAuth, async (req, res) => {
     for (const call of calls) {
       scanned += 1;
       try {
+        const attendees = call.metadata?.contact_name ? [call.metadata.contact_name] : [];
         const msg = await anthropic.messages.create({
           feature: 'call-insights-extract',
           // Sonnet — see apps/worker/src/signals/insights.mjs for why (founder-critical,
@@ -59,7 +60,7 @@ insightsApiRouter.post('/extract', verifySupabaseAuth, async (req, res) => {
           // JSON is in the text block, not content[0].
           model: 'claude-sonnet-5',
           max_tokens: 6000,
-          messages: [{ role: 'user', content: buildInsightExtractionPrompt(call.content) }],
+          messages: [{ role: 'user', content: buildInsightExtractionPrompt(call.content, { attendees }) }],
         });
         const items = parseInsightsJson(msg.content.find(b => b.type === 'text')?.text ?? '[]');
         if (items.length) {

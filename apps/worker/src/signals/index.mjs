@@ -553,8 +553,9 @@ export async function extractMeetingSignals({
       const sourceLabel = [...new Set(
         participants.map(p => p.company || p.name).filter(Boolean),
       )].join(', ') || null;
+      const attendees = [...new Set(participants.map(p => p.name).filter(Boolean))];
       setImmediate(() =>
-        extractCallInsights({ supabase, workspaceId, transcript: summary, sourceLabel })
+        extractCallInsights({ supabase, workspaceId, transcript: summary, sourceLabel, attendees })
           .catch(err => console.warn('[INSIGHT_HOOK_ERROR]', err.message)),
       );
     }

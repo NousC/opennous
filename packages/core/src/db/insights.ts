@@ -30,39 +30,44 @@ export interface ExtractedInsight {
 }
 
 // The one prompt both extractors share (the worker's auto-hook and the API's
-// manual "extract" button), so the two never drift.
-export function buildInsightExtractionPrompt(transcript: string): string {
-  return `You are mining a sales/discovery call for insights about OUR OWN company — the side running the call (referred to as "we"/"us"/"our product"). This is the OPPOSITE of recording facts about the other attendees; those are captured elsewhere. Read the WHOLE transcript before deciding.
+// manual "extract" button), so the two never drift. Pass the external attendee
+// names so the model can tell the prospect's words from our own.
+export function buildInsightExtractionPrompt(transcript: string, opts: { attendees?: string[] } = {}): string {
+  const names = (opts.attendees ?? []).filter(Boolean);
+  const whoSaid = names.length
+    ? `The EXTERNAL attendees — the prospect/customer side we are learning from — are: ${names.join(', ')}. Everyone else who speaks (e.g. "Bennet", our own side) is US.`
+    : `The transcript has two sides: the person hosting/selling (US) and the prospect/customer. Judge which speaker is the prospect from context.`;
+  return `You are mining a sales/discovery call for insights about OUR OWN company — product, positioning, market, or buyer. Read the WHOLE transcript first.
 
-CAPTURE anything that teaches us about our own product, positioning, market, or buyer. This includes, and you must not miss:
-- Direct advice they gave us (what to build, how to message, who to sell to).
+${whoSaid}
+
+THE HARD RULE: an insight may ONLY be grounded in what an EXTERNAL attendee (the prospect) actually said. Our own side's statements are our existing opinions, not learnings — NEVER turn something WE said into an insight, and NEVER use one of our lines as the quote. If the prospect merely agreed ("yeah exactly") with a point WE made, that is not their insight; skip it unless they said something substantive in their own words. Every quote MUST be a verbatim line spoken by the prospect.
+
+CAPTURE (only from the prospect's own words):
+- Advice they gave us — what to build, how to message, who to sell to.
 - A gap, objection, or friction they exposed in what we do.
-- A market shift, wedge, segment, or channel they revealed — including WHY-NOW observations about where the market is going.
-- The underlying pain that makes someone buy — the bottleneck they feel.
-- A general truth or thesis they state that VALIDATES or CHALLENGES our core bet — even when it is framed as a broad observation and not as advice aimed at us. If a well-informed operator independently arrives at the thesis our product is built on, that is a high-value insight, not small talk. Capture it.
+- A market shift, wedge, segment, or channel they revealed, incl. why-now observations.
+- The underlying pain that makes someone buy.
+- A thesis they state that validates or challenges our core bet — capture it even when it just agrees with us; external validation is high-value. (Hunt for this — it is the most-missed kind. E.g. an operator independently saying teams keep rebuilding customer context from scratch would validate a persistent-context product.)
 
-Do NOT capture: pure facts about the attendee/their company, logistics, or generic pleasantries.
+Do NOT capture: facts about the attendee/their company, logistics, pleasantries, or anything only WE said.
 
 Transcript: "${transcript}"
 
-An insight is worth recording ONLY if it passes ALL THREE bars:
-1. ABOUT US — it informs how WE build, message, sell, or target, OR it confirms/challenges our thesis. Not merely a fact about them.
-2. DURABLE — a lesson still useful weeks from now, not a one-off logistic.
-3. SPECIFIC — it carries the concrete point or reason, not a vague platitude.
+Each insight must pass ALL THREE bars: (1) ABOUT US — informs how we build/message/sell/target, or confirms/challenges our thesis; (2) DURABLE — useful weeks from now; (3) SPECIFIC — carries the concrete point.
 
-Tag each insight with:
+Tag each with:
 - "category": exactly one of: ${INSIGHT_CATEGORY_KEYS.join(', ')}.
-- "content": the insight as ONE crisp standalone sentence, written from our point of view.
-- "quote": a short verbatim line from the transcript that supports it (for provenance).
+- "content": ONE tight sentence, our point of view, MAX ~18 words. Punchy, no preamble, no hedging.
+- "quote": the single most telling fragment the PROSPECT said, verbatim, MAX ~20 words. Not our words.
 
 Categories:
 ${insightCategoryPromptBlock()}
 
-THESIS-VALIDATION is the most commonly missed category, so hunt for it explicitly. Whenever an attendee independently describes a structural problem, a market shift, or a "why now" that our product is built to solve — even in passing, even as their own philosophy rather than advice to us — that is a high-value insight. Do not skip it because it merely agrees with us; external validation of our bet is exactly what we want to capture. Illustrative pattern (NOT from this call, do not copy it — find the real equivalents in the transcript above): an operator saying "teams keep rebuilding the same customer context from scratch every quarter" would be a market insight validating a persistent-context product. Now find every such moment ACTUALLY present in this transcript and record it with its real quote.
-
 Rules:
-- Extract EVERY insight that clears all three bars — there is no target number. A thin call yields zero; a rich discovery call can yield several. When a statement is a genuine thesis/market/buyer signal, err toward capturing it rather than dropping it. NEVER pad, NEVER restate the same insight twice.
-- Hard ceiling of 8 insights — a safety limit, not a goal.
+- Extract every insight that clears all three bars — no target number. A thin call yields zero; a rich one several. NEVER pad, NEVER restate the same insight twice.
+- Keep content and quote SHORT. If it needs two sentences, it is not tight enough — cut it down.
+- Hard ceiling of 8 insights.
 
 Output ONLY valid JSON: [{"category":"<key>","content":"...","quote":"..."}]
 If nothing meaningful: []`;

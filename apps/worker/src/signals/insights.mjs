@@ -20,8 +20,10 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
  * @param {string}   args.workspaceId
  * @param {string}   args.transcript  the full call notes/transcript
  * @param {string=}  args.sourceLabel  who/when, e.g. "Jack Cane, Revenanas" (provenance)
+ * @param {string[]=} args.attendees   external attendee names, so the model draws insights
+ *                                      only from the prospect's words, not our own side.
  */
-export async function extractCallInsights({ supabase, workspaceId, transcript, sourceLabel }) {
+export async function extractCallInsights({ supabase, workspaceId, transcript, sourceLabel, attendees }) {
   try {
     if (!transcript || transcript.length < 200) return 0; // thin calls rarely hold a real insight
     setUser({ id: String(workspaceId) });
@@ -36,7 +38,7 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
       // and the JSON lives in the `text` block, not content[0].
       model: 'claude-sonnet-5',
       max_tokens: 6000,
-      messages: [{ role: 'user', content: buildInsightExtractionPrompt(transcript) }],
+      messages: [{ role: 'user', content: buildInsightExtractionPrompt(transcript, { attendees }) }],
     });
 
     const textBlock = msg.content.find(b => b.type === 'text')?.text ?? '[]';
