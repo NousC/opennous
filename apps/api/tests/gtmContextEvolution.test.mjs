@@ -86,7 +86,7 @@ run('Phase 1 — a fact evolves by subject: supersede keeps history, active read
 run('Phase 2 — an agent write-back evolves the matching belief, not a duplicate', async () => {
   const supabase = getSupabaseClient();
 
-  // A playbook-created belief on the positioning slot.
+  // A foundation-created belief on the positioning slot.
   const seed = await saveNote(supabase, workspaceId, {
     entityId, category: 'Positioning', source: 'playbook', subject: 'playbook.positioning',
     content: 'We win on speed of setup', confidence: 0.8,
@@ -113,7 +113,7 @@ run('Phase 2 — an agent write-back evolves the matching belief, not a duplicat
   assert.equal(positioning[0].content, 'We win on depth of GTM context, not just speed', 'active is the write-back');
   assert.equal(positioning[0].source, 'agent', 'active is agent-sourced');
 
-  // The superseded playbook belief is kept as history.
+  // The superseded foundation belief is kept as history.
   const seedAfter = await getNote(supabase, workspaceId, seed.id);
   assert.equal(seedAfter.is_active, false, 'old belief invalidated, not deleted');
   assert.equal(seedAfter.superseded_by, updated.id, 'old belief links to the write-back');

@@ -18,7 +18,7 @@
  *   query                — retrieve + summarise a corpus of activity across many people
  *   attention            — what needs your attention (accounts gone quiet, facts decayed)
  *   verify               — re-check a fact before acting on it
- *   get_playbook         — read the user's own rules: voice, outreach, icp, positioning
+ *   get_foundation         — read the user's own rules: voice, outreach, icp, positioning
  *   save_note            — attach a note/document (meeting brief, transcript, prep) to a contact
  *   search_notes         — semantic search over saved notes & documents
  *   get_workspace_status — what's set up in this workspace + a ranked next_steps list (call first)
@@ -112,21 +112,21 @@ Nous first even when the user never says "Nous":
 - What needs attention, what has gone quiet     -> attention
 - Your action items / what you owe an account    -> get_action_items
 - A fact looks stale before you act on it       -> verify
-- Our own rules: ICP, positioning, voice, outreach -> get_playbook
+- Our own rules: ICP, positioning, voice, outreach -> get_foundation
 - Our ICP/positioning lives in our own files    -> sync_icp (file → graph) / export_icp_model (graph → file)
-- You edited an ICP / context / playbook file   -> re-sync THIS turn: sync_icp (ICP/context) or sync_playbook (a playbook)
+- You edited an ICP / context / foundation file   -> re-sync THIS turn: sync_icp (ICP/context) or sync_foundation (a foundation)
 - A brief / note / transcript on a contact      -> save_note / search_notes
 - What's set up here and what to do next        -> get_workspace_status
 
-Read get_playbook at the start of GTM work for the user's own rules (voice,
+Read get_foundation at the start of GTM work for the user's own rules (voice,
 outreach, icp, positioning). After every interaction you help with, call record so
 the record stays current.
 
-CRITICAL — edits don't apply until you sync. Editing an ICP / context / playbook
+CRITICAL — edits don't apply until you sync. Editing an ICP / context / foundation
 file (context/icp.md, positioning.md, references/voice.md, …) does NOT change the
 ICP score, the exclusions, or what any other agent reads until it is synced into
 the graph. After ANY such edit you MUST call sync_icp (for ICP/context files) or
-sync_playbook (for a playbook) in the SAME turn. Never leave an edited file
+sync_foundation (for a foundation) in the SAME turn. Never leave an edited file
 unsynced — an unsynced edit is silently inert.`;
 
 // ─── factory ──────────────────────────────────────────────────────────────────
@@ -264,7 +264,7 @@ export function createServer() {
     "confidence and freshness, plus what they actually SAID and did, ranked by how much it tells you. " +
     "Pass an email or entity UUID, and the intent you're working toward so the record is shaped for it.",
     {
-      id: z.string().describe("Email address or entity UUID"),
+      id: z.string().describe("Who to look up — an email, an entity UUID, or a name. A name may match several people; you'll get candidates to choose from."),
       intent: z
         .enum(["meeting_prep", "call_prep", "account_review", "follow_up", "draft_email"])
         .optional()
@@ -282,6 +282,17 @@ export function createServer() {
       // so the model reads what was actually said instead of a list of event names.
       const q = new URLSearchParams({ intent: intent ?? "account_review", compress: "1" });
       const rec = await get(`/v2/accounts/${encodeURIComponent(id)}?${q}`);
+
+      // A name matched several people — surface the candidates to choose from.
+      // Without this, the header line below reads `rec.type`/`rec.entity_id` off the
+      // ambiguous response (which carries neither) and prints "undefined · undefined".
+      if (rec.status === "ambiguous") {
+        const opts = (rec.candidates ?? []).map(c =>
+          `  • ${c.name ?? "(unnamed)"}${c.detail ? ` — ${c.detail}` : ""}  [${c.entity_id}]`).join("\n");
+        return { content: [{ type: "text", text:
+          `"${id}" matches several people. Call get_account again with one of these entity ids:\n${opts}` }] };
+      }
+
       const lines = [`${rec.type} · ${rec.entity_id}`, ""];
 
       if (rec.icp) {
@@ -726,63 +737,95 @@ export function createServer() {
   );
 
   // get_gtm_profile removed: the user's GTM lives in their files, mirrored into
-  // the graph as playbooks (get_playbook) plus the learned ICP model. Read
-  // get_playbook for the user's own rules, ICP, and positioning.
+  // the graph as foundations (get_foundation) plus the learned ICP model. Read
+  // get_foundation for the user's own rules, ICP, and positioning.
 
   // ===========================================================================
-  // TOOLS: get_playbook / sync_playbook  —  the POLICY layer (vs. facts).
-  // Playbooks are versioned rule-docs that GOVERN agent behavior: voice, outreach,
+  // TOOLS: get_foundation / sync_foundation  —  the POLICY layer (vs. facts).
+  // Foundations are versioned rule-docs that GOVERN agent behavior: voice, outreach,
   // icp, positioning. Read the relevant one BEFORE acting; push file edits back so
-  // every agent obeys the same rules. GET/POST /v2/playbooks.
+  // every agent obeys the same rules. GET/POST /v2/foundations.
   // ===========================================================================
-  const getPlaybookSchema = {
+  const getFoundationSchema = {
     kind: z.enum(["voice", "outreach", "icp", "positioning"]).optional()
       .describe("Which policy to read. Omit to list all four."),
   };
-  const getPlaybookHandler = async ({ kind }) => {
-    const r = await get("/v2/playbooks", kind ? { kind } : undefined);
-    const pbs = r.playbooks || [];
+  const getFoundationHandler = async ({ kind }) => {
+    const r = await get("/v2/foundations", kind ? { kind } : undefined);
+    const pbs = r.foundations || [];
     if (!pbs.length) return { content: [{ type: "text", text:
-      "No playbooks set up yet. The user can set them up on the Playbooks page or in their context files." }] };
+      "No foundations set up yet. The user can set them up on the Foundations page or in their context files." }] };
     if (kind) {
       const pb = pbs[0];
       const src = pb.source === "claude_code" ? `mirrors ${pb.file_path}` : "stored in Nous";
       return { content: [{ type: "text", text:
-        `# ${pb.title} — ${pb.kind} playbook (v${pb.version}, ${src})\n\n${pb.body_md}` }] };
+        `# ${pb.title} — ${pb.kind} foundation (v${pb.version}, ${src})\n\n${pb.body_md}` }] };
     }
     const lines = pbs.map(p => `  ${p.kind.padEnd(12)} ${p.title}  (${p.source === "claude_code" ? p.file_path : "stored in Nous"})`);
     return { content: [{ type: "text", text:
-      "The user's playbooks (read one with get_playbook(kind)):\n" + lines.join("\n") }] };
+      "The user's foundations (read one with get_foundation(kind)):\n" + lines.join("\n") }] };
   };
-  server.tool("get_playbook",
-    "Read a PLAYBOOK — the user's policy/rules for a kind of action: voice, outreach, icp, or positioning. " +
-    "These are RULES TO OBEY, not facts. Read the relevant playbook BEFORE you act: before writing outreach " +
+  server.tool("get_foundation",
+    "Read a FOUNDATION — the user's policy/rules for a kind of action: voice, outreach, icp, or positioning. " +
+    "These are RULES TO OBEY, not facts. Read the relevant foundation BEFORE you act: before writing outreach " +
     "read 'voice' and 'outreach'; before scoring or qualifying read 'icp'; for messaging read 'positioning'. " +
     "Omit kind to list all four.",
-    getPlaybookSchema, getPlaybookHandler);
+    getFoundationSchema, getFoundationHandler);
 
-  const syncPlaybookSchema = {
-    kind: z.enum(["voice", "outreach", "icp", "positioning"]).describe("Which playbook to update."),
-    body_md: z.string().describe("The full markdown content of the playbook. Follow the Nous document house style so every playbook reads like a clean text file: a '# Title' line, a '> ' one-paragraph lede, an optional plain 'Key: value' block, a '---' divider, then '## Title-case' sections with plain '- ' bullets. Keep it markdown, no decorative formatting."),
+  const syncFoundationSchema = {
+    kind: z.enum(["voice", "outreach", "icp", "positioning"]).describe("Which foundation to update."),
+    body_md: z.string().describe("The full markdown content of the foundation. Follow the Nous document house style so every foundation reads like a clean text file: a '# Title' line, a '> ' one-paragraph lede, an optional plain 'Key: value' block, a '---' divider, then '## Title-case' sections with plain '- ' bullets. Keep it markdown, no decorative formatting."),
     file_path: z.string().optional().describe("The repo file this mirrors, e.g. 'context/icp/icp.md'. Pass it when syncing a Claude Code file so the source is recorded as the file."),
   };
-  const syncPlaybookHandler = async ({ kind, body_md, file_path }) => {
-    const r = await post(`/v2/playbooks/${kind}`, { body_md, file_path });
+  const syncFoundationHandler = async ({ kind, body_md, file_path }) => {
+    const r = await post(`/v2/foundations/${kind}`, { body_md, file_path });
     return { content: [{ type: "text", text:
-      `Synced the ${r.playbook?.kind || kind} playbook into Nous (v${r.playbook?.version}). Other agents now read the same rules.` }] };
+      `Synced the ${r.foundation?.kind || kind} foundation into Nous (v${r.foundation?.version}). Other agents now read the same rules.` }] };
   };
-  server.tool("sync_playbook",
-    "Push a playbook's content into Nous so the graph stays current. You MUST call this in the SAME turn " +
+  server.tool("sync_foundation",
+    "Push a foundation's content into Nous so the graph stays current. You MUST call this in the SAME turn " +
     "whenever you edit a policy file in the repo (e.g. references/voice.md, outreach rules), passing the " +
     "file's new content and its path, so Nous mirrors it and every other agent obeys the same rules. An " +
-    "edited playbook file that isn't synced is silently inert — other agents keep reading the old rules. " +
-    "MIRROR, DO NOT REWRITE: when the user already has a playbook file, sync it AS-IS. Their file is the " +
+    "edited foundation file that isn't synced is silently inert — other agents keep reading the old rules. " +
+    "MIRROR, DO NOT REWRITE: when the user already has a foundation file, sync it AS-IS. Their file is the " +
     "author and Nous is the mirror — always pass file_path so the next sync knows where an in-app edit " +
     "lands. 'Improving' their wording on the way through means the copy in Nous silently disagrees with " +
     "the copy in their repo, and they will trust neither. If a file looks wrong, SAY SO; don't fix it in " +
     "transit. " +
     "(For the ICP/context files specifically, sync_icp is the sync — use that one.)",
-    syncPlaybookSchema, syncPlaybookHandler);
+    syncFoundationSchema, syncFoundationHandler);
+
+  // ===========================================================================
+  // TOOL: get_insights  —  what Nous LEARNED about us from calls (the mirror of
+  // foundations). Insights are auto-extracted from call transcripts into four docs:
+  // product, positioning, market, buyer. READ-ONLY over MCP — the extractor
+  // authors them, not agents. GET /v2/insights[?category=].
+  // ===========================================================================
+  const getInsightsSchema = {
+    category: z.enum(["product", "positioning", "market", "buyer"]).optional()
+      .describe("Which insight doc to read. Omit to list all four."),
+  };
+  const getInsightsHandler = async ({ category }) => {
+    const r = await get("/v2/insights", category ? { category } : undefined);
+    const docs = r.insights || [];
+    if (!docs.length) return { content: [{ type: "text", text:
+      "No insights captured yet. They fill automatically from call transcripts (product, positioning, market, buyer)." }] };
+    if (category) {
+      const d = docs[0];
+      return { content: [{ type: "text", text:
+        `# ${d.title} insights (v${d.version})\n\n${d.body_md || "(empty)"}` }] };
+    }
+    const lines = docs.map(d => `  ${d.category.padEnd(12)} ${d.title}  (v${d.version})`);
+    return { content: [{ type: "text", text:
+      "What Nous learned about us from calls (read one with get_insights(category)):\n" + lines.join("\n") }] };
+  };
+  server.tool("get_insights",
+    "Read INSIGHTS — what Nous learned about US from call transcripts, the mirror of the foundations/foundations " +
+    "the user authors. Four docs: product (what to build), positioning (how to message), market (segments, " +
+    "wedges, channels), buyer (ICP, the pain that drives the purchase). These accumulate automatically after " +
+    "every call. Read them when working on product direction, messaging, GTM strategy, or targeting. Omit " +
+    "category to list all four.",
+    getInsightsSchema, getInsightsHandler);
 
   // The GTM context is no longer written through a dedicated MCP tool. In the file
   // symbiosis model the user's own files (context/icp.md, positioning.md, …) are
@@ -863,7 +906,7 @@ export function createServer() {
   // ===========================================================================
   // TOOL: get_workspace_status  —  GET /v2/workspace/status
   // The "one main call." Nous is operated by the agent, so the agent needs to
-  // know the state of the workspace: is it onboarded, is the GTM playbook built,
+  // know the state of the workspace: is it onboarded, is the GTM foundation built,
   // which integrations are connected, is CRM sync configured, are events live —
   // and what to set up next. Call this at the start of a session.
   // ===========================================================================
@@ -911,7 +954,7 @@ export function createServer() {
           : " — MISSING. The workspace is not set up until this exists. Scan their repo before you ask them anything."}`
       );
       lines.push(`  ${mark(setup.onboarding?.done)} Profile${setup.onboarding?.done ? "" : ` — missing ${(setup.onboarding?.missing ?? []).join(", ") || "details"}`}`);
-      lines.push(`  ${mark(setup.gtm_playbook?.done)} GTM playbook${setup.gtm_playbook?.model ? " (scoring model live)" : ""}${setup.gtm_playbook?.stale_facts ? ` · ${setup.gtm_playbook.stale_facts} stale fact(s)` : ""}`);
+      lines.push(`  ${mark(setup.gtm_playbook?.done)} GTM foundation${setup.gtm_playbook?.model ? " (scoring model live)" : ""}${setup.gtm_playbook?.stale_facts ? ` · ${setup.gtm_playbook.stale_facts} stale fact(s)` : ""}`);
       if (setup.icp_sync) {
         const sy = setup.icp_sync;
         lines.push(`  ⟳ ICP synced from ${sy.synced_from} (${relAge(sy.synced_at)})${sy.model_changed ? " · model has CHANGED since — run export_icp_model to refresh the file" : ""}`);
@@ -1001,15 +1044,15 @@ export function createServer() {
 
   // ===========================================================================
   // TOOL: build_icp_model  —  POST /v2/workspace/scoring-model
-  // The second half of building the GTM playbook. The agent syncs the GTM context
+  // The second half of building the GTM foundation. The agent syncs the GTM context
   // from the user's files with sync_icp, then calls this to turn it into a weighted
   // ICP scoring model. After this, accounts get scored for fit and
-  // get_workspace_status shows the playbook as done.
+  // get_workspace_status shows the foundation as done.
   // ===========================================================================
   server.tool(
     "build_icp_model",
     "Build (or rebuild) the user's ICP scoring model from their synced GTM context. This is " +
-    "the second half of setting up the GTM playbook: first sync the user's ICP/positioning/pricing " +
+    "the second half of setting up the GTM foundation: first sync the user's ICP/positioning/pricing " +
     "files with sync_icp, then call this to translate that context into a weighted set of scoring " +
     "signals so accounts get scored for fit. (sync_icp usually builds the model on first sync, so you " +
     "often won't need this directly.) If a model already exists it is left alone unless you " +
@@ -1057,7 +1100,7 @@ export function createServer() {
     "customer domains and closed-LOST domains; Nous enriches each, links the contacts you already " +
     "have there, and runs contrastive lift (what's true of winners but not losers) to discover the " +
     "signals that actually predict revenue — then re-scores open accounts. This is the strongest way " +
-    "to build the playbook: a model trained on who actually bought beats one inferred from a " +
+    "to build the foundation: a model trained on who actually bought beats one inferred from a " +
     "description. Ask the user for a handful of each (even 3-5 won + 3-5 lost helps). Domains only " +
     "(e.g. 'acme.com'), no scheme.",
     {

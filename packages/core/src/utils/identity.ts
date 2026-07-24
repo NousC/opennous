@@ -63,6 +63,70 @@ export function companyDomainFromEmail(email: string | null | undefined): string
   return domain;
 }
 
+// Normalise an email's local part to a stable identity key: lowercase, drop the
+// plus-tag, then strip everything a human treats as noise (digits, dots,
+// underscores, hyphens) down to letters only. `sarahwig9` and `sarahwig15` both
+// collapse to `sarahwig`; `jordan.lee+work` → `jordanlee`. Returns null when the
+// result is shorter than 4 letters — too generic to anchor an identity on. This
+// is an EXACT key after normalisation, not fuzzy matching: there is no
+// similarity threshold, only equality on the normalised value.
+export function normalizeEmailLocalPart(email: string | null | undefined): string | null {
+  if (!email || typeof email !== 'string') return null;
+  const at = email.lastIndexOf('@');
+  if (at <= 0) return null;
+  const base = email.slice(0, at).toLowerCase().split('+')[0];
+  const letters = base.replace(/[^a-z]/g, '');
+  return letters.length >= 4 ? letters : null;
+}
+
+// Bare, lowercased domain of an email address. null on malformed input.
+export function emailDomain(email: string | null | undefined): string | null {
+  if (!email || typeof email !== 'string') return null;
+  const at = email.lastIndexOf('@');
+  if (at === -1) return null;
+  const d = email.slice(at + 1).toLowerCase().trim().replace(/^www\./, '');
+  return d || null;
+}
+
+// Given the incoming email(s) and every (entity_id, email) already active in the
+// workspace, pick the UNIQUE existing person a bare-email record should attach to,
+// per the normalised-local-part tier (docs/identity-resolution.md §Planned).
+// The identity key is (normalised local part, domain): a record forks into a
+// duplicate only when Step 1 (shared identifier) and Step 2 (name) both miss, and
+// this is the tier that catches `sarahwig9@gmail.com` vs `sarahwig15@gmail.com`.
+//
+// Gates, matching the rest of the resolution layer's "never guess" philosophy:
+//   - Same domain required (baked into the key), so gmail↔acme never collapse.
+//   - The exact same email is skipped — Step 1 already owns that case.
+//   - UNIQUE candidate only: zero or more-than-one existing entity sharing the
+//     key is ambiguous, so it returns null and the caller creates a fresh record
+//     (a duplicate is a cheap, reversible merge; a wrong fuse is not).
+// Pure and side-effect free so the decision is unit-testable without a database.
+export function pickLocalPartMatch(
+  incomingEmails: string[],
+  existing: { entity_id: string; email: string }[],
+): string | null {
+  const keys = new Map<string, string>(); // "norm|domain" -> the raw incoming email (lowercased)
+  for (const e of incomingEmails) {
+    const norm = normalizeEmailLocalPart(e);
+    const dom = emailDomain(e);
+    if (norm && dom) keys.set(`${norm}|${dom}`, e.toLowerCase().trim());
+  }
+  if (keys.size === 0) return null;
+
+  const candidates = new Set<string>();
+  for (const row of existing) {
+    const norm = normalizeEmailLocalPart(row.email);
+    const dom = emailDomain(row.email);
+    if (!norm || !dom) continue;
+    const key = `${norm}|${dom}`;
+    if (!keys.has(key)) continue;
+    if (keys.get(key) === row.email.toLowerCase().trim()) continue; // identical email → Step 1's job
+    candidates.add(row.entity_id);
+  }
+  return candidates.size === 1 ? [...candidates][0] : null;
+}
+
 // A LinkedIn "member URN" URL (/in/ACoAA…) wraps LinkedIn's internal, opaque
 // member id. It resolves in a logged-in browser but is NOT a stable public
 // vanity handle and is NOT scrapeable by post-search actors. Never treat it as

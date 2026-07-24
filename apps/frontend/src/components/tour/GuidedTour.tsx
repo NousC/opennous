@@ -236,7 +236,7 @@ export default function GuidedTour() {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2">
-          <img src="/Nous.png" alt="" className="h-4 w-4 object-contain" />
+          <img src="/nous-logo.svg" alt="" className="h-4 w-4 object-contain" />
           {stepNumber && (
             <span className="text-[11px] font-medium text-muted-foreground/70 tabular-nums">
               Step {stepNumber.n} of {stepNumber.total}

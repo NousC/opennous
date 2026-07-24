@@ -3884,10 +3884,10 @@ CREATE TABLE public.pending_actions (
 
 
 --
--- Name: playbooks; Type: TABLE; Schema: public; Owner: -
+-- Name: foundations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.playbooks (
+CREATE TABLE public.foundations (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
     kind text NOT NULL,
@@ -3900,8 +3900,25 @@ CREATE TABLE public.playbooks (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     content_hash text,
-    CONSTRAINT playbooks_kind_check CHECK ((kind = ANY (ARRAY['voice'::text, 'outreach'::text, 'icp'::text, 'positioning'::text]))),
-    CONSTRAINT playbooks_source_check CHECK ((source = ANY (ARRAY['nous'::text, 'claude_code'::text])))
+    CONSTRAINT foundations_kind_check CHECK ((kind = ANY (ARRAY['voice'::text, 'outreach'::text, 'icp'::text, 'positioning'::text]))),
+    CONSTRAINT foundations_source_check CHECK ((source = ANY (ARRAY['nous'::text, 'claude_code'::text])))
+);
+
+
+--
+-- Name: insights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.insights (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    category text NOT NULL,
+    title text NOT NULL,
+    body_md text DEFAULT ''::text NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT insights_category_check CHECK ((category = ANY (ARRAY['product'::text, 'positioning'::text, 'market'::text, 'buyer'::text])))
 );
 
 
@@ -4918,19 +4935,35 @@ ALTER TABLE ONLY public.pending_actions
 
 
 --
--- Name: playbooks playbooks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: foundations foundations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.playbooks
-    ADD CONSTRAINT playbooks_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.foundations
+    ADD CONSTRAINT foundations_pkey PRIMARY KEY (id);
 
 
 --
--- Name: playbooks playbooks_workspace_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: insights insights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.playbooks
-    ADD CONSTRAINT playbooks_workspace_id_kind_key UNIQUE (workspace_id, kind);
+ALTER TABLE ONLY public.insights
+    ADD CONSTRAINT insights_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: insights insights_workspace_id_category_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insights
+    ADD CONSTRAINT insights_workspace_id_category_key UNIQUE (workspace_id, category);
+
+
+--
+-- Name: foundations foundations_workspace_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.foundations
+    ADD CONSTRAINT foundations_workspace_id_kind_key UNIQUE (workspace_id, kind);
 
 
 --
@@ -5953,10 +5986,17 @@ CREATE INDEX outbound_workspace ON public.outbound_events USING btree (workspace
 
 
 --
--- Name: playbooks_workspace_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: foundations_workspace_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX playbooks_workspace_idx ON public.playbooks USING btree (workspace_id);
+CREATE INDEX foundations_workspace_idx ON public.foundations USING btree (workspace_id);
+
+
+--
+-- Name: insights_workspace_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX insights_workspace_idx ON public.insights USING btree (workspace_id);
 
 
 --
@@ -7465,10 +7505,16 @@ ALTER TABLE public.outbound_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pending_actions ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: playbooks; Type: ROW SECURITY; Schema: public; Owner: -
+-- Name: foundations; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
-ALTER TABLE public.playbooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.foundations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: insights; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.insights ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: playground_messages; Type: ROW SECURITY; Schema: public; Owner: -

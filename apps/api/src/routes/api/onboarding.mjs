@@ -30,11 +30,11 @@ async function resolveWorkspaceId(supabase, reqUser, fallback = null) {
 // that answers "is this workspace set up". The router asks this. The setup screen asks
 // this. There is no second opinion.
 //
-// onboarded = the workspace has an ICP **in the Vault** (a playbooks row, kind='icp').
+// onboarded = the workspace has an ICP **in the Vault** (a foundations row, kind='icp').
 //
 // It used to be `business_type`, which the agent happened to set on its way past — a
 // label, where the ICP is the thing every other part of the product actually reads:
-// scoring, attention, the briefs, get_playbook. A workspace with a business_type and no
+// scoring, attention, the briefs, get_foundation. A workspace with a business_type and no
 // ICP is not set up, it just looks like it is.
 //
 // It was then briefly `workspaces.icp_text`, which was worse: that column feeds NOTHING.
@@ -50,11 +50,17 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
     const workspaceId = await resolveWorkspaceId(supabase, req.user, req.workspaceId);
     if (!workspaceId) return res.json({ connected: false, onboarded: false, hasIcp: false });
 
-    const [{ data: ws }, { data: keys }, { count: sources }, { count: accounts }, { count: trainedDeals }, icpPresent] = await Promise.all([
+    const [{ data: ws }, { data: keys }, { count: sources }, { count: linkedinSources }, { count: accounts }, { count: trainedDeals }, icpPresent] = await Promise.all([
       supabase.from('workspaces').select('website, tour_completed_at').eq('id', workspaceId).maybeSingle(),
       supabase.from('api_keys').select('last_used_at').eq('workspace_id', workspaceId).is('revoked_at', null),
       supabase.from('workflow_provider_connections')
         .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
+      // LinkedIn lives in its OWN table (not workflow_provider_connections), so count
+      // it too — otherwise the guided tour's "connect 3 (email, notetaker, LinkedIn)"
+      // never counts the LinkedIn one. Degrade to 0 on failure like the extras below.
+      supabase.from('workspace_linkedin_connections')
+        .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId)
+        .then(r => r, () => ({ count: 0 })),
       // Accounts in the graph — the "import your accounts" checkpoint of the guided tour.
       // These two are guided-tour extras, not the gate, so they degrade to a zero count on
       // any failure rather than rejecting Promise.all and 500-ing the whole gate.
@@ -70,7 +76,7 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
         .not('resolved_at', 'is', null)
         .in('outcome_value->>disposition', ['won', 'lost'])
         .then(r => r, () => ({ count: 0 })),
-      // The playbook row, and only the playbook row. This is the whole gate.
+      // The foundation row, and only the foundation row. This is the whole gate.
       hasIcp(supabase, workspaceId),
     ]);
 
@@ -81,11 +87,12 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
       connected: (keys || []).some(k => k.last_used_at),
       // Something is feeding the graph. Without this the ICP is set and nothing
       // ever arrives, which is a lonelier failure than not being set up at all.
-      hasSource: (sources ?? 0) > 0,
-      // How MANY sources are connected. The guided tour's integration step wants at
-      // least three (email, meeting notes, LinkedIn) before import makes sense —
-      // one connection alone leaves the graph nearly empty.
-      sourceCount: sources ?? 0,
+      hasSource: ((sources ?? 0) + (linkedinSources ?? 0)) > 0,
+      // How MANY sources are connected, across BOTH connection tables (workflow
+      // providers like Gmail/Fireflies + LinkedIn). The guided tour's integration
+      // step wants at least three (email, notetaker, LinkedIn) before import makes
+      // sense — one source alone leaves the graph nearly empty.
+      sourceCount: (sources ?? 0) + (linkedinSources ?? 0),
       // Guided-tour checkpoints. Additive — the gate above reads none of these.
       accountCount: accounts ?? 0,
       icpTrained: (trainedDeals ?? 0) > 0,
@@ -216,7 +223,7 @@ Rules:
 // It writes through lib/icp.mjs, which puts the ICP in all three places that need it:
 // the Vault (the authority), the ICP note (the only thing the scoring model learns from),
 // and the icp_text cache. This route used to write the cache ALONE, which meant the gate
-// opened onto a workspace where the Vault was empty, get_playbook returned nothing, and
+// opened onto a workspace where the Vault was empty, get_foundation returned nothing, and
 // the scorecard had never been seeded.
 //
 // source is 'nous' here: there is no repo on this road, so the Vault is the author.

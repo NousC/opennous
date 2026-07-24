@@ -12,6 +12,8 @@ export * from './db/readContext.js';
 export * from './db/predictions.js';
 export * from './db/notes.js';
 export * from './db/claimCategories.js';
+export * from './db/insightCategories.js';
+export * from './db/insights.js';
 export * from './db/search.js';
 export * from './context.js';
 export * from './query.js';

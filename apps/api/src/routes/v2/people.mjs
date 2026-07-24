@@ -82,13 +82,32 @@ function parseDuration(input) {
   return n * ms;
 }
 
+// Fields (besides `email`) that carry an additional email for the same person.
+// Each becomes its own `email` identifier so resolution matches on any of them.
+const EXTRA_EMAIL_FIELDS = ['emails', 'personal_email', 'work_email', 'secondary_email', 'other_email'];
+
 function splitBody(body) {
   // identifiers → entity_identifiers via attachIdentifiers
   // everything else → claims via assertClaims
   const identifiers = [];
   const claimValues = {};
+  const seenEmail = new Set();
+  const addEmail = (v) => {
+    for (const raw of Array.isArray(v) ? v : [v]) {
+      const s = typeof raw === 'string' ? raw.trim() : (raw ? String(raw) : '');
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (seenEmail.has(key)) continue;
+      seenEmail.add(key);
+      identifiers.push({ kind: 'email', value: s });
+    }
+  };
   for (const [k, v] of Object.entries(body ?? {})) {
-    if (k in IDENTIFIER_KIND_BY_FIELD) {
+    if (k === 'email') {
+      addEmail(v);                                   // string OR array of emails
+    } else if (EXTRA_EMAIL_FIELDS.includes(k)) {
+      addEmail(v);                                   // secondary email fields → more email identifiers
+    } else if (k in IDENTIFIER_KIND_BY_FIELD) {
       if (v) identifiers.push({ kind: IDENTIFIER_KIND_BY_FIELD[k], value: String(v) });
     } else {
       claimValues[k] = v;
@@ -257,7 +276,14 @@ peopleV2Router.post('/', async (req, res) => {
       });
     }
 
-    const entityId = await getOrCreateEntity(supabase, workspaceId, 'person', identifiers);
+    // Pass the incoming name as a resolution hint so the name-fallback tier can
+    // attach to an existing same-person record instead of forking a duplicate.
+    // Without this the name only becomes a claim AFTER creation (below), too late
+    // to prevent the fork — the root cause of same-batch LinkedIn import dupes.
+    const nameHint = (claimValues.first_name || claimValues.last_name)
+      ? { first_name: claimValues.first_name ?? null, last_name: claimValues.last_name ?? null }
+      : undefined;
+    const entityId = await getOrCreateEntity(supabase, workspaceId, 'person', identifiers, { nameHint });
     if (Object.keys(claimValues).length > 0) {
       await assertClaims(supabase, workspaceId, entityId, { values: claimValues });
     }

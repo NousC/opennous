@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { normaliseLinkedInUrl, isUUID, isMemberUrnLinkedInUrl } from '../utils/identity.js';
+import { normaliseLinkedInUrl, isUUID, isMemberUrnLinkedInUrl, normalizeEmailLocalPart, pickLocalPartMatch } from '../utils/identity.js';
 
 // LinkedIn URL variants we'll accept as equivalent on lookup. Covers the
 // historical inconsistency where the write path stored URLs raw (with/without
@@ -52,6 +52,7 @@ export function normaliseIdentifier(kind: string, value: string): string {
 /** Build the v2 Identifier[] list from a v1-style contact data blob. */
 export function identifiersFromContactData(data: {
   email?: string | null;
+  emails?: (string | null)[] | null;
   linkedin_url?: string | null;
   linkedin_member_id?: string | null;
   hubspot_id?: string | null;
@@ -61,7 +62,18 @@ export function identifiersFromContactData(data: {
   attio_id?: string | null;
 }): Identifier[] {
   const out: Identifier[] = [];
-  if (data.email)              out.push({ kind: 'email',              value: data.email });
+  // A person can have several emails (work + personal). Attach EVERY one as an
+  // identifier so future resolution matches on any of them, not just the primary.
+  // De-duped case-insensitively; the primary `email` is kept first.
+  const seenEmail = new Set<string>();
+  for (const e of [data.email, ...(data.emails ?? [])]) {
+    const v = typeof e === 'string' ? e.trim() : '';
+    if (!v) continue;
+    const key = v.toLowerCase();
+    if (seenEmail.has(key)) continue;
+    seenEmail.add(key);
+    out.push({ kind: 'email', value: v });
+  }
   // Member-URN URLs (/in/ACoAA…) are not real public handles — keep them out of
   // the identifier set so they never resolve or surface as a scrapeable URL.
   if (data.linkedin_url && !isMemberUrnLinkedInUrl(data.linkedin_url))
@@ -252,6 +264,35 @@ async function resolvePersonByNameFallback(
     byEntity.set(c.entity_id, m);
   }
 
+  // Race guard for same-batch imports. Name CLAIMS are derived asynchronously
+  // (~30s after ingest), but a concurrent same-person row is created within
+  // milliseconds — so at decision time the twin has no queryable claim yet and we
+  // fork a duplicate (the "why is there always an empty account" bug). The name
+  // OBSERVATIONS, however, are written synchronously at ingest. Fold in recent
+  // name observations on ACTIVE entities to see twins whose claims haven't
+  // derived yet; bounded to the last 15 min because anything older already has a
+  // claim above. Claims win when present.
+  const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data: recentObs } = await supabase
+    .from('observations')
+    .select('entity_id, property, value, entities!inner(status)')
+    .eq('workspace_id', workspaceId)
+    .eq('kind', 'state')
+    .in('property', ['first_name', 'last_name'])
+    .eq('entities.status', 'active')
+    .gte('ingested_at', since)
+    .order('ingested_at', { ascending: false })
+    .limit(5000);
+  for (const o of (recentObs as { entity_id: string; property: string; value: unknown }[]) ?? []) {
+    const m = byEntity.get(o.entity_id) ?? {};
+    const v = String(o.value ?? '').trim().toLowerCase();
+    if (!v) continue;
+    // order is newest-first; only fill a gap the claim didn't already provide
+    if (o.property === 'first_name') { if (!m.first) m.first = v; }
+    else if (!m.last) m.last = v;
+    byEntity.set(o.entity_id, m);
+  }
+
   const strong: string[] = [];   // surname appears in the incoming email — safe even if they have an email
   const weak: string[] = [];     // name-prefix only — gated below to email-less (lossless) candidates
   for (const [id, m] of byEntity) {
@@ -270,6 +311,42 @@ async function resolvePersonByNameFallback(
     if (!hasEmail?.length) return weak[0];              // lossless: candidate had no email of its own
   }
   return null;
+}
+
+/**
+ * Normalised email local-part fallback (docs/identity-resolution.md §Planned).
+ * Runs AFTER the name fallback and, unlike it, needs no name hint — it catches
+ * the bare-email fork the name tier structurally cannot: a person who signs up
+ * as `sarahwig9@gmail.com` while an outbound record already exists under
+ * `sarahwig15@gmail.com` (different email, no shared LinkedIn, and — in the real
+ * case that motivated this — the signup put the name in `company`, so there is
+ * no first_name to anchor Step 2 on).
+ *
+ * Matches on (normalised local part, domain). The heavy lifting and the "unique
+ * candidate only" safety live in the pure `pickLocalPartMatch`; this wrapper only
+ * fetches the workspace's active email identifiers (bounded — hundreds, not
+ * millions) scoped to ACTIVE entities so a merged tombstone can never be chosen.
+ */
+async function resolvePersonByEmailLocalPart(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  identifiers: Identifier[],
+): Promise<string | null> {
+  const incoming = identifiers.filter(i => i.kind === 'email').map(i => i.value);
+  if (!incoming.some(e => normalizeEmailLocalPart(e))) return null; // nothing distinctive to match on
+
+  const { data } = await supabase
+    .from('entity_identifiers')
+    .select('entity_id, value, entities!inner(status)')
+    .eq('workspace_id', workspaceId)
+    .eq('kind', 'email')
+    .eq('status', 'active')
+    .eq('entities.status', 'active')
+    .limit(20000);
+
+  const existing = ((data as { entity_id: string; value: string }[] | null) ?? [])
+    .map(r => ({ entity_id: r.entity_id, email: r.value }));
+  return pickLocalPartMatch(incoming, existing);
 }
 
 /**
@@ -297,12 +374,22 @@ export async function getOrCreateEntity(
   }
 
   // No identifier matched. Before forking a new person, try the corroborated
-  // name fallback — this prevents the duplicate that merge_contacts would later fix.
-  if (type === 'person' && opts?.nameHint) {
-    const matched = await resolvePersonByNameFallback(supabase, workspaceId, identifiers, opts.nameHint);
-    if (matched) {
-      await attachIdentifiers(supabase, workspaceId, matched, identifiers);
-      return matched;
+  // fallbacks — these prevent the duplicate that merge_contacts would later fix.
+  if (type === 'person') {
+    // 1) Name fallback: exact first name + surname corroboration (needs a name hint).
+    if (opts?.nameHint) {
+      const matched = await resolvePersonByNameFallback(supabase, workspaceId, identifiers, opts.nameHint);
+      if (matched) {
+        await attachIdentifiers(supabase, workspaceId, matched, identifiers);
+        return matched;
+      }
+    }
+    // 2) Normalised email local-part: catches the nameless bare-email fork the
+    //    name tier can't (sarahwig9 vs sarahwig15). Needs no name hint.
+    const byLocal = await resolvePersonByEmailLocalPart(supabase, workspaceId, identifiers);
+    if (byLocal) {
+      await attachIdentifiers(supabase, workspaceId, byLocal, identifiers);
+      return byLocal;
     }
   }
 
@@ -796,7 +883,7 @@ async function searchEntitiesByName(
     byEntity.set(c.entity_id, m);
   }
 
-  const out: FocusCandidate[] = [];
+  let out: FocusCandidate[] = [];
   for (const [id, m] of byEntity) {
     const full = m.name
       ? String(m.name)
@@ -822,6 +909,26 @@ async function searchEntitiesByName(
       name: full || null,
       detail: company || (m.job_title ? String(m.job_title) : null),
     });
+  }
+
+  // The claims scan above is status-BLIND, but a merge leaves conflicting name
+  // claims on the tombstone ("conflicts stay on the drop") and a parked lead keeps
+  // its name claims too — so without this, a merged duplicate or a parked lead
+  // still surfaces here and the agent reports a "duplicate" that no longer exists
+  // (the Rayyan-appears-twice bug). Drop any candidate whose entity is not active.
+  if (out.length) {
+    const ids = out.map(o => o.entity_id);
+    const active = new Set<string>();
+    for (let i = 0; i < ids.length; i += PAGE) {
+      const { data: ents } = await supabase
+        .from('entities')
+        .select('id')
+        .eq('workspace_id', workspaceId)
+        .eq('status', 'active')
+        .in('id', ids.slice(i, i + PAGE));
+      for (const e of (ents as { id: string }[] | null) ?? []) active.add(e.id);
+    }
+    out = out.filter(o => active.has(o.entity_id));
   }
 
   // Same v1/v2 sync gap as resolveEntity: a contact whose name CLAIMS went missing

@@ -1,7 +1,7 @@
 // Server-side onboarding "agent" — the assisted-setup engine for teams that have no
 // agent of their own. This is the CUSTOM (sales-led) onboarding: after a sales call we
 // have their intake answers, their website, and — the strongest ICP signal there is —
-// their best customers. Given those, it uses Haiku to draft real GTM playbooks (ICP,
+// their best customers. Given those, it uses Haiku to draft real GTM foundations (ICP,
 // positioning, voice), writes them into the workspace, seeds the ICP memory + scoring
 // model from the real closed-won examples, and marks the workspace onboarded.
 //
@@ -29,11 +29,11 @@ async function ensureWorkspaceEntity(supabase, workspaceId) {
   return data?.id || null;
 }
 
-async function upsertPlaybook(supabase, workspaceId, kind, body_md) {
-  const { data: existing } = await supabase.from('playbooks')
+async function upsertFoundation(supabase, workspaceId, kind, body_md) {
+  const { data: existing } = await supabase.from('foundations')
     .select('version').eq('workspace_id', workspaceId).eq('kind', kind).maybeSingle();
   const now = new Date().toISOString();
-  await supabase.from('playbooks').upsert({
+  await supabase.from('foundations').upsert({
     workspace_id: workspaceId, kind, title: TITLES[kind] || kind, body_md,
     source: 'nous', file_path: null, content_hash: null,
     version: existing ? existing.version + 1 : 1, synced_at: now, updated_at: now,
@@ -44,7 +44,7 @@ export async function runOnboardingAgent(supabase, workspaceId, answers = {}) {
   const { company_name, website, offer, icp, positioning, voice } = answers;
   const exampleCustomers = (Array.isArray(answers.example_customers) ? answers.example_customers : [])
     .map((d) => String(d || '').trim()).filter(Boolean).slice(0, 10);
-  const built = { playbooks: [], scorecard: null, business_type: null, example_customers: 0, errors: [] };
+  const built = { foundations: [], scorecard: null, business_type: null, example_customers: 0, errors: [] };
 
   // 1. Read the company's own website for grounding (best-effort structured signals).
   let siteContext = 'none';
@@ -71,15 +71,15 @@ export async function runOnboardingAgent(supabase, workspaceId, answers = {}) {
     ? customerProfiles.map((c) => `- ${c.domain}: ${JSON.stringify(c.signals).slice(0, 500)}`).join('\n')
     : 'none provided';
 
-  // 2. Haiku drafts the playbooks + infers business_type from answers + site + the
+  // 2. Haiku drafts the foundations + infers business_type from answers + site + the
   //    real best-customer examples.
   const prompt =
     `You are onboarding a new go-to-market workspace for "${company_name || 'a company'}". ` +
-    `Write three GTM playbooks in markdown that are COMPREHENSIVE yet TIGHT — rich with specific, usable detail, but every line earns its place. Use clear "### " sub-headers and bullets. No filler, no generic marketing fluff, and do NOT just restate the inputs — infer and add value. Ground every claim in the intake, the website, and especially the common pattern across their best customers. Mine the website + customer signals hard for detail others would miss.\n\n` +
+    `Write three GTM foundations in markdown that are COMPREHENSIVE yet TIGHT — rich with specific, usable detail, but every line earns its place. Use clear "### " sub-headers and bullets. No filler, no generic marketing fluff, and do NOT just restate the inputs — infer and add value. Ground every claim in the intake, the website, and especially the common pattern across their best customers. Mine the website + customer signals hard for detail others would miss.\n\n` +
     `INTAKE\n- What they sell: ${offer || '—'}\n- Ideal customer: ${icp || '—'}\n- Positioning: ${positioning || '—'}\n- Voice: ${voice || '—'}\n- Website: ${website || '—'}\n\n` +
     `WEBSITE SIGNALS (their own site): ${siteContext}\n\n` +
     `THEIR BEST CUSTOMERS (scraped — the ground truth for the ICP; generalise the pattern across them):\n${customerContext}\n\n` +
-    `Write these three playbooks:\n\n` +
+    `Write these three foundations:\n\n` +
     `## ICP  (make this the most detailed)\n` +
     `- **Firmographics**: industry, company size, stage/funding, geography, revenue band — derived from the common pattern across their best customers.\n` +
     `- **Buying committee**: the 2-3 roles involved (economic buyer, champion/user, potential blocker) and what each one cares about.\n` +
@@ -101,11 +101,11 @@ export async function runOnboardingAgent(supabase, workspaceId, answers = {}) {
     `- **Words to use / words to avoid**.\n` +
     `- **2 sample opening lines** written in this voice, each referencing a real trigger or pain.\n\n` +
     `Also infer business_type: "service" or "software".\n\n` +
-    `Output the three playbooks as PLAIN MARKDOWN separated by these EXACT delimiter lines, and nothing else (no JSON, no code fences):\n\n` +
+    `Output the three foundations as PLAIN MARKDOWN separated by these EXACT delimiter lines, and nothing else (no JSON, no code fences):\n\n` +
     `===ICP===\n(the ICP markdown)\n===POSITIONING===\n(the positioning markdown)\n===VOICE===\n(the voice markdown)\n===BUSINESS_TYPE===\nservice or software`;
 
   // Plain-markdown-between-delimiters, NOT JSON: embedding three large markdown
-  // playbooks inside one JSON string truncates/breaks parsing, so we split on
+  // foundations inside one JSON string truncates/breaks parsing, so we split on
   // markers instead — robust regardless of length.
   const out = {};
   try {
@@ -139,11 +139,11 @@ export async function runOnboardingAgent(supabase, workspaceId, answers = {}) {
   try { await supabase.from('workspaces').update(updates).eq('id', workspaceId); }
   catch (e) { built.errors.push('workspace: ' + String(e?.message || e).slice(0, 80)); }
 
-  // 4. Write the playbooks.
+  // 4. Write the foundations.
   for (const kind of ['icp', 'positioning', 'voice']) {
     if (!bodies[kind]) continue;
-    try { await upsertPlaybook(supabase, workspaceId, kind, bodies[kind]); built.playbooks.push(kind); }
-    catch (e) { built.errors.push(`playbook ${kind}: ` + String(e?.message || e).slice(0, 80)); }
+    try { await upsertFoundation(supabase, workspaceId, kind, bodies[kind]); built.foundations.push(kind); }
+    catch (e) { built.errors.push(`foundation ${kind}: ` + String(e?.message || e).slice(0, 80)); }
   }
 
   // 5. Seed the ICP + website memory facts (the scorecard reads these), then build

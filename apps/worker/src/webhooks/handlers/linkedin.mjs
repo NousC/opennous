@@ -449,7 +449,7 @@ async function enrichNewLinkedInContact(supabase, workspaceId, contact, { member
         await applyLinkedInProfile(supabase, contact, {
           jobTitle: fields.jobTitle, company: fields.company,
           companyDomain: fields.companyDomain, photoUrl: fields.photoUrl,
-          email: fields.email, phone: fields.phone, headline: fields.headline,
+          email: fields.email, emails: fields.emails, phone: fields.phone, headline: fields.headline,
           publicIdentifier: fields.publicIdentifier,
         });
         if (fields.email) contact = { ...contact, email: fields.email }; // so we don't re-discover

@@ -93,7 +93,7 @@ export default function CliLogin() {
 
         <div className="p-6 text-center">
           <div className="flex items-center justify-center gap-2">
-            <img src="/Nous.png" alt="" className="w-5 h-5 object-contain" />
+            <img src="/nous-logo.svg" alt="" className="w-5 h-5 object-contain" />
             <span className="font-fraunces font-semibold text-[16px] tracking-[-0.01em] text-[#1A1712]">nous</span>
           </div>
 

@@ -67,7 +67,7 @@ export async function resolveTeamAndPlan(req) {
 // is nothing to meter — their graph costs us nothing to fill. That is the open-source
 // promise and it is the complete developer primitive.
 //
-// `playbooks` (the Vault) and `adoption` came OFF this list on 2026-07-14. The Vault is
+// `foundations` (the Vault) and `adoption` came OFF this list on 2026-07-14. The Vault is
 // the context layer, the context layer is the product, and an ICP file that syncs to the
 // operator's own repo is the whole open-core promise — see get_icp / sync_icp. Blocking
 // the surface that shows it contradicted the sentence directly below.

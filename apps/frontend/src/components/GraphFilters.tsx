@@ -19,7 +19,7 @@
 // Every control shows its consequence. A filter that will not tell you how much it just
 // removed is a filter you cannot trust.
 import { useState } from "react";
-import { Search, X, Plus, RotateCcw, ChevronRight } from "lucide-react";
+import { Search, X, RotateCcw, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type Show = { people: boolean; companies: boolean; claims: boolean; orphans: boolean };
@@ -65,11 +65,22 @@ const pretty = (k: string) =>
 // A pattern is coloured by WHAT KIND of thing it is, not by its position in a palette.
 // Stack, pain, intent and segment are four different reasons to care about an account, and
 // the colour should say which one you are looking at before you read the label.
+// Revenue types — the colour says the ACTION before you read the label:
+// pain=wedge, objection=friction, tool=stack, competitor=win/loss, play=timing,
+// person=who-signs, connection=warm-path, channel=attribution, segment=lookalike.
 const CAT_COLOR: Record<string, string> = {
+  pain:       "#d4574c",
+  objection:  "#c2410c",
+  tool:       "#7c5cf0",
+  competitor: "#0891b2",
+  play:       "#2aa8a0",
+  person:     "#2fa36b",
+  connection: "#4a7fd4",
+  channel:    "#e0a03a",
+  segment:    "#9aa0ad",
+  // legacy fallbacks (old whole-claim cluster kinds)
   stack:   "#7c5cf0",
-  pain:    "#d4574c",
   intent:  "#2aa8a0",
-  segment: "#e0a03a",
   theme:   "#9aa0ad",
 };
 
@@ -100,13 +111,14 @@ export function buildGroups(
 
 export function GraphFilters({
   show, setShow, search, setSearch,
-  groupBy, setGroupBy, groups, setGroups,
+  groupBy, setGroupBy, lens, setLens, groups, setGroups,
   filter, setFilter,
   display, setDisplay, forces, setForces, counts, onFit,
 }: {
   show: Show; setShow: (s: Show) => void;
   search: string; setSearch: (s: string) => void;
   groupBy: GroupBy; setGroupBy: (g: GroupBy) => void;
+  lens: string; setLens: (l: string) => void;
   groups: Group[]; setGroups: (g: Group[]) => void;
   filter: string; setFilter: (f: string) => void;
   display: Display; setDisplay: (d: Display) => void;
@@ -114,6 +126,23 @@ export function GraphFilters({
   counts: Counts;
   onFit: () => void;
 }) {
+  // Lens list — ICP overview + one row per revenue category present in the graph.
+  // These re-render the graph toward that category (its concept hubs + the accounts
+  // on them); they colour nothing, so there is deliberately no swatch.
+  const LENSES: { id: string; label: string }[] = [
+    { id: "icp", label: "ICP overview" },
+    { id: "pain", label: "Pains" },
+    { id: "objection", label: "Objections" },
+    { id: "play", label: "Goals & plays" },
+    { id: "competitor", label: "Competitors" },
+    { id: "tool", label: "Stack" },
+    { id: "person", label: "People" },
+    { id: "connection", label: "Warm paths" },
+    { id: "channel", label: "Channels" },
+    { id: "segment", label: "Segments" },
+  ];
+  const typeCounts: Record<string, number> = {};
+  for (const p of (counts.patterns ?? [])) typeCounts[p.cat] = (typeCounts[p.cat] || 0) + 1;
   const [openDisplay, setOpenDisplay] = useState(false);
   const [openForces, setOpenForces] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -129,17 +158,11 @@ export function GraphFilters({
     setSearch("");
     setFilter("");
     setGroupBy("tier");
+    setLens("icp");
     setDisplay({ node: 1, label: 1, link: 1 });
     setForces({ repel: 1, dist: 1, center: 1 });
     onFit();
   };
-
-  const AXES: { id: GroupBy; label: string }[] = [
-    { id: "tier",     label: "ICP tier" },
-    { id: "pattern",  label: "Pattern" },
-    { id: "signal",   label: "Signal" },
-    { id: "activity", label: "Activity" },
-  ];
 
   return (
     <aside className={cn(
@@ -185,107 +208,37 @@ export function GraphFilters({
           )}
         </div>
 
-        {/* ── GROUP BY — the axis you are colouring along. This is the whole point of the
-            panel: not "highlight one thing", but "cut the graph up and show me the
-            shape". Tier is the default because it is the cut you always want first. */}
-        <Section title="Group by" note="colours the whole graph">
-          <div className="grid grid-cols-2 gap-1">
-            {AXES.map(a => (
+        {/* ── VIEW — the graph opens as the ICP overview (accounts by tier). Each row
+            REFOCUSES the graph onto one revenue category: that type's concept hubs plus
+            the accounts on them. It colours nothing, so there is deliberately no dot. */}
+        <Section title="View" note="click to refocus the graph">
+          <div className="space-y-[2px]">
+            {LENSES.filter(l => l.id === "icp" || (typeCounts[l.id] || 0) > 0).map(l => (
               <button
-                key={a.id}
-                onClick={() => setGroupBy(a.id)}
+                key={l.id}
+                onClick={() => setLens(l.id)}
                 className={cn(
-                  "rounded-md px-2 py-1.5 text-[12px] transition-colors text-left",
-                  groupBy === a.id
+                  "w-full flex items-center justify-between rounded-md px-2 py-1.5 text-[12.5px] text-left transition-colors",
+                  lens === l.id
                     ? "bg-foreground text-background font-medium"
-                    : "bg-muted/50 text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+                    : "text-foreground/80 hover:bg-accent hover:text-foreground",
                 )}
               >
-                {a.label}
+                <span className="truncate">{l.label}</span>
+                {l.id !== "icp" && (
+                  <span className={cn("text-[11.5px] tabular-nums flex-shrink-0 ml-2",
+                    lens === l.id ? "opacity-70" : "text-muted-foreground/40")}>
+                    {typeCounts[l.id] || 0}
+                  </span>
+                )}
               </button>
             ))}
           </div>
-
-          {/* The buckets the axis produced, with what each one caught. A bucket that says
-              0 is telling you something true about the data, and it should say it out
-              loud rather than quietly not existing. */}
-          {groups.length > 0 && (
-            <div className="mt-2.5 space-y-[3px]">
-              {groups.map((g, i) => (
-                <div key={g.q + i} className="flex items-center gap-2 group/row py-[1px]">
-                  <button
-                    onClick={() => {
-                      const cur = SWATCHES.indexOf(g.color);
-                      setGroups(groups.map((x, j) => j === i ? { ...x, color: SWATCHES[(cur + 1) % SWATCHES.length] } : x));
-                    }}
-                    title="Change colour"
-                    className="h-2.5 w-2.5 rounded-full flex-shrink-0 ring-1 ring-black/10 hover:scale-125 transition-transform"
-                    style={{ background: g.color }}
-                  />
-                  {groupBy === "custom" ? (
-                    <input
-                      value={g.q}
-                      onChange={e => setGroups(groups.map((x, j) => j === i ? { ...x, q: e.target.value } : x))}
-                      placeholder="icp>=85 quiet>30"
-                      className="flex-1 min-w-0 rounded-md border border-border bg-background px-1.5 py-[3px] text-[11.5px] font-mono text-foreground outline-none focus:border-foreground/25"
-                    />
-                  ) : (
-                    <span className="flex-1 min-w-0 truncate text-[12.5px] text-foreground/80">{g.label ?? g.q}</span>
-                  )}
-                  <span className={cn(
-                    "text-[11.5px] tabular-nums flex-shrink-0",
-                    counts.groups?.[i] ? "text-foreground/70 font-medium" : "text-muted-foreground/30",
-                  )}>
-                    {counts.groups?.[i] ?? 0}
-                  </span>
-                  {groupBy === "custom" && (
-                    <button onClick={() => setGroups(groups.filter((_, j) => j !== i))}
-                      className="p-0.5 rounded text-muted-foreground/30 hover:text-foreground flex-shrink-0">
-                      <X className="h-3 w-3" strokeWidth={2} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {groupBy === "signal" && groups.length === 0 && (
-            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground/50">
-              No signal has fired on any account. The ICP model is scoring on its prior alone.
-            </p>
-          )}
-          {groupBy === "pattern" && (
-            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground/40">
-              {groups.length
-                ? "An account can sit in several patterns at once. Where it comes to rest between them is the point."
-                : "No claim is shared by two accounts yet, so there is no pattern to draw."}
-            </p>
-          )}
-
-          {groupBy === "custom" ? (
-            <button
-              onClick={() => setGroups([...groups, { q: "", color: SWATCHES[groups.length % SWATCHES.length] }])}
-              className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-border py-1.5 text-[12px] text-muted-foreground/60 hover:text-foreground hover:border-foreground/25 transition-colors"
-            >
-              <Plus className="h-3.5 w-3.5" strokeWidth={2} /> Add bucket
-            </button>
-          ) : (
-            <button
-              onClick={() => setGroupBy("custom")}
-              className="mt-2 text-[11.5px] text-muted-foreground/45 hover:text-foreground transition-colors"
-            >
-              Cut it my own way…
-            </button>
-          )}
-
-          {groupBy === "custom" && (
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground/40">
-              <span className="font-mono">icp&gt;=85</span> · <span className="font-mono">icp:70-84</span> ·{" "}
-              <span className="font-mono">quiet&gt;30</span> · <span className="font-mono">people&gt;=3</span> ·{" "}
-              <span className="font-mono">tier:t1</span> · <span className="font-mono">sig:&lt;key&gt;</span> ·{" "}
-              <span className="font-mono">single</span> · <span className="font-mono">dm</span>. Terms AND together.
-            </p>
-          )}
+          <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground/40">
+            {lens === "icp"
+              ? "Accounts by ICP tier. Click a category to see its shared concepts and the accounts on them."
+              : "The accounts that share each concept in this category. Click ICP overview to go back."}
+          </p>
         </Section>
 
         {/* One filter. The panel is for CUTTING the graph (Group by), not for hunting a

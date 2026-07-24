@@ -22,7 +22,7 @@ const APPEND_SECTIONS = new Set(['Notes']);
 const slugify = (s) => String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 // Find the active fact a write-back should evolve. The agent passes a bare slot
-// name ("pricing"); a playbook-created fact owns "playbook.pricing", so match
+// name ("pricing"); a foundation-created fact owns "playbook.pricing", so match
 // either form so a write-back updates the existing belief instead of duplicating.
 export function findSupersedable(active, subject) {
   if (!subject) return null;
@@ -118,8 +118,8 @@ export async function writeWorkspaceFact(supabase, workspaceId, opts = {}) {
 
 // GET /v2/workspace/facts — workspace-level facts the workspace owner has
 // explicitly recorded (ICP, target market, product, pricing, competitors,
-// playbooks). These are NOT facts about individual people or companies;
-// they're the workspace's own playbook.
+// foundations). These are NOT facts about individual people or companies;
+// they're the workspace's own foundation.
 //
 // Query params:
 //   categories — comma-separated list (e.g. "ICP,Market"). Omit for all.

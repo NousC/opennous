@@ -7,6 +7,7 @@ import Anthropic, { setUser } from 'useleak';
 import { listNotes, saveNote, updateNote, searchClaims, listActivities, recordObservation,
   isEntityInternal, linkPersonMention, resolvePersonMention, tagClaimMentions,
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS } from '@nous/core';
+import { extractCallInsights } from './insights.mjs';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -375,14 +376,14 @@ export async function extractActivitySignals({ supabase, activityId, contactId, 
       max_tokens: Math.min(2000, Math.max(400, maxFacts * 130)),
       messages: [{ role: 'user', content: `Extract durable CRM intelligence about ${contactName} from this private ${channelLabel}.
 ${provenance}
-Record facts ONLY about ${contactName}, drawn from what THEY reveal about themselves, their company, needs, constraints, opinions, or plans. NEVER turn the user's own questions, offers, or statements into facts about ${contactName} (e.g. if the user asked "what's behind your product?", that is NOT a fact that ${contactName} is interested in the user's product).
+Record facts about ${contactName}, drawn from what THEY reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between ${contactName} and the user (us): how ${contactName} found us or why they reached out (a video, post, referral, or event), anything ${contactName} offered us or introductions they can make, and any objection or critique ${contactName} raised about our product or how we differ from alternatives. Do NOT turn the user's OWN questions or statements into facts about ${contactName} (e.g. if the user asked "what's behind your product?", that is NOT a fact that ${contactName} is interested in the user's product) — but an offer, an introduction, a critique, or a reason-for-reaching-out that ${contactName} genuinely voices IS a fact about ${contactName} and must be recorded.
 ${contactCtx ? `Contact: ${contactCtx}` : ''}
 
 Message: "${summary}"
 
 A fact is worth recording ONLY if it passes ALL THREE bars:
 1. DURABLE — still true weeks or months from now. A meeting time, an availability, or a reschedule is NOT durable.
-2. DECISION-RELEVANT — it would change how someone sells to or works with ${contactName}: their budget, authority, pain, goals, stack, or buying timeline.
+2. DECISION-RELEVANT — it would change how someone sells to or works with ${contactName}: their budget, authority, pain, goals, stack, or buying timeline — OR how the relationship should be worked: how they found us, what they offered us, or the objection they raised about us.
 3. SPECIFIC — it carries the concrete detail or the reason WHY, not a vague label. "Evaluating Clay vs Apollo because Apollo's data went stale", not "looking at tools".
 
 NEVER record (noise, or it already lives elsewhere in the CRM):
@@ -544,6 +545,20 @@ export async function extractMeetingSignals({
     if (!participants?.length) return [];
     setUser({ id: String(workspaceId) });
 
+    // Insights about US, mined from this call, in parallel with the facts about
+    // THEM. Runs once per call regardless of attendee count (so it sits above the
+    // 1:1 branch below), never blocks the fact extraction, and lands in the
+    // workspace Insights docs, not on any contact. Skipped on dry runs.
+    if (!dryRun) {
+      const sourceLabel = [...new Set(
+        participants.map(p => p.company || p.name).filter(Boolean),
+      )].join(', ') || null;
+      setImmediate(() =>
+        extractCallInsights({ supabase, workspaceId, transcript: summary, sourceLabel })
+          .catch(err => console.warn('[INSIGHT_HOOK_ERROR]', err.message)),
+      );
+    }
+
     // A 1:1 call is the common case, and the single-person prompt is sharper for
     // it (it can say "these are Sarah's own words" rather than hedging across a
     // roster). Nothing is saved by generalising it, so don't.
@@ -570,18 +585,18 @@ export async function extractMeetingSignals({
       max_tokens: Math.min(3000, Math.max(600, maxFacts * 130)),
       messages: [{ role: 'user', content: `Extract durable CRM intelligence from this meeting transcript.
 
-These are notes/transcript from a call. The people below are the EXTERNAL attendees — the ones we are selling to or working with. Record facts about THEM, drawn from what they reveal about themselves, their company, needs, constraints, opinions, or plans.
+These are notes/transcript from a call. The people below are the EXTERNAL attendees — the ones we are selling to or working with. Record facts about THEM, drawn from what they reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between an attendee and us: how they found us or why they reached out (a video, post, referral, or event), anything they offered us or introductions they can make, and any objection or critique they raised about our product or how we differ from alternatives.
 
 EXTERNAL ATTENDEES:
 ${roster}
 
-NEVER attribute the user's (our own side's) questions, offers, or statements to an attendee. If we asked "what's driving the timeline?", that is NOT a fact that they care about timelines. Only THEIR words describe them.
+Do NOT turn the user's (our own side's) questions or statements into facts about an attendee — if WE asked "what's driving the timeline?", that is NOT a fact that they care about timelines. But an offer, an introduction, a critique, or a reason-for-reaching-out that an ATTENDEE genuinely voices IS a fact about them and must be recorded.
 
 Transcript: "${summary}"
 
 A fact is worth recording ONLY if it passes ALL THREE bars:
 1. DURABLE — still true weeks or months from now. A meeting time, an availability, or a reschedule is NOT durable.
-2. DECISION-RELEVANT — it would change how someone sells to or works with them: budget, authority, pain, goals, stack, or buying timeline.
+2. DECISION-RELEVANT — it would change how someone sells to or works with them: budget, authority, pain, goals, stack, or buying timeline — OR how the relationship should be worked: how they found us, what they offered us, or the objection they raised about us.
 3. SPECIFIC — it carries the concrete detail or the reason WHY, not a vague label. "Evaluating Clay vs Apollo because Apollo's data went stale", not "looking at tools".
 
 NEVER record (noise, or it already lives elsewhere in the CRM):

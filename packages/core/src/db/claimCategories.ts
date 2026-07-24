@@ -53,8 +53,8 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     key: 'objection',
     label: 'Objection',
     about: 'either',
-    description: 'A concern that blocks a deal: price, security, timing, switching cost, or competitor loyalty.',
-    example: 'Worried switching tools mid-quarter will disrupt live campaigns.',
+    description: 'A concern, pushback, or challenge to us — price, security, timing, switching cost, competitor loyalty, or skepticism that we are meaningfully different from the alternatives. Applies even when the person is a peer or advisor, not a buyer.',
+    example: 'Questioned how we differ from memory tools like Fireflies that already sync notes to the CRM.',
   },
   {
     key: 'authority',
@@ -92,6 +92,18 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     example: 'Currently on Clay and frustrated with its pricing at scale.',
   },
   {
+    // How the relationship began. Its own category because a content-led / inbound
+    // GTM lives or dies on knowing WHICH content, channel, or referral actually
+    // brought a real person in — that is the feedback loop, and it has no home in
+    // any "what they are/do" category. About the RELATIONSHIP, not the prospect's
+    // own world.
+    key: 'discovery',
+    label: 'Discovery',
+    about: 'person',
+    description: 'How this relationship began — the content, channel, post, referral, or event that brought them to us, and why they reached out. The origin of the relationship, not a fact about their own company.',
+    example: 'Found us through our YouTube video on open-source GTM and reached out on LinkedIn.',
+  },
+  {
     // Key stays 'relationship' (existing claims are tagged with it); the label is
     // "Connections" because this is the network layer — who they know, who they run
     // with, the shared/mutual contacts that open a warm path. Named people captured
@@ -100,8 +112,8 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     key: 'relationship',
     label: 'Connections',
     about: 'person',
-    description: 'A durable connection to another person or org — reports-to, referred-by, a shared or mutual connection, a community they run or belong to, or a specific person they name knowing.',
-    example: 'Shares a mutual connection in Georgi; runs the Clay Club Amsterdam community.',
+    description: 'A durable connection to another person or org — reports-to, referred-by, a shared or mutual connection, a community they run or belong to, a specific person they name knowing, OR an offer to introduce or connect us to specific people, communities, or organizations.',
+    example: 'Offered to introduce us to seed- and YC-stage founders in his network.',
   },
   {
     key: 'general',
@@ -123,6 +135,16 @@ const ALIASES: Record<string, string> = {
   'painpoints': 'pain',
   'painpoint': 'pain',
   'objections': 'objection',
+  'concern': 'objection',
+  'pushback': 'objection',
+  'discovered': 'discovery',
+  'origin': 'discovery',
+  'inbound': 'discovery',
+  'found us': 'discovery',
+  'source': 'discovery',
+  'intro': 'relationship',
+  'introduction': 'relationship',
+  'offer': 'relationship',
   'preferences': 'preference',
   'relationships': 'relationship',
   'connection': 'relationship',

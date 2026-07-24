@@ -129,9 +129,15 @@ export const CATALOGUE = {
     display: 'Fathom', category: 'meetings', auth: 'api_key',
     keyUrl:  'https://fathom.video/customize#api-access-header',
     keyHint: 'Settings → API Access → generate an API key.',
-    webhook: 'auto',
+    // Fathom's webhook-create API did not reliably register a destination for us:
+    // connections came back with an api_key but no webhook_id, and Fathom's own UI
+    // showed no webhook — so 'auto' reported success while nothing was ever wired up
+    // and no meeting reached us. Manual is the honest, working path: we hand the user
+    // the inbound URL and they paste it into Fathom's own Add Webhook form.
+    webhook: 'manual',
+    webhookUrl: 'https://fathom.video/customize#api-access-header',
     // Fathom keys are user-scoped, not workspace-scoped.
-    webhookNote: 'Fathom keys only see meetings you recorded or that were shared with you. Each rep connects their own.',
+    webhookNote: 'In Fathom → Settings → API Access → your API client → Add Webhook, paste the URL above as the Destination URL, keep the "My Recordings" scope on, and enable the Summary, Action items and Transcript events. Fathom keys only see meetings you recorded or that were shared with you, so each rep connects their own.',
   },
   fireflies: {
     display: 'Fireflies.ai', category: 'meetings', auth: 'api_key',

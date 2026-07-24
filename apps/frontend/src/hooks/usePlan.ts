@@ -91,7 +91,7 @@ export function usePlan(): UsePlanResult {
   //
   // It is NOT "everything unlocked", which is what this used to claim. Both the
   // cloud managed layer (CRM sync, lead lists, the learned ICP model) and the agent
-  // team layer (Threads, Adoption, Playbooks, Tasks, Skills) are held back — and
+  // team layer (Threads, Adoption, Foundations, Tasks, Skills) are held back — and
   // showing a self-hoster a tab that 403s on the API is worse than not showing it at
   // all. SELF_HOST_BLOCKED mirrors CLOUD_ONLY_FEATURES in access.mjs.
   const planId = selfHosted ? 'pro' : normalizePlanId(data?.plan);

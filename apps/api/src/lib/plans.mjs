@@ -85,7 +85,7 @@ const GRAPH = {
   // and could never see or edit it again — the one artifact onboarding exists to create,
   // locked behind the paywall. Serving it is a deterministic Postgres read, the same
   // argument that makes retrieval free.
-  playbooks: true,
+  foundations: true,
   adoption: true,
   // The intelligence under it. Deterministic or sub-cent Haiku, so it costs us
   // ~nothing and it is never a paywall. It is also the moat; charging for it would

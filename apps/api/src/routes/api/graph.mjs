@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient, scoreTier } from '@nous/core';
+import { getSupabaseClient, scoreTier, getInternalEntityIds } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 
 // GET /api/graph?workspaceId=... — the workspace context graph as a war-room:
@@ -81,7 +81,7 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     if (!UUID.test(workspaceId)) return res.status(400).json({ error: 'invalid_workspace_id' });
     if (req.workspaceId !== workspaceId) return res.status(403).json({ error: 'workspace_not_found_or_unauthorized' });
 
-    const [contacts, companies, rels, gedges] = await Promise.all([
+    const [contactsRaw, companies, rels, gedges, internalIds] = await Promise.all([
       pageAll((a, b) => supabase.from('contacts')
         .select('id,first_name,last_name,job_title,icp_score,last_activity_at').eq('workspace_id', workspaceId).range(a, b)),
       pageAll((a, b) => supabase.from('companies')
@@ -90,7 +90,12 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
         .eq('type', 'works_at').is('valid_to', null).then(r => r.data || []),
       supabase.from('workspace_graph_edges').select('subject_id,object_id,object_label,relationship')
         .eq('workspace_id', workspaceId).not('subject_id', 'is', null).then(r => r.data || []),
+      getInternalEntityIds(supabase, workspaceId),
     ]);
+    // Team members (teammates flagged is_internal) are NOT accounts — a co-founder or
+    // colleague must never appear in the context graph as a prospect. Drop them up
+    // front so they vanish from nodes, committees, and every concept they'd anchor.
+    const contacts = contactsRaw.filter(c => !internalIds.has(c.id));
 
     const contactIds = new Set(contacts.map(c => c.id));
     // contact → employer (first works_at) + set of companies that employ a contact
@@ -186,73 +191,71 @@ graphApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
         sig: sigOf.get(c.id) || [] });
     }
 
-    // shared-claim clusters: non-generic claim shared by 2+ touched companies
-    const tmap = new Map();
-    // Who SAID it, not just where they work. A claim extracted from a person's own
-    // conversation belongs to that person. Rolling every claim up to the company and then
-    // handing it back down to everyone who works there is how one founder saying "we run
-    // Clay and Claude Code" turns into four colleagues who all appear to have said it —
-    // and how the overlap you were looking for gets flattened into a company-wide smear.
-    const subjClaims = new Map();   // entityId (person OR company) -> Set(label)
-    for (const g of gedges) {
-      if (g.object_id || !g.object_label) continue;
-      if (STOP.has(g.object_label.toLowerCase())) continue;
-      let co = null;
-      if (contactIds.has(g.subject_id)) co = contactCompany.get(g.subject_id);
-      else if (companyIds.has(g.subject_id)) co = g.subject_id;
-      if (!companyIds.has(co)) continue;
-      if (!subjClaims.has(g.subject_id)) subjClaims.set(g.subject_id, new Set());
-      subjClaims.get(g.subject_id).add(g.object_label);
-      if (!tmap.has(g.object_label)) tmap.set(g.object_label, new Set());
-      tmap.get(g.object_label).add(co);
+    // PATTERNS — claim-derived, not keyword-frequency.
+    //
+    // This is the product's USP made visible: raw data -> background reasoning ->
+    // CLAIMS -> semantic clusters of those claims. The worker (computePatterns.mjs)
+    // clusters Intel-claim EMBEDDINGS across accounts and stores each cluster in
+    // claim_patterns; we read the latest generation here. That is why "Ramp: seven-
+    // tool stack, no unified view" and "Deel: region-specific stacks, no unified
+    // view" collapse into ONE pattern (same meaning, zero shared keywords) instead
+    // of the old exact-string match on extracted edge-labels, which surfaced
+    // "software", "agency", and stray claim fragments as "patterns".
+    //
+    // A person carries the patterns their OWN claims fall into — claims are extracted
+    // from that person's conversations, so the pattern belongs to them, and the person
+    // is the only node you can actually act on. An account is rarely one pattern; the
+    // interesting ones sit in an overlap nobody had noticed.
+    const patRows = await supabase.from('graph_concepts')
+      .select('label,type,entity_ids,claim_ids,generation')
+      .eq('workspace_id', workspaceId)
+      .order('generation', { ascending: false })
+      .then(r => r.data || []);
+    const latestGen = patRows.length ? patRows[0].generation : null;
+    const nodeIds = new Set(nodes.filter(n => n.t === 0 || n.t === 1).map(n => n.i));
+    // Revenue-substance beats commodity. "Everyone uses Clay" is a shallow tag; a
+    // shared OBJECTION or PAIN is why a deal is won or lost. Rank the substantive
+    // types first so the graph (and the panel's top hubs) lead with why-they-buy /
+    // why-they-won't / what-they're-doing — not the stack everyone already has.
+    const TYPE_RANK = { objection: 6, pain: 6, competitor: 5, play: 5, person: 4, connection: 4, channel: 2, tool: 1, segment: 1 };
+    const conceptRows = patRows
+      .filter(p => p.generation === latestGen)
+      .map(p => ({ label: p.label, cat: p.type || 'theme', claimIds: p.claim_ids || [],
+                   ids: (p.entity_ids || []).filter(id => nodeIds.has(id)) }))
+      .filter(c => c.ids.length >= 2)
+      .sort((a, b) => ((TYPE_RANK[b.cat] || 3) - (TYPE_RANK[a.cat] || 3)) || (b.ids.length - a.ids.length))
+      .slice(0, 28);   // concepts are finer than the old whole-claim clusters, so allow more hubs
+    // `cat` carries the revenue TYPE (pain/tool/objection/…) so the hub colours itself
+    // by what KIND of thing it is — the type is the action.
+    const clusters = conceptRows.map(c => ({ label: c.label, cat: c.cat, ids: c.ids }));
+
+    // EVIDENCE — the Obsidian "why is this linked" made visible. A concept node is the
+    // abstraction; what grounds each account in it is the SPECIFIC thing that account
+    // said. Pull the source-claim text so every account→concept membership carries the
+    // account's own words (e.g. the pain "Fragmented account data" is grounded on Ramp
+    // by "runs a seven-tool stack with no unified view").
+    const allClaimIds = [...new Set(conceptRows.flatMap(c => c.claimIds))];
+    const claimById = new Map();
+    for (let i = 0; i < allClaimIds.length; i += 300) {
+      const { data } = await supabase.from('claims').select('id,entity_id,value').in('id', allClaimIds.slice(i, i + 300));
+      for (const c of (data || [])) claimById.set(c.id, { entity: c.entity_id, content: c.value?.content || '' });
     }
-    const clusters = [...tmap.entries()].filter(([, s]) => s.size >= 2)
-      .map(([label, s]) => ({ label, ids: [...s], cat: classifyClaim(label) })).sort((a, b) => b.ids.length - a.ids.length).slice(0, 16);
-    // append normalized-industry segment clusters (accounts sharing a canonical segment)
-    for (const [seg, set] of segMap) if (set.size >= 2) clusters.push({ label: seg, ids: [...set], cat: 'segment' });
 
-    // PATTERNS on the account.
-    //
-    // A cluster is a claim two or more companies share — a tool in the stack, a pain, an
-    // initiative, a segment. The graph already draws them as their own layer, but you
-    // could not GROUP by them, and grouping is where they become useful: an account is
-    // rarely one pattern, it is the intersection of several, and the interesting accounts
-    // are the ones sitting in an overlap nobody had noticed.
-    //
-    // People inherit their employer's patterns. The claims were extracted from the
-    // company's conversations and the person is who you talk to about them, so scoring
-    // the pattern to the company and then hiding it from the person would put the
-    // insight one hop away from the only node you can actually act on.
-    // Only claims that at least two companies share are patterns. A claim one account
-    // carries alone is a fact about that account, not a pattern, and hubbing it would
-    // give you a hub with one spoke.
-    const catOf = new Map(clusters.map(cl => [cl.label, cl.cat]));
-
+    const patByEntity = new Map();
+    for (const c of conceptRows) {
+      const ev = new Map();   // entity_id -> its own claim text for THIS concept
+      for (const cid of c.claimIds) {
+        const cl = claimById.get(cid);
+        if (cl && !ev.has(cl.entity)) ev.set(cl.entity, cl.content);
+      }
+      for (const id of c.ids) {
+        if (!patByEntity.has(id)) patByEntity.set(id, []);
+        patByEntity.get(id).push({ label: c.label, cat: c.cat, evidence: ev.get(id) || null });
+      }
+    }
     for (const n of nodes) {
       if (n.t !== 0 && n.t !== 1) continue;
-      const own = subjClaims.get(n.i);
-      const labels = new Set();
-      if (own) for (const l of own) if (catOf.has(l)) labels.add(l);
-      // A person also carries whatever their COMPANY itself claims — a firmographic
-      // (industry, segment) is a fact about the org, and the person is genuinely in it.
-      // What they do NOT inherit is a colleague's claim.
-      if (n.t === 0 && n.co) {
-        const coOwn = subjClaims.get(n.co);
-        if (coOwn) for (const l of coOwn) if (catOf.has(l)) labels.add(l);
-      }
-      // The industry-derived segment cluster is keyed on the company, so pull it down too.
-      n.pat = [...labels].map(l => ({ label: l, cat: catOf.get(l) }));
-    }
-    // Segment clusters come from the company's `industry` claim, which lives on the
-    // company row rather than in the edge table — attach them by company.
-    for (const cl of clusters) {
-      if (cl.cat !== 'segment') continue;
-      const ids = new Set(cl.ids);
-      for (const n of nodes) {
-        const co = n.t === 1 ? n.i : n.t === 0 ? n.co : null;
-        if (!co || !ids.has(co)) continue;
-        if (!n.pat.some(p => p.label === cl.label)) n.pat.push({ label: cl.label, cat: 'segment' });
-      }
+      n.pat = patByEntity.get(n.i) || [];
     }
 
     const edges = [];

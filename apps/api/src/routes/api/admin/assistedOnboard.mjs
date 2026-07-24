@@ -4,7 +4,7 @@
 // is what they're buying). So they can't do the reconcile-your-repo flow the operator road
 // uses — there's no repo and no agent. After the sales call, an admin runs this: it hands
 // the intake answers, the company website, and their best-customer domains to
-// runOnboardingAgent, which drafts the ICP/positioning/voice playbooks and seeds the
+// runOnboardingAgent, which drafts the ICP/positioning/voice foundations and seeds the
 // scoring model from those real closed-won examples.
 //
 // Learning the ICP from a customer's actual best customers is the single strongest signal
@@ -24,7 +24,7 @@ export const assistedOnboardRouter = Router();
 // POST /api/admin/assisted-onboard
 //   body: { workspace_id, company_name?, website?, offer?, icp?, positioning?, voice?,
 //           example_customers?: string[] }
-//   → 200 { ok, built: { playbooks, scorecard, business_type, example_customers, errors } }
+//   → 200 { ok, built: { foundations, scorecard, business_type, example_customers, errors } }
 assistedOnboardRouter.post('/', async (req, res) => {
   try {
     const {

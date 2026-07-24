@@ -69,6 +69,9 @@ function layout(nodes: any[], edges: any[]) {
 //          the model guessing).
 function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", embedded = false, onOpen?: (n: any) => void): any {
   const cv = root.querySelector('#gx-c') as HTMLCanvasElement;
+  const tip = root.querySelector('#gx-tip') as HTMLElement | null;
+  // Claim text is user data — escape before it touches innerHTML.
+  const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, (c: string) => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c]));
   const ctx = cv.getContext('2d', { alpha: false })!;
   let W = 0, H = 0; const DPR = Math.min(1.6, window.devicePixelRatio || 1);
   const RAIL = 0;   // the filter panel is a sibling element now, not an overlay
@@ -96,9 +99,16 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   // Person↔person KNOWS/connection links — a distinct rose so a "who knows whom"
   // edge reads differently from employment (grey) and shared-claim (violet).
   const E_KNOWS = LIGHT ? 'rgba(224,90,140,0.48)' : 'rgba(240,130,170,0.42)';
+  // Revenue types — the hub's colour is its ACTION (pain=wedge, objection=friction,
+  // tool=stack, competitor=win/loss, play=timing, person=who-signs, connection=warm
+  // path, channel=attribution, segment=lookalike). Legacy keys kept as fallbacks.
   const CATCOL: Record<string, string> = LIGHT
-    ? { stack: '#7c5cf0', pain: '#e05a4e', intent: '#2aa8a0', segment: '#dd9a3e', theme: '#9aa0ad' }
-    : { stack: '#a78bfa', pain: '#f0665c', intent: '#4fd1c5', segment: '#f2b263', theme: '#8a8fa0' };
+    ? { pain: '#d4574c', objection: '#c2410c', tool: '#7c5cf0', competitor: '#0891b2', play: '#2aa8a0',
+        person: '#2fa36b', connection: '#4a7fd4', channel: '#dd9a3e', segment: '#9aa0ad',
+        stack: '#7c5cf0', intent: '#2aa8a0', theme: '#9aa0ad' }
+    : { pain: '#f0665c', objection: '#e0723c', tool: '#a78bfa', competitor: '#22c3d6', play: '#4fd1c5',
+        person: '#4ade80', connection: '#6f9ff0', channel: '#f2b263', segment: '#8a8fa0',
+        stack: '#a78bfa', intent: '#4fd1c5', theme: '#8a8fa0' };
   const nodes = D.nodes, byId = new Map(nodes.map((n: any) => [n.i, n]));
   // Node radius is set from DEGREE, below, once the adjacency is built — the way Obsidian
   // does it. See the note there.
@@ -138,6 +148,17 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   // View + camera state. Declared BEFORE the simulation, which reads `mode` on its
   // very first tick during the warm start.
   let scale = 1, tx = 0, ty = 0, ts = 1, ttx = 0, tty = 0, anim = false, fast = false, hov: any = null, sel: any = null, hi: Set<string> | null = null, pending = false, mode = view === 'icp' ? 'patterns' : 'accounts', dead = false;
+  // Category lens: null = the ICP overview (accounts, tier-coloured); a concept TYPE
+  // ("objection", "pain", …) re-renders the graph toward that category — that type's
+  // concept hubs plus the accounts on them, nothing else. `focusMembers` is the set of
+  // account ids sitting on a hub of the active type (recomputed on each focus change).
+  let focusCat: string | null = null, focusMembers: Set<string> | null = null;
+  function computeFocus() {
+    if (!focusCat) { focusMembers = null; return; }
+    const mem = new Set<string>();
+    for (const e of edges) if (e.k === 2 && e.b?.t === 3 && e.b.cat === focusCat) mem.add(e.a.i);
+    focusMembers = mem;
+  }
   const F = (v: any) => Number.isFinite(v);
 
   // ── What the panel drives ────────────────────────────────────────────────────
@@ -360,6 +381,12 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
 
   const vis = (n: any) => {
     if (keep && !keep.has(n.i)) return false;
+    // Category lens: only this type's concept hubs + the accounts on them.
+    if (focusCat) {
+      if (n.t === 3) return n.cat === focusCat && show.claims;
+      if (n.t === 0) return show.people && !!focusMembers?.has(n.i);
+      return false;
+    }
     if (n.t === 0 && !show.people) return false;
     if (n.t === 1 && !show.companies) return false;
     if (n.t === 3 && !show.claims) return false;
@@ -368,7 +395,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     if (n.t === 1 && !show.orphans && !(n.pc > 0)) return false;
     return mode === 'patterns' ? n.t !== 0 : n.t !== 3;
   };
-  const eOn = (e: any) => (mode === 'patterns' ? e.k === 2 : e.k !== 2);
+  const eOn = (e: any) => ((focusCat || mode === 'patterns') ? e.k === 2 : e.k !== 2);
 
   // Barnes-Hut quadtree. Built fresh each tick; at these node counts that is cheaper
   // than maintaining one.
@@ -391,7 +418,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   }
   function qmass(q: Q | null): void {
     if (!q) return;
-    if (!q.kids) { if (q.n) { q.m = q.n.q0 * forces.repel; q.cx = q.n.x; q.cy = q.n.y; } return; }
+    if (!q.kids) { if (q.n) { q.m = q.n.q0 * forces.repel * (focusCat ? 1.9 : 1); q.cx = q.n.x; q.cy = q.n.y; } return; }
     let m = 0, cx = 0, cy = 0;
     for (const k of q.kids) { if (!k) continue; qmass(k); if (!k.m) continue; m += k.m; cx += k.cx * k.m; cy += k.cy * k.m; }
     q.m = m; if (m) { q.cx = cx / m; q.cy = cy / m; }
@@ -495,7 +522,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     }
 
     // gravity
-    for (const n of live) { const g = n.g * forces.center; n.vx -= n.x * g * alpha; n.vy -= n.y * g * alpha; }
+    for (const n of live) { const g = n.g * forces.center * (focusCat ? 0.4 : 1); n.vx -= n.x * g * alpha; n.vy -= n.y * g * alpha; }
 
     // integrate
     for (const n of live) {
@@ -631,9 +658,11 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
       const faded = !!(S && !S.has(n.i));
       ctx.globalAlpha = faded ? 0.14 : 1;
       if (n.t === 3) { const r = n.r * disp.node, cc = groupColor(n) ?? (CATCOL[n.cat] || CLA); ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(0.785); if (!fast && !faded && !LIGHT) { ctx.shadowColor = cc; ctx.shadowBlur = 13; } ctx.fillStyle = cc; ctx.fillRect(-r, -r, 2 * r, 2 * r); ctx.shadowBlur = 0; ctx.restore(); ctx.globalAlpha = 1; continue; }
-      const gc = gcPre;
-      const col = gc ?? (n.t === 1 ? COMPANY(n) : fillP(n));
-      const lit = !faded && (col === GREEN || col === GOLD || (n.t === 1 && n.look));
+      // A category lens is about the pattern, not the ICP — so accounts drop their tier
+      // colour and go neutral, letting the (type-coloured) hubs carry the meaning.
+      const gc = focusCat ? null : gcPre;
+      const col = focusCat ? SLATE : (gc ?? (n.t === 1 ? COMPANY(n) : fillP(n)));
+      const lit = !faded && !focusCat && (col === GREEN || col === GOLD || (n.t === 1 && n.look));
       if (!fast && lit && !LIGHT) { ctx.shadowColor = (n.t === 1 && n.look) ? GOLD : col; ctx.shadowBlur = n.t === 1 ? 12 : 9; } else ctx.shadowBlur = 0;
       // A node in a group is drawn larger and ringed. Colour alone is not enough at this
       // scale, and the whole point of a group is that you can find it without hunting.
@@ -648,7 +677,9 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (const n of nodes) {
       if (!F(n.x) || !vis(n)) continue; const near = S && S.has(n.i);
-      const showLbl = near || (n.t === 3 && scale > 0.4) || (n.t === 1 && scale > 0.75) || scale > 1.7; if (!showLbl) continue;
+      // In a category lens the view is sparse, so name the accounts — telling person
+      // from person is the whole point there. In the dense overview, labels stay lazy.
+      const showLbl = near || (n.t === 3 && scale > 0.4) || (n.t === 1 && scale > 0.75) || (focusCat && n.t === 0 && scale > 0.45) || scale > 1.7; if (!showLbl) continue;
       let lb = n.l || (n.t === 1 ? 'company' : 'person'); if (!lb) continue; if (lb.length > 26) lb = lb.slice(0, 25) + '…';
       const big = n.t === 3 || n.t === 1; const fs = ((near ? 12 : (big ? 11 : 10)) * disp.label) / scale;
       ctx.font = (big ? '600 ' : '500 ') + fs + 'px ui-sans-serif,system-ui,sans-serif';
@@ -706,9 +737,23 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
       alphaTarget = 0.3; reheat(0.3);
       return;
     }
-    if (drag) { tx += e.clientX - lx; ty += e.clientY - ly; ttx = tx; tty = ty; lx = e.clientX; ly = e.clientY; moved++; fast = true; req(); return; }
+    if (drag) { tx += e.clientX - lx; ty += e.clientY - ly; ttx = tx; tty = ty; lx = e.clientX; ly = e.clientY; moved++; fast = true; if (tip) tip.style.display = 'none'; req(); return; }
     // Cursor only. Nothing on the canvas reacts to the pointer — see fset().
-    cv.style.cursor = pick(e.clientX, e.clientY) ? 'pointer' : 'grab';
+    const under: any = pick(e.clientX, e.clientY);
+    cv.style.cursor = under ? 'pointer' : 'grab';
+    // In a category lens (a sparse view), hovering an account reveals its OWN words that
+    // ground it in the focused pattern — the thing Obsidian shows you. Off in the dense
+    // overview, where a hover would strobe.
+    if (tip) {
+      const ev = focusCat && under && under.t === 0 ? (under.pat || []).find((p: any) => p.cat === focusCat && p.evidence) : null;
+      if (ev) {
+        const rb = root.getBoundingClientRect();
+        tip.style.left = (e.clientX - rb.left + 14) + 'px';
+        tip.style.top = (e.clientY - rb.top + 14) + 'px';
+        tip.innerHTML = `<b>${esc(under.l || 'account')}</b><em>${esc(ev.label)}</em><span>“${esc(ev.evidence)}”</span>`;
+        tip.style.display = 'block';
+      } else tip.style.display = 'none';
+    }
   };
   const onDown = (e: MouseEvent) => {
     moved = 0;
@@ -738,6 +783,7 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
   const onDbl = () => { sel = null; hi = null; clearActive(); reheat(0.7); fit(); };
   const onResize = () => { size(); fit(); req(); };
   cv.addEventListener('mousemove', onMove); cv.addEventListener('mousedown', onDown); window.addEventListener('mouseup', onUp);
+  cv.addEventListener('mouseleave', () => { if (tip) tip.style.display = 'none'; });
   cv.addEventListener('wheel', onWheel, { passive: false }); cv.addEventListener('dblclick', onDbl); window.addEventListener('resize', onResize);
   (root.querySelector('#gx-zin') as HTMLElement).onclick = () => zoomAt((W - RAIL) / 2, H / 2, 1.4);
   (root.querySelector('#gx-zout') as HTMLElement).onclick = () => zoomAt((W - RAIL) / 2, H / 2, 1 / 1.4);
@@ -760,6 +806,9 @@ function runEngine(root: HTMLElement, D: any, view: "graph" | "icp" = "graph", e
     setDisplay(v: typeof disp)  { disp = { ...disp, ...v }; req(); },
     setForces(v: typeof forces) { forces = { ...forces, ...v }; reheat(0.5); },
     setMode(m: string)          { toMode(m); },
+    // Focus the graph on one revenue category (or null for the ICP overview). Re-derives
+    // the accounts on that type's hubs, then reheats so they cluster around them.
+    setFocus(cat: string | null) { focusCat = cat || null; computeFocus(); if (tip) tip.style.display = 'none'; toMode(cat ? 'patterns' : 'accounts'); },
     fit()                       { sel = null; hi = null; clearActive(); reheat(0.6); fit(); },
     // What is actually on the canvas right now. The panel shows these counts, because a
     // filter that does not tell you how much it removed is a filter you cannot trust.
@@ -1015,11 +1064,14 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
 
   const [show, setShow] = useState<Show>({ people: true, companies: true, claims: true, orphans: false });
   const [search, setSearch] = useState("");
-  // The graph arrives ALREADY CUT BY TIER. An uncoloured graph asks you to do the work of
-  // deciding what to look at before it has shown you anything; a graph that opens as four
-  // tiers has already answered the first question you were going to ask.
+  // The graph opens as the ICP OVERVIEW — accounts coloured by tier, the map you want
+  // first. Colour stays tier throughout; the LENS (below) is a separate axis that
+  // refocuses the graph onto one revenue category (objections, pains, …) on click.
   const [groupBy, setGroupBy] = useState<GroupBy>("tier");
   const [groups, setGroups] = useState<Group[]>(() => buildGroups("tier", {}));
+  // Which category the graph is focused on. 'icp' = the overview; a concept type
+  // ('objection', 'pain', …) re-renders toward that category's concept web.
+  const [lens, setLens] = useState<string>("icp");
   const [filter, setFilter] = useState("");
   // Display and Forces are the user's own tuning of THEIR graph, so they persist. Group
   // by / filter / search are questions you ask in the moment and reset when you leave;
@@ -1041,16 +1093,21 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
   };
   // Choosing an axis REBUILDS the buckets. Custom is the exception: it is the axis you
   // are writing yourself, so it must not be overwritten under you.
-  useEffect(() => {
-    if (groupBy === "custom") return;
-    const f = ctl.current?.counts() ?? counts;
-    setGroups(buildGroups(groupBy, { signals: f.signals, patterns: f.patterns }));
-  }, [groupBy]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: groups are owned entirely by the LENS effect below — TIER_GROUPS on the ICP
+  // overview, [] in a category lens. There is deliberately no counts-driven rebuild
+  // here: it re-fired on every lens switch (the visible facets change) and clobbered
+  // the lens's setGroups([]), which is why the tier anchors kept coming back.
 
   useEffect(() => { sync(c => c.setShow(show)); }, [show]);       // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setFilter(filter)); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setSearch(search)); }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setGroups(groups)); }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A category lens is NOT about ICP tier — so drop the tier grouping entirely (its
+  // anchors and colours) when one is active, and restore it on the ICP overview.
+  useEffect(() => {
+    sync(c => c.setFocus(lens === "icp" ? null : lens));
+    setGroups(lens === "icp" ? buildGroups("tier", {}) : []);
+  }, [lens]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setDisplay(display)); }, [display]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setForces(forces)); }, [forces]);    // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1106,6 +1163,9 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
     <div ref={rootRef} className={embedded ? "gx-root gx-light" : "gx-root"}>
       <style>{embedded ? CSS_EMBEDDED : CSS}</style>
       <canvas id="gx-c" />
+      {/* Evidence tooltip — only used in a category lens (a sparse view), where hovering
+          an account reveals the account's OWN words that ground it in the pattern. */}
+      <div id="gx-tip" />
       {/* Back only exists on the full-screen route. Embedded, there is nowhere to go
           back to — you are already on the page. */}
       {!embedded && (
@@ -1121,6 +1181,7 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
         show={show} setShow={setShow}
         search={search} setSearch={setSearch}
         groupBy={groupBy} setGroupBy={setGroupBy}
+        lens={lens} setLens={setLens}
         groups={groups} setGroups={setGroups}
         filter={filter} setFilter={setFilter}
         display={display} setDisplay={setDisplay}

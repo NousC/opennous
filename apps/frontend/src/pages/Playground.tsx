@@ -75,7 +75,7 @@ function ToolCallCard({ call }: { call: ToolCall }) {
     const o = call.output as Record<string, unknown> | null;
     if (!o || typeof o !== "object") return null;
     if ("error" in o) return String(o.error);
-    if (call.name === "get_playbook") {
+    if (call.name === "get_foundation") {
       const n     = (o as any).count;
       const cats  = (o as any).by_category;
       const top   = cats && typeof cats === "object" ? Object.entries(cats).slice(0, 3).map(([k, v]) => `${k} ${v}`).join(" · ") : "";
