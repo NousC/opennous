@@ -11,6 +11,7 @@ import { isKeyProvider } from '../../providers/catalogue.mjs';
 import { testProviderCredentials, testNamedProvider } from '../../providers/test.mjs';
 import { connectProvider, disconnectProvider } from '../../providers/connect.mjs';
 import { decrypt, encryptCredentials } from '../../providers/crypto.mjs';
+import { isWorkspaceMember } from '../../lib/authz.mjs';
 
 export const workflowProvidersRouter = Router();
 
@@ -196,6 +197,9 @@ workflowProvidersRouter.get('/connections/:id', verifySupabaseAuth, async (req, 
       .eq('id', id)
       .single();
     if (error || !data) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, data.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     const hints = {};
     const { data: full } = await supabase.from('workflow_provider_connections').select('encrypted_credentials').eq('id', id).single();
@@ -221,9 +225,12 @@ workflowProvidersRouter.post('/connections/:id/test', verifySupabaseAuth, async 
     if (!UUID.test(id)) return res.status(400).json({ error: 'invalid_id' });
     const { data: conn } = await supabase
       .from('workflow_provider_connections')
-      .select('encrypted_credentials, provider:workflow_providers(name)')
+      .select('workspace_id, encrypted_credentials, provider:workflow_providers(name)')
       .eq('id', id).single();
     if (!conn) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, conn.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     const creds = {};
     for (const [k, v] of Object.entries(conn.encrypted_credentials || {})) {
@@ -249,15 +256,18 @@ workflowProvidersRouter.patch('/connections/:id', verifySupabaseAuth, async (req
     const { credentials } = req.body;
     if (!credentials || !Object.keys(credentials).length) return res.status(400).json({ error: 'credentials required' });
 
-    const { data: existing } = await supabase.from('workflow_provider_connections').select('encrypted_credentials').eq('id', id).single();
+    const { data: existing } = await supabase.from('workflow_provider_connections').select('workspace_id, encrypted_credentials').eq('id', id).single();
     if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, existing.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     // Only overwrite the fields they actually supplied — a blank field in the edit form
     // means "leave it alone", not "erase it".
     const supplied = Object.fromEntries(Object.entries(credentials).filter(([, v]) => v));
     const merged = { ...(existing.encrypted_credentials || {}), ...encryptCredentials(supplied) };
 
-    await supabase.from('workflow_provider_connections').update({ encrypted_credentials: merged, is_verified: false }).eq('id', id);
+    await supabase.from('workflow_provider_connections').update({ encrypted_credentials: merged, is_verified: false }).eq('id', id).eq('workspace_id', existing.workspace_id);
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', message: err.message });
@@ -277,10 +287,15 @@ workflowProvidersRouter.patch('/connections/:id/enrichment-toggle', verifySupaba
       .select('encrypted_credentials, workspace_id, provider:workflow_providers(category)')
       .eq('id', id).single();
     if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, existing.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     // If enabling an enrichment provider, disable all other enrichment connections in this workspace
     if (enabled && existing.provider?.category === 'enrichment') {
-      const wid = workspace_id || existing.workspace_id;
+      // Pin to the (membership-verified) connection's own workspace — never a
+      // caller-supplied workspace_id, or a member of A could disable B's enrichment.
+      const wid = existing.workspace_id;
       const { data: others } = await supabase
         .from('workflow_provider_connections')
         .select('id, encrypted_credentials')
@@ -297,7 +312,7 @@ workflowProvidersRouter.patch('/connections/:id/enrichment-toggle', verifySupaba
     }
 
     const updated = { ...(existing.encrypted_credentials || {}), use_for_enrichment: !!enabled };
-    await supabase.from('workflow_provider_connections').update({ encrypted_credentials: updated }).eq('id', id);
+    await supabase.from('workflow_provider_connections').update({ encrypted_credentials: updated }).eq('id', id).eq('workspace_id', existing.workspace_id);
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', message: err.message });
@@ -316,6 +331,12 @@ workflowProvidersRouter.delete('/connections/:id', verifySupabaseAuth, async (re
     const { id } = req.params;
     if (!UUID.test(id)) return res.status(400).json({ error: 'invalid_id' });
 
+    const { data: existing } = await supabase.from('workflow_provider_connections').select('workspace_id').eq('id', id).single();
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, existing.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
     await disconnectProvider({ supabase, connectionId: id });
     return res.json({ ok: true });
   } catch (err) {
@@ -332,10 +353,13 @@ workflowProvidersRouter.get('/slack/channels', verifySupabaseAuth, async (req, r
 
     const { data: conn } = await supabase
       .from('workflow_provider_connections')
-      .select('encrypted_credentials')
+      .select('workspace_id, encrypted_credentials')
       .eq('id', connection_id)
       .single();
     if (!conn) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, conn.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
 
     const token = decrypt(conn.encrypted_credentials?.bot_token || conn.encrypted_credentials?.access_token || conn.encrypted_credentials?.token || '');
     if (!token) return res.status(400).json({ error: 'no_token' });

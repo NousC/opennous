@@ -7,6 +7,7 @@ import {
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { enrichCompany } from '../../services/enrichment.mjs';
 import { icpFit } from '../../lib/icpFit.mjs';
+import { isWorkspaceMember } from '../../lib/authz.mjs';
 
 export const companiesApiRouter = Router();
 
@@ -63,7 +64,15 @@ companiesApiRouter.patch('/:id', verifySupabaseAuth, async (req, res) => {
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'no_fields' });
     updates.updated_at = new Date().toISOString();
 
-    const { data, error } = await supabase.from('companies').update(updates).eq('id', id).select('*').single();
+    // Resolve the company's workspace and confirm the caller belongs to it — this
+    // route takes no workspaceId, so the middleware couldn't check membership.
+    const { data: company } = await supabase.from('companies').select('workspace_id').eq('id', id).single();
+    if (!company) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, company.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
+    const { data, error } = await supabase.from('companies').update(updates).eq('id', id).eq('workspace_id', company.workspace_id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ company: data });
   } catch (err) {
@@ -92,6 +101,7 @@ companiesApiRouter.post('/enrich', verifySupabaseAuth, async (req, res) => {
           enriched_at: new Date().toISOString(),
         })
         .eq('id', companyId)
+        .eq('workspace_id', workspaceId)
         .select('*')
         .single();
       return res.json({ enriched: true, company: merged || company });
