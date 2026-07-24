@@ -1093,14 +1093,10 @@ export default function Galaxy({ embedded = false, view = "graph", onOpen }: { e
   };
   // Choosing an axis REBUILDS the buckets. Custom is the exception: it is the axis you
   // are writing yourself, so it must not be overwritten under you.
-  // Rebuild the buckets when the axis changes OR when the facets first arrive — the
-  // pattern buckets come from the loaded graph (facets.patterns), so on first paint
-  // they are empty and must repopulate the moment the data lands. Idempotent.
-  useEffect(() => {
-    if (groupBy === "custom") return;
-    const f = ctl.current?.counts() ?? counts;
-    setGroups(buildGroups(groupBy, { signals: f.signals, patterns: f.patterns }));
-  }, [groupBy, counts.patterns?.length, counts.signals?.length]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: groups are owned entirely by the LENS effect below — TIER_GROUPS on the ICP
+  // overview, [] in a category lens. There is deliberately no counts-driven rebuild
+  // here: it re-fired on every lens switch (the visible facets change) and clobbered
+  // the lens's setGroups([]), which is why the tier anchors kept coming back.
 
   useEffect(() => { sync(c => c.setShow(show)); }, [show]);       // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { sync(c => c.setFilter(filter)); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
