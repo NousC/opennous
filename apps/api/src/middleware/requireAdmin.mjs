@@ -23,10 +23,9 @@ export async function requireAdmin(req, res, next) {
     }
 
     // Defense in depth: also require the users.is_admin field. req.user is the
-    // Supabase auth user, whose
-    // id is the auth UUID — that lives in users.supabase_user_id, NOT users.id.
-    // verifySupabaseAuth already resolved the internal users.id into
-    // req.internalUserId; use that for the lookup.
+    // Clerk auth user, whose id is the Clerk user id — that lives in
+    // users.clerk_user_id, NOT users.id. verifyClerkAuth already resolved the
+    // internal users.id into req.internalUserId; use that for the lookup.
     const { data: userData, error } = await supabase
       .from('users')
       .select('is_admin, id, email, name, team_id')

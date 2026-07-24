@@ -15,6 +15,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { getSupabaseClient } from '@nous/core';
 import { ensureUserAndTeam } from '../../../lib/auth.mjs';
+import { clerkClient, findClerkUserByEmail } from '../../../lib/clerk.mjs';
 import { runOnboardingAgent } from '../../../lib/onboardingAgent.mjs';
 
 export const provisionRouter = express.Router();
@@ -39,13 +40,19 @@ provisionRouter.post('/account', requirePartnerSecret, async (req, res) => {
     const email = (req.body?.email || `agency-${crypto.randomBytes(6).toString('hex')}@partner.opennous.cloud`).toLowerCase();
     const supabase = getSupabaseClient();
 
-    // 1. Service auth user (confirmed; no email sent). The agency operates the
-    //    workspace through its MCP key — it never logs into Nous interactively.
-    const { data: au, error: auErr } = await supabase.auth.admin.createUser({ email, email_confirm: true, user_metadata: { name } });
-    if (auErr) return res.status(400).json({ error: 'auth_user', detail: auErr.message });
+    // 1. Service Clerk user (no email sent). The agency operates the workspace
+    //    through its MCP key — it never logs into Nous interactively, so it's
+    //    created passwordless. Reuse if one already exists for this email.
+    let clerkUser;
+    try {
+      clerkUser = await findClerkUserByEmail(email)
+        || await clerkClient.users.createUser({ emailAddress: [email], firstName: name, skipPasswordRequirement: true });
+    } catch (e) {
+      return res.status(400).json({ error: 'auth_user', detail: e?.message });
+    }
 
     // 2. Canonical account bootstrap: team + user + workspace + membership + Free sub.
-    const { user, team } = await ensureUserAndTeam(au.user);
+    const { user, team } = await ensureUserAndTeam({ id: clerkUser.id, email, user_metadata: { name } });
 
     // 3. The workspace ensureUserAndTeam created for the team.
     const { data: ws } = await supabase.from('workspaces').select('id').eq('team_id', team.id).order('created_at').limit(1).maybeSingle();
@@ -83,18 +90,18 @@ provisionRouter.post('/graduate', requirePartnerSecret, async (req, res) => {
     const supabase = getSupabaseClient();
     const addr = email.trim().toLowerCase();
 
-    // 1. Ensure an auth user for the client's real email (confirmed; they claim
-    //    the login via password reset). Reuse if it already exists.
-    const { data: list } = await supabase.auth.admin.listUsers();
-    let authUser = (list?.users || []).find((u) => (u.email || '').toLowerCase() === addr);
-    if (!authUser) {
-      const { data: created, error: cErr } = await supabase.auth.admin.createUser({ email: addr, email_confirm: true, user_metadata: { name: name || addr } });
-      if (cErr) return res.status(400).json({ error: 'auth_user', detail: cErr.message });
-      authUser = created.user;
+    // 1. Ensure a Clerk user for the client's real email. Reuse if it already
+    //    exists; otherwise create passwordless (they claim the login below).
+    let clerkUser;
+    try {
+      clerkUser = await findClerkUserByEmail(addr)
+        || await clerkClient.users.createUser({ emailAddress: [addr], firstName: name || addr, skipPasswordRequirement: true });
+    } catch (e) {
+      return res.status(400).json({ error: 'auth_user', detail: e?.message });
     }
 
     // 2. Ensure the client's own team + Nous user (canonical bootstrap).
-    const { user, team } = await ensureUserAndTeam(authUser);
+    const { user, team } = await ensureUserAndTeam({ id: clerkUser.id, email: addr, user_metadata: { name: name || addr } });
 
     // 3. Move the workspace to the client's team — data-preserving handoff.
     const { error: wErr } = await supabase.from('workspaces').update({ team_id: team.id }).eq('id', workspace_id);
@@ -106,16 +113,19 @@ provisionRouter.post('/graduate', requirePartnerSecret, async (req, res) => {
       await supabase.from('workspace_members').upsert({ workspace_id, user_id: agency_owner_user_id, role: 'member' }, { onConflict: 'workspace_id,user_id' });
     }
 
-    // 5. A set-password link so the client can claim their login. Best-effort —
-    //    the account exists regardless; the agency shares this link (branded email
-    //    on their side). recovery works whether or not a password is set yet.
+    // 5. A claim link so the client can take over their login. Clerk's version of
+    //    a recovery link is a sign-in-token "ticket" the /login page consumes:
+    //    they land signed in, then set a password from account settings. Best-effort
+    //    — the account exists regardless; the agency shares this link (branded email
+    //    on their side).
     let claim_url = null;
     try {
       const appUrl = (process.env.APP_URL || 'https://app.opennous.cloud').replace(/\/$/, '');
-      const { data: link } = await supabase.auth.admin.generateLink({
-        type: 'recovery', email: addr, options: { redirectTo: `${appUrl}/` },
+      const created = await clerkClient.signInTokens.createSignInToken({
+        userId: clerkUser.id,
+        expiresInSeconds: 60 * 60 * 24 * 7,
       });
-      claim_url = link?.properties?.action_link || null;
+      claim_url = created?.token ? `${appUrl}/login?__clerk_ticket=${encodeURIComponent(created.token)}` : null;
     } catch (e) { console.warn('[provision/graduate] claim link:', e?.message || e); }
 
     return res.status(201).json({ nous_user_id: user.id, team_id: team.id, workspace_id, email: addr, claim_url });

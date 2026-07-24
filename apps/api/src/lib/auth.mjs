@@ -4,22 +4,22 @@ import { getSupabaseClient } from '@nous/core';
 const authCache = new Map();
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
 
-export async function ensureUserAndTeam(supabaseUser, skipTeamCreation = false) {
+export async function ensureUserAndTeam(authUser, skipTeamCreation = false) {
   const supabase = getSupabaseClient();
-  const { id: supabaseUserId, email, user_metadata } = supabaseUser;
+  const { id: clerkUserId, email, user_metadata } = authUser;
   const name = user_metadata?.name || user_metadata?.full_name || email?.split('@')[0] || 'User';
   const avatarUrl = user_metadata?.avatar_url || user_metadata?.picture || null;
 
   let { data: existingUser, error: userSelectError } = await supabase
     .from('users')
     .select('*, team:team_id(*)')
-    .eq('supabase_user_id', supabaseUserId)
+    .eq('clerk_user_id', clerkUserId)
     .maybeSingle();
 
   if (userSelectError) throw new Error(`Error loading user: ${userSelectError.message}`);
 
-  // Email fallback: migrated users may have supabase_user_id unset on their existing record.
-  // Find them by email and backfill supabase_user_id so future lookups work without this fallback.
+  // Email fallback: imported users may have clerk_user_id unset on their existing record.
+  // Find them by email and backfill clerk_user_id so future lookups work without this fallback.
   if (!existingUser && email) {
     const { data: byEmail } = await supabase
       .from('users')
@@ -29,13 +29,13 @@ export async function ensureUserAndTeam(supabaseUser, skipTeamCreation = false) 
 
     if (byEmail) {
       existingUser = byEmail;
-      if (!byEmail.supabase_user_id) {
+      if (!byEmail.clerk_user_id) {
         try {
           await supabase.from('users')
-            .update({ supabase_user_id: supabaseUserId })
+            .update({ clerk_user_id: clerkUserId })
             .eq('id', byEmail.id);
         } catch { /* best-effort backfill */ }
-        existingUser = { ...byEmail, supabase_user_id: supabaseUserId };
+        existingUser = { ...byEmail, clerk_user_id: clerkUserId };
       }
     }
   }
@@ -60,7 +60,7 @@ export async function ensureUserAndTeam(supabaseUser, skipTeamCreation = false) 
       const { data: newUser, error: createUserError } = await supabase
         .from('users')
         .insert({
-          supabase_user_id: supabaseUserId,
+          clerk_user_id: clerkUserId,
           email,
           name,
           team_id: pendingInvitation.team_id,
@@ -71,7 +71,7 @@ export async function ensureUserAndTeam(supabaseUser, skipTeamCreation = false) 
 
       if (createUserError) {
         if (createUserError.code === '23505') {
-          const { data: eu } = await supabase.from('users').select('*, team:team_id(*)').eq('supabase_user_id', supabaseUserId).single();
+          const { data: eu } = await supabase.from('users').select('*, team:team_id(*)').eq('clerk_user_id', clerkUserId).single();
           if (!eu) throw new Error('Error loading user after race condition');
           return { user: eu, team: eu.team };
         }
@@ -107,7 +107,7 @@ export async function ensureUserAndTeam(supabaseUser, skipTeamCreation = false) 
     const { data: newUser, error: createUserError } = await supabase
       .from('users')
       .insert({
-        supabase_user_id: supabaseUserId,
+        clerk_user_id: clerkUserId,
         email,
         name,
         team_id: team.id,
@@ -119,7 +119,7 @@ export async function ensureUserAndTeam(supabaseUser, skipTeamCreation = false) 
     if (createUserError) {
       if (createUserError.code === '23505') {
         try { await supabase.from('teams').delete().eq('id', newTeam.id); } catch { /* cleanup */ }
-        const { data: eu } = await supabase.from('users').select('*, team:team_id(*)').eq('supabase_user_id', supabaseUserId).single();
+        const { data: eu } = await supabase.from('users').select('*, team:team_id(*)').eq('clerk_user_id', clerkUserId).single();
         if (!eu) throw new Error('Error loading user after race condition');
         return { user: eu, team: eu.team };
       }

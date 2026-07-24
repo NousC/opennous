@@ -1,6 +1,7 @@
 import { getSupabaseClient } from '@nous/core';
 import { setUser } from 'useleak';
 import { isSelfHosted } from '../lib/plans.mjs';
+import { verifyClerkToken, resolveClerkProfile } from '../lib/clerk.mjs';
 
 // useleak cost-tracking tags each request with the end user's email + name.
 // That PII must never leave a self-hosted box, so identify() is a no-op there.
@@ -14,10 +15,11 @@ function identify(u) {
 }
 
 // Short-TTL in-memory cache for the full middleware result. Every authed
-// request used to do up to 3 round-trips: supabase.auth.getUser() over the
-// network, the public.users lookup, and the workspace_members membership
-// check. Caching the resolved (user, internalUserId, hasMembership) tuple
-// for 60s drops most requests to zero DB calls.
+// request used to do up to 3 round-trips: the token verification (a network
+// call under Supabase; local JWKS-cached under Clerk), the public.users lookup,
+// and the workspace_members membership check. Caching the resolved
+// (user, internalUserId, hasMembership) tuple for 60s drops most requests to
+// zero DB calls.
 //
 // Memory ceiling: bounded by (active tokens × active workspaces) over 60s,
 // which is small even at hundreds of users. A periodic sweep clears
@@ -32,7 +34,12 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref?.();
 
-export async function verifySupabaseAuth(req, res, next) {
+// Verify a Clerk session token, resolve the internal user, and attach the
+// request identity. Exported as `verifySupabaseAuth` too for the many routers
+// that import it under the old name — the token is now a Clerk JWT, but the
+// contract (req.user, req.internalUserId, req.workspaceId, req.viewerScope) is
+// unchanged.
+export async function verifyClerkAuth(req, res, next) {
   const token = req.headers.authorization?.startsWith('Bearer ')
     ? req.headers.authorization.slice(7)
     : null;
@@ -46,7 +53,6 @@ export async function verifySupabaseAuth(req, res, next) {
     if (cached.invalid) return res.status(401).json({ error: 'invalid_token' });
     if (cached.notMember) return res.status(403).json({ error: 'not_a_member' });
     req.user = cached.user;
-    req.supabaseUser = cached.user;
     req.internalUserId = cached.internalUserId;
     if (workspaceId) {
       req.workspaceId = workspaceId;
@@ -60,50 +66,80 @@ export async function verifySupabaseAuth(req, res, next) {
     return next();
   }
 
-  const supabase = getSupabaseClient();
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-
-  if (error || !user) {
-    // Cache the rejection too, briefly — stops a flood of bad-token retries
-    // from hammering Supabase auth.
+  // Verify the Clerk-issued JWT. verifyToken checks signature + expiry against
+  // Clerk's JWKS (cached locally by @clerk/backend), so this is not a per-request
+  // network round-trip the way supabase.auth.getUser() was.
+  let claims;
+  try {
+    claims = await verifyClerkToken(token);
+  } catch {
+    // Cache the rejection too, briefly — stops a flood of bad-token retries.
     authCache.set(cacheKey, { expiresAt: Date.now() + 10_000, invalid: true });
     return res.status(401).json({ error: 'invalid_token' });
   }
 
+  const clerkUserId = claims.sub;
+  if (!clerkUserId) {
+    authCache.set(cacheKey, { expiresAt: Date.now() + 10_000, invalid: true });
+    return res.status(401).json({ error: 'invalid_token' });
+  }
+
+  // Resolve email/name/avatar (from claims when the session token carries them,
+  // else one Backend API fetch). Only actually needed for provisioning/fallback,
+  // but kept on req.user so downstream ensureUserAndTeam() has the same shape it
+  // had with the Supabase user object.
+  let profile;
+  try {
+    profile = await resolveClerkProfile(claims);
+  } catch {
+    profile = { email: null, name: null, avatarUrl: null };
+  }
+
+  const user = {
+    id: clerkUserId,
+    email: profile.email,
+    user_metadata: {
+      full_name: profile.name,
+      name: profile.name,
+      avatar_url: profile.avatarUrl,
+      picture: profile.avatarUrl,
+    },
+  };
   req.user = user;
-  req.supabaseUser = user;
   identify(user);
 
-  // workspace_members stores the internal users.id, not the auth UUID.
+  // workspace_members stores the internal users.id, not the auth provider id.
   // Resolve the internal user record so membership checks use the right ID.
+  const supabase = getSupabaseClient();
   const { data: internalUser } = await supabase
     .from('users')
-    .select('id, supabase_user_id')
-    .eq('supabase_user_id', user.id)
+    .select('id, clerk_user_id')
+    .eq('clerk_user_id', clerkUserId)
     .maybeSingle();
 
   let internalUserId = internalUser?.id;
 
-  // Email fallback for migrated users whose supabase_user_id may not be set yet.
+  // Email fallback for imported users whose clerk_user_id may not be set yet.
+  // Backfill it so future lookups hit the fast path above.
   if (!internalUserId && user.email) {
     const { data: byEmail } = await supabase
       .from('users')
-      .select('id, supabase_user_id')
+      .select('id, clerk_user_id')
       .ilike('email', user.email)
       .maybeSingle();
     if (byEmail) {
       internalUserId = byEmail.id;
-      if (!byEmail.supabase_user_id) {
+      if (!byEmail.clerk_user_id) {
         try {
           await supabase.from('users')
-            .update({ supabase_user_id: user.id })
+            .update({ clerk_user_id: clerkUserId })
             .eq('id', byEmail.id);
         } catch { /* best-effort backfill */ }
       }
     }
   }
 
-  if (!internalUserId) internalUserId = user.id;
+  if (!internalUserId) internalUserId = clerkUserId;
   req.internalUserId = internalUserId;
 
   // Resolve workspace membership when a workspace is specified
@@ -139,3 +175,6 @@ export async function verifySupabaseAuth(req, res, next) {
 
   next();
 }
+
+// Back-compat alias: routers still import { verifySupabaseAuth }.
+export const verifySupabaseAuth = verifyClerkAuth;

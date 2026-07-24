@@ -55,7 +55,7 @@ playgroundRouter.get('/threads', verifySupabaseAuth, async (req, res) => {
       .from('playground_threads')
       .select('id, title, created_at, updated_at')
       .eq('workspace_id', workspaceId)
-      .eq('user_id', req.user.id)
+      .eq('user_id', req.internalUserId)
       .order('updated_at', { ascending: false })
       .limit(100);
     if (error) throw error;
@@ -97,7 +97,7 @@ playgroundRouter.post('/threads', verifySupabaseAuth, async (req, res) => {
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('playground_threads')
-      .insert({ workspace_id: workspaceId, user_id: req.user.id, title: 'New chat' })
+      .insert({ workspace_id: workspaceId, user_id: req.internalUserId, title: 'New chat' })
       .select('id, title, created_at, updated_at')
       .single();
     if (error) throw error;
@@ -118,7 +118,7 @@ playgroundRouter.get('/threads/:id/messages', verifySupabaseAuth, async (req, re
     if (!workspaceId)  return res.status(400).json({ error: 'workspaceId_required' });
 
     const supabase = getSupabaseClient();
-    const owns = await assertOwnership(supabase, id, req.user.id, String(workspaceId));
+    const owns = await assertOwnership(supabase, id, req.internalUserId, String(workspaceId));
     if (!owns.ok) return res.status(owns.status).json({ error: owns.error });
 
     const { data, error } = await supabase
@@ -144,7 +144,7 @@ playgroundRouter.delete('/threads/:id', verifySupabaseAuth, async (req, res) => 
     if (!workspaceId)  return res.status(400).json({ error: 'workspaceId_required' });
 
     const supabase = getSupabaseClient();
-    const owns = await assertOwnership(supabase, id, req.user.id, String(workspaceId));
+    const owns = await assertOwnership(supabase, id, req.internalUserId, String(workspaceId));
     if (!owns.ok) return res.status(owns.status).json({ error: owns.error });
 
     await supabase.from('playground_threads').delete().eq('id', id);
@@ -184,7 +184,7 @@ playgroundRouter.post('/chat/stream', verifySupabaseAuth, async (req, res) => {
     if (text.length > MAX_MESSAGE_LEN) return res.status(413).json({ error: 'message_too_long', max: MAX_MESSAGE_LEN });
 
     const supabase = getSupabaseClient();
-    const owns = await assertOwnership(supabase, threadId, req.user.id, workspaceId);
+    const owns = await assertOwnership(supabase, threadId, req.internalUserId, workspaceId);
     if (!owns.ok) return res.status(owns.status).json({ error: owns.error });
 
     const { data: priorRows, error: histErr } = await supabase
@@ -321,7 +321,7 @@ playgroundRouter.post('/chat', verifySupabaseAuth, async (req, res) => {
     if (text.length > MAX_MESSAGE_LEN) return res.status(413).json({ error: 'message_too_long', max: MAX_MESSAGE_LEN });
 
     const supabase = getSupabaseClient();
-    const owns = await assertOwnership(supabase, threadId, req.user.id, workspaceId);
+    const owns = await assertOwnership(supabase, threadId, req.internalUserId, workspaceId);
     if (!owns.ok) return res.status(owns.status).json({ error: owns.error });
 
     // Pull the recent history for context window. Cap at HISTORY_LIMIT pairs

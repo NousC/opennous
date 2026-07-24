@@ -1,10 +1,15 @@
-import { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { createContext, useContext, useEffect, useState, useRef, useCallback, ReactNode } from 'react';
+import { useAuth as useClerkAuth, useUser, useSignIn, useSignUp } from '@clerk/react';
+
+// Minimal auth types. The app only ever reads `session.access_token`,
+// `session.user.email`, `user.id`, and `user.email` off these — so we keep the
+// same shape the Supabase User/Session exposed, without the Supabase dependency.
+type AuthUser = { id: string | null; email: string | null } | null;
+type AuthSession = { access_token: string; user: { id: string | null; email: string | null } } | null;
 
 interface AuthContextType {
-  user: User | null;
-  session: Session | null;
+  user: AuthUser;
+  session: AuthSession;
   loading: boolean;
   userDataLoading: boolean; // true while /me is in-flight after auth
   signIn: (email: string, password: string) => Promise<{ error: any; data?: any }>;
@@ -20,182 +25,117 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Normalize a thrown Clerk error into the `{ message }` shape the pages expect
+// from the old Supabase `error` object.
+function clerkError(err: any) {
+  return {
+    message:
+      err?.errors?.[0]?.longMessage ||
+      err?.errors?.[0]?.message ||
+      err?.message ||
+      'Something went wrong. Please try again.',
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { isLoaded, isSignedIn, getToken, signOut: clerkSignOut } = useClerkAuth();
+  const { user: clerkUser } = useUser();
+  const { isLoaded: signInLoaded, signIn: signInResource, setActive: setActiveSignIn } = useSignIn();
+  const { isLoaded: signUpLoaded, signUp: signUpResource, setActive: setActiveSignUp } = useSignUp();
+
+  // `token` mirrors the current Clerk session JWT for the ~50 call sites that read
+  // `session.access_token` synchronously. Clerk tokens are short-lived (~60s), so
+  // we refresh proactively below; hot paths that need a guaranteed-fresh token use
+  // freshAccessToken() (lib/freshToken) which calls getToken() directly.
+  const [token, setToken] = useState<string | null>(null);
   const [userData, setUserData] = useState<any | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [userDataLoading, setUserDataLoading] = useState(false);
 
-  // Refs to prevent race conditions in production
   const fetchingUserDataRef = useRef(false);
-  const lastFetchedTokenRef = useRef<string | null>(null);
+  const meFetchedRef = useRef(false);
 
+  // Keep `token` fresh while signed in: prime it immediately, then refresh every
+  // 30s and whenever the tab regains focus, so a synchronous `session.access_token`
+  // read is never more than ~30s old (well inside the ~60s token lifetime).
   useEffect(() => {
-    let isMounted = true;
-
-    // Clean up OAuth hash if present (after Supabase has read it)
-    const cleanupHash = () => {
-      if (window.location.hash) {
-        window.history.replaceState({}, document.title, window.location.pathname);
-      }
-    };
-
-    // Timeout fallback — cleared on success, fires only if init hangs
-    let timeout: ReturnType<typeof setTimeout>;
-
-    // Initialize auth
-    const initAuth = async () => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      setToken(null);
+      return;
+    }
+    let active = true;
+    const refresh = async () => {
       try {
-        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-
-        if (!isMounted) return;
-
-        if (error) {
-          console.error('[AUTH] Error getting session:', error);
-          setLoading(false);
-          clearTimeout(timeout);
-          return;
-        }
-
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
-        setLoading(false);
-        clearTimeout(timeout);
-
-        cleanupHash();
-
-        if (currentSession) {
-          fetchUserData(currentSession.access_token);
-        }
-      } catch (err) {
-        console.error('[AUTH] Init error:', err);
-        if (isMounted) setLoading(false);
-        clearTimeout(timeout);
-      }
+        const t = await getToken();
+        if (active && t) setToken(t);
+      } catch { /* transient — next tick retries */ }
     };
-
-    // Start auth initialization
-    initAuth();
-
-    timeout = setTimeout(() => {
-      if (isMounted) {
-        console.warn('[AUTH] Init timeout');
-        setLoading(false);
-      }
-    }, 10000);
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
-      if (!isMounted) return;
-
-      // Update state
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-
-      // Handle session changes
-      if (newSession) {
-        cleanupHash();
-        fetchUserData(newSession.access_token);
-      } else {
-        setUserData(null);
-        setOnboardingCompleted(false);
-      }
-    });
-
+    refresh();
+    const id = setInterval(refresh, 30_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      isMounted = false;
-      clearTimeout(timeout);
-      subscription.unsubscribe();
+      active = false;
+      clearInterval(id);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, []);
+  }, [isLoaded, isSignedIn, getToken]);
 
-  const fetchUserData = async (accessToken: string, force: boolean = false): Promise<boolean> => {
-    // Prevent concurrent fetches with the same token (race condition fix for production)
-    if (fetchingUserDataRef.current && lastFetchedTokenRef.current === accessToken && !force) {
-      return false;
-    }
-
-    // Prevent fetching with the same token twice (SIGNED_IN + INITIAL_SESSION events)
-    // Skip this check if force=true (for workspace switching)
-    if (!force && lastFetchedTokenRef.current === accessToken && userData) {
-      return !!onboardingCompleted;
-    }
-
+  const fetchUserData = useCallback(async (force: boolean = false): Promise<boolean> => {
+    if (fetchingUserDataRef.current && !force) return false;
     fetchingUserDataRef.current = true;
-    lastFetchedTokenRef.current = accessToken;
     setUserDataLoading(true);
 
     try {
+      const accessToken = await getToken();
+      if (!accessToken) return false;
+
       const apiUrl = import.meta.env.VITE_API_URL ?? '';
-      // Check for selected workspace in localStorage
       const selectedWorkspaceId = localStorage.getItem('selectedWorkspaceId');
       const url = selectedWorkspaceId
         ? `${apiUrl}/me?workspace_id=${selectedWorkspaceId}`
         : `${apiUrl}/me`;
 
-      let response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
+      let response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
 
       // Stale selectedWorkspaceId (leftover from a previous user in this browser)
-      // gives a 403. Drop it and retry with the bare /me so the server picks
-      // a workspace this user actually belongs to.
+      // gives a 403. Drop it and retry with the bare /me.
       if (response.status === 403 && selectedWorkspaceId) {
         console.warn('[AUTH] Stored selectedWorkspaceId 403d — clearing and retrying');
         localStorage.removeItem('selectedWorkspaceId');
-        response = await fetch(`${apiUrl}/me`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
-        });
+        response = await fetch(`${apiUrl}/me`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      }
+
+      // Token may have rotated under us — force a fresh one and retry once.
+      if (response.status === 401) {
+        const fresh = await getToken({ skipCache: true });
+        if (fresh && fresh !== accessToken) {
+          setToken(fresh);
+          response = await fetch(url, { headers: { Authorization: `Bearer ${fresh}` } });
+        }
       }
 
       if (response.ok) {
         const data = await response.json();
-
-        // If cached workspace doesn't belong to this user, clear it and use the one from /me
         if (data.workspace) {
           const cached = localStorage.getItem('selectedWorkspaceId');
           if (!cached || cached !== data.workspace.id) {
             localStorage.setItem('selectedWorkspaceId', data.workspace.id);
           }
         }
-
         setUserData(data);
         const isCompleted = !!data.onboarding_completed;
         setOnboardingCompleted(isCompleted);
         return isCompleted;
-      } else if (response.status === 401) {
-        // Token may be stale — try refreshing the Supabase session once
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        if (refreshed?.session?.access_token && refreshed.session.access_token !== accessToken) {
-          lastFetchedTokenRef.current = refreshed.session.access_token;
-          const retry = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${refreshed.session.access_token}` },
-          });
-          if (retry.ok) {
-            const data = await retry.json();
-            if (data.workspace) {
-              const cached = localStorage.getItem('selectedWorkspaceId');
-              if (!cached || cached !== data.workspace.id) {
-                localStorage.setItem('selectedWorkspaceId', data.workspace.id);
-              }
-            }
-            setUserData(data);
-            setOnboardingCompleted(!!data.onboarding_completed);
-            return !!data.onboarding_completed;
-          }
-        }
-        return false;
-      } else {
-        if (response.status === 429) {
-          console.warn('[AUTH] Rate limit hit for /me endpoint, will retry later');
-          return false;
-        }
-        return false;
       }
+
+      if (response.status === 429) {
+        console.warn('[AUTH] Rate limit hit for /me endpoint, will retry later');
+      }
+      return false;
     } catch (error) {
       console.error('Error fetching user data:', error);
       return false;
@@ -203,113 +143,120 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       fetchingUserDataRef.current = false;
       setUserDataLoading(false);
     }
-  };
+  }, [getToken]);
 
-  // Expose refresh function for components to call after onboarding or workspace switching
-  const refreshUserData = async () => {
-    if (session?.access_token) {
-      await fetchUserData(session.access_token, true); // Force refresh
+  // Load /me once per sign-in. Clerk rotates the token every ~30s; we deliberately
+  // do NOT refetch on rotation — only on sign-in, and on explicit refreshUserData().
+  useEffect(() => {
+    if (!isLoaded) return;
+    if (!isSignedIn) {
+      meFetchedRef.current = false;
+      setUserData(null);
+      setOnboardingCompleted(false);
+      return;
     }
-  };
+    if (meFetchedRef.current) return;
+    meFetchedRef.current = true;
+    fetchUserData(true);
+  }, [isLoaded, isSignedIn, fetchUserData]);
+
+  const refreshUserData = useCallback(() => { fetchUserData(true); }, [fetchUserData]);
 
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { error, data };
+    if (!signInLoaded) return { error: { message: 'Auth is still loading — try again in a moment.' } };
+    try {
+      const res = await signInResource.create({ identifier: email, password });
+      if (res.status === 'complete') {
+        await setActiveSignIn({ session: res.createdSessionId });
+        return { error: null, data: {} };
+      }
+      return { error: { message: 'Additional verification is required to sign in.' } };
+    } catch (err) {
+      return { error: clerkError(err) };
+    }
   };
 
-  const signUp = async (email: string, password: string, name?: string, newsletterConsent?: boolean) => {
-    // Ensure we use the frontend URL, not backend
-    const frontendUrl = window.location.origin;
-    // Redirect to dashboard - onboarding modals will handle setup
-    const redirectUrl = `${frontendUrl}/`;
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name,
-          full_name: name,
-          newsletter_consent: newsletterConsent ?? false,
-        },
-        emailRedirectTo: redirectUrl,
-      },
-    });
-
-    // If session exists (email confirmation disabled), fetch user data immediately
-    if (data.session) {
-      // Small delay to ensure state updates
-      setTimeout(() => {
-        fetchUserData(data.session.access_token);
-      }, 100);
+  const signUp = async (email: string, password: string, name?: string, _newsletterConsent?: boolean) => {
+    if (!signUpLoaded) return { error: { message: 'Auth is still loading — try again in a moment.' }, data: null };
+    try {
+      // Resend path: a signup is already in flight for this email — just re-send
+      // the email code instead of re-creating (which Clerk would reject).
+      if (signUpResource.id) {
+        await signUpResource.prepareEmailAddressVerification({ strategy: 'email_code' });
+        return { error: null, data: { session: null } };
+      }
+      await signUpResource.create({ emailAddress: email, password, ...(name ? { firstName: name } : {}) });
+      await signUpResource.prepareEmailAddressVerification({ strategy: 'email_code' });
+      // No session yet — the page moves to its email-code step, which calls verifyOtp.
+      return { error: null, data: { session: null } };
+    } catch (err) {
+      return { error: clerkError(err), data: null };
     }
-
-    return { error, data };
   };
 
-  const verifyOtp = async (email: string, token: string) => {
-    const { data, error } = await supabase.auth.verifyOtp({
-      email,
-      token,
-      type: 'signup',
-    });
-
-    if (data.session) {
-      await fetchUserData(data.session.access_token);
+  const verifyOtp = async (_email: string, code: string) => {
+    if (!signUpLoaded) return { error: { message: 'Auth is still loading — try again in a moment.' }, data: null };
+    try {
+      const res = await signUpResource.attemptEmailAddressVerification({ code });
+      if (res.status === 'complete') {
+        await setActiveSignUp({ session: res.createdSessionId });
+        return { error: null, data: { session: {} } };
+      }
+      return { error: { message: 'That code did not verify. Please try again.' }, data: null };
+    } catch (err) {
+      return { error: clerkError(err), data: null };
     }
-
-    return { error, data };
   };
 
   const signInWithGoogle = async (redirectPath?: string) => {
-    // Ensure we use the frontend URL, not backend
-    const frontendUrl = window.location.origin;
-    // Default to the dashboard; callers (e.g. invite accept) can pass a path to
-    // return to — critical so the invite token survives the Google round-trip and
-    // the accept can auto-fire on return.
-    const redirectUrl = `${frontendUrl}${redirectPath ?? "/"}`;
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: redirectUrl,
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      },
-    });
-    return { error };
+    if (!signInLoaded) return { error: { message: 'Auth is still loading — try again in a moment.' } };
+    try {
+      const origin = window.location.origin;
+      // OAuth returns to /sso-callback (which finalizes the flow), then Clerk
+      // forwards to redirectUrlComplete — so the CLI/invite return path survives
+      // the Google round-trip.
+      await signInResource.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: `${origin}/sso-callback`,
+        redirectUrlComplete: `${origin}${redirectPath ?? '/'}`,
+      });
+      return { error: null };
+    } catch (err) {
+      return { error: clerkError(err) };
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
-    // Wipe per-user browser state so the next person signing in on this
-    // browser doesn't inherit a stale workspace pointer.
     try {
-      localStorage.removeItem('selectedWorkspaceId');
-    } catch { /* sandbox / private mode */ }
+      await clerkSignOut();
+    } catch { /* already signed out */ }
+    // Wipe per-user browser state so the next person on this browser doesn't
+    // inherit a stale workspace pointer.
+    try { localStorage.removeItem('selectedWorkspaceId'); } catch { /* sandbox / private mode */ }
     setUserData(null);
     setOnboardingCompleted(false);
     setUserDataLoading(false);
   };
+
+  const email = clerkUser?.primaryEmailAddress?.emailAddress ?? null;
+  const user: AuthUser = isSignedIn ? { id: clerkUser?.id ?? null, email } : null;
+  const session: AuthSession = isSignedIn && token
+    ? { access_token: token, user: { id: clerkUser?.id ?? null, email } }
+    : null;
 
   return (
     <AuthContext.Provider
       value={{
         user,
         session,
-        loading,
+        loading: !isLoaded,
         userDataLoading,
         signIn,
         signUp,
         signInWithGoogle,
         signOut,
         verifyOtp,
-        isAuthenticated: !!user,
+        isAuthenticated: !!isSignedIn,
         userData,
         onboardingCompleted,
         refreshUserData,
@@ -327,4 +274,3 @@ export function useAuth() {
   }
   return context;
 }
-

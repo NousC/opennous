@@ -106,7 +106,7 @@ const SignupContent = () => {
   };
 
   const handleVerifyOtp = async () => {
-    if (otpCode.length !== 8) return;
+    if (otpCode.length !== 6) return;
     setLoading(true);
 
     const { error } = await verifyOtp(email, otpCode);
@@ -195,13 +195,13 @@ const SignupContent = () => {
 
             <div className="flex justify-center mt-6 mb-5">
               <InputOTP
-                maxLength={8}
+                maxLength={6}
                 value={otpCode}
                 onChange={(value) => setOtpCode(value)}
                 disabled={loading}
               >
                 <InputOTPGroup>
-                  {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+                  {[0, 1, 2, 3, 4, 5].map((i) => (
                     <InputOTPSlot
                       key={i}
                       index={i}
@@ -229,7 +229,7 @@ const SignupContent = () => {
             <Button
               onClick={handleVerifyOtp}
               className="w-full h-12 rounded-lg pl-5 pr-1.5 flex items-center justify-between gap-2 font-medium text-sm bg-[#E0912B] hover:brightness-105 text-[#1a1000] transition-transform hover:scale-[1.005] disabled:opacity-60 disabled:hover:scale-100"
-              disabled={loading || otpCode.length !== 8}
+              disabled={loading || otpCode.length !== 6}
             >
               <span>{loading ? "Verifying..." : "Continue"}</span>
               <span
@@ -390,11 +390,11 @@ const SignupContent = () => {
                 <div className="relative">
                   <Input
                     type={showPassword ? "text" : "password"}
-                    placeholder="Password (min 6 characters)"
+                    placeholder="Password (min 8 characters)"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={8}
                     className="h-11 rounded-lg text-sm border-[#E4DED1] bg-[#FBFAF5] text-[#1A1712] placeholder:text-[#6B655B] pr-10 focus-visible:ring-[#96601f] focus-visible:border-[#96601f]"
                     disabled={loading}
                   />
