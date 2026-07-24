@@ -53,7 +53,9 @@ insightsApiRouter.post('/extract', verifySupabaseAuth, async (req, res) => {
       try {
         const msg = await anthropic.messages.create({
           feature: 'call-insights-extract',
-          model: 'claude-haiku-4-5-20251001',
+          // Sonnet — see apps/worker/src/signals/insights.mjs for why (founder-critical,
+          // once per call, must catch thesis-validation insights Haiku drops).
+          model: 'claude-sonnet-5',
           max_tokens: 1400,
           messages: [{ role: 'user', content: buildInsightExtractionPrompt(call.content) }],
         });

@@ -28,7 +28,10 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
 
     const msg = await anthropic.messages.create({
       feature: 'call-insights-extract',
-      model: 'claude-haiku-4-5-20251001',
+      // Sonnet, not Haiku: insight extraction runs ONCE per call (not per fact) and is
+      // founder-critical — it must catch abstract thesis-validation insights that Haiku
+      // reliably drops in favour of concrete items. The claim extractor stays on Haiku.
+      model: 'claude-sonnet-5',
       max_tokens: 1400,
       messages: [{ role: 'user', content: buildInsightExtractionPrompt(transcript) }],
     });
