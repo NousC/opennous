@@ -1,0 +1,111 @@
+name: Context Graph
+
+# The rule: any change to the open-source context-graph substrate / control plane
+#   (1) is guarded — a clean substrate module may never import closed product code, and
+#   (2) is flagged — on merge to main it (will) sync to the OSS mirror repo.
+# Auto-push activates once the mirror exists: set the repo variable CONTEXT_GRAPH_REPO
+# (e.g. NousC/context-graph) + a deploy token, and the sync step below runs. Until then it
+# prints a pending notice. Path set mirrors context-graph.paths.json (source of truth).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/core/src/db/canonicalAxes.ts"
+      - "packages/core/src/db/conflicts.ts"
+      - "packages/core/src/db/identityProposals.ts"
+      - "packages/core/src/db/claimCategories.ts"
+      - "packages/core/src/db/readContext.ts"
+      - "packages/core/src/db/client.ts"
+      - "packages/core/src/db/observations.ts"
+      - "packages/core/src/db/claims.ts"
+      - "packages/core/src/db/entities.ts"
+      - "packages/core/src/db/activities.ts"
+      - "packages/core/src/db/relationshipOwner.ts"
+      - "packages/core/src/dateResolve.ts"
+      - "packages/core/src/utils/identity.ts"
+      - "packages/core/src/services/canonicalProjection.ts"
+      - "apps/api/src/routes/api/graph.mjs"
+      - "apps/api/src/routes/api/systemLog.mjs"
+      - "apps/api/src/routes/api/conflicts.mjs"
+      - "apps/api/src/routes/api/identityProposals.mjs"
+      - "apps/api/src/lib/visibility.mjs"
+      - "apps/worker/src/workers/claimEngine.mjs"
+      - "apps/worker/src/utils/resolveMeeting.mjs"
+      - "apps/worker/src/utils/resolveContact.mjs"
+      - "apps/worker/src/webhooks/handlers/fireflies.mjs"
+      - "apps/worker/src/webhooks/handlers/fathom.mjs"
+      - "apps/worker/src/signals/**"
+      - "supabase/migrations/**"
+      - "context-graph.paths.json"
+  pull_request:
+    paths:
+      - "packages/core/src/db/canonicalAxes.ts"
+      - "packages/core/src/db/conflicts.ts"
+      - "packages/core/src/db/identityProposals.ts"
+      - "packages/core/src/db/claimCategories.ts"
+      - "packages/core/src/db/readContext.ts"
+      - "packages/core/src/db/client.ts"
+      - "packages/core/src/db/observations.ts"
+      - "packages/core/src/db/claims.ts"
+      - "packages/core/src/db/entities.ts"
+      - "packages/core/src/db/activities.ts"
+      - "packages/core/src/db/relationshipOwner.ts"
+      - "packages/core/src/dateResolve.ts"
+      - "packages/core/src/utils/identity.ts"
+      - "packages/core/src/services/canonicalProjection.ts"
+      - "apps/api/src/routes/api/graph.mjs"
+      - "apps/api/src/routes/api/systemLog.mjs"
+      - "apps/api/src/routes/api/conflicts.mjs"
+      - "apps/api/src/routes/api/identityProposals.mjs"
+      - "apps/api/src/lib/visibility.mjs"
+      - "apps/worker/src/workers/claimEngine.mjs"
+      - "apps/worker/src/utils/resolveMeeting.mjs"
+      - "apps/worker/src/utils/resolveContact.mjs"
+      - "apps/worker/src/webhooks/handlers/fireflies.mjs"
+      - "apps/worker/src/webhooks/handlers/fathom.mjs"
+      - "apps/worker/src/signals/**"
+      - "supabase/migrations/**"
+      - "context-graph.paths.json"
+
+jobs:
+  guard:
+    # Imported public PRs (copy.bara.sky import_pr, branch public-pr/N) are untrusted code: never
+    # run them here, where CI has secrets and the private tree (GET-753).
+    if: ${{ !startsWith(github.head_ref, 'public-pr/') && !startsWith(github.ref_name, 'public-pr/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: No product imports in the clean substrate
+        run: node scripts/context-graph-guard.mjs
+
+  flag-and-sync:
+    # Imported public PRs (copy.bara.sky import_pr, branch public-pr/N) are untrusted code: never
+    # run them here, where CI has secrets and the private tree (GET-753).
+    if: ${{ !startsWith(github.head_ref, 'public-pr/') && !startsWith(github.ref_name, 'public-pr/') }}
+    runs-on: ubuntu-latest
+    needs: guard
+    steps:
+      - name: Flag this as a context-graph change
+        run: |
+          echo "### Context graph change detected" >> "$GITHUB_STEP_SUMMARY"
+          echo "This change touches the open-source context-graph substrate / control plane." >> "$GITHUB_STEP_SUMMARY"
+          echo "On merge to \`main\` it syncs to the OSS mirror (once configured)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Sync to the OSS mirror (main only, when configured)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CONTEXT_GRAPH_REPO: ${{ vars.CONTEXT_GRAPH_REPO }}
+        run: |
+          if [ -z "$CONTEXT_GRAPH_REPO" ]; then
+            echo "::notice::OSS mirror not configured yet (no CONTEXT_GRAPH_REPO). Sync pending Phase 3 (carve packages/context-graph + create the repo). No-op."
+            exit 0
+          fi
+          if [ ! -f scripts/sync-context-graph.mjs ]; then
+            echo "::notice::CONTEXT_GRAPH_REPO is set but scripts/sync-context-graph.mjs does not exist yet. Skipping."
+            exit 0
+          fi
+          echo "Syncing context graph → $CONTEXT_GRAPH_REPO"
+          node scripts/sync-context-graph.mjs

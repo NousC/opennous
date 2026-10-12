@@ -1,0 +1,14 @@
+-- Source becomes a dimension on the Noema measures (GET-193/GET-328).
+--
+-- A meeting corpus and an email corpus have genuinely different shapes: email is heavier on
+-- commitments and timing, a call heavier on pain and objection. Add a few thousand email threads to a few hundred
+-- meeting claims and `noema.claims.<category>` becomes an email distribution with meeting noise in
+-- it — every week-on-week comparison silently changes meaning, and nothing looks wrong while it
+-- happens. Grounding has the same problem: one source hallucinating disappears inside a healthy
+-- average.
+--
+-- So the per-source series is added BEFORE the first Gmail batch rather than explained afterwards.
+-- The all-source series stays, so the existing history remains continuous.
+--
+-- The function body is in this repo's migration for the observatory; this migration only widens it.
+-- Applied to prod 2026-09-18.

@@ -1,0 +1,29 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    # Imported public PRs (copy.bara.sky import_pr, branch public-pr/N) are untrusted code: never
+    # run them here, where CI has secrets and the private tree (GET-753).
+    if: ${{ !startsWith(github.head_ref, 'public-pr/') && !startsWith(github.ref_name, 'public-pr/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build

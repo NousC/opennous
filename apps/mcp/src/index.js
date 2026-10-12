@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+
+/**
+ * Nous MCP Server — stdio entrypoint (published as @opennous/mcp).
+ *
+ * Runs locally and is launched by the client via `npx -y @opennous/mcp`. The
+ * workspace API key comes from the env. For the hosted, multi-tenant HTTP
+ * variant see http.js; the tools themselves live in server.js.
+ *
+ * Required env:
+ *   NOUS_API_KEY   — workspace API key (Settings -> API Keys)
+ * Optional:
+ *   NOUS_API_URL   — API base URL (default: https://api.opennous.cloud)
+ */
+
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { validateConfig } from "./client.js";
+import { createServer } from "./server.js";
+
+// Advisory only — don't hard-exit if there's no key yet. The user may register
+// the MCP first and sign in after (`npx @opennous/cli login`); the server must
+// already be running so the key (resolved per-call from env or ~/.nous/config.json)
+// is picked up without a restart.
+try {
+  validateConfig();
+} catch (err) {
+  console.error(`[nous] ${err.message}`);
+}
+
+// NOUS_SURFACE=plugin trims the stdio server to the 6-primitive plugin allowlist
+// (+ whoami) — the same trim the hosted HTTP variant applies via ?surface=plugin.
+// Unset (or any other value) serves the full toolset. See server.js createServer({surface}).
+const server = createServer({ surface: process.env.NOUS_SURFACE });
+const transport = new StdioServerTransport();
+await server.connect(transport);

@@ -1,0 +1,169 @@
+# Nous self-host, batteries included: the app plus its own database and auth.
+# No Supabase account needed. Layered on top of docker-compose.yaml, which stays the
+# file for running against an external Supabase project (Nous Cloud runs that one).
+#
+#   cp nous.env.example nous.env              # set APP_DOMAIN, API_DOMAIN, MCP_DOMAIN, ANTHROPIC_API_KEY
+#   node scripts/selfhost-keys.mjs nous.env   # writes secrets + COMPOSE_FILE into nous.env
+#   docker compose --env-file nous.env up -d --build
+#
+# The keys script sets COMPOSE_FILE=docker-compose.yaml:docker-compose.selfhost.yaml
+# in nous.env, so that plain command (and ./update.sh) layers this file on. Without
+# it, pass both files: -f docker-compose.yaml -f docker-compose.selfhost.yaml.
+#
+# Adds:
+#   db         Postgres 17 + pgvector (data in the nous_pgdata volume)
+#   auth       GoTrue, Supabase's auth server (sign-up, sign-in, email links)
+#   db-schema  one-shot on every start: applies supabase/schema.sql on a fresh database,
+#              then any supabase/migrations files not yet in the ledger, then grants
+#   postgrest  PostgREST, the REST layer supabase-js talks to (internal only)
+# and points api, worker and mcp at them through Caddy's internal gateway
+# (http://supabase:8000). Full guide: docs/self-host-bundled.md
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/selfhost-keys.mjs first}
+    volumes:
+      - nous_pgdata:/var/lib/postgresql/data
+      - ./deploy/selfhost/db/00-supabase-roles.sh:/docker-entrypoint-initdb.d/00-supabase-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  auth:
+    image: supabase/gotrue:v2.178.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: "9999"
+      API_EXTERNAL_URL: https://${APP_DOMAIN}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: https://${APP_DOMAIN}
+      GOTRUE_URI_ALLOW_LIST: https://${APP_DOMAIN}/**
+      GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}
+      GOTRUE_JWT_SECRET: ${SUPABASE_JWT_SECRET:?run scripts/selfhost-keys.mjs first}
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: "false"
+      # No SMTP: AUTOCONFIRM true, so sign-up returns a session at once (there is no
+      # way to send a confirmation). With SMTP set, scripts/selfhost-keys.mjs writes
+      # false, so addresses are confirmed by email. The api gets the same value as
+      # AUTH_EMAIL_AUTOCONFIRM (below): keep the two expressions identical.
+      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-true}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
+      GOTRUE_SMTP_SENDER_NAME: ${SMTP_SENDER_NAME:-Nous}
+      GOTRUE_MAILER_URLPATHS_INVITE: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_CONFIRMATION: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_RECOVERY: /auth/v1/verify
+      GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9999/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  db-schema:
+    image: pgvector/pgvector:pg17
+    restart: "no"
+    depends_on:
+      auth:
+        condition: service_healthy
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Only to print the owner's setup link while the instance has no owner.
+      SELFHOST_SETUP_TOKEN: ${SELFHOST_SETUP_TOKEN:-}
+      APP_DOMAIN: ${APP_DOMAIN}
+    volumes:
+      # The whole folder: schema.sql, migrations/, and schema-baseline-migrations.txt
+      # when the checkout has it (a missing single-file mount would become a directory).
+      - ./supabase:/supabase:ro
+      - ./deploy/selfhost/db:/selfhost:ro
+    entrypoint: ["/bin/sh", "/selfhost/apply-schema.sh"]
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    depends_on:
+      db-schema:
+        condition: service_completed_successfully
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_DB_MAX_ROWS: ""
+
+  api:
+    environment:
+      SUPABASE_URL: http://supabase:8000
+      AUTH_PROVIDER: supabase
+      # Closed by default: only the sign-up that presents SELFHOST_SETUP_TOKEN becomes the
+      # owner (one atomic claim, lib/instanceOwner.mjs); after that, only invitees.
+      DISABLE_SIGNUPS: ${DISABLE_SIGNUPS:-true}
+      SELFHOST_SETUP_TOKEN: ${SELFHOST_SETUP_TOKEN:?run scripts/selfhost-keys.mjs first}
+      # Tells the API that GoTrue confirms addresses without an email, so an invite
+      # or pending seat is never handed over by email match, only by invite token.
+      # Must be the same expression as the auth service's GOTRUE_MAILER_AUTOCONFIRM.
+      AUTH_EMAIL_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-true}
+    depends_on:
+      db-schema:
+        condition: service_completed_successfully
+      postgrest:
+        condition: service_started
+
+  worker:
+    environment:
+      SUPABASE_URL: http://supabase:8000
+    depends_on:
+      db-schema:
+        condition: service_completed_successfully
+
+  mcp:
+    environment:
+      SUPABASE_URL: http://supabase:8000
+
+  frontend:
+    build:
+      args:
+        VITE_AUTH_PROVIDER: supabase
+        VITE_CLERK_PUBLISHABLE_KEY: ""
+        VITE_SUPABASE_URL: https://${APP_DOMAIN}
+        VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?run scripts/selfhost-keys.mjs first}
+        # Same origin: the frontend's nginx proxies /api and /me to the API.
+        VITE_API_URL: ""
+        # Off on self-host: company favicons and Gravatar photos would tell Google and Gravatar
+        # which domains and (hashed) emails are in your workspace. Set true in nous.env to show them.
+        VITE_EXTERNAL_IMAGES: ${VITE_EXTERNAL_IMAGES:-false}
+
+  caddy:
+    volumes:
+      - ./deploy/selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      default:
+        aliases:
+          - supabase
+    depends_on:
+      - auth
+      - postgrest
+
+volumes:
+  nous_pgdata:

@@ -1,0 +1,27 @@
+-- The index behind "everything of this kind, in this workspace".
+--
+-- observations had no index starting at (workspace_id, property). Every index it did have starts
+-- at entity_id (observations_claim_input, observations_timeline) or is the dedup key
+-- (workspace_id, source, external_id), so a read that names a workspace and a kind of thing but
+-- no single entity had nothing to use and fell to a sequential scan.
+--
+-- That is the shape the account and deal lists ask for, and the shape every activity rollup asks
+-- for. It is fine at ten thousand rows and fatal past a million: on a workspace past a million
+-- observations, those reads stopped returning at all —
+--
+--   SELECT ... FROM observations WHERE workspace_id = $1 AND property = 'interaction.call_made'
+--   -> canceling statement due to statement timeout   (57014)
+--
+-- observed_at DESC is the third column because these reads are nearly always "most recent first",
+-- so the ordering comes out of the index instead of a sort over the whole match.
+--
+-- CONCURRENTLY: the table is hot and this must not take a write lock on a live workspace. It
+-- cannot run inside a transaction block, so apply it as a statement of its own. If it is ever
+-- interrupted it leaves an INVALID index behind — drop that before re-running:
+--
+--   SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+--   DROP INDEX CONCURRENTLY idx_observations_ws_property;
+--
+-- Idempotent.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_observations_ws_property
+    ON public.observations (workspace_id, property, observed_at DESC);

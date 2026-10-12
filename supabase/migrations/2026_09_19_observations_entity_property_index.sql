@@ -1,0 +1,57 @@
+-- The engagement check reads an index keyed by PERSON, not by activity type (GET perf, 2026-09-19).
+-- Applied to production 2026-09-19.
+--
+-- The `contacts` view decides who is a real contact with an EXISTS over observations, asking
+-- "has this person any of these 20 interaction types?". The only index that served it was
+-- observations_event_property_entity (property, entity_id), keyed on the activity TYPE first.
+--
+-- With property leading, one person costs TWENTY btree descents -- one per value in the array --
+-- which are then OR'd together. Measured on a 203-entity workspace (110 loops):
+--
+--     Bitmap Index Scan (property = ANY(20 values) AND entity_id = e.id)   Buffers: 3300  (30/loop)
+--     Bitmap Index Scan (property = 'interaction.linkedin_message'     )   Buffers:  330  ( 3/loop)
+--
+-- Exactly 10x, for asking twenty values instead of one.
+--
+-- Worse, above roughly 300 estimated people the planner abandons the per-person check entirely
+-- and builds a hash of EVERY person in the DATABASE who has ever interacted, then tests
+-- membership. On a mid-sized workspace that meant materialising tens of thousands of observation rows --
+-- almost all belonging to a different tenant -- reading hundreds of MB of heap blocks, and
+-- evicting other pages to do it. 6,345 ms for one page.
+--
+-- An entity-leading index makes the per-person check one descent instead of twenty, which is
+-- enough for the planner to stop flipping to the hash.
+--
+--     a mid-sized workspace:  6,345 ms  ->  91 ms      plan CORRELATED, uses this index
+--     a smaller workspace:      108 ms  ->  roughly a quarter of the buffers
+--
+-- ADDED ALONGSIDE the property-leading index, not instead of it. If the planner still chooses
+-- the hashed plan it still needs (property, entity_id); dropping that first would have turned a
+-- slow index scan into a sequential scan of a large table. It costs a few MB, so there is no
+-- pressure to remove it.
+--
+-- NOT FIXED by this, and deliberately left alone: the largest workspaces
+-- still choose the hashed plan and still take seconds. Indexing does not reach them;
+-- the answer there is to stop reading the view at all. A SET STATISTICS 1000 bump on
+-- observations.property/entity_id was tried and REVERTED -- it bought 117ms -> 58ms on an
+-- already-fixed workspace, did not move the plans that misbehave, and made ANALYZE on the
+-- hottest table in the system 4x slower (1.8s -> 8.4s). An unproven permanent cost on a hot
+-- table is not a fix.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS observations_entity_property_event
+  ON public.observations (entity_id, property) WHERE kind = 'event';
+
+-- ---------------------------------------------------------------------------
+-- Dead weight, measured over the life of these statistics and dropped.
+-- ---------------------------------------------------------------------------
+-- observations_ws_property_at_id: 87 MB, THIRTEEN scans ever. It overlaps
+-- idx_observations_ws_property (45 MB, 6,899 scans), which serves the same shape.
+-- entity_identifiers_source_idx: 208 kB, ZERO scans ever.
+--
+-- Both are maintained on every insert into the two hottest tables in the system, so they were
+-- charging write cost for reads nobody makes. Rollback is the definition itself:
+--   CREATE INDEX observations_ws_property_at_id ON public.observations
+--     USING btree (workspace_id, property, observed_at DESC, id DESC);
+--   CREATE INDEX entity_identifiers_source_idx ON public.entity_identifiers
+--     USING btree (workspace_id, source) WHERE (source IS NOT NULL);
+DROP INDEX CONCURRENTLY IF EXISTS public.observations_ws_property_at_id;
+DROP INDEX CONCURRENTLY IF EXISTS public.entity_identifiers_source_idx;

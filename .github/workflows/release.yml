@@ -1,0 +1,115 @@
+name: Release
+
+# Container images for self-hosters (GET-758). On a version tag in the PUBLIC repo, builds
+# api, worker, mcp and frontend from the open-source tree for linux/amd64 + linux/arm64 and
+# pushes them to GHCR:
+#
+#   ghcr.io/nousc/opennous-api       :1.2.3  :1.2  :latest   (:1.2 and :latest only when this is
+#                                                           the newest stable tag; not for -rc or backports)
+#   ghcr.io/nousc/opennous-worker    (same tags)
+#   ghcr.io/nousc/opennous-mcp
+#   ghcr.io/nousc/opennous-frontend
+#
+# Cut a release: tag the public repo, e.g.  git tag v1.2.3 && git push origin v1.2.3
+# (tags are not exported by Copybara; they are made on NousC/opennous itself).
+# Self-hosters use them through docker-compose.release.yaml and NOUS_VERSION (see update.sh).
+#
+# The frontend image is built with placeholders for the two per-install values (Supabase URL
+# and anon key); apps/frontend/docker/40-nous-runtime-config.sh fills them in on start.
+#
+# This file also lives in the private repo (NousC/opennous-cloud), where it must never run:
+# the private tree holds the Cloud layer. Two guards: the repository name, and a check that
+# no cloud/ folder or private file is in the checkout.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    if: github.repository == 'NousC/opennous'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+          - name: worker
+            dockerfile: apps/worker/Dockerfile
+          - name: mcp
+            dockerfile: apps/mcp/Dockerfile
+          - name: frontend
+            dockerfile: apps/frontend/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # all tags, to decide whether this release is the newest
+
+      - name: This is the public tree
+        run: |
+          leaks=$(find . -path ./node_modules -prune -o \( -path '*/src/cloud' -o -name CLAUDE.md -o -name SLACK.md \
+            -o -name fn.sql -o -name copy.bara.sky -o -name public-export.json -o -name export-preview.mjs \
+            -o -name check-public-build.mjs -o -path ./.github/workflows/public-export.yml \
+            -o -path ./docs/unit-economics.md -o -path ./docs/biggest-ideas.md -o -path ./docs/customer-success.md \) -print)
+          if [ -n "$leaks" ]; then
+            echo "::error::private files in the checkout, refusing to publish images:"; echo "$leaks"; exit 1
+          fi
+
+      # :latest only for the newest stable release: not for a pre-release (v1.3.0-rc.1) and not
+      # for a backport (v1.1.5 tagged after v1.2.0).
+      - name: Is this the newest stable release?
+        id: newest
+        run: |
+          newest=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -e '-' | head -n1)
+          if [ "$GITHUB_REF_NAME" = "$newest" ]; then echo "latest=true" >> "$GITHUB_OUTPUT"; else echo "latest=false" >> "$GITHUB_OUTPUT"; fi
+          echo "this: $GITHUB_REF_NAME, newest stable: $newest"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/nousc/opennous-${{ matrix.name }}
+          flavor: |
+            latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.newest.outputs.latest }}
+            type=raw,value=latest,enable=${{ steps.newest.outputs.latest }}
+          labels: |
+            org.opencontainers.image.title=opennous-${{ matrix.name }}
+            org.opencontainers.image.source=https://github.com/NousC/opennous
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Only the frontend reads these. Self-host signs in with Supabase Auth on the same
+          # origin; the two per-install values are placeholders filled in at container start.
+          build-args: |
+            VITE_AUTH_PROVIDER=supabase
+            VITE_CLERK_PUBLISHABLE_KEY=
+            VITE_SUPABASE_URL=__NOUS_RUNTIME_SUPABASE_URL__
+            VITE_SUPABASE_ANON_KEY=__NOUS_RUNTIME_SUPABASE_ANON_KEY__
+            VITE_API_URL=
+            VITE_EXTERNAL_IMAGES=false
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max

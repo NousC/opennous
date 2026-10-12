@@ -1,0 +1,29 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["type: feature-request"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What do you want to build or improve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: pitch
+    attributes:
+      label: Why is this needed?
+      description: What agent use case or workflow does this unlock?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you implement it? (optional but helpful)
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

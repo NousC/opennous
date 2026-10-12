@@ -1,0 +1,36 @@
+# Run the released images from GHCR instead of building on your server (GET-758).
+# Layer it on top of the other compose files and pin a version in nous.env:
+#
+#   NOUS_VERSION=1.2.3
+#   COMPOSE_FILE=docker-compose.yaml:docker-compose.selfhost.yaml:docker-compose.release.yaml
+#                (drop docker-compose.selfhost.yaml if you use an external Supabase project)
+#
+#   docker compose --env-file nous.env pull api worker mcp frontend
+#   docker compose --env-file nous.env up -d
+#
+# ./update.sh does both (and checks out the matching tag) whenever NOUS_VERSION is set.
+# The build: sections in docker-compose.yaml stay, so this is a fallback, not a lock-in:
+# `up` uses the pulled image, and builds from source only when the image is missing
+# (pull failed, or no release for that version). `up --build` always builds from source.
+#
+# Use the same NOUS_VERSION as the checked-out tag (update.sh does), so the compose files,
+# migrations and images agree.
+
+services:
+  api:
+    image: ghcr.io/nousc/opennous-api:${NOUS_VERSION:?set NOUS_VERSION in nous.env, e.g. 1.2.3}
+
+  worker:
+    image: ghcr.io/nousc/opennous-worker:${NOUS_VERSION:?set NOUS_VERSION in nous.env, e.g. 1.2.3}
+
+  mcp:
+    image: ghcr.io/nousc/opennous-mcp:${NOUS_VERSION:?set NOUS_VERSION in nous.env, e.g. 1.2.3}
+
+  frontend:
+    image: ghcr.io/nousc/opennous-frontend:${NOUS_VERSION:?set NOUS_VERSION in nous.env, e.g. 1.2.3}
+    environment:
+      # The release frontend is built once for everyone; these two per-install values are
+      # written into it on start (apps/frontend/docker/40-nous-runtime-config.sh).
+      # scripts/selfhost-keys.mjs sets both VITE_* values in nous.env for the bundled stack.
+      NOUS_SUPABASE_URL: ${VITE_SUPABASE_URL:?set VITE_SUPABASE_URL in nous.env}
+      NOUS_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?set VITE_SUPABASE_ANON_KEY in nous.env}

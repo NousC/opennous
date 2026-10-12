@@ -1,0 +1,48 @@
+# Serve HTTP/1.1 + HTTP/2 only — no HTTP/3. QUIC resets long-lived SSE streams in
+# some networks (Chrome surfaces ERR_QUIC_PROTOCOL_ERROR and, unlike a navigation,
+# a failed fetch/EventSource does not silently retry over TCP), which was killing
+# the agent chat stream mid-answer. HTTP/2 handles SSE reliably; the small h3 perf
+# edge isn't worth dropping a streaming request.
+{
+    servers {
+        protocols h1 h2
+    }
+}
+
+# Shared security headers. HSTS + nosniff everywhere; the app also refuses to be
+# framed (clickjacking) and trims the referrer. A tuned Content-Security-Policy is
+# a deliberate follow-up (it needs allow-lists for Clerk/Stripe/PostHog origins).
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
+
+{$APP_DOMAIN} {
+    import security_headers
+    header {
+        X-Frame-Options "DENY"
+        Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+    }
+    reverse_proxy frontend:80
+}
+
+{$API_DOMAIN} {
+    import security_headers
+    handle /inbound/* {
+        reverse_proxy worker:3001
+    }
+    # flush_interval -1 forwards every write immediately — the agent chat is an SSE
+    # stream, so the proxy must never buffer it.
+    reverse_proxy api:3000 {
+        flush_interval -1
+    }
+}
+
+{$MCP_DOMAIN} {
+    import security_headers
+    reverse_proxy mcp:3002
+}

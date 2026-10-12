@@ -1,0 +1,68 @@
+{
+  "_comment": "Canonical definition of the open-source context graph (the substrate + control plane). Source of truth for the sync rule + the no-product-imports guard. Paths reflect CURRENT (pre-carve) locations; tighten to packages/context-graph after the carve.",
+
+  "substrate": {
+    "clean": [
+      "packages/core/src/db/canonicalAxes.ts",
+      "packages/core/src/db/conflicts.ts",
+      "packages/core/src/db/identityProposals.ts",
+      "packages/core/src/db/claimCategories.ts",
+      "packages/core/src/db/readContext.ts",
+      "packages/core/src/db/client.ts",
+      "packages/core/src/db/observations.ts",
+      "packages/core/src/dateResolve.ts",
+      "packages/core/src/services/canonicalProjection.ts",
+      "packages/core/src/utils/identity.ts",
+      "packages/core/src/db/entities.ts",
+      "packages/core/src/db/entityOverlay.ts",
+      "packages/core/src/db/activities.ts",
+      "packages/core/src/db/claims.ts",
+      "packages/core/src/db/notes.ts",
+      "packages/core/src/db/teamMembers.ts",
+      "packages/core/src/db/triggers.ts",
+      "packages/core/src/embed.ts"
+    ],
+    "pending_decouple": [
+      { "file": "packages/core/src/db/relationshipOwner.ts", "reason": "rep-attribution mixed with the governance in-touch set; keep the governance half" }
+    ]
+  },
+
+  "syncPaths": [
+    "packages/core/src/db/canonicalAxes.ts",
+    "packages/core/src/db/conflicts.ts",
+    "packages/core/src/db/identityProposals.ts",
+    "packages/core/src/db/claimCategories.ts",
+    "packages/core/src/db/readContext.ts",
+    "packages/core/src/db/client.ts",
+    "packages/core/src/db/observations.ts",
+    "packages/core/src/db/claims.ts",
+    "packages/core/src/db/entities.ts",
+    "packages/core/src/db/entityOverlay.ts",
+    "packages/core/src/db/activities.ts",
+    "packages/core/src/db/relationshipOwner.ts",
+    "packages/core/src/db/notes.ts",
+    "packages/core/src/dateResolve.ts",
+    "packages/core/src/utils/identity.ts",
+    "packages/core/src/services/canonicalProjection.ts",
+    "apps/api/src/routes/api/graph.mjs",
+    "apps/api/src/routes/api/systemLog.mjs",
+    "apps/api/src/routes/api/conflicts.mjs",
+    "apps/api/src/routes/api/identityProposals.mjs",
+    "apps/api/src/lib/visibility.mjs",
+    "apps/worker/src/workers/claimEngine.mjs",
+    "apps/worker/src/services/canonicalProjection.mjs",
+    "apps/worker/src/utils/resolveMeeting.mjs",
+    "apps/worker/src/utils/resolveContact.mjs",
+    "apps/worker/src/webhooks/handlers/fireflies.mjs",
+    "apps/worker/src/webhooks/handlers/fathom.mjs",
+    "apps/worker/src/signals/**",
+    "supabase/migrations/**"
+  ],
+
+  "productDeny": [
+    "scorecard", "predictions", "outcomes", "rescore", "insights", "insightCategories",
+    "flags", "features", "campaignMessages", "campaignStats", "leads", "companies", "contacts",
+    "committee", "pipelineFeatures", "pipeline", "relationship",
+    "crmHygiene", "crmReconcile", "crmApply", "crmPush", "crmProvenance", "crmWriteState"
+  ]
+}

@@ -1,0 +1,61 @@
+-- The activity query scanned the whole table because it asked case-insensitively (GET perf, 2026-09-21).
+-- NOT YET APPLIED TO PRODUCTION.
+--
+-- Symptom, measured on a large workspace (a table of millions of observations) through
+-- api.opennous.cloud with an admin key:
+--
+--     POST /v2/query {scope:{kind:'state',property:'stage',limit:10}}        500  8,344 ms
+--     POST /v2/query {scope:{kind:'event',property:'interaction.email',
+--                            since_days:7,limit:3}}                          500  8,443 ms
+--     POST /v2/query {scope:{kind:'event',since_days:1,limit:3}}             500  9,017 ms
+--     POST /v2/query {scope:{reporting:'company'}}                           200    932 ms
+--     POST /v2/query {scope:{foundation:'icp'}}                              200  4,209 ms
+--
+-- Failure is INDEPENDENT of limit and of window: 3 rows over one day costs the same as 50 rows
+-- over a year, and always dies at ~8-9s. That is a statement timeout on a scan, not a big result
+-- set. The reporting and foundation paths are untouched because they never read observations.
+--
+-- Two causes, one per shape.
+--
+-- 1. WITH a property filter. packages/core/src/query.ts built `property ILIKE 'prefix%'`.
+--    ILIKE cannot use a btree index under any collation, so idx_observations_ws_property
+--    (workspace_id, property, observed_at DESC) -- 45 MB, 6,899 scans, already there and already
+--    earning its keep -- was simply unavailable to this query. Fixed in the same commit by
+--    switching to LIKE. Properties are machine-written lowercase constants (all 41 distinct
+--    literals across core/api/worker are lowercase; the dynamic ones are
+--    `interaction.${type}`, `icp.${layer}`, `note.${randomUUID()}`,
+--    `action_item.${source}_${id}_${i}` with source='gmail'), so nothing was relying on the
+--    case-insensitivity. Uppercase occurs only inside an id SUFFIX, which the trailing % covers.
+--
+-- 2. WITHOUT a property filter. The base query is always
+--    `where workspace_id = $1 order by observed_at desc limit n`, and no index leads with
+--    (workspace_id, observed_at). Every existing index leads with entity_id, or with
+--    workspace_id followed by property/entity_id/source, none of which this shape supplies. So
+--    the planner sorts the workspace's slice of a multi-gigabyte table to return three rows. That is the
+--    index below.
+--
+-- HONESTY ON EVIDENCE: the timings above are real and were taken through the public API. The
+-- PLANS are not -- this environment has no psql, no Management API and no dashboard, so no
+-- EXPLAIN was run. Cause is inferred from the code, the index list and the flat ~8-9s failure
+-- across every size. Before trusting the numbers this migration claims, run:
+--
+--     EXPLAIN (ANALYZE, BUFFERS) SELECT id, entity_id, kind, property, value, source,
+--       observed_at, raw, owner_user_id FROM observations
+--       WHERE workspace_id = '<workspace-id>'
+--       ORDER BY observed_at DESC LIMIT 3;
+--
+-- once before and once after. If the "before" is not a sort or seq scan over the workspace, the
+-- reasoning here is wrong and this index should not be kept.
+--
+-- COST: leading column is workspace_id, same as idx_observations_ws_property (45 MB), and this
+-- one carries one fewer column, so expect roughly that order. It is maintained on every insert
+-- into the hottest table in the system, which is the reason to confirm it is actually chosen
+-- rather than keeping it on principle. Check pg_stat_user_indexes.idx_scan after a week; if it
+-- is in the single digits, drop it.
+--
+-- ROLLBACK: DROP INDEX CONCURRENTLY IF EXISTS public.idx_observations_ws_time;
+--
+-- CONCURRENTLY so a live customer's table is never locked. It cannot run inside a transaction
+-- block: paste it on its own, not wrapped in BEGIN/COMMIT.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_observations_ws_time
+  ON public.observations (workspace_id, observed_at DESC);

@@ -1,0 +1,4 @@
+# Check every text file out with LF, on Windows too. The shell scripts, Caddyfiles, SQL and
+# nous.env.example are read inside Linux containers, where a CRLF checkout (Git for Windows'
+# default) breaks them: /bin/sh^M, "set: illegal option", values that end in \r.
+* text=auto eol=lf

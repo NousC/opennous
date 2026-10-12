@@ -1,0 +1,259 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveFocus, getOrCreateEntity } from '../db/entities.js';
+import { recordObservation } from '../db/observations.js';
+
+// Named-person mentions → graph nodes, WITHOUT ever guessing identity.
+//
+// A Connections fact ("Wendell shares a warm connection with Ottoline") names a person.
+// To make that person a real, taggable node in the graph — so "what warm
+// connections can we use?" can traverse to an account, not just read a name — we
+// have to answer "which Ottoline?". We never guess. A mention resolves one of three
+// ways, mirroring the identity-resolution rule already in the codebase
+// (resolvePersonByNameFallback: "any ambiguity → null, never guess"):
+//
+//   - EXACTLY ONE match in the workspace  → link to that account. Unique = safe.
+//   - TWO OR MORE matches (five Ottolines)  → AMBIGUOUS: link nothing, carry all the
+//                                           candidates on the edge for a human/agent
+//                                           to pick. Never auto-choose.
+//   - ZERO matches                        → create an explicitly UNRESOLVED stub
+//                                           node (name-only, flagged mention-derived)
+//                                           so the person exists in the graph and can
+//                                           be tagged, PENDING identity. When more
+//                                           evidence arrives (email, LinkedIn, fuller
+//                                           name) it graduates by merging into the
+//                                           real person (mergeEntities / merge_contacts).
+//
+// Every mention carries a resolution status and a confidence, so the graph degrades
+// honestly instead of inventing links. This is general: any named person on any
+// account flows through the same path.
+
+const KNOWS = 'KNOWS';
+
+export type MentionResolution =
+  | { status: 'resolved'; entityId: string }
+  | { status: 'ambiguous'; candidates: { entity_id: string; name: string | null; detail: string | null }[] }
+  | { status: 'new' };
+
+function splitName(name: string): { first: string; last: string } {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean);
+  return { first: parts[0] ?? '', last: parts.slice(1).join(' ') };
+}
+
+/**
+ * Resolve a named person to an existing account. Disambiguation is delegated to
+ * resolveFocus (which searches identifiers, name claims, AND the contacts table):
+ * one hit → resolved, several → ambiguous, none → new.
+ */
+export async function resolvePersonMention(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  name: string,
+): Promise<MentionResolution> {
+  const clean = (name ?? '').trim();
+  if (clean.length < 2) return { status: 'new' };
+  const r = await resolveFocus(supabase, workspaceId, clean);
+  if (r.status === 'resolved') return { status: 'resolved', entityId: r.entity_id };
+  if (r.status === 'ambiguous') return { status: 'ambiguous', candidates: r.candidates };
+  return { status: 'new' };
+}
+
+/**
+ * Create an explicitly-UNRESOLVED placeholder node for a mentioned person we can't
+ * match yet. It's a real entity (so it shows in the graph and can be tagged), but
+ * flagged `unresolved_mention` so it never poses as a confirmed account and can
+ * later graduate into the real person. Goes through the contacts view (its INSERT
+ * trigger owns the entity/claim rows), same path contact ingestion uses.
+ */
+export async function createMentionStub(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  name: string,
+  opts: { mentionedByEntityId?: string | null } = {},
+): Promise<string> {
+  const { first, last } = splitName(name);
+  const entityId = await getOrCreateEntity(supabase, workspaceId, 'person', []);
+  await supabase.from('contacts').insert({
+    id:             entityId,
+    workspace_id:   workspaceId,
+    first_name:     first || name,
+    last_name:      last || null,
+    source:         'mention',
+    pipeline_stage: 'identified',
+  }).then(null, () => {}); // PK conflict / trigger-owned row → fine
+
+  // A queryable marker so graduation/merge and People-list filtering can find these
+  // — an unresolved stub is not a lead and shouldn't be worked like one.
+  await recordObservation(supabase, {
+    workspaceId, entityId, kind: 'state', property: 'identity_status',
+    value: { status: 'unresolved_mention', mentioned_by: opts.mentionedByEntityId ?? null },
+    source: 'mention', method: 'inference',
+  }).catch(() => {});
+
+  return entityId;
+}
+
+async function upsertEdge(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  p: {
+    relationship: string;
+    subjectEntityId: string | null; subjectLabel: string;
+    objectId: string | null; objectLabel: string; objectType?: 'contact' | 'company';
+    sourceMemoryId?: string | null; status: string; candidates?: unknown; confidence?: number;
+  },
+): Promise<void> {
+  const confidence = p.confidence ?? (p.status === 'resolved' ? 0.9 : p.status === 'resolved_stub' ? 0.6 : 0.3);
+  await supabase.from('workspace_graph_edges').upsert({
+    workspace_id:     workspaceId,
+    subject_type:     'contact',
+    subject_id:       p.subjectEntityId,
+    subject_label:    p.subjectLabel,
+    relationship:     p.relationship,
+    object_type:      p.objectType ?? 'contact',
+    object_id:        p.objectId,
+    object_label:     p.objectLabel,
+    source:           'mention',
+    source_memory_id: p.sourceMemoryId ?? null,
+    confidence,
+    metadata:         { resolution: p.status, ...(p.candidates ? { candidates: p.candidates } : {}) },
+  }, { onConflict: 'workspace_id,subject_label,relationship,object_label', ignoreDuplicates: false });
+}
+
+const upsertKnowsEdge = (
+  supabase: SupabaseClient,
+  workspaceId: string,
+  p: { subjectEntityId: string | null; subjectLabel: string; objectId: string | null; objectLabel: string; sourceMemoryId?: string | null; status: string; candidates?: unknown },
+) => upsertEdge(supabase, workspaceId, { ...p, relationship: KNOWS });
+
+/**
+ * Public entry point. Given a person named in a claim, resolve them → (stub if new,
+ * unless allowStub is false) → write the KNOWS edge, and return the mention ref for
+ * the claim's `metadata.mentions` (so the Intel card can render the @tag). An
+ * ambiguous name is left UNLINKED (object_id null) with its candidates on the edge —
+ * we surface the choice, we don't make it.
+ */
+export async function linkPersonMention(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  p: {
+    subjectEntityId: string; subjectLabel: string; name: string;
+    sourceMemoryId?: string | null; allowStub?: boolean;
+    // When the subject belongs to a company, a person they name in that context is
+    // likely part of the SAME buying committee — tie the mentioned person to the
+    // company (MENTIONED_AT) so they show up on the account's committee, not just as
+    // a floating person↔person link. Soft/unconfirmed until enrichment confirms it.
+    companyId?: string | null; companyLabel?: string | null;
+    // A buying role the fact states about the mentioned person ("Corwin owns the
+    // budget") → a typed committee edge, so the committee read gives them a role.
+    role?: 'champion' | 'blocker' | 'budget_holder' | 'decision_maker' | 'none' | null;
+  },
+): Promise<{ label: string; entity_id: string | null; status: string; candidates?: unknown }> {
+  // A name with an alias in brackets — "Isolde (Izzy)" — is the person before the brackets.
+  // Resolve that first; the full string only when it doesn't match.
+  const bare = String(p.name ?? '').replace(/\s*[(\[][^)\]]*[)\]]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  let res = await resolvePersonMention(supabase, workspaceId, bare || p.name);
+  if (res.status === 'new' && bare && bare !== p.name) res = await resolvePersonMention(supabase, workspaceId, p.name);
+  // The subject naming THEMSELVES (by an alias, or in their own words) is not a relationship.
+  if (res.status === 'resolved' && res.entityId === p.subjectEntityId) {
+    return { label: p.name, entity_id: p.subjectEntityId, status: 'self' };
+  }
+  let objectId: string | null = null;
+  let status: string = res.status;
+  let candidates: unknown;
+
+  if (res.status === 'resolved') {
+    objectId = res.entityId;
+  } else if (res.status === 'ambiguous') {
+    candidates = res.candidates;                       // never guess — surface the choice
+  } else if (res.status === 'new' && p.allowStub !== false) {
+    objectId = await createMentionStub(supabase, workspaceId, p.name, { mentionedByEntityId: p.subjectEntityId });
+    status = 'resolved_stub';
+  }
+
+  await upsertKnowsEdge(supabase, workspaceId, {
+    subjectEntityId: p.subjectEntityId, subjectLabel: p.subjectLabel,
+    objectId, objectLabel: p.name, sourceMemoryId: p.sourceMemoryId, status, candidates,
+  });
+
+  // Committee membership: the named person → the subject's company. Only when we have
+  // a real person node to attach (resolved or stub); an ambiguous name has nowhere to
+  // land. Confidence stays low — a mention is a lead on the committee, not a confirmed
+  // employee, so the account read flags it as "mentioned, unconfirmed".
+  if (p.companyId && objectId) {
+    await upsertEdge(supabase, workspaceId, {
+      relationship: 'MENTIONED_AT', objectType: 'company',
+      subjectEntityId: objectId, subjectLabel: p.name,
+      objectId: p.companyId, objectLabel: p.companyLabel ?? 'their company',
+      sourceMemoryId: p.sourceMemoryId, status, confidence: 0.5,
+    });
+
+    // A stated buying role → a typed committee edge, so the committee read shows them
+    // AS an economic buyer / champion / etc., not just a member. Low confidence — it's
+    // from a mention, and the edge extractor upgrades it when the person is confirmed.
+    const ROLE_REL: Record<string, string> = {
+      champion: 'CHAMPIONS', blocker: 'BLOCKS',
+      budget_holder: 'BUDGET_HOLDER_AT', decision_maker: 'DECISION_MAKER_AT',
+    };
+    const rel = p.role && ROLE_REL[p.role];
+    if (rel) {
+      await upsertEdge(supabase, workspaceId, {
+        relationship: rel, objectType: 'company',
+        subjectEntityId: objectId, subjectLabel: p.name,
+        objectId: p.companyId, objectLabel: p.companyLabel ?? 'their company',
+        sourceMemoryId: p.sourceMemoryId, status, confidence: 0.5,
+      });
+    }
+  }
+
+  return { label: p.name, entity_id: objectId, status, candidates };
+}
+
+/**
+ * Tag resolved/stub mentions onto a claim's `metadata.mentions` (the data the Intel
+ * card renders as clickable @<name> chips). Merges by entity_id, so re-running is
+ * idempotent. Only mentions with an entity_id are persisted — an ambiguous, unlinked
+ * name has nothing to click through to.
+ */
+export async function tagClaimMentions(
+  supabase: SupabaseClient,
+  claimId: string,
+  mentions: Array<{ label: string; entity_id: string | null; status: string }>,
+): Promise<void> {
+  type Linked = { label: string; entity_id: string; status: string };
+  const linked = mentions.filter((m): m is Linked => !!m.entity_id);
+  if (!linked.length) return;
+  const { data: claim } = await supabase.from('claims').select('value').eq('id', claimId).maybeSingle();
+  const value = (claim?.value ?? {}) as Record<string, unknown>;
+  const metadata = (value.metadata ?? {}) as Record<string, unknown>;
+  const existing = Array.isArray(metadata.mentions)
+    ? (metadata.mentions as Array<{ label?: string; entity_id?: string; status?: string }>)
+    : [];
+  const byId = new Map<string, Linked>();
+  for (const m of existing) if (m?.entity_id) byId.set(m.entity_id, { label: m.label ?? '', entity_id: m.entity_id, status: m.status ?? 'resolved' });
+  for (const m of linked) byId.set(m.entity_id, { label: m.label, entity_id: m.entity_id, status: m.status });
+  await supabase.from('claims').update({
+    value: { ...value, metadata: { ...metadata, mentions: [...byId.values()] } },
+  }).eq('id', claimId);
+}
+
+/**
+ * Resolve an AMBIGUOUS mention to the account a human picked. Upserts the KNOWS edge
+ * as `resolved` to that entity, and tags the pick onto the claim's metadata.mentions.
+ * The human-in-the-loop completion: the system never guessed, the human chose.
+ */
+export async function resolveMentionToEntity(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  p: { subjectEntityId: string; subjectLabel: string; objectEntityId: string; objectLabel: string; sourceClaimId?: string | null },
+): Promise<void> {
+  await upsertKnowsEdge(supabase, workspaceId, {
+    subjectEntityId: p.subjectEntityId, subjectLabel: p.subjectLabel,
+    objectId: p.objectEntityId, objectLabel: p.objectLabel,
+    sourceMemoryId: p.sourceClaimId ?? null, status: 'resolved',
+  });
+  if (p.sourceClaimId) {
+    await tagClaimMentions(supabase, p.sourceClaimId, [
+      { label: p.objectLabel, entity_id: p.objectEntityId, status: 'resolved' },
+    ]);
+  }
+}

@@ -1,0 +1,33 @@
+# Undated files in supabase/migrations, by the date they entered the repo (git log
+# --diff-filter=A). v1_to_v2 and the phase files are the v1 -> v2 conversion and predate
+# every dated file. Apply order is by date (dated files by their YYYY_MM_DD_ prefix, these
+# by the date below), then by filename.
+#
+# Read by scripts/check-schema-baseline.sh and by the bundled stack's db-schema service
+# (deploy/selfhost/db/apply-schema.sh). New migrations must be named YYYY_MM_DD_*.sql;
+# an undated file missing here stops check-schema-baseline.sh.
+#
+# date        file (a shell pattern)
+2026_05_00    v1_to_v2.sql
+2026_05_00    phase1_*
+2026_05_00    phase2_*
+2026_05_00    phase3_*
+2026_05_00    phase4b_*
+2026_05_00    phase4c_*
+2026_05_00    phase5_*
+2026_07_16    drop_mind_episodes.sql
+2026_07_16    engagement_enabled_toggle.sql
+2026_07_19    contact_enrichment_jobs.sql
+2026_07_20    workspaces_tour_completed_at.sql
+2026_07_27    campaign_stats.sql
+2026_08_13    workspace_skill_references.sql
+2026_08_13    skill_references_git_sha.sql
+2026_08_16    entity_merge_log.sql
+2026_08_16    team_join_tokens.sql
+2026_08_17    backfill_credit_control.sql
+2026_08_17    workspace_backfill_watermark.sql
+2026_08_31    forecast_snapshots.sql
+2026_09_01    composio_google.sql
+2026_09_11    agent_actions.sql
+2026_09_17    workspace_own_domains.sql
+2026_10_02    workspace_icp_scorer.sql

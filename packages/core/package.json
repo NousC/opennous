@@ -1,0 +1,25 @@
+{
+  "name": "@nous/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./cloud": "./dist/cloud/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node ../../scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.0",
+    "@supabase/supabase-js": "^2.44.0",
+    "pdfkit": "^0.17.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.18",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,1212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Warm grey (GET-593, the interface refresh canvas). The app frame and sidebar sit
+       on a warm grey ground (#F4F4F2); the content panel is white and floats on it
+       (see StandardLayout). Ink is a warm near-black, greys carry a faint yellow so
+       nothing reads blue. Values are the canvas's hex, converted to HSL. */
+    --background: 0 0% 100%;
+    --frame: 60 8.3% 95.3%;
+    --foreground: 60 4% 9.8%;
+    --card: 0 0% 100%;
+    --card-foreground: 60 4% 9.8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 60 4% 9.8%;
+    --primary: 60 4% 9.8%;
+    --primary-foreground: 60 9.1% 97.8%;
+    --secondary: 45 14.3% 94.5%;
+    --secondary-foreground: 60 4% 9.8%;
+    --muted: 45 14.3% 94.5%;
+    --muted-foreground: 51 3.1% 49%;
+    --accent: 45 14.3% 94.5%;
+    --accent-foreground: 60 4% 9.8%;
+    --destructive: 9 58.6% 43.5%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 48 10.2% 90.4%;
+    --input: 48 9.1% 89.2%;
+    --ring: 60 4% 9.8%;
+
+    /* Refresh additions. ink-2 = secondary text (#56554F), hairline = row dividers
+       inside a card (#F0EFEC), hover = row hover (#FAFAF9). Status colours are used for
+       dots, small text and numbers only, never large fills. */
+    --ink-2: 51 4.2% 32.4%;
+    --hairline: 45 11.8% 93.3%;
+    /* The search palette's warm band (GET-662): hover and selection read warm, not grey. */
+    --hover: 45 18% 96.2%;
+    --positive: 145 45.2% 32.9%;
+    --warning: 36 80.1% 33.5%;
+    --warning-dot: 35 51.2% 49.8%;
+    --risk: 9 58.6% 43.5%;
+    --brand: 22 100% 50%;
+
+    /* Motion: small and quick. Popovers, toasts and expanding rows only; hover
+       changes the background colour and nothing else. */
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --dur-fast: 120ms;
+    --dur-base: 160ms;
+
+    /* Elevation: hairline-led. A card is a border, not a shadow. */
+    --shadow-card: 0 1px 2px rgba(20, 20, 18, 0.03);
+    --shadow-pop: 0 0 0 1px rgba(20, 20, 18, 0.08), 0 12px 32px -8px rgba(20, 20, 18, 0.18), 0 4px 8px -4px rgba(20, 20, 18, 0.06);
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+    --landing-orange: 39 56% 93%;
+    --landing-green: 157 27% 16%;
+    --landing-yellow: 63 92% 57%;
+
+    /* Dark Landing Theme - New Era SaaS */
+    --landing-bg-base: #09090B;
+    --landing-bg-surface: #111113;
+    --landing-bg-elevated: #18181B;
+    --landing-border-subtle: rgba(255, 255, 255, 0.06);
+    --landing-border-default: rgba(255, 255, 255, 0.1);
+    --landing-text-primary: #FAFAFA;
+    --landing-text-secondary: #A1A1AA;
+    --landing-text-muted: #71717A;
+    --landing-accent: #22c55e;
+    --landing-accent-hover: #16a34a;
+    --landing-accent-glow: rgba(34, 197, 94, 0.15);
+
+    /* Workflow Canvas - Light Theme */
+    --workflow-canvas-bg: 248 249 250;        /* #f8f9fa */
+    --workflow-card-bg: 255 255 255;          /* #ffffff */
+    --workflow-card-border: 226 232 240;      /* #e2e8f0 */
+    --workflow-text-primary: 15 23 42;        /* #0f172a */
+    --workflow-text-secondary: 100 116 139;   /* #64748b */
+    --workflow-accent: 16 185 129;            /* #10b981 - KEEP */
+  }
+
+  .dark {
+    /* Warm dark: the same yellow-grey undertone as the light theme, so switching modes
+       keeps the product's temperature. */
+    --background: 60 2.4% 8%;
+    --frame: 60 3.7% 5.3%;
+    --foreground: 60 7.7% 92.4%;
+    --card: 60 1.9% 10.4%;
+    --card-foreground: 60 7.7% 92.4%;
+    --popover: 60 1.9% 10.4%;
+    --popover-foreground: 60 7.7% 92.4%;
+    --primary: 60 7.7% 92.4%;
+    --primary-foreground: 60 2.4% 8%;
+    --secondary: 60 2.9% 13.3%;
+    --secondary-foreground: 60 7.7% 92.4%;
+    --muted: 60 2.9% 13.3%;
+    --muted-foreground: 51 3.4% 59.8%;
+    --accent: 60 2.9% 13.3%;
+    --accent-foreground: 60 7.7% 92.4%;
+    --destructive: 10 66.3% 63.9%;
+    --destructive-foreground: 60 2.4% 8%;
+    --border: 60 3.6% 16.3%;
+    --input: 60 3.2% 18.6%;
+    --ring: 45 8.9% 82.4%;
+    --ink-2: 51 5% 72.7%;
+    --hairline: 60 3% 12.9%;
+    --hover: 60 3.3% 11.8%;
+    --positive: 147 37.3% 53.7%;
+    --warning: 36 64.7% 57.8%;
+    --warning-dot: 36 64.7% 57.8%;
+    --risk: 10 66.3% 63.9%;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  /* ── App type system ──────────────────────────────────────────────────────
+     Geist, everywhere, self-hosted (@fontsource-variable/geist, imported in main.tsx;
+     no Google request). Headings are the SAME family at a restrained weight
+     (semibold, lightly tracked): weight and spacing, not a second font. The marketing
+     site keeps Fraunces via its own scoped classes; this only governs the app shell.
+     Numbers that line up in columns use the `tabular-nums` utility. */
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'calt' 1;
+  }
+
+  /* One focus ring, everywhere (standard 10): a 2px ink outline with a 2px gap, shown
+     only for keyboard focus. Components no longer draw their own ring. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+  /* Text fields always count as focus-visible, so the ink ring landed on every click into one.
+     They show focus the search palette's way instead: a darker hairline (GET-665); borderless
+     fields sit in a wrapper that shows focus-within. Buttons, links and other controls keep the
+     ring above. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible,
+  textarea:focus-visible {
+    outline: none;
+    border-color: hsl(var(--foreground) / 0.3);
+  }
+
+  /* Reduced motion: transitions collapse to nothing (standard 11). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  .font-heading {
+    font-family: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.018em;
+  }
+
+  p, span, a, button, label, input, textarea, select,
+  .font-body {
+    font-family: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  /* TEMPLATE/DOCUMENT EDITOR: Allow theme fonts to override global fonts */
+  .notion-page-editor h1,
+  .notion-page-editor h2,
+  .notion-page-editor h3,
+  .notion-page-editor h4,
+  .notion-page-editor h5,
+  .notion-page-editor h6 {
+    font-family: inherit;
+    font-weight: inherit;
+    letter-spacing: inherit;
+  }
+
+  .notion-page-editor p,
+  .notion-page-editor span,
+  .notion-page-editor a,
+  .notion-page-editor li {
+    font-family: inherit;
+  }
+}
+
+/* Generic placeholder styling for editable content */
+[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+/* Premium scroll-reveal animations - very slow and elegant */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(50px);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.scroll-reveal-left {
+  opacity: 0;
+  transform: translateX(-60px);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal-left.revealed {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.scroll-reveal-right {
+  opacity: 0;
+  transform: translateX(60px);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal-right.revealed {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.scroll-reveal-scale {
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 2s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scroll-reveal-scale.revealed {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Pop-in effect for cards - very slow and subtle bounce */
+.scroll-reveal-pop {
+  opacity: 0;
+  transform: scale(0.9) translateY(40px);
+  transition: opacity 1.8s cubic-bezier(0.34, 1.56, 0.64, 1),
+              transform 1.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.scroll-reveal-pop.revealed {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+
+/* Smooth scroll with subtle snap points */
+.landing-scroll-container {
+  scroll-snap-type: y proximity;
+  overflow-y: auto;
+}
+
+.landing-scroll-section {
+  scroll-snap-align: start;
+}
+
+/* Stagger delays for children */
+.scroll-reveal-stagger > *:nth-child(1) { transition-delay: 0ms; }
+.scroll-reveal-stagger > *:nth-child(2) { transition-delay: 200ms; }
+.scroll-reveal-stagger > *:nth-child(3) { transition-delay: 400ms; }
+.scroll-reveal-stagger > *:nth-child(4) { transition-delay: 600ms; }
+.scroll-reveal-stagger > *:nth-child(5) { transition-delay: 800ms; }
+.scroll-reveal-stagger > *:nth-child(6) { transition-delay: 1000ms; }
+
+/* Premium navbar dropdown animations */
+@keyframes nav-viewport-open {
+  0% {
+    opacity: 0;
+    transform: translateY(-15px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes nav-viewport-close {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+}
+
+.nav-viewport-animate[data-state="open"] {
+  animation: nav-viewport-open 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.nav-viewport-animate[data-state="closed"] {
+  animation: nav-viewport-close 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Content switching animation between tabs */
+@keyframes nav-content-in {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.nav-content-animate[data-motion="from-start"] {
+  animation: nav-content-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.nav-content-animate[data-motion="from-end"] {
+  animation: nav-content-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --direction: -1;
+}
+
+.nav-content-animate[data-motion="from-end"] {
+  animation-name: nav-content-in-reverse;
+}
+
+@keyframes nav-content-in-reverse {
+  0% {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Hero media flow-in animation - slow and elegant */
+@keyframes hero-media-in {
+  0% {
+    opacity: 0;
+    transform: translateY(50px) scale(0.94);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-hero-media-in {
+  animation: hero-media-in 2.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes rotate-carousel {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-carousel {
+  animation: rotate-carousel 30s linear infinite;
+  transform-origin: center center;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(-50%, -50%) translateY(0px);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-8px);
+  }
+}
+
+/* Premium hero decoration animations */
+@keyframes hero-drift-left {
+  0%, 100% {
+    transform: translateY(0) translateX(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-8px) translateX(4px) rotate(0.5deg);
+  }
+  50% {
+    transform: translateY(-4px) translateX(8px) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-12px) translateX(2px) rotate(-0.5deg);
+  }
+}
+
+@keyframes hero-drift-right {
+  0%, 100% {
+    transform: translateY(0) translateX(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-6px) translateX(-4px) rotate(-0.5deg);
+  }
+  50% {
+    transform: translateY(-10px) translateX(-2px) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-4px) translateX(-6px) rotate(0.5deg);
+  }
+}
+
+.animate-hero-drift-left {
+  animation: hero-drift-left 20s ease-in-out infinite;
+}
+
+.animate-hero-drift-right {
+  animation: hero-drift-right 18s ease-in-out infinite;
+}
+
+/* Tab slide animation */
+@keyframes tab-slide-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes flow {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-flow {
+  animation: flow 2s ease-in-out infinite;
+}
+
+@keyframes flow-vertical {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+.animate-flow-vertical {
+  animation: flow-vertical 2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Workflow execution border animation - Premium moving border */
+@keyframes border-rotate {
+  0% {
+    --angle: 0deg;
+  }
+  100% {
+    --angle: 360deg;
+  }
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* Moving border wrapper for running state */
+.workflow-card-running {
+  position: relative;
+  z-index: 0;
+}
+
+.workflow-card-running::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -3px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--angle),
+    #10b981 0deg,
+    #10b981 90deg,
+    transparent 90deg,
+    transparent 270deg,
+    #10b981 270deg,
+    #10b981 360deg
+  );
+  animation: border-rotate 1.5s linear infinite;
+}
+
+.workflow-card-running::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  background: white;
+}
+
+/* Blog content editor (Admin CMS, the one TipTap editor) - headings and paragraph spacing.
+   Scoped to the editor's own element: as a bare `.prose` rule with !important it also put
+   24px under every paragraph the agent writes in the app (GET-648). */
+.ProseMirror.prose h1 {
+  font-size: 2.25rem !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+  margin-top: 2rem !important;
+  margin-bottom: 1rem !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.ProseMirror.prose h2 {
+  font-size: 1.875rem !important;
+  font-weight: 700 !important;
+  line-height: 1.3 !important;
+  margin-top: 1.5rem !important;
+  margin-bottom: 0.75rem !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.ProseMirror.prose h3 {
+  font-size: 1.5rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+  margin-top: 1.25rem !important;
+  margin-bottom: 0.5rem !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+/* Blog Content - Ensure paragraphs have proper spacing */
+.ProseMirror.prose p {
+  margin-top: 0 !important;
+  margin-bottom: 1.5rem !important;
+}
+
+.ProseMirror.prose p:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Ensure paragraphs after headings have proper spacing */
+.ProseMirror.prose h1 + p,
+.ProseMirror.prose h2 + p,
+.ProseMirror.prose h3 + p {
+  margin-top: 0.75rem !important;
+  margin-bottom: 1.5rem !important;
+}
+
+/* CTA Renderer - Override prose styles for white text */
+.cta-renderer h2 {
+  color: #ffffff !important;
+}
+
+.cta-renderer p {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Hide scrollbar utility */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ============================================
+   DARK LANDING PAGE - NEW ERA SAAS THEME
+   ============================================ */
+
+/* Dark landing page base */
+.landing-dark {
+  background: var(--landing-bg-base);
+  color: var(--landing-text-primary);
+}
+
+/* Gradient text effect (Linear/Vercel style) */
+.landing-gradient-text {
+  background: linear-gradient(180deg, #FAFAFA 0%, #A1A1AA 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Subtle noise texture overlay */
+.landing-noise::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  opacity: 0.02;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Gradient orb decorations */
+.landing-orb-1 {
+  position: absolute;
+  width: 800px;
+  height: 600px;
+  background: radial-gradient(ellipse at center, rgba(34, 197, 94, 0.12), transparent 70%);
+  filter: blur(80px);
+  top: -200px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.landing-orb-2 {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(34, 197, 94, 0.08), transparent 70%);
+  filter: blur(60px);
+  bottom: 20%;
+  left: 10%;
+  pointer-events: none;
+}
+
+/* Glassmorphic card */
+.landing-glass-card {
+  background: rgba(17, 17, 19, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 16px;
+}
+
+/* Dark surface card */
+.landing-surface-card {
+  background: var(--landing-bg-surface);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 24px;
+}
+
+/* Card with hover glow effect */
+.landing-glow-card {
+  position: relative;
+  background: var(--landing-bg-surface);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 24px;
+  transition: border-color 0.3s ease;
+}
+
+.landing-glow-card:hover {
+  border-color: var(--landing-border-default);
+}
+
+.landing-glow-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(34, 197, 94, 0.06),
+    transparent 40%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.landing-glow-card:hover::before {
+  opacity: 1;
+}
+
+/* Primary CTA button - green accent with glow */
+.landing-btn-primary {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  color: #09090B;
+  font-weight: 500;
+  padding: 12px 24px;
+  border-radius: 12px;
+  border: none;
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.3),
+    0 0 20px rgba(34, 197, 94, 0.2);
+  transition: all 0.2s ease;
+}
+
+.landing-btn-primary:hover {
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.5),
+    0 0 30px rgba(34, 197, 94, 0.35);
+  transform: translateY(-1px);
+}
+
+/* Flowing line animation for hero section */
+@keyframes flowLine {
+  0%, 100% {
+    transform: translateX(0) translateY(0);
+  }
+  50% {
+    transform: translateX(8px) translateY(-4px);
+  }
+}
+
+.flowing-line {
+  animation: flowLine 6s ease-in-out infinite;
+}
+
+/* Ghost button - subtle white border */
+.landing-btn-ghost {
+  background: transparent;
+  color: var(--landing-text-primary);
+  border: 1px solid var(--landing-border-default);
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.landing-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Announcement pill/badge */
+.landing-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 100px;
+  border: 1px solid var(--landing-border-default);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--landing-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.landing-pill:hover {
+  border-color: var(--landing-accent);
+  color: var(--landing-text-primary);
+}
+
+/* Tab underline indicator (lime) */
+.landing-tab-active {
+  position: relative;
+}
+
+.landing-tab-active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--landing-accent);
+}
+
+/* Product showcase with glow */
+.landing-showcase {
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid var(--landing-border-subtle);
+  background: var(--landing-bg-surface);
+}
+
+.landing-showcase::after {
+  content: '';
+  position: absolute;
+  bottom: -50%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80%;
+  height: 200px;
+  background: radial-gradient(ellipse at center, rgba(34, 197, 94, 0.15), transparent 70%);
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+/* Dot grid pattern */
+.landing-dot-grid {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Floating glassmorphic navbar */
+.landing-navbar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 24px);
+  max-width: 1200px;
+  background: rgba(9, 9, 11, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--landing-border-subtle);
+  border-radius: 16px;
+  padding: 8px 24px;
+  z-index: 100;
+}
+
+/* Pricing card popular glow */
+.landing-pricing-popular {
+  position: relative;
+}
+
+.landing-pricing-popular::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(135deg, #22c55e, #16a34a);
+  border-radius: inherit;
+  z-index: -1;
+  opacity: 0.4;
+  filter: blur(20px);
+}
+
+/* Testimonial card floating animation */
+@keyframes landing-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.landing-float-1 {
+  animation: landing-float 6s ease-in-out infinite;
+}
+
+.landing-float-2 {
+  animation: landing-float 6s ease-in-out infinite;
+  animation-delay: -2s;
+}
+
+.landing-float-3 {
+  animation: landing-float 6s ease-in-out infinite;
+  animation-delay: -4s;
+}
+
+/* Section divider */
+.landing-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--landing-border-subtle), transparent);
+}
+
+/* Print styles for document viewing */
+@media print {
+  /* Force color printing */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Hide UI elements */
+  header,
+  .document-view-header,
+  [class*="DocumentViewHeader"],
+  nav,
+  .sidebar,
+  .page-thumbnails,
+  footer,
+  button,
+  .no-print,
+  [class*="sticky"],
+  [class*="fixed"] {
+    display: none !important;
+  }
+
+  /* Reset page margins */
+  @page {
+    margin: 0.5in;
+    size: letter;
+  }
+
+  /* Reset body for printing */
+  html, body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Remove dark background from share link view */
+  .min-h-screen {
+    min-height: auto !important;
+    padding: 0 !important;
+    background: white !important;
+    background-image: none !important;
+  }
+
+  /* Remove flexbox layout that causes issues */
+  .flex.pt-14 {
+    display: block !important;
+    padding-top: 0 !important;
+  }
+
+  .flex-1 {
+    flex: none !important;
+    width: 100% !important;
+  }
+
+  /* Document pages print settings */
+  .shadow-lg.min-h-\[11in\] {
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    padding: 0.5in !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    page-break-after: always;
+    break-after: page;
+    position: relative !important;
+  }
+
+  /* Last page shouldn't have page break after */
+  .shadow-lg.min-h-\[11in\]:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  /* Preserve background images and colors on document pages */
+  .shadow-lg.min-h-\[11in\],
+  .shadow-lg.min-h-\[11in\] * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Ensure background images in document pages render */
+  .shadow-lg.min-h-\[11in\] > div[style*="background-image"] {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Ensure images print properly */
+  img {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Text colors should print */
+  h1, h2, h3, h4, h5, h6, p, span, div {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide the powered by footer when printing */
+  a[href*="opennous.cloud"] {
+    display: none !important;
+  }
+
+  /* Hide page thumbnails sidebar */
+  .w-24.bg-slate-800\/50 {
+    display: none !important;
+  }
+
+  /* Remove padding/background from content area when printing */
+  .p-8.bg-slate-900\/50 {
+    padding: 0 !important;
+    background: transparent !important;
+  }
+
+  /* Hide document title header in share link mode (it's in the doc already) */
+  .max-w-\[8\.5in\].mx-auto.mb-6 {
+    display: none !important;
+  }
+}
+
+/* ── Nous auth constellation (GraphField) — matches opennous.cloud ── */
+@keyframes graph-drift {
+  0% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-12px, 10px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes edge-breathe {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.26;
+  }
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes node-pulse {
+  0%,
+  100% {
+    opacity: 0.22;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.18);
+  }
+}
+
+
+
+
+
+/* ── Pre-call brief printing (BriefPanel) ─────────────────────────────────────
+   The Print button mounts a clone of the brief in a portal directly under
+   <body> and flags the body with .printing-brief. In print, the app shell is
+   dropped entirely and only the portal renders — so no scroll container,
+   sticky bar, or sidebar can clip or leak into the printout. On screen the
+   portal stays hidden. The global print rules above (buttons hidden, letter
+   page) still apply, which is why the brief renders quotes as plain text. */
+.brief-print-portal {
+  display: none;
+}
+@media print {
+  body.printing-brief #root {
+    display: none !important;
+  }
+  body.printing-brief .brief-print-portal {
+    display: block !important;
+    padding: 0;
+  }
+  .brief-print-portal .brief-print-root {
+    max-width: 100% !important;
+  }
+  /* The global hide-list drops [class*="sticky"] — restore the brief's header
+     inside the print portal (higher specificity wins for both properties). */
+  .brief-print-portal .sticky {
+    display: flex !important;
+    position: static !important;
+  }
+}
+
+/* ─── Printing a report ──────────────────────────────────────────────────────
+ *
+ * The PDF is the SAME DOCUMENT the app renders, printed — not a second layout engine
+ * with its own drift. That is the whole reason the design lives in CSS: change the
+ * report's look once and both surfaces move together.
+ *
+ * Everything but the document is hidden with `visibility`, not `display`, so React
+ * keeps its tree and the recharts SVGs stay measured — collapsing the layout would
+ * reflow every chart to zero width just as the page is captured.
+ */
+@media print {
+  body * { visibility: hidden; }
+  #report-print-root, #report-print-root * { visibility: visible; }
+
+  #report-print-root {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    overflow: visible;
+    border: 0;
+    background: #fff;
+  }
+  /* The dock is a resizable side panel on screen; on paper it is the page. */
+  #report-print-root .report-scroll { overflow: visible !important; height: auto !important; }
+
+  /* Chrome that belongs to the app, never to the document. */
+  .print-hide { display: none !important; }
+  .print-only { display: block !important; }
+
+  /* Nothing a reader treats as one object may be split across a page break. A chart cut
+   * in half is worse than a chart on the next page. */
+  figure, table, thead, .report-callout, .report-metrics { break-inside: avoid; page-break-inside: avoid; }
+
+  /* EACH SECTION IS A PAGE. The divider a reader sees on screen is the page edge they get
+   * on paper, so the on-screen rhythm and the printed one are the same decision rather than
+   * two. `first-of-type` keeps the executive summary on page one with the masthead instead
+   * of pushing a blank sheet ahead of it. */
+  .report-section { break-before: page; page-break-before: always; break-inside: auto; }
+  .report-section:first-of-type { break-before: auto; page-break-before: avoid; }
+  /* The screen's boundary rule would print as a line at the very top of every page. */
+  .report-section { border-top: 0 !important; padding-top: 0 !important; }
+  h3 { break-after: avoid; page-break-after: avoid; }
+  tr  { break-inside: avoid; page-break-inside: avoid; }
+  thead { display: table-header-group; }   /* repeat headers on every page of a long table */
+
+  @page { size: A4; margin: 16mm 14mm 18mm; }
+
+  /* Print the real colours — a report whose won/lost bars come out grey says nothing. */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+
+/* On screen the print-only masthead stays out of the way. */
+.print-only { display: none; }
+
+/* ── The agent's prose rhythm ──────────────────────────────────────────────────
+ * Every gap inside an agent answer is set here and nowhere else.
+ *
+ * This lived as a stack of Tailwind arbitrary variants (`[&>*+ul]:mt-1.5`,
+ * `[&>ul+*]:mt-5`, six more). They generated real rules, with the right values, in the
+ * right place in the cascade — all verified in the deployed stylesheet — and the page
+ * still rendered the inverse: more air above a list than below it. An evening went into
+ * escaping, generated order and plugin specificity without settling it.
+ *
+ * Written out, it reads top to bottom and the browser resolves it with no build step in
+ * between. Last in the file, so it wins every tie against the typography plugin.
+ */
+/* ONE SCALE: 6 · 10 · 16 · 20. Tight seam, default gap, section break, new part. Every
+ * number below is one of those four, so the page reads as one rhythm rather than as a pile
+ * of individual decisions — and a change to the density is a change to the scale, here. */
+.agent-prose > *        { margin-top: 0; margin-bottom: 0; }   /* one system, not two */
+.agent-prose > * + *    { margin-top: 10px; }                  /* the default gap */
+
+/* A list is not a paragraph, and its two seams are not the same seam: the line above
+ * introduces the bullets and belongs with them, while what follows the list is a new
+ * thought. One uniform gap is what made a closing question look stuck to the last bullet.
+ *
+ * ON THE LIST ITSELF, not on its siblings. This was `> * + ul` / `> ul + *` twice over —
+ * both generated, both with the right values, both correctly placed in the cascade, and the
+ * page rendered their inverse every time: a heading detached from its own bullets and glued
+ * to the section above. Margins on the element need no adjacent-sibling match to work, and
+ * they collapse against the neighbour's zero margin, so the gap is exactly what is written
+ * here. `> ul` (0,1,1) also outranks the generic `> * + *` (0,1,0), so the 12px never wins. */
+.agent-prose > ul,
+.agent-prose > ol       { margin-top: 6px; margin-bottom: 16px; }
+
+/* Items are one thought, so they sit closer than paragraphs. Without the reset, the
+ * typography plugin's own li margins reappear at the edges of every list. */
+.agent-prose li         { margin-top: 0; margin-bottom: 0; }
+.agent-prose li + li    { margin-top: 6px; }
+.agent-prose li > p     { margin-top: 0; margin-bottom: 0; }   /* a wrapped item is not two paragraphs */
+.agent-prose li > p + p { margin-top: 6px; }
+
+/* A table has the same two seams a list does, and had neither. The line above introduces it;
+ * the line below is a new thought. Without this it fell to the generic 10px, and 10px under a
+ * table is not the same as 10px under a paragraph: the last row carries a border, so the
+ * following sentence sits directly against a drawn line and reads as part of the table.
+ *
+ * Slightly more room below than a list gets (18 vs 16) for exactly that reason — the border
+ * is a visual edge the eye has to clear before the prose starts again.
+ *
+ * ON THE ELEMENT, like the list rule above, and for the same reason: `> * + table` and
+ * `> table + *` are adjacent-sibling matches that lost this argument once already. */
+.agent-prose > table    { margin-top: 6px; margin-bottom: 18px; }
+
+/* A heading opens a section: it hugs what it introduces, and opens away from what came before. */
+.agent-prose > h1 + *,
+.agent-prose > h2 + *,
+.agent-prose > h3 + *   { margin-top: 6px; }
+/* A heading needs enough room above it to read as OPENING something rather than as a bold
+ * line in the flow. 16px was the same order as the 10px default gap, so a section boundary
+ * looked like one more paragraph break. */
+.agent-prose > * + h1   { margin-top: 26px; }
+.agent-prose > * + h2   { margin-top: 24px; }
+.agent-prose > * + h3   { margin-top: 18px; }
+
+/* Section and card titles (GET-658): quiet labels that step back so the rows lead, the way
+   Linear labels its sections. It was picked over heavier, serif and alternative faces. */
+@layer components {
+  .section-title {
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: hsl(var(--muted-foreground));
+  }
+}

@@ -1,0 +1,80 @@
+name: Visual
+
+# Playwright screenshot suite (GET-596 baselines, GET-652 CI). Every route plus the UI
+# gallery, in preview mode against the fixture world — no API, database or Clerk key needed.
+# The committed baselines are -darwin, so this runs on macOS; a Linux runner would need its
+# own baseline set. Never regenerate baselines from CI: update them locally with
+# `pnpm --filter ./apps/frontend test:visual:update` and commit them.
+#
+# No branch filter on purpose: stacked PRs (base != main) need the check too.
+
+on:
+  pull_request:
+    paths:
+      - "apps/frontend/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/visual.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: visual-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  visual:
+    # Imported public PRs (copy.bara.sky import_pr, branch public-pr/N) are untrusted code: never
+    # run them here, where CI has secrets and the private tree (GET-753).
+    if: ${{ !startsWith(github.head_ref, 'public-pr/') && !startsWith(github.ref_name, 'public-pr/') }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Playwright version
+        id: pw
+        working-directory: apps/frontend
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.pw.outputs.version }}-chromium
+
+      - name: Install Chromium
+        working-directory: apps/frontend
+        run: pnpm exec playwright install chromium
+
+      # playwright.config.ts starts both servers itself (webServer): the preview API on a
+      # fixed clock (PREVIEW_NOW, TZ=Europe/Berlin) and vite with VITE_PREVIEW=1. The browser
+      # context pins timezone Europe/Berlin and locale en-US. TZ here matches the API's so
+      # anything else that reads the host clock agrees.
+      - name: Run visual suite
+        working-directory: apps/frontend
+        env:
+          CI: "true"
+          TZ: Europe/Berlin
+        run: pnpm exec playwright test
+
+      - name: Upload diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-test-results
+          path: apps/frontend/test-results/
+          retention-days: 14
+          if-no-files-found: ignore

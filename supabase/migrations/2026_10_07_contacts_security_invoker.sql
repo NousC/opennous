@@ -1,0 +1,12 @@
+-- Put security_invoker back on the contacts view (GET-757).
+--
+-- 2026_08_17_sec_views_security_invoker.sql set security_invoker on companies and contacts so the
+-- views run with the caller's rights and the RLS on entities/claims/observations applies through
+-- them. 2026_09_08_activity_and_company_view_fixes.sql then rebuilt contacts with CREATE OR REPLACE
+-- VIEW and no WITH clause, which drops reloptions (scripts/schema-drift.mjs describes the same
+-- thing on production). 2026_09_19_companies_last_activity_plan.sql restored it on companies only,
+-- so a database built from this repo ends with a contacts view that runs as its owner while anon
+-- and authenticated hold SELECT on it: RLS does not apply to anything read through it.
+--
+-- Idempotent; on a database where the option is already set this changes nothing.
+ALTER VIEW public.contacts SET (security_invoker = on);

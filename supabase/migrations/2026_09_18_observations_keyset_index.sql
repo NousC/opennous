@@ -1,0 +1,23 @@
+-- Let the email scan page by keyset instead of offset (GET-329).
+--
+-- Pass 1 of the Gmail read walks a workspace's email newest-first. With OFFSET paging it got
+-- steadily slower as it went, because OFFSET n walks and detoasts n rows before returning anything:
+--
+--   page 1  (OFFSET 0)      419 ms
+--   page 40 (OFFSET 40000)  12,635 ms   -- still reads 41,000 rows to return 1,000
+--
+-- Past roughly page 60 that exceeds PostgREST's 8s statement_timeout, so the run died before
+-- reading a single thread. The workaround was to bound the scan, which truncates threads at the
+-- boundary: a two-way conversation whose older half falls outside the bound reads as inbound-only
+-- and loses the context its replies need. Fine for a 30-thread sample, not fine for 5,000.
+--
+-- A keyset asks for "the next 1,000 after this point" and costs the same at page 400 as at page 1.
+-- The cursor has to be the PAIR (observed_at, id): an import stamps rows from the source clock, so
+-- timestamps repeat, and a cursor on a non-unique key either repeats rows or SKIPS them — and skips
+-- are silent and lose whole threads.
+--
+-- NOT a generated thread_id column, which was the other candidate: observations is a large table, and
+-- adding a stored generated column rewrites all of it. This index is a small fraction of that and
+-- builds CONCURRENTLY.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS observations_ws_property_at_id
+  ON public.observations (workspace_id, property, observed_at DESC, id DESC);

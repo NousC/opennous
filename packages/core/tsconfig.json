@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "moduleResolution": "NodeNext",
+    "module": "NodeNext",
+    // audit.mjs is pure JS shared by the API and the worker (both have @nous/core in their
+    // Docker image; neither has the other's app dir). allowJs lets tsc carry it into dist so
+    // both import it from one place. checkJs stays off — it's emitted, not type-audited.
+    "allowJs": true
+  },
+  "include": ["src"]
+}

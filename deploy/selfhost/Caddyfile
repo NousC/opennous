@@ -1,0 +1,62 @@
+# Caddy for the bundled self-host stack (docker-compose.selfhost.yaml).
+# Same routes as the root Caddyfile, plus Supabase Auth on the app domain and an
+# internal-only gateway for the API's database client.
+{
+    servers {
+        protocols h1 h2
+    }
+}
+
+(security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
+
+{$APP_DOMAIN} {
+    import security_headers
+    # Sign-in, sign-up, password reset, email links. The browser's supabase-js client
+    # uses https://$APP_DOMAIN as its Supabase URL, so it calls /auth/v1/* here.
+    # PostgREST (/rest/v1) is deliberately NOT routed publicly.
+    handle_path /auth/v1/* {
+        reverse_proxy auth:9999
+    }
+    handle {
+        header {
+            X-Frame-Options "DENY"
+            Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+        }
+        reverse_proxy frontend:80
+    }
+}
+
+{$API_DOMAIN} {
+    import security_headers
+    handle /inbound/* {
+        reverse_proxy worker:3001
+    }
+    reverse_proxy api:3000 {
+        flush_interval -1
+    }
+}
+
+{$MCP_DOMAIN} {
+    import security_headers
+    reverse_proxy mcp:3002
+}
+
+# Internal Supabase gateway, reachable only on the compose network as
+# http://supabase:8000 (port 8000 is not published). api, worker and mcp use it as
+# SUPABASE_URL: /rest/v1 → PostgREST, /auth/v1 → GoTrue (auth.admin calls).
+http://supabase:8000 {
+    handle_path /rest/v1/* {
+        reverse_proxy postgrest:3000
+    }
+    handle_path /auth/v1/* {
+        reverse_proxy auth:9999
+    }
+    respond 404
+}
