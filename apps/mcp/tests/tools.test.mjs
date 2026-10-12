@@ -72,7 +72,19 @@ test('find deals: filters map to GET /v2/deals and rows render on one line', asy
   });
   assert.deepEqual(calls[0].query, { status: 'open', closing_within_days: '30', sort: 'close_date', limit: '10' });
   assert.match(text, /^1 deal · sorted by close_date · more available, page with offset 1/);
-  assert.match(text, /• Acme renewal — Acme · Negotiation · open · 48,000 USD · closes 2026-10-15 · win 42% \(18% in 30d\) · health 62 · owner Odile {2}\[1111/);
+  assert.match(text, /• Acme renewal — Acme · Negotiation · open · \$48,000 · closes 2026-10-15 · win 42% \(18% in 30d\) · health 62 · owner Odile {2}\[1111/);
+});
+
+test('find deals: a deal with no currency reads as dollars, another currency keeps its code (GET-831)', async () => {
+  const deal = (over) => ({ id: UUID, name: 'Acme pilot', account: { entity_id: ACC, name: 'Acme', domain: 'acme.com' }, stage: 'Demo',
+    canonical_stage: 'demo', status: 'open', amount: 450, currency: null, close_date: null, owner: null, pipeline: null,
+    health: null, win_probability: null, close_within_30d: null, last_activity_at: null, implied: false, ...over });
+  const { text } = await callTool('find', { kind: 'deals' }, {
+    'GET /v2/deals': () => [200, { deals: [deal({}), deal({ currency: 'EUR', amount: 1200 })], offset: 0, has_more: false }],
+  });
+  assert.match(text, /Acme · Demo · open · \$450 /);
+  assert.match(text, /Acme · Demo · open · 1,200 EUR /);
+  assert.doesNotMatch(text, /· 450 /);
 });
 
 test('find people: stage → pipeline_stage, include_all → include=all', async () => {
@@ -89,7 +101,7 @@ test('find accounts with win_chance caps limit at 50 and shows odds', async () =
   });
   assert.equal(calls[0].query.limit, '50');
   assert.equal(calls[0].query.icp_fit, 'true');
-  assert.match(text, /Acme — acme\.com · ICP 80 tier 1 · 1 open deal · 48,000 pipeline · win 50%/);
+  assert.match(text, /Acme — acme\.com · ICP 80 tier 1 · 1 open deal · \$48,000 pipeline · win 50%/);
 });
 
 test('find refuses a filter the kind does not support, without calling the API', async () => {

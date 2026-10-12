@@ -182,7 +182,13 @@ const pct     = (c) => `${Math.round((c ?? 0) * 100)}%`;
 // ─── list rows (find) and the deal block (get_context) ───────────────────────
 
 const day = (ts) => (ts ? String(ts).slice(0, 10) : null);
-const fmtMoney = (n, cur) => (n == null ? null : `${Number(n).toLocaleString("en-US")}${cur ? ` ${cur}` : ""}`);
+// A value with no currency is in dollars, as the app shows it (GET-831): "$450", never a bare
+// "450" an agent then reports as "currency not recorded". Another recorded currency keeps its code.
+const fmtMoney = (n, cur) => {
+  if (n == null) return null;
+  const v = Number(n).toLocaleString("en-US");
+  return !cur || cur === "USD" || cur === "$" ? `$${v}` : `${v} ${cur}`;
+};
 // Win odds come back as 0-1 (null = not scored: a closed deal, or no outlook for it).
 const fmtOdds = (p) => (p == null ? null : `${Math.round(p * 100)}%`);
 const stageText = (stage, canonical) =>
