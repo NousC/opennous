@@ -5,7 +5,7 @@ import { Router } from 'express';
 import { getSupabaseClient } from '@nous/core';
 import { isSelfHosted } from '../../lib/plans.mjs';
 import { modelSetupStatus } from '../../lib/llm.mjs';
-import { integrationStatus, emailStatus, SELF_HOST_GUIDE } from '../../lib/instanceSetup.mjs';
+import { integrationStatus, emailStatus, addressStatus, SELF_HOST_GUIDE } from '../../lib/instanceSetup.mjs';
 
 export const instanceSetupRouter = Router();
 
@@ -19,6 +19,7 @@ instanceSetupRouter.get('/', async (req, res) => {
       .from('api_keys').select('last_used_at').eq('workspace_id', req.workspaceId).is('revoked_at', null);
     return res.json({
       guide: SELF_HOST_GUIDE,
+      address: addressStatus(),
       ai: modelSetupStatus(),
       email: emailStatus(),
       integrations: integrationStatus(),

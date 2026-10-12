@@ -9,6 +9,7 @@ import { Check, ExternalLink, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { SettingsGroup, SettingsRow } from "@/components/settings/SettingsKit";
 import { CodeSnippet } from "@/components/connect/shared";
+import { GetDataIn } from "@/components/settings/GetDataIn";
 import { cn } from "@/lib/utils";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
@@ -18,6 +19,7 @@ type Job = { tier: string; label: string; model: string; route: "anthropic" | "o
 type Integration = { id: string; name: string; kind: string; ready: boolean; needs: string[]; guide?: string };
 type Setup = {
   guide: string;
+  address: { domain: string | null; public: boolean; guide: string };
   ai: { providers: { anthropic: boolean; openaiCompatible: boolean; endpoint: string; openRouter: boolean; local: boolean }; jobs: Job[] };
   email: { ready: boolean; needs: string[]; guide: string };
   integrations: Integration[];
@@ -116,10 +118,23 @@ export function InstanceSetup() {
         <span className="font-mono text-[12px]">{APPLY}</span>.
       </p>
 
+      <SettingsGroup title="Public address">
+        <SettingsRow label={setup.address.domain ?? "No API domain set"}
+          hint={setup.address.public
+            ? "Granola, HubSpot and Fireflies can send new calls and changes here as they happen."
+            : "Only this machine or network can reach it, so tools cannot send live updates (connecting still works, and data arrives through the import and the backfill). Point your own domain at the server to receive them."}>
+          {setup.address.public ? <Status ok>Reachable</Status> : <><Status ok={false}>Local only</Status><GuideLink href={setup.address.guide}>How</GuideLink></>}
+        </SettingsRow>
+      </SettingsGroup>
+
+      <GetDataIn jobs={ai.jobs} providerLabel={ai.providers.openRouter ? "OpenRouter" : ai.providers.endpoint} />
+
       <SettingsGroup title="AI providers">
         <SettingsRow label="Anthropic" hint="Claude models, by their Anthropic id (claude-…)."
           leading={<img src="/model-logos/anthropic.png" alt="" className="h-5 w-5 rounded" />}>
-          {ai.providers.anthropic ? <Status ok>Key set</Status> : <><Status ok={false}>No key</Status><Env names={["ANTHROPIC_API_KEY"]} /></>}
+          {ai.providers.anthropic ? <Status ok>Key set</Status>
+            : ai.jobs.some((j) => j.route === "anthropic") ? <><Status ok={false}>No key</Status><Env names={["ANTHROPIC_API_KEY"]} /></>
+            : <span className="text-[12px] text-muted-foreground">Not used</span>}
         </SettingsRow>
         <SettingsRow
           label={ai.providers.openRouter ? "OpenRouter" : "OpenAI-compatible endpoint"}

@@ -35,6 +35,19 @@ export function integrationStatus(env = process.env) {
   ];
 }
 
+/**
+ * Whether tools can reach this install. Granola, HubSpot and Fireflies push new calls and changes
+ * to https://<API_DOMAIN>/inbound/…; on localhost (or any name only this network knows) they cannot,
+ * so connecting works but the live webhook does not, and data arrives only by import and backfill.
+ */
+export function addressStatus(env = process.env) {
+  const domain = String(env.API_DOMAIN ?? '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  const local = !domain || /(^|\.)(localhost|local|test|internal|lan|home)$/i.test(domain)
+    || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$|0\.0\.0\.0)/.test(domain)
+    || /yourdomain\.com$/i.test(domain);
+  return { domain: domain || null, public: !local, guide: `${GUIDE}#run-it` };
+}
+
 /** Sign-in emails (password reset, confirmations) need SMTP on the auth server. */
 export function emailStatus(env = process.env) {
   const smtp = set(env, 'SMTP_HOST') && set(env, 'SMTP_ADMIN_EMAIL');

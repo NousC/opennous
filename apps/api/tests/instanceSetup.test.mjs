@@ -2,7 +2,7 @@
 // ready, read from its environment. Pure: each test passes its own env.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { integrationStatus, emailStatus } from '../src/lib/instanceSetup.mjs';
+import { integrationStatus, emailStatus, addressStatus } from '../src/lib/instanceSetup.mjs';
 
 const byId = (env) => Object.fromEntries(integrationStatus(env).map((i) => [i.id, i]));
 
@@ -24,4 +24,13 @@ test('Google is ready only with its own OAuth app (never Composio); Salesforce w
 test('email is ready only with an SMTP host and sender', () => {
   assert.equal(emailStatus({}).ready, false);
   assert.equal(emailStatus({ SMTP_HOST: 'smtp.acme.com', SMTP_ADMIN_EMAIL: 'no-reply@acme.com' }).ready, true);
+});
+
+test('the public address: localhost and private names cannot receive webhooks, a real domain can', () => {
+  for (const d of ['localhost', 'api.localhost', '127.0.0.1', '192.168.1.20', 'nous.local', 'api.yourdomain.com', '']) {
+    assert.equal(addressStatus({ API_DOMAIN: d }).public, false, d || '(unset)');
+  }
+  const s = addressStatus({ API_DOMAIN: 'api.acme.com' });
+  assert.equal(s.public, true);
+  assert.equal(s.domain, 'api.acme.com');
 });
