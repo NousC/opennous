@@ -16,6 +16,8 @@ export interface SettingsNavItem {
   group: SettingsGroup;
   /** When set, the row leaves Settings for this path instead of switching section. */
   href?: string;
+  /** Routable but not in the rail: its page is reached from the sidebar, and old links still land. */
+  unlisted?: boolean;
 }
 
 export interface SettingsNavInput {
@@ -57,10 +59,12 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // keeps the `integrations` id so every existing ?section= link still lands.
     // Each one is a standalone page on every plan (GET-625 follow-up on API, GET-660 on Custom), so
     // the row goes there and both plans see the same page.
-    { id: "integrations",    label: "Personal integrations", group: "Connections", href: "/integrations", show: !selfHosted },
-    { id: "company-sources", label: "Shared integrations",   group: "Connections", href: "/company-sources", show: !selfHosted },
-    { id: "webhooks",        label: "Webhooks",              group: "Connections", href: "/webhooks", show: !selfHosted },
-    { id: "api-keys",        label: "API keys",              group: "Connections", href: "/keys", show: !selfHosted },
+    // On API the sidebar's Integrations group already holds these four (GET-620), so the rail does
+    // not repeat them (GET-857); unlisted, not hidden, so a ?section= link still reaches the page.
+    { id: "integrations",    label: "Personal integrations", group: "Connections", href: "/integrations", show: !selfHosted, unlisted: core },
+    { id: "company-sources", label: "Shared integrations",   group: "Connections", href: "/company-sources", show: !selfHosted, unlisted: core },
+    { id: "webhooks",        label: "Webhooks",              group: "Connections", href: "/webhooks", show: !selfHosted, unlisted: core },
+    { id: "api-keys",        label: "API keys",              group: "Connections", href: "/keys", show: !selfHosted, unlisted: core },
     // Raw evidence goes to the operator's own git on the API plan; on Custom it lives with us.
     { id: "repo",            label: "Repo",                  group: "Connections", show: core && !selfHosted },
     // Agent — the Workspace layer adds Memory and Skills ahead of Automations.
@@ -102,6 +106,6 @@ export function resolveSection(raw: string | null | undefined, items: SettingsNa
 /** The rail grouped for rendering, empty groups dropped. */
 export function groupNav(items: SettingsNavItem[]): { group: SettingsGroup; items: SettingsNavItem[] }[] {
   return GROUP_ORDER
-    .map((group) => ({ group, items: items.filter((i) => i.group === group) }))
+    .map((group) => ({ group, items: items.filter((i) => i.group === group && !i.unlisted) }))
     .filter((g) => g.items.length > 0);
 }

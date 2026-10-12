@@ -19,6 +19,11 @@ test("API plan admin: the board's three groups, billing goes to /usage, Repo kep
   const billing = nav.find((i) => i.id === "billing")!;
   assert.equal(billing.label, "Usage and billing");
   assert.equal(billing.href, "/usage");
+  // The sidebar holds Personal, Shared, Webhooks and API keys on API, so the rail does not repeat
+  // them (GET-857); they stay routable, so /settings?section=integrations still lands on the page.
+  const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
+  assert.deepEqual(rail, ["profile", "notifications", "security", "repo", "general", "members", "billing"]);
+  assert.equal(resolveSection("integrations", nav), "integrations");
 });
 
 test("Custom plan admin: Billing is the Usage page too (GET-660), no Repo, no Agent group", () => {
@@ -89,4 +94,10 @@ test("self-host admin: no Connections group (the sidebar has them), no billing, 
 test("self-host member: no Instance setup", () => {
   const nav = settingsNav({ tier: "api", isWorkspaceAdmin: false, isOwner: false, selfHosted: true });
   assert.ok(!ids(nav).includes("instance"));
+});
+
+test("Custom plan keeps the Connections rows in the rail: its sidebar has no Integrations group (GET-857)", () => {
+  const nav = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false });
+  const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
+  for (const id of ["integrations", "company-sources", "webhooks", "api-keys"]) assert.ok(rail.includes(id), id);
 });
