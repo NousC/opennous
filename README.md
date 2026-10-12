@@ -27,9 +27,9 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/hero-graph-dark.png" />
-    <source media="(prefers-color-scheme: light)" srcset=".github/assets/hero-graph.png" />
-    <img src=".github/assets/hero-graph.png" alt="The OpenNous Graph: every account with its logo, linked to its people and deals, beside the accounts ranked by ICP fit" width="900" />
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/hero-graph-v3-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/hero-graph-v3.png" />
+    <img src=".github/assets/hero-graph-v3.png" alt="The OpenNous Graph: every account with its logo, linked to its people and deals, beside the accounts ranked by ICP fit" width="900" />
   </picture>
 </p>
 
