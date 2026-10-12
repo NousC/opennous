@@ -52,7 +52,6 @@ import { scoresV2Router } from './routes/v2/scores.mjs';
 import { attentionV2Router } from './routes/v2/attention.mjs';
 import { campaignPerformanceV2Router } from './routes/v2/campaignPerformance.mjs';
 import { pipelineIntelligenceV2Router } from './routes/v2/pipelineIntelligence.mjs';
-import { forecastV2Router } from './routes/v2/forecast.mjs';
 import { dealsV2Router } from './routes/v2/deals.mjs';
 import { pipelinesV2Router } from './routes/v2/pipelines.mjs';
 import { auditV2Router } from './routes/v2/audit.mjs';
@@ -365,11 +364,8 @@ app.use('/v2/attention',       verifyApiKey,     requireOpsBalance, logV2Op, att
 // (no X-Nous-Client header), so Adoption's usage numbers are untouched.
 app.use('/v2/campaigns',       verifyAuthEither, requireOpsBalance, logV2Op, campaignPerformanceV2Router);
 app.use('/v2/pipeline',        verifyAuthEither, requireOpsBalance, logV2Op, pipelineIntelligenceV2Router);
-// Revenue forecast. verifyAuthEither like /v2/pipeline: it backs both an agent tool and an
-// in-app surface, and it is a read, so it carries the same auth and metering. No feature
-// gate — Forecast is a per-person surface everyone on the team can see.
-app.use('/v2/forecast',        verifyAuthEither, requireOpsBalance, logV2Op, forecastV2Router);
-// Deal outlook — health + how likely each deal is to close, and why. Same auth as forecast:
+// The revenue forecast (/v2/forecast) is Nous Cloud's, mounted by src/cloud/index.mjs (GET-843).
+// Deal outlook — health + how likely each deal is to close, and why. Same auth as the forecast:
 // it backs the agent's `deals` tool (key) and can back an in-app surface (session).
 app.use('/v2/deals',           verifyAuthEither, requireOpsBalance, logV2Op, dealsV2Router);
 app.use('/v2/pipelines',       verifyApiKey,     requireOpsBalance, logV2Op, pipelinesV2Router);
@@ -533,6 +529,7 @@ if (!HAS_CLOUD) {
     ['/api/playground', 'playground'],
     ['/api/reports', 'reports'],
     ['/v2/report', 'reports'],
+    ['/v2/forecast', 'forecasting'],
     ['/api/slack', 'slack'],
     ['/api/oauth/slack', 'slack'],
     ['/api/workflow-providers/slack/oauth', 'slack'],

@@ -10,8 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  smoothRate, buildConversionRates, winProbabilityByStage, probCloseWithin,
-  forecastPipeline, DEFAULT_STAGE_PRIORS, PRIOR_STRENGTH,
+  smoothRate, buildConversionRates, winProbabilityByStage, probCloseWithin, DEFAULT_STAGE_PRIORS, PRIOR_STRENGTH,
 } from '../dist/services/forecast.js';
 import { kaplanMeierCurve } from '../dist/services/funnelTimeline.js';
 
@@ -176,81 +175,3 @@ const model = () => {
     },
   };
 };
-
-test('the total is the sum of the per-deal contributions — fully explainable', () => {
-  const r = forecastPipeline([
-    { entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 5 },
-    { entityId: 'b', amount: 30000, stage: 'negotiation', daysInStage: 10 },
-  ], model(), { horizonDays: 30 });
-  const summed = r.deals.reduce((s, d) => s + d.contribution, 0);
-  assert.ok(Math.abs(r.expected - summed) <= 1, `total does not match its parts: ${r.expected} vs ${summed}`);
-});
-
-test('the forecast never exceeds the raw open pipeline', () => {
-  const r = forecastPipeline([
-    { entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 5 },
-    { entityId: 'b', amount: 30000, stage: 'discovery', daysInStage: 10 },
-  ], model(), { horizonDays: 30 });
-  assert.ok(r.expected <= r.openPipeline, `${r.expected} > ${r.openPipeline}`);
-  assert.equal(r.openPipeline, 80000);
-});
-
-test('a deal with no amount is reported, NOT counted as zero', () => {
-  // Treating unknown as nothing is how a forecast ends up confidently low.
-  const r = forecastPipeline([
-    { entityId: 'a', amount: null, stage: 'negotiation', daysInStage: 5 },
-    { entityId: 'b', amount: 30000, stage: 'negotiation', daysInStage: 5 },
-  ], model(), { horizonDays: 30 });
-  assert.equal(r.missingAmountCount, 1);
-  assert.equal(r.openPipeline, 30000);
-  assert.ok(r.deals.find(d => d.entityId === 'a').caveat, 'no caveat on the unknown deal');
-});
-
-test('a stage with no timing history contributes nothing and says why', () => {
-  const r = forecastPipeline(
-    [{ entityId: 'a', amount: 50000, stage: 'interested', daysInStage: 5 }],
-    model(), { horizonDays: 30 },
-  );
-  assert.equal(r.expected, 0);
-  assert.equal(r.deals[0].pClose, null);
-  assert.match(r.deals[0].caveat, /timing/);
-});
-
-test('deals come back biggest contributor first', () => {
-  const r = forecastPipeline([
-    { entityId: 'small', amount: 1000, stage: 'negotiation', daysInStage: 5 },
-    { entityId: 'big', amount: 90000, stage: 'negotiation', daysInStage: 5 },
-  ], model(), { horizonDays: 30 });
-  assert.equal(r.deals[0].entityId, 'big');
-});
-
-test('a late-stage deal outweighs an identical early-stage one', () => {
-  const r = forecastPipeline([
-    { entityId: 'late', amount: 50000, stage: 'negotiation', daysInStage: 5 },
-    { entityId: 'early', amount: 50000, stage: 'discovery', daysInStage: 5 },
-  ], model(), { horizonDays: 30 });
-  const late = r.deals.find(d => d.entityId === 'late');
-  const early = r.deals.find(d => d.entityId === 'early');
-  assert.ok(late.contribution > early.contribution);
-});
-
-test('basis reports honestly how much is assumption', () => {
-  const noData = forecastPipeline([], {
-    rates: buildConversionRates([]), winByStage: {}, curvesByStage: {},
-  }, { horizonDays: 30 });
-  assert.equal(noData.basis, 'prior');
-
-  const lots = buildConversionRates(
-    ['identified', 'connected', 'interested', 'meeting_booked', 'discovery', 'demo', 'negotiation']
-      .map(from => ({ from, to: 'x', reached_from: 500, reached_to: 250 })),
-  );
-  const learned = forecastPipeline([], { rates: lots, winByStage: {}, curvesByStage: {} }, { horizonDays: 30 });
-  assert.equal(learned.basis, 'learned');
-});
-
-test('an empty pipeline forecasts zero without blowing up', () => {
-  const r = forecastPipeline([], model(), { horizonDays: 30 });
-  assert.equal(r.expected, 0);
-  assert.equal(r.dealCount, 0);
-  assert.equal(r.openPipeline, 0);
-});

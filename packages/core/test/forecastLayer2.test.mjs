@@ -15,8 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyIntentMultiplier, intentMultiplierFor, DEFAULT_INTENT_HAZARD,
-  simulateForecast, forecastPipeline, buildConversionRates, winProbabilityByStage,
+  applyIntentMultiplier, intentMultiplierFor, DEFAULT_INTENT_HAZARD, buildConversionRates, winProbabilityByStage,
 } from '../dist/services/forecast.js';
 import { kaplanMeierCurve } from '../dist/services/funnelTimeline.js';
 
@@ -87,124 +86,8 @@ test('a null timing probability stays null through the intent step', () => {
   assert.equal(applyIntentMultiplier(null, 1.4), null);
 });
 
-test('intent changes WHEN, never WHETHER — P(win) is untouched', () => {
-  const deals = (band) => [{ entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 10, intentBand: band }];
-  const hot = forecastPipeline(deals('Hot'), model(), { horizonDays: 30 });
-  const cold = forecastPipeline(deals('Dormant'), model(), { horizonDays: 30 });
-  assert.equal(hot.deals[0].pWin, cold.deals[0].pWin, 'intent leaked into P(win)');
-  assert.ok(hot.deals[0].pClose > cold.deals[0].pClose);
-  assert.ok(hot.expected > cold.expected);
-});
 
-test('two identical deals are separated only by intent — the whole point of layer 2', () => {
-  // Acme and Borealis: same stage, same amount, same 40 days. Acme replied on Wednesday,
-  // Borealis has been silent since June. Layer 1 gives them the same number.
-  const r = forecastPipeline([
-    { entityId: 'acme', amount: 50000, stage: 'negotiation', daysInStage: 40, intentBand: 'Hot' },
-    { entityId: 'borealis', amount: 50000, stage: 'negotiation', daysInStage: 40, intentBand: 'Dormant' },
-  ], model(), { horizonDays: 30 });
-  const acme = r.deals.find(d => d.entityId === 'acme');
-  const borealis = r.deals.find(d => d.entityId === 'borealis');
-  assert.ok(acme.contribution > borealis.contribution * 1.5,
-    `not meaningfully separated: ${acme.contribution} vs ${borealis.contribution}`);
-  // The pre-intent figure is retained on both, so the adjustment stays auditable.
-  assert.equal(acme.pCloseBase, borealis.pCloseBase);
-});
 
-test('intent can be switched off, to show what it changed', () => {
-  const deals = [{ entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 10, intentBand: 'Hot' }];
-  const off = forecastPipeline(deals, model(), { horizonDays: 30, intentHazard: false });
-  assert.equal(off.deals[0].intentMultiplier, 1);
-  assert.equal(off.deals[0].pClose, off.deals[0].pCloseBase);
-});
 
-test('a workspace-specific multiplier table overrides the defaults', () => {
-  // The hook for a fitted coefficient once a workspace has enough closed deals.
-  const deals = [{ entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 10, intentBand: 'Hot' }];
-  const custom = forecastPipeline(deals, model(), { horizonDays: 30, intentTable: { Hot: 3.0 } });
-  const dflt = forecastPipeline(deals, model(), { horizonDays: 30 });
-  assert.equal(custom.deals[0].intentMultiplier, 3.0);
-  assert.ok(custom.deals[0].pClose > dflt.deals[0].pClose);
-});
 
 // ── Monte Carlo bands ────────────────────────────────────────────────────────
-
-test('percentiles are ordered and bracket the mean', () => {
-  const b = simulateForecast([
-    { amount: 50000, probability: 0.6 },
-    { amount: 30000, probability: 0.4 },
-    { amount: 20000, probability: 0.8 },
-  ]);
-  assert.ok(b.p10 <= b.p50 && b.p50 <= b.p90, `${b.p10} ${b.p50} ${b.p90}`);
-  assert.ok(b.mean >= b.p10 && b.mean <= b.p90, `mean ${b.mean} outside its own band`);
-});
-
-test('the simulated mean matches the arithmetic expectation', () => {
-  const b = simulateForecast(
-    [{ amount: 100000, probability: 0.5 }, { amount: 40000, probability: 0.25 }],
-    { iterations: 20000 },
-  );
-  assert.equal(b.mean, 60000);   // 100k*0.5 + 40k*0.25
-});
-
-test('the same input gives the same answer every time', () => {
-  // An unseeded simulation drifts on every refresh and cannot be reproduced in a bug report.
-  const deals = [{ amount: 50000, probability: 0.5 }, { amount: 25000, probability: 0.3 }];
-  assert.deepEqual(simulateForecast(deals), simulateForecast(deals));
-});
-
-test('a lumpy pipeline gets a WIDE band, a diversified one a tight band', () => {
-  // The reason a band exists. One coin-flip deal is nearly bimodal; twenty small ones average
-  // out. Same expected value, completely different confidence.
-  const lumpy = simulateForecast([{ amount: 200000, probability: 0.5 }]);
-  const spread = simulateForecast(Array.from({ length: 20 }, () => ({ amount: 10000, probability: 0.5 })));
-  const width = (b) => (b.p90 - b.p10) / Math.max(1, b.mean);
-  assert.ok(width(lumpy) > width(spread) * 2,
-    `lumpy=${width(lumpy)} spread=${width(spread)} — concentration not reflected`);
-});
-
-test('concentration flags when one deal IS the forecast', () => {
-  const lumpy = simulateForecast([
-    { amount: 200000, probability: 0.5 }, { amount: 2000, probability: 0.5 },
-  ]);
-  const even = simulateForecast(Array.from({ length: 10 }, () => ({ amount: 10000, probability: 0.5 })));
-  assert.ok(lumpy.concentration > 0.9, `should be dominated by one deal: ${lumpy.concentration}`);
-  assert.ok(even.concentration < 0.2, `should read as diversified: ${even.concentration}`);
-});
-
-test('a certain deal collapses the band onto its amount', () => {
-  const b = simulateForecast([{ amount: 75000, probability: 1 }]);
-  assert.equal(b.p10, 75000);
-  assert.equal(b.p50, 75000);
-  assert.equal(b.p90, 75000);
-});
-
-test('no priced deals gives zeros, not NaN', () => {
-  for (const input of [[], [{ amount: 0, probability: 0.5 }], [{ amount: 100, probability: 0 }]]) {
-    const b = simulateForecast(input);
-    assert.equal(b.mean, 0);
-    assert.equal(b.p50, 0);
-    assert.ok(Number.isFinite(b.p90));
-  }
-});
-
-test('the forecast carries its own band, from the same probabilities as the total', () => {
-  const r = forecastPipeline([
-    { entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 5, intentBand: 'Hot' },
-    { entityId: 'b', amount: 30000, stage: 'negotiation', daysInStage: 20, intentBand: 'Warm' },
-  ], model(), { horizonDays: 30 });
-  assert.ok(r.bands, 'no band on the result');
-  assert.ok(r.bands.p10 <= r.bands.p50 && r.bands.p50 <= r.bands.p90);
-  // The headline number and the band must never disagree — one source, two readings.
-  assert.ok(Math.abs(r.bands.mean - r.expected) <= 1,
-    `band mean ${r.bands.mean} does not match expected ${r.expected}`);
-});
-
-test('deals with no amount are excluded from the band, not simulated as zero', () => {
-  const r = forecastPipeline([
-    { entityId: 'a', amount: 50000, stage: 'negotiation', daysInStage: 5 },
-    { entityId: 'b', amount: null, stage: 'negotiation', daysInStage: 5 },
-  ], model(), { horizonDays: 30 });
-  assert.equal(r.missingAmountCount, 1);
-  assert.ok(r.bands.p90 > 0, 'the priced deal vanished from the simulation');
-});

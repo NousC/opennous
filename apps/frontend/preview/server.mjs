@@ -10,6 +10,7 @@
 // Unmatched /api|/v2 paths 404 with a console line, so gaps are visible instead
 // of silently blanking a page.
 import http from "node:http";
+import { existsSync } from "node:fs";
 import {
   WS, USERS, COMPANIES, CONTACTS, FLAGS, TASKS, PORTFOLIO, GRAPH, CAMPAIGNS,
   companyDetail, personRecord, icpRecord,
@@ -166,11 +167,17 @@ const apiDataRoutes = !API_DATA ? [] : [
   ...(await import("./fixtures/api-plan-p1.mjs")).routes,
 ];
 
+// Fixtures for Cloud-only surfaces (the revenue forecast, GET-843) live in preview/cloud/, which the
+// open-source export leaves out; loaded only when the folder is here.
+const cloudPreviewRoutes = existsSync(new URL("./cloud/index.mjs", import.meta.url))
+  ? (await import("./cloud/index.mjs")).routes : [];
+
 // ── Route table ──────────────────────────────────────────────────────────────
 // [method, regex, handler(match, query, req, res)]
 const routes = [
   ...(API_PLAN ? (await import("./fixtures/api-plan-p2.mjs")).routes : []),
   ...(API_PLAN ? (await import("./fixtures/api-plan-p4.mjs")).apiPlanP4Routes : []),
+  ...cloudPreviewRoutes,
   ...apiPlanRoutes,
   ...(API_PLAN ? (await import("./fixtures/api-plan-p1.mjs")).routes : []),
   ...apiDataRoutes,
@@ -180,29 +187,6 @@ const routes = [
   ["POST", /^\/api\/onboarding\/tour-seen$/, () => ({ ok: true })],
   // Which CRM is connected (GET-602): the app names it everywhere ("View in HubSpot").
   ["GET", /^\/api\/onboarding\/checklist$/, () => ({ crm: { done: true, provider: "hubspot", imported: true, accounts: 20 } })],
-  // Forecast (GET-842): the open deals carried as a weighted forecast, the shape POST /v2/forecast
-  // returns, plus a few weeks of snapshots so the accuracy panel has rows.
-  ["POST", /^\/v2\/forecast$/, async (_m, _q, req) => {
-    const { period = "month" } = (await readBody(req)) ?? {};
-    const open = DEALS.filter((d) => d.status === "open" && d.value);
-    const deals = open.map((d) => {
-      const pWin = Math.round((d.health_score ?? 50) * 0.8) / 100;
-      const pClose = period === "quarter" ? 0.85 : 0.45;
-      return { entityId: d.company_id, name: d.name, amount: d.value, stage: d.stage, pWinBase: pWin, pWin, pCloseBase: pClose, pClose, contribution: Math.round(d.value * pWin * pClose) };
-    }).sort((a, b) => b.contribution - a.contribution);
-    const expected = deals.reduce((s, d) => s + d.contribution, 0);
-    const end = new Date(); end.setMonth(end.getMonth() + (period === "quarter" ? 3 : 1), 0);
-    return {
-      period: { start: new Date().toISOString(), end: end.toISOString(), label: period === "quarter" ? "This quarter" : "This month", days_remaining: Math.ceil((end - Date.now()) / 86400000) },
-      expected, bands: { p10: Math.round(expected * 0.6), p50: expected, p90: Math.round(expected * 1.45) },
-      dealCount: deals.length, openPipeline: open.reduce((s, d) => s + d.value, 0), basis: "blended", deals,
-      win_model: { basis: "fitted", applied: true }, intent_coverage: { with_band: 12, accounts: 20 },
-    };
-  }],
-  ["GET", /^\/v2\/forecast\/snapshots$/, () => ({ snapshots: [4, 3, 2, 1].map((w, i) => ({
-    id: `fs-${w}`, period_start: new Date(Date.now() - w * 7 * 86400000).toISOString(), period_end: new Date().toISOString(),
-    taken_at: new Date(Date.now() - w * 7 * 86400000).toISOString(), expected: 88000 + i * 6000, p10: 52000 + i * 4000,
-    p50: 88000 + i * 6000, p90: 128000 + i * 7000, open_pipeline: 310000 - i * 9000, basis: "blended" })) })],
   ["GET", /^\/api\/usage$/, () => USAGE],
   ["GET", /^\/api\/usage\/ops-breakdown$/, () => OPS_BREAKDOWN],
   ["GET", /^\/api\/billing\/state$/, () => BILLING_STATE],

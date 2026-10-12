@@ -196,8 +196,8 @@ export {
 export {
   addPreference, listPreferences, removePreference, renderPreferences,
 } from './db/preferences.mjs';
-// The revenue forecast — one implementation shared by the /v2 route and the weekly
-// snapshot cron, so the number graded later is the number a caller saw.
+// Deal scoring — P(win), timing and the deal outlook. The revenue forecast that rolls it up
+// for a period is Nous Cloud's, in '@nous/core/cloud' (GET-843).
 export * from './services/funnelTimeline.js';
 export * from './services/winModel.js';
 export * from './services/forecast.js';

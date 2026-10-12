@@ -126,6 +126,7 @@ const CLOUD_ONLY_FEATURES = new Set([
   'tasks',
   'skills',
   'slack',        // the Slack connector and agent
+  'forecasting',  // the revenue forecast and its weekly snapshots (GET-843)
 ]);
 
 /** Exported so the frontend gate and the docs can stay in step with this list. */

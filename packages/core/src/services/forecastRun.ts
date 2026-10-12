@@ -9,8 +9,8 @@ import {
   type FunnelHop,
 } from './funnelTimeline.js';
 import {
-  buildConversionRates, winProbabilityByStage, forecastPipeline,
-  type ForecastResult, type ConversionRate,
+  buildConversionRates, winProbabilityByStage, scoreDealsWithin, stageRatesBasis as stageRatesBasis_,
+  type ConversionRate, type StageRatesBasis,
 } from './forecast.js';
 import {
   DEFAULT_WIN_COEFFS, WIN_FEATURE_VERSION,
@@ -18,48 +18,13 @@ import {
 } from './winModel.js';
 import { INBOUND_TYPES } from './pipelineFeatures.js';
 
-// The forecast run — assembly + computation for one workspace, extracted from the /v2
-// route so the API stays a thin shell (per the layer rules) and so the worker's weekly
-// snapshot cron and the win-model fit job run EXACTLY the same forecast a caller sees.
-// Three consumers, one implementation; a snapshot that ran different code from the live
-// endpoint would grade a forecast nobody was ever shown.
+// The deal scoring every forecast consumer shares: the assembly (rates, timing curves, each
+// account's stage) and scoreOpenDeals, then the deal outlook on top. The revenue forecast that
+// rolls these up for a period (runForecast, the weekly snapshots) is Nous Cloud's
+// (packages/core/src/cloud/forecast.ts, GET-843), and reads exactly this scoring, so the
+// forecast and the deal outlook never disagree about a deal.
 
 const DAY = 86_400_000;
-
-/** Bump when the forecast's behaviour changes — stamped on every snapshot row. */
-export const FORECAST_MODEL_VERSION = '3.0.0';
-
-export interface ForecastPeriod {
-  start: Date;
-  end: Date;
-  label: string;
-}
-
-// The period being forecast. Defaults to the rest of the current calendar month.
-//
-// Calendar, not fiscal: workspaces.fiscal_year_start_month does not exist yet, so
-// pretending to honour a fiscal calendar would quietly give a Feb-start company the wrong
-// quarter. Callers can always pass explicit dates.
-export function resolvePeriod(
-  body: { period_start?: string; period_end?: string; period?: string } = {},
-  now: Date = new Date(),
-): ForecastPeriod {
-  if (body.period_start && body.period_end) {
-    const start = new Date(body.period_start), end = new Date(body.period_end);
-    if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) && end > start) {
-      return { start, end, label: 'custom' };
-    }
-  }
-  const kind = body.period === 'quarter' ? 'quarter' : 'month';
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = kind === 'quarter'
-    ? new Date(Date.UTC(now.getUTCFullYear(), Math.floor(now.getUTCMonth() / 3) * 3 + 3, 0, 23, 59, 59))
-    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59));
-  const start = kind === 'quarter'
-    ? new Date(Date.UTC(now.getUTCFullYear(), Math.floor(now.getUTCMonth() / 3) * 3, 1))
-    : monthStart;
-  return { start, end, label: kind };
-}
 
 // ─── assembly: the substrate reads every forecast consumer shares ────────────
 
@@ -228,11 +193,6 @@ export async function assembleForecast(
 
 // ─── the run: layer 1 + 2 + 3 for one workspace ──────────────────────────────
 
-export interface RunForecastOptions {
-  period?: { period_start?: string; period_end?: string; period?: string };
-  now?: number;
-}
-
 export interface WinModelRow {
   coefficients: Record<string, number>;
   basis: 'default' | 'fitted';
@@ -243,19 +203,14 @@ export interface WinModelRow {
   fitted_at: string;
 }
 
-export type ForecastRunResult = ForecastResult & {
-  period: { start: string; end: string; label: string; days_remaining: number; calendar: 'calendar' };
-  intent_coverage: { with_band: number; accounts: number };
-  timing_sample: Record<string, { total: number; wins: number }>;
-  win_model: {
-    basis: 'default' | 'fitted';
-    applied: boolean;
-    feature_version: string;
-    fitted_at?: string;
-    training?: { wins: number; losses: number };
-  };
-  model_version: string;
-};
+/** Which win model scored the deals: the default coefficients or the workspace's own fitted ones. */
+export interface WinModelInfo {
+  basis: 'default' | 'fitted';
+  applied: boolean;
+  feature_version: string;
+  fitted_at?: string;
+  training?: { wins: number; losses: number };
+}
 
 const isInboundTouch = (type: string | null): boolean =>
   !!type && INBOUND_TYPES.some(t => type.includes(t));
@@ -294,7 +249,7 @@ export interface ScoredDeal {
 export interface ScoredPipeline {
   asm: ForecastAssembly;
   deals: ScoredDeal[];
-  winModel: ForecastRunResult['win_model'];
+  winModel: WinModelInfo;
 }
 
 /**
@@ -518,59 +473,6 @@ export async function scoreOpenDeals(
   };
 }
 
-export async function runForecast(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  opts: RunForecastOptions = {},
-): Promise<ForecastRunResult> {
-  const now = opts.now ?? Date.now();
-  const nowDate = new Date(now);
-  const period = resolvePeriod(opts.period ?? {}, nowDate);
-  // Horizon is measured from TODAY, not the period start. A forecast made on the 20th for
-  // "this month" is asking about the eleven days that are left, not about thirty.
-  const horizonDays = Math.max(0, (period.end.getTime() - now) / DAY);
-
-  const { asm, deals: scored, winModel } = await scoreOpenDeals(supabase, workspaceId, { now });
-  const deals = scored.map(d => ({
-    entityId: d.entityId,
-    name: d.name,
-    amount: d.amount,
-    stage: d.stage,
-    daysInStage: d.daysInStage,
-    amountBasis: d.amount != null ? 'crm' : 'none',
-    intentBand: d.intentBand,
-    pWin: d.pWin,
-  }));
-
-  const result = forecastPipeline(deals,
-    { rates: asm.rates, winByStage: asm.winByStage, curvesByStage: asm.curvesByStage },
-    { horizonDays },
-  );
-
-  return {
-    period: {
-      start: period.start.toISOString(),
-      end: period.end.toISOString(),
-      label: period.label,
-      days_remaining: Math.round(horizonDays),
-      calendar: 'calendar',
-    },
-    ...result,
-    intent_coverage: {
-      with_band: scored.filter(d => d.intentBand != null).length,
-      accounts: scored.length,
-    },
-    timing_sample: Object.fromEntries(
-      PIPELINE_LADDER.map(s => {
-        const rows = asm.winRowsByStage[s] || [];
-        return [s, { total: rows.length, wins: rows.filter(r => !r.censored).length }];
-      }),
-    ),
-    win_model: winModel,
-    model_version: FORECAST_MODEL_VERSION,
-  };
-}
-
 // ─── the deal outlook: one deal at a time, no roll-up ────────────────────────
 //
 // The forecast answers "how much lands this period". The outlook answers what a rep asks
@@ -615,8 +517,8 @@ export interface DealOutlookResult {
   deals: DealOutlook[];
   horizons: number[];
   /** How much the stage conversion rates rest on assumption rather than this workspace's history. */
-  stageRatesBasis: ForecastResult['basis'];
-  winModel: ForecastRunResult['win_model'];
+  stageRatesBasis: StageRatesBasis;
+  winModel: WinModelInfo;
   /** Stage of every account with a reconstructed ladder, open or closed. */
   stageByAccount: Map<string, string>;
 }
@@ -639,7 +541,7 @@ export function dealOutlookFromScores(
     timingWinsByStage?: Record<string, number>;
   },
   horizons: number[],
-): { deals: DealOutlook[]; horizons: number[]; stageRatesBasis: ForecastResult['basis'] } {
+): { deals: DealOutlook[]; horizons: number[]; stageRatesBasis: StageRatesBasis } {
   const hs = [...new Set((horizons?.length ? horizons : [30]).map(h => Math.max(1, Math.round(h))))];
   const byId = new Map<string, DealOutlook>(
     deals.map(d => [d.entityId, {
@@ -649,9 +551,9 @@ export function dealOutlookFromScores(
       intentMultiplier: 1,
     }]),
   );
-  let stageRatesBasis: ForecastResult['basis'] = 'prior';
+  const stageRatesBasis = stageRatesBasis_(model.rates);
   hs.forEach((h, i) => {
-    const res = forecastPipeline(
+    const res = scoreDealsWithin(
       deals.map(d => ({
         entityId: d.entityId, amount: null, stage: d.stage,
         daysInStage: d.daysInStage, intentBand: d.intentBand, pWin: d.pWin,
@@ -659,8 +561,7 @@ export function dealOutlookFromScores(
       model,
       { horizonDays: h },
     );
-    stageRatesBasis = res.basis;
-    for (const r of res.deals) {
+    for (const r of res) {
       const o = byId.get(r.entityId);
       if (!o) continue;
       const basis: TimingBasis = r.pClose === null ? 'no_history'
@@ -714,61 +615,3 @@ function trendOf(times: string[], nowMs: number): string {
   return 'steady';
 }
 
-// ─── snapshots: the weekly materialisation ───────────────────────────────────
-
-/** Cap stored per-deal detail so a 5k-account workspace does not write megabyte rows. */
-const SNAPSHOT_DEAL_CAP = 200;
-
-/**
- * Shape a forecast result into a snapshot row. Pure — testable without a database.
- * Deals are already sorted biggest-contributor-first by forecastPipeline; the cap keeps
- * the ones that explain the number.
- */
-export function snapshotFromForecast(
-  workspaceId: string,
-  run: ForecastRunResult,
-): Record<string, unknown> {
-  return {
-    workspace_id: workspaceId,
-    period_start: run.period.start.slice(0, 10),
-    period_end: run.period.end.slice(0, 10),
-    model_version: run.model_version,
-    basis: run.basis,
-    expected: run.expected,
-    p10: run.bands.p10,
-    p50: run.bands.p50,
-    p90: run.bands.p90,
-    deal_count: run.dealCount,
-    open_pipeline: run.openPipeline,
-    deals: run.deals.slice(0, SNAPSHOT_DEAL_CAP).map(d => ({
-      entityId: d.entityId,
-      name: d.name ?? null,
-      amount: d.amount,
-      stage: d.stage,
-      pWinBase: +d.pWinBase.toFixed(4),
-      pWin: +d.pWin.toFixed(4),
-      pClose: d.pClose === null ? null : +d.pClose.toFixed(4),
-      contribution: Math.round(d.contribution),
-      intentBand: d.intentBand ?? null,
-    })),
-  };
-}
-
-/**
- * Persist one snapshot row. Best-effort by design: a failed snapshot must never fail the
- * forecast (or the cron run) that produced it — but the failure is returned so the caller
- * can log it, because a silently missing week defeats the whole point of the history.
- */
-export async function writeForecastSnapshot(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  run: ForecastRunResult,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const { error } = await supabase.from('forecast_snapshots')
-      .insert(snapshotFromForecast(workspaceId, run));
-    return error ? { ok: false, error: error.message } : { ok: true };
-  } catch (e) {
-    return { ok: false, error: (e as Error)?.message ?? String(e) };
-  }
-}

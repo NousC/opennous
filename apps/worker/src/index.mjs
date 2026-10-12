@@ -46,7 +46,6 @@ import { processInvariants } from './workers/invariants.mjs';
 import { processBulkLeadJobs } from './workers/bulkLeadJobs.mjs';
 import { processContactEnrichmentJobs } from './workers/contactEnrichmentJobs.mjs';
 import { scoreIntentCron } from './intentScore.mjs';
-import { runForecastSnapshots } from './workers/forecastSnapshot.mjs';
 import { runPipelineStageStats } from './workers/pipelineStageStats.mjs';
 import { runInsightThemes } from './workers/insightThemes.mjs';
 import { runInsightBoard } from './workers/insightBoard.mjs';
@@ -736,12 +735,8 @@ console.log('[WORKER] Intent score — every 6 hours');
 // the forecast's coefficients on a workspace's closed deals (src/cloud/index.mjs, GET-754
 // slice 8). Without it the forecast runs on the default coefficients.
 
-// ── Forecast snapshots — weekly, Monday 06:00 UTC ────────────────────────────
-// Writes what the forecast says (month + quarter) for every workspace with open pipeline.
-// The one clock in the whole forecasting layer that cannot be started retroactively: a
-// week without a snapshot is a week whose forecast can never be graded.
-cron.schedule('0 6 * * 1', () => runForecastSnapshots().catch(e => console.error('[FORECAST_SNAPSHOT]', e.message)), { timezone: 'UTC' });
-console.log('[WORKER] Forecast snapshots — weekly (Mon 06:00 UTC)');
+// Forecast snapshots (weekly, Monday 06:00 UTC, after the fit) are Cloud's too, with the revenue
+// forecast they record (src/cloud/index.mjs, GET-843).
 
 // ── Embedding worker — every 2 minutes, OFF unless switched on ───────────────
 // Fills claim and observation embeddings so semantic search (the Context API retrieve step)

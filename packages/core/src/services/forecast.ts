@@ -1,7 +1,9 @@
 import { PIPELINE_LADDER } from '../pipeline.js';
 import { survivalAt, type SurvivalStep } from './funnelTimeline.js';
 
-// Forecast, layer 1 — base-rate weighted pipeline.
+// Forecast, layer 1 — base-rate weighted pipeline. This file is the per-deal half (P(win) and
+// timing, which the deal outlook uses too); the roll-up into a revenue forecast is Nous Cloud's
+// (cloud/forecast.ts, GET-843).
 //
 // A forecast is two probabilities multiplied, and they come from different data:
 //
@@ -29,8 +31,8 @@ import { survivalAt, type SurvivalStep } from './funnelTimeline.js';
  *
  * These are JUDGEMENT CALLS, not measurements — plausible mid-market B2B rates, and they are
  * meant to be overwritten. A stage with real volume barely feels them; a stage with four
- * deals leans on them almost entirely, which is the intended behaviour. `basis` on the
- * forecast result reports how much of the answer is still prior rather than data.
+ * deals leans on them almost entirely, which is the intended behaviour. stageRatesBasis()
+ * reports how much of the answer is still prior rather than data.
  */
 export const DEFAULT_STAGE_PRIORS: Record<string, number> = {
   identified:     0.25,   // → connected
@@ -163,7 +165,12 @@ export function probCloseWithin(
   return Math.min(1, Math.max(0, p));
 }
 
-// ─── putting it together ─────────────────────────────────────────────────────
+// ─── one deal, one window: P(win) and P(closes within N days) ─────────────────
+//
+// The per-deal half of the forecast, which the deal outlook (forecastRun.ts) reads on its own:
+// how likely a deal is to be won, and to be won inside a window. The revenue roll-up on top of
+// it (amounts, the period total, the simulated band, the weekly snapshot) is Nous Cloud's
+// (packages/core/src/cloud/forecast.ts, GET-843).
 
 export interface ForecastDealInput {
   entityId: string;
@@ -185,7 +192,7 @@ export interface ForecastDealInput {
   pWin?: number | null;
 }
 
-export interface ForecastDealOutput extends ForecastDealInput {
+export interface DealTiming extends ForecastDealInput {
   /** Stage-only P(win) — kept so the layer-3 adjustment stays auditable per deal. */
   pWinBase: number;
   pWin: number;
@@ -194,65 +201,54 @@ export interface ForecastDealOutput extends ForecastDealInput {
   pClose: number | null;
   /** The intent multiplier applied. 1 = no effect or no band known. */
   intentMultiplier: number;
-  contribution: number;
-  /** Set when this deal could not be forecast properly, so the UI can say why. */
+  /** Set when timing could not be judged, so the UI can say why. */
   caveat?: string;
 }
 
-export interface ForecastResult {
-  expected: number;
-  currency: string;
-  dealCount: number;
-  /** Deals excluded from the total because they carry no amount. */
-  missingAmountCount: number;
-  /** Total open value regardless of probability — the unweighted pipeline. */
-  openPipeline: number;
-  deals: ForecastDealOutput[];
-  /**
-   * How much of this rests on priors rather than the workspace's own history.
-   *   'prior'   — mostly assumption. Show a wide band and say so.
-   *   'blended' — real data, thin.
-   *   'learned' — enough history to stand on its own.
-   */
-  basis: 'prior' | 'blended' | 'learned';
-  conversionRates: ConversionRate[];
-  /** Simulated spread. `expected` is the mean of this, not a separate calculation. */
-  bands: ForecastBands;
+/** How much the stage rates rest on priors rather than the workspace's own history. */
+export type StageRatesBasis = 'prior' | 'blended' | 'learned';
+
+export interface ForecastModel {
+  rates: ConversionRate[];
+  winByStage: Record<string, number>;
+  /** Time-to-win curve per stage. */
+  curvesByStage: Record<string, SurvivalStep[]>;
 }
 
 /**
- * Weigh every open deal for one period.
- *
- * A deal with no amount is NOT counted as zero — it is reported separately in
- * `missingAmountCount`. Silently treating unknown as nothing is how a forecast ends up
- * confidently low, and "we don't know what this is worth" is a different statement from
- * "this is worth nothing".
- *
- * When the timing curve cannot answer for a stage, `pClose` is null and the deal contributes
- * nothing, with a caveat attached. Assuming it lands inside the period would be inventing the
- * exact number the forecast exists to establish.
+ * Weight the prior share by how much each rung actually carries, then bucket it. A number
+ * resting on assumptions must say so rather than presenting the same face as one built on
+ * three hundred closed deals.
+ *   'prior'   — mostly assumption. Show a wide band and say so.
+ *   'blended' — real data, thin.
+ *   'learned' — enough history to stand on its own.
  */
-export function forecastPipeline(
+export function stageRatesBasis(rates: ConversionRate[]): StageRatesBasis {
+  const avgPriorWeight = rates.length
+    ? rates.reduce((s, r) => s + r.priorWeight, 0) / rates.length
+    : 1;
+  return avgPriorWeight > 0.6 ? 'prior' : avgPriorWeight > 0.25 ? 'blended' : 'learned';
+}
+
+/**
+ * Every deal's P(win) and P(closes within `horizonDays`), in input order.
+ *
+ * When the timing curve cannot answer for a stage, `pClose` is null with a caveat attached.
+ * Assuming it lands inside the window would be inventing the exact number this exists to
+ * establish.
+ */
+export function scoreDealsWithin(
   deals: ForecastDealInput[],
-  model: {
-    rates: ConversionRate[];
-    winByStage: Record<string, number>;
-    /** Time-to-win curve per stage. */
-    curvesByStage: Record<string, SurvivalStep[]>;
-  },
+  model: ForecastModel,
   opts: {
     horizonDays: number;
-    currency?: string;
-    /** Set false to compute the pre-intent forecast — used to show what intent changed. */
+    /** Set false to compute the pre-intent figure — used to show what intent changed. */
     intentHazard?: boolean;
     /** Override the band -> multiplier table (a workspace's own fitted values, later). */
     intentTable?: Record<string, number>;
   },
-): ForecastResult {
-  const out: ForecastDealOutput[] = [];
-  let expected = 0, openPipeline = 0, missingAmountCount = 0;
-
-  for (const d of deals || []) {
+): DealTiming[] {
+  return (deals || []).map((d) => {
     const pWinBase = model.winByStage[d.stage] ?? 0;
     // Layer 3: a caller-supplied adjusted probability wins over the stage-only figure.
     // Both are reported, so "why is this deal at 31% when negotiation is 60%" is always
@@ -271,50 +267,9 @@ export function forecastPipeline(
       ? 1
       : intentMultiplierFor(d.intentBand, opts.intentTable);
     const pClose = applyIntentMultiplier(pCloseBase, intentMultiplier);
-
-    let caveat: string | undefined;
-    if (d.amount == null) { missingAmountCount++; caveat = 'no amount on this account'; }
-    else if (pClose === null) caveat = 'not enough closed deals from this stage to judge timing';
-
-    const contribution = d.amount != null && pClose !== null
-      ? d.amount * pWin * pClose
-      : 0;
-
-    if (d.amount != null) openPipeline += d.amount;
-    expected += contribution;
-    out.push({ ...d, pWinBase, pWin, pCloseBase, pClose, intentMultiplier, contribution, ...(caveat ? { caveat } : {}) });
-  }
-
-  // Weight the prior share by how much each rung actually carries, then bucket it. A forecast
-  // resting on assumptions must say so rather than presenting the same face as one built on
-  // three hundred closed deals.
-  const avgPriorWeight = model.rates.length
-    ? model.rates.reduce((s, r) => s + r.priorWeight, 0) / model.rates.length
-    : 1;
-  const basis: ForecastResult['basis'] =
-    avgPriorWeight > 0.6 ? 'prior' : avgPriorWeight > 0.25 ? 'blended' : 'learned';
-
-  // Simulate from the SAME per-deal probabilities the total was built from, so the band and
-  // the headline number can never disagree.
-  const simInputs: SimulationDeal[] = [];
-  for (const d of out) {
-    if (d.amount == null || d.pClose === null) continue;
-    simInputs.push({ amount: d.amount, probability: d.pWin * d.pClose });
-  }
-  const bands = simulateForecast(simInputs);
-
-  return {
-    expected: Math.round(expected),
-    bands,
-    currency: opts.currency ?? '$',
-    dealCount: out.length,
-    missingAmountCount,
-    openPipeline: Math.round(openPipeline),
-    // Biggest contributors first — the forecast is only useful if you can see what drives it.
-    deals: out.sort((a, b) => b.contribution - a.contribution),
-    basis,
-    conversionRates: model.rates,
-  };
+    const caveat = pClose === null ? 'not enough closed deals from this stage to judge timing' : undefined;
+    return { ...d, pWinBase, pWin, pCloseBase, pClose, intentMultiplier, ...(caveat ? { caveat } : {}) };
+  });
 }
 
 // ─── Layer 2a: intent as a hazard multiplier ─────────────────────────────────
@@ -382,99 +337,4 @@ export function intentMultiplierFor(
   if (!band) return 1;
   const m = table[band];
   return Number.isFinite(m) && m > 0 ? m : 1;
-}
-
-// ─── Layer 2b: Monte Carlo — a range instead of a false point ────────────────
-
-/**
- * Deterministic PRNG (mulberry32).
- *
- * Seeded on purpose. An unseeded simulation returns a slightly different forecast every
- * time it is called, which makes the number impossible to test, impossible to reproduce in
- * a bug report, and unnerving to a user who refreshes the page and watches it drift.
- */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return function () {
-    a = (a + 0x6D2B79F5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export interface SimulationDeal {
-  amount: number;
-  /** Combined P(win) × P(close in period). */
-  probability: number;
-}
-
-export interface ForecastBands {
-  p10: number;
-  p50: number;
-  p90: number;
-  mean: number;
-  iterations: number;
-  /**
-   * Largest single deal's share of the expected total. High concentration is why a band
-   * matters: when one deal is most of the number, the outcome is closer to a coin flip
-   * than to an average, and the "expected" value may be a total that can never occur.
-   */
-  concentration: number;
-}
-
-/**
- * Run the quarter many times and report the spread.
- *
- * WHY THIS EXISTS. Layer 1 returns a single expected value, and a single number implies a
- * precision that a dozen deals cannot support. Suppose the expectation is $180k and one deal
- * is $80k at even odds: roughly half the time it lands and you finish near $220k, half the
- * time it does not and you finish near $140k. You land on $180k almost never. The expected
- * value is the average of two outcomes, neither of which is the expected value.
- *
- * Simulating makes that visible. With four hundred deals the band tightens on its own; with
- * twelve it stays honestly wide.
- *
- * Each deal is one Bernoulli draw at its combined probability. Deals are treated as
- * INDEPENDENT, which is a real simplification — a budget freeze or a champion leaving hits
- * several at once, and correlated losses make the true downside fatter than this shows. The
- * band is therefore optimistic at the low end, not pessimistic.
- */
-export function simulateForecast(
-  deals: SimulationDeal[],
-  opts: { iterations?: number; seed?: number } = {},
-): ForecastBands {
-  const iterations = Math.max(1, Math.min(opts.iterations ?? 10_000, 100_000));
-  const priced = (deals || []).filter(d =>
-    d && Number.isFinite(d.amount) && d.amount > 0 &&
-    Number.isFinite(d.probability) && d.probability > 0);
-
-  const mean = priced.reduce((s, d) => s + d.amount * d.probability, 0);
-  if (!priced.length) {
-    return { p10: 0, p50: 0, p90: 0, mean: 0, iterations, concentration: 0 };
-  }
-
-  const rand = mulberry32(opts.seed ?? 0x5EED);
-  const totals = new Float64Array(iterations);
-  for (let i = 0; i < iterations; i++) {
-    let t = 0;
-    for (const d of priced) if (rand() < d.probability) t += d.amount;
-    totals[i] = t;
-  }
-  totals.sort();
-
-  // Nearest-rank percentile. Exact interpolation is false precision on a simulation.
-  const at = (q: number) => totals[Math.min(iterations - 1, Math.max(0, Math.floor(q * iterations)))];
-  const topShare = mean > 0
-    ? Math.max(...priced.map(d => d.amount * d.probability)) / mean
-    : 0;
-
-  return {
-    p10: Math.round(at(0.10)),
-    p50: Math.round(at(0.50)),
-    p90: Math.round(at(0.90)),
-    mean: Math.round(mean),
-    iterations,
-    concentration: Math.round(topShare * 100) / 100,
-  };
 }
