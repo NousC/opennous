@@ -7,6 +7,7 @@
 //   over even that            "Your history is bigger than onboarding reads on its own." [Contact us]
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CONTACT_URL } from "@/config/contact";
 import { notInCrmLine } from "@/lib/getStarted";
@@ -15,7 +16,7 @@ const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
 type Estimate = { credits: number; allowance: number | null; basis: string; window_days: number | null; conversations: Record<string, number>; discovered?: { people: number; accounts: number } | null };
 type Preview = {
-  state: "none" | "awaiting_confirmation" | "over_allowance" | "needs_support" | "running" | "done";
+  state: "none" | "awaiting_confirmation" | "over_allowance" | "needs_support" | "running" | "done" | "dismissed";
   /** A backfill already ran in this workspace (GET-733). */
   ran_before?: boolean;
   accounts?: number;
@@ -68,14 +69,28 @@ export function BackfillCard({ className, onStarted, hideIfRan = false }: { clas
     }
   };
 
+  // The ✕ (GET-849): closed for good, on every device. Hidden at once; the server remembers it on the
+  // waiting job, so the preview answers "dismissed" from then on.
+  const dismiss = () => {
+    setP((cur) => (cur ? { ...cur, state: "dismissed" } : cur));
+    fetch(`${apiUrl}/api/backfill/dismiss`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceId }),
+    }).catch(() => {});
+  };
+
   // Running or done: the header pill is the live view, and the credits row below says what it spent.
-  if (!p || p.state === "none" || p.state === "done" || p.state === "running") return null;
+  if (!p || p.state === "none" || p.state === "done" || p.state === "running" || p.state === "dismissed") return null;
   if (hideIfRan && p.ran_before) return null;
   const e = p.estimate;
   const allowance = e?.allowance ?? null;
 
   return (
-    <div className={cn("rounded-2xl border border-border bg-card p-6", className)}>
+    <div className={cn("relative rounded-2xl border border-border bg-card p-6", className)}>
+      <button type="button" onClick={dismiss} aria-label="Close"
+        className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/70 hover:bg-muted hover:text-foreground">
+        <X className="h-4 w-4" />
+      </button>
       <div className="text-[12px] text-muted-foreground">Backfill</div>
       {p.state === "running" ? (
         <p className="mt-1.5 text-[14px] text-foreground">Reading {found(e)} from the last {p.window_days === 30 ? "30 days" : "3 months"}. Accounts fill in as it goes.</p>

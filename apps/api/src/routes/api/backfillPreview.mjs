@@ -100,9 +100,15 @@ backfillRouter.get('/preview', verifySupabaseAuth, async (req, res) => {
       });
     }
 
-    // A backfill already ran here (GET-733): the billing page does not offer another one.
+    // Closed by the customer (GET-849): the waiting backfill stays waiting — Home's onboarding can
+    // still start it — but no card offers it again, on any device.
+    if (job.state?.dismissed_at) return res.json({ state: 'dismissed', job_id: job.job_id });
+
+    // A backfill already ran here (GET-733): the billing page does not offer another one. Every
+    // finished job counts (GET-849): backfills from before the confirm flow carry no started_at,
+    // and requiring one made a workspace backfilled in September look as if it never was.
     const { count: ranBefore } = await supabase.from('contact_enrichment_jobs').select('job_id', { count: 'exact', head: true })
-      .eq('workspace_id', workspaceId).eq('done', true).not('state->>started_at', 'is', null);
+      .eq('workspace_id', workspaceId).eq('done', true);
     const state = job.paused_reason === 'over_ceiling' ? 'needs_support'
       : job.paused_reason === 'over_allowance' ? 'over_allowance'
       : 'awaiting_confirmation';
@@ -124,6 +130,38 @@ backfillRouter.get('/preview', verifySupabaseAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('[GET /api/backfill/preview]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+/**
+ * POST /api/backfill/dismiss { workspaceId }
+ *
+ * The card's ✕ (GET-849). Marks the viewer's waiting backfill dismissed, so the preview answers
+ * `dismissed` and no card shows it again. Nothing is cancelled: the job stays waiting, and a
+ * backfill written later (a new row) is offered as usual.
+ */
+backfillRouter.post('/dismiss', verifySupabaseAuth, async (req, res) => {
+  try {
+    const workspaceId = req.body?.workspaceId;
+    if (!workspaceId) return res.status(400).json({ error: 'workspaceId_required' });
+    const supabase = getSupabaseClient();
+    const owner = await backfillOwnerFor(supabase, workspaceId, req.internalUserId).catch(() => null);
+    const { data: job } = await ownerJobFilter(supabase
+      .from('contact_enrichment_jobs')
+      .select('job_id, status, state')
+      .eq('workspace_id', workspaceId)
+      .eq('status', AWAITING), owner)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!job) return res.json({ ok: true, dismissed: false });
+    const state = { ...(job.state ?? {}), dismissed_at: new Date().toISOString(), dismissed_by: req.internalUserId ?? null };
+    const { error } = await supabase.from('contact_enrichment_jobs').update({ state }).eq('job_id', job.job_id);
+    if (error) throw error;
+    return res.json({ ok: true, dismissed: true, job_id: job.job_id });
+  } catch (err) {
+    console.error('[POST /api/backfill/dismiss]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
