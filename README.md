@@ -33,8 +33,6 @@
   </picture>
 </p>
 
-<p align="center"><sub>From a fictional demo workspace. Every company, person and domain in it is invented.</sub></p>
-
 ## Key capabilities
 
 - **Unified account records:** Resolve emails, meetings, transcripts, product activity and CRM fields to the right person, company and deal. Uncertain matches go to review, never to a guess.
