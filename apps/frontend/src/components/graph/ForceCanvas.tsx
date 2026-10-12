@@ -50,6 +50,24 @@ function logo(url: string): HTMLImageElement | null {
   return null;
 }
 const LOGO_SCALE = 1.35;
+
+/**
+ * A gentle pull toward the middle. With no hub to hang from, a graph of many small groups (an account
+ * and its one or two people) has nothing holding the groups together, and repulsion sends them
+ * off-screen until zoom-to-fit makes every one a speck. This keeps them in one readable field.
+ */
+function centerPull(strength: number) {
+  let nodes: GNode[] = [];
+  const force = (alpha: number) => {
+    for (const n of nodes) {
+      const v = n as GNode & { vx?: number; vy?: number };
+      v.vx = (v.vx ?? 0) - (n.x ?? 0) * strength * alpha;
+      v.vy = (v.vy ?? 0) - (n.y ?? 0) * strength * alpha;
+    }
+  };
+  force.initialize = (ns: GNode[]) => { nodes = ns; };
+  return force;
+}
 /** The radius a node is drawn at: a loaded logo sits in a slightly larger disc. */
 const drawnR = (n: { r: number; image?: string | null }) => (n.image && logos.get(n.image) ? n.r * LOGO_SCALE : n.r);
 
@@ -123,6 +141,7 @@ export function ForceCanvas({ nodes, links, query, onClick, selected = null, onB
     const charge = g.d3Force("charge") as unknown as { strength: (f: (n: GNode) => number) => void; distanceMax?: (d: number) => void } | undefined;
     charge?.strength((n: GNode) => n.charge);
     charge?.distanceMax?.(420);
+    g.d3Force("pull", centerPull(0.05) as never);
     const lk = g.d3Force("link") as unknown as { distance: (f: (l: GLink) => number) => { strength: (f: (l: GLink) => number) => void } } | undefined;
     lk?.distance((l: GLink) => l.distance).strength((l: GLink) => l.strength);
     fitted.current = false;

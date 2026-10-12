@@ -34,7 +34,8 @@ export function contextGraph(net, deals = [], stakes = [], { now = Date.now() } 
   for (const d of deals) {
     if (!d?.entity_id || !ids.has(d.company_id)) continue;
     add({ id: d.entity_id, type: 'deal', label: d.name ?? 'Deal', sub: d.stage ?? d.status ?? null, status: d.status ?? null,
-      value: d.pipeline_value != null ? Number(d.pipeline_value) : null, days: days(d.last_activity_at) });
+      value: d.pipeline_value != null ? Number(d.pipeline_value) : null, days: days(d.last_activity_at),
+      ...(d.implied ? { implied: true } : {}) });
     edges.push({ s: d.entity_id, t: d.company_id, type: 'deal_of' });
   }
   for (const r of stakes) if (ids.has(r.from_entity_id) && ids.has(r.to_entity_id)) edges.push({ s: r.from_entity_id, t: r.to_entity_id, type: 'on_deal' });

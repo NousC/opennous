@@ -51,6 +51,15 @@ test('patterns are not nodes: their labels are keyword clusters ("Outreach · Pi
   assert.ok(!g.edges.some(e => e.s.startsWith('cl') || e.t.startsWith('cl')));
 });
 
+test("an account's own deal is drawn like a CRM deal and says it is implied (GET-844)", () => {
+  const g = contextGraph(net, [{ entity_id: 'implied:globex', name: 'Globex deal', company_id: 'globex', stage: 'Demo', status: 'open', pipeline_value: 450, implied: true }],
+    [{ from_entity_id: 'cy', to_entity_id: 'implied:globex' }]);
+  const d = g.nodes.find(n => n.id === 'implied:globex');
+  assert.equal(d.type, 'deal'); assert.equal(d.implied, true); assert.equal(d.value, 450); assert.equal(d.sub, 'Demo');
+  assert.ok(g.edges.some(e => e.type === 'deal_of' && e.s === 'implied:globex' && e.t === 'globex'));
+  assert.ok(g.edges.some(e => e.type === 'on_deal' && e.s === 'cy' && e.t === 'implied:globex'));
+});
+
 test('a neighbourhood grows by hops', () => {
   const g = contextGraph(net, deals, stakes);
   const ids = (d) => neighbourhood(g, 'acme', d).nodes.map(n => n.id).sort();

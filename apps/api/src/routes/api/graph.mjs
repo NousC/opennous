@@ -1,10 +1,11 @@
 import { Router } from 'express';
-import { getSupabaseClient, scoreTier, getInternalEntityIds, filterDerivedForViewer, filterByCitedClaimsForViewer } from '@nous/core';
+import { getSupabaseClient, scoreTier, getInternalEntityIds, filterDerivedForViewer, filterByCitedClaimsForViewer, accountStage, TERMINAL_STAGES, STAGE_LABEL } from '@nous/core';
 import { requestMessageViewer } from '../../lib/messagePrivacy.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { rankCommittee, committeeEdges, ROLE_EDGES } from '../../lib/committee.mjs';
 import { contextGraph, neighbourhood } from '../../lib/contextGraph.mjs';
-import { hasListRows } from '../../lib/listRows.mjs';
+import { hasListRows, personStagesForAccounts, dealValueByCompany } from '../../lib/listRows.mjs';
+import { impliedDealName } from '../../lib/accountDeals.mjs';
 import { listWorkspaceDeals } from '../../lib/workspaceDeals.mjs';
 
 // GET /api/graph?workspaceId=... — the workspace context graph as a war-room:
@@ -86,7 +87,7 @@ function normSeg(t) {
  * a screen while still being a network — the most recently worked accounts and their people.
  */
 const GRAPH_ACCOUNT_CAP = 300;
-const GRAPH_PEOPLE_CAP = 1200;
+const GRAPH_PEOPLE_CAP = 3000;
 
 async function pageAll(makeQuery) {
   const out = []; const size = 1000;
@@ -120,12 +121,16 @@ async function buildNetwork(supabase, req, workspaceId) {
     // person and account through the views timed out on a client workspace — tens of thousands of people
     // assembled from claims — and a graph of nine thousand accounts is not a picture anyone
     // can read anyway. The ones nobody has touched in a year are not the ones to draw.
-    supabase.from('entity_list_rows')
+    // Paged: PostgREST answers any single read with at most 1,000 rows, so a `.limit(1200)` was a
+    // silent 1,000 ("People 999"), and whoever fell past it vanished from their account — one account
+    // drew one of its two people (GET-844).
+    pageAll((from, to) => from >= GRAPH_PEOPLE_CAP ? Promise.resolve({ data: [] }) : supabase.from('entity_list_rows')
       .select('entity_id, name, job_title, icp_score, last_activity_at, company_id')
       .eq('workspace_id', workspaceId).eq('kind', 'person')
       .order('last_activity_at', { ascending: false, nullsFirst: false })
-      .limit(GRAPH_PEOPLE_CAP)
-      .then(r => (r.data || []).map(x => ({
+      .order('entity_id', { ascending: true })
+      .range(from, to))
+      .then(rows => rows.slice(0, GRAPH_PEOPLE_CAP).map(x => ({
         id: x.entity_id, first_name: (x.name ?? '').split(' ')[0] || null,
         last_name: (x.name ?? '').split(' ').slice(1).join(' ') || null,
         job_title: x.job_title, icp_score: x.icp_score, last_activity_at: x.last_activity_at,
@@ -417,6 +422,7 @@ graphApiRouter.get('/context', verifySupabaseAuth, async (req, res) => {
     const accountIds = net.nodes.filter(n => n.t === 1).map(n => n.i);
     const personIds = net.nodes.filter(n => n.t === 0).map(n => n.i);
     const deals = [], stakes = [];
+    let rosterStakes = false;   // the claims path brings each deal's people with it
     // The deals the Deals board shows: the flattened rows when the workspace has them, otherwise
     // the deals assembled from claims, as /api/companies/deals does. Reading only the rows drew no
     // deal at all on a workspace too small to have been flattened (GET-841).
@@ -434,9 +440,34 @@ graphApiRouter.get('/context', verifySupabaseAuth, async (req, res) => {
         deals.push({ entity_id: d.id, name: d.name, company_id: d.company_id, stage: d.stage, status: d.status, pipeline_value: d.value, last_activity_at: null });
         for (const pid of d.roster_ids) stakes.push({ from_entity_id: pid, to_entity_id: d.id });
       }
+      rosterStakes = true;
     }
-    const dealIds = new Set(deals.map(d => d.entity_id));
-    for (let i = 0; i < personIds.length && dealIds.size && !stakes.length; i += 200) {
+    // Every account has a deal by default: with no CRM deal behind it, its own, staged by its
+    // people, exactly as the account page and the Sales Pipeline show it ("Acme deal · Demo · $450",
+    // id 'account'). A workspace with no CRM drew no deal at all here (GET-844). Only an account that
+    // left the ladder (lost, disqualified, churned) has none, as on the pipeline.
+    const withCrmDeal = new Set(deals.map(d => d.company_id));
+    const bare = accountIds.filter(id => !withCrmDeal.has(id));
+    if (bare.length) {
+      const [stagesBy, valueBy] = await Promise.all([
+        personStagesForAccounts(supabase, workspaceId, bare),
+        dealValueByCompany(supabase, bare),
+      ]);
+      const nameOf = new Map(net.nodes.filter(n => n.t === 1).map(n => [n.i, n.l]));
+      const staffOf = new Map();
+      for (const n of net.nodes) if (n.t === 0 && n.co) staffOf.set(n.co, [...(staffOf.get(n.co) ?? []), n.i]);
+      for (const id of bare) {
+        const stage = accountStage(stagesBy.get(id) ?? []) ?? 'identified';
+        if (TERMINAL_STAGES.includes(stage)) continue;
+        const dealId = `implied:${id}`;
+        deals.push({ entity_id: dealId, name: impliedDealName(nameOf.get(id)), company_id: id,
+          stage: STAGE_LABEL[stage] ?? stage, status: stage === 'closed_won' ? 'won' : 'open',
+          pipeline_value: valueBy.get(id) ?? null, last_activity_at: null, implied: true });
+        for (const pid of staffOf.get(id) ?? []) stakes.push({ from_entity_id: pid, to_entity_id: dealId });
+      }
+    }
+    const dealIds = new Set(deals.filter(d => !d.implied).map(d => d.entity_id));
+    for (let i = 0; i < personIds.length && dealIds.size && !rosterStakes; i += 200) {
       stakes.push(...(await pageAll((from, to) => supabase.from('relationships')
         .select('from_entity_id, to_entity_id')
         .eq('workspace_id', workspaceId).eq('type', 'stakeholder_of').is('valid_to', null)

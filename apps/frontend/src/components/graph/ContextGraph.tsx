@@ -9,12 +9,10 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowUpRight, X } from "lucide-react";
-import { ApiTopBarFilter, useInApiShell } from "@/components/shell/ApiTopBar";
 import { cn } from "@/lib/utils";
 import { faviconUrl } from "@/lib/externalImages";
 import { AccountLogo } from "@/components/pipeline/DealBits";
 import { ForceCanvas, type CanvasLink, type CanvasNode } from "./ForceCanvas";
-import { PanelToggle } from "./GraphPanel";
 import { useGraphApi } from "./graphApi";
 
 export type Lens = "account" | "person" | "deal";
@@ -92,8 +90,6 @@ export function ContextGraph({ lens, search }: { lens: Lens; search: string }) {
   const [centerOn, setCenterOn] = useState<{ id: string } | null>(null);
   // Picked in the panel (not on the canvas): also pan the canvas to it.
   const pick = (id: string | null) => { setFocus(id); if (id) setCenterOn({ id }); };
-  const inShell = useInApiShell();
-  const [small, setSmall] = useState(false);
 
   const { nodes, links } = useMemo(() => {
     const g = q.data;
@@ -107,11 +103,13 @@ export function ContextGraph({ lens, search }: { lens: Lens; search: string }) {
       keep = new Set([...keep].filter((id) => near.has(id)));
     }
     let edges = g.edges.filter((e) => keep.has(e.s) && keep.has(e.t));
-    // An account with one person and nothing else is real but says nothing on a graph: those pairs
-    // and lone nodes are hidden unless asked for. Picked from the list, they still open in the panel.
-    if (!small && lens !== "deal") {
-      const comp = components([...keep], edges);
-      keep = new Set([...keep].filter((id) => (comp.size.get(comp.of.get(id)!) ?? 0) > 2));
+    // Every account and deal is drawn, however small its group: hiding the pairs hid most of the
+    // book (GET-844). A person tied to nothing is the only thing left out of the
+    // Accounts and Deals views; the People view draws everyone.
+    if (lens !== "person") {
+      const linked = new Set(edges.flatMap((e) => [e.s, e.t]));
+      const typeOf = new Map(g.nodes.map((n) => [n.id, n.type]));
+      keep = new Set([...keep].filter((id) => linked.has(id) || typeOf.get(id) !== "person"));
       edges = edges.filter((e) => keep.has(e.s) && keep.has(e.t));
     }
     const degree = new Map<string, number>();
@@ -124,29 +122,16 @@ export function ContextGraph({ lens, search }: { lens: Lens; search: string }) {
       nodes: g.nodes.filter((n) => keep.has(n.id)).map((n) => toCanvas(n, degree.get(n.id) ?? 0, lens, social.has(n.id))),
       links: toLinks(edges),
     };
-  }, [q.data, lens, small]);
-
-  const active = small ? 1 : 0;
+  }, [q.data, lens]);
   const node = focus ? q.data?.nodes.find((n) => n.id === focus) ?? null : null;
 
-  const toggles = lens === "deal" ? null : <PanelToggle label="Small clusters" on={small} set={setSmall} />;
 
   return (
     <>
-      {inShell && toggles && (
-        <ApiTopBarFilter active={active}>
-          <div className="px-3 pb-1 pt-2 text-[11.5px] font-medium text-muted-foreground">Show</div>
-          <div className="px-3 pb-2">{toggles}</div>
-        </ApiTopBarFilter>
-      )}
       <div className="relative min-h-0 min-w-0 flex-1">
         {q.isLoading ? <p className="p-6 text-[13px] text-muted-foreground">Loading…</p>
           : q.error ? <p className="p-6 text-[13px] text-muted-foreground">Could not load the graph.</p>
           : <ForceCanvas nodes={nodes} links={links} query={search} selected={focus} onClick={setFocus} onBackground={() => setFocus(null)} centerOn={centerOn} />}
-        {/* Outside the API plan there is no top bar Filter button, so the toggles sit on the canvas. */}
-        {!inShell && toggles && (
-          <div className="absolute right-3 top-3 z-10 w-[210px] rounded-xl border border-border bg-card/95 px-3 py-1.5 shadow-card backdrop-blur">{toggles}</div>
-        )}
       </div>
       {/* Beside the graph on a wide screen; under it on a phone. */}
       <aside className="flex h-[45%] w-full flex-shrink-0 flex-col overflow-hidden border-t border-hairline bg-background md:h-auto md:w-[360px] md:border-l md:border-t-0">
@@ -158,16 +143,6 @@ export function ContextGraph({ lens, search }: { lens: Lens; search: string }) {
   );
 }
 
-/** Connected components: which one each node is in, and how big each is. */
-function components(ids: string[], edges: GEdge[]) {
-  const parent = new Map(ids.map((id) => [id, id]));
-  const find = (x: string): string => { const p = parent.get(x)!; if (p === x) return x; const r = find(p); parent.set(x, r); return r; };
-  for (const e of edges) parent.set(find(e.s), find(e.t));
-  const of = new Map(ids.map((id) => [id, find(id)]));
-  const size = new Map<string, number>();
-  for (const r of of.values()) size.set(r, (size.get(r) ?? 0) + 1);
-  return { of, size };
-}
 
 /** Nothing picked: the lens's records, the ones worth opening first at the top. */
 function ListPanel({ lens, graph, search, setFocus }: { lens: Lens; graph: Graph; search: string; setFocus: (id: string) => void }) {
@@ -280,7 +255,8 @@ function RecordPanel({ node, graph, claims, claimsLoading, setFocus }: {
 
   const dealAccount = node.type === "deal" ? m.account : null;
   const href = node.type === "account" ? `/accounts/${node.id}` : node.type === "person" ? `/people/${node.id}`
-    : node.type === "deal" && dealAccount ? `/accounts/${dealAccount.id}/deals/${node.id}` : null;
+    // An account's own (implied) deal opens as /deals/account, as on the account page.
+    : node.type === "deal" && dealAccount ? `/accounts/${dealAccount.id}/deals/${node.id.startsWith("implied:") ? "account" : node.id}` : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
