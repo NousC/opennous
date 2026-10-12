@@ -499,6 +499,8 @@ test('deals list: CRM deals and implied deals, in one shape', async () => {
     stage: 'Contract Sent', canonical_stage: 'negotiation', status: 'open', amount: 50000, currency: 'USD',
     close_date: day(20), owner: { name: 'Chris Black', email: 'chris@us.com' },
     pipeline: { id: 'default', name: 'Sales Pipeline' }, health: 74, win_probability: 0.62, close_within_30d: 0.31,
+    // No fitted win model in the mock, so the odds are a rank (GET-832): Acme leads 3 open deals.
+    win_rank: 1, win_rank_of: 3, odds_basis: 'rank',
     last_activity_at: open.last_activity_at, implied: false,
   });
   const implied = r.body.deals.find((d) => d.implied);
@@ -508,6 +510,7 @@ test('deals list: CRM deals and implied deals, in one shape', async () => {
   assert.equal(implied.status, 'open');
   assert.equal(implied.pipeline, null);
   assert.equal(implied.win_probability, 0.2);
+  assert.equal(implied.win_rank, 3);
   assert.equal(r.body.deals.find((d) => d.id === D_WON).win_probability, null, 'a closed deal carries no odds');
   assert.equal(r.body.deals.find((d) => d.id === D_OTHER).canonical_stage, 'interested', "the expansion pipeline's own ladder");
   assert.equal(outlookCalls, 1, 'one outlook run per request');

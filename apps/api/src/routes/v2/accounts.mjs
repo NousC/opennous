@@ -182,7 +182,7 @@ accountsV2Router.get('/', async (req, res) => {
     const icp = await fetchIcpByEntity(supabase, workspaceId, page.map((r) => r.entity_id));
     const accounts = page.map((r) => {
       const a = shapeAccount(r, { stage: r._stage, icp: icp.get(r.entity_id) });
-      if (odds) Object.assign(a, odds.byAccount.get(r.entity_id) ?? { win_probability: null, close_within_30d: null });
+      if (odds) Object.assign(a, odds.byAccount.get(r.entity_id) ?? { win_probability: null, close_within_30d: null, win_rank: null, win_rank_of: null, odds_basis: null });
       return a;
     });
     return res.json({ accounts, limit, offset, has_more });

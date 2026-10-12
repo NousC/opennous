@@ -191,6 +191,11 @@ const fmtMoney = (n, cur) => {
 };
 // Win odds come back as 0-1 (null = not scored: a closed deal, or no outlook for it).
 const fmtOdds = (p) => (p == null ? null : `${Math.round(p * 100)}%`);
+// Until the win model is fitted on the workspace's own deals the odds are a rank, never a % (GET-832).
+const fmtRowOdds = (r) => r.odds_basis === "rank" && r.win_rank != null
+  ? `odds ${ordinal(r.win_rank)} of ${r.win_rank_of} open`
+  : null;
+const ordinal = (n) => { const t = n % 100; return `${n}${t >= 11 && t <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] ?? "th"}`; };
 const stageText = (stage, canonical) =>
   stage && canonical && String(stage).toLowerCase() !== canonical.replace(/_/g, " ") ? `${stage} (${canonical})` : (stage ?? canonical ?? null);
 
@@ -202,7 +207,7 @@ function dealLine(d) {
     d.status,
     fmtMoney(d.amount, d.currency),
     d.close_date && `closes ${day(d.close_date)}`,
-    d.win_probability != null && `win ${fmtOdds(d.win_probability)}${d.close_within_30d != null ? ` (${fmtOdds(d.close_within_30d)} in 30d)` : ""}`,
+    fmtRowOdds(d) ?? (d.win_probability != null && `win ${fmtOdds(d.win_probability)}${d.close_within_30d != null ? ` (${fmtOdds(d.close_within_30d)} in 30d)` : ""}`),
     d.health != null && `health ${d.health}`,
     d.owner && `owner ${d.owner.name ?? d.owner.email}`,
     d.pipeline?.name && `pipeline ${d.pipeline.name}`,
@@ -237,7 +242,7 @@ function accountLine(a) {
     a.health != null && `health ${a.health}`,
     a.open_deals ? `${a.open_deals} open deal${a.open_deals === 1 ? "" : "s"}` : null,
     a.pipeline_value ? `${fmtMoney(a.pipeline_value)} pipeline` : null,
-    a.win_probability !== undefined && `win ${fmtOdds(a.win_probability) ?? "unknown"}${a.close_within_30d != null ? ` (${fmtOdds(a.close_within_30d)} in 30d)` : ""}`,
+    fmtRowOdds(a) ?? (a.win_probability !== undefined && `win ${fmtOdds(a.win_probability) ?? "unknown"}${a.close_within_30d != null ? ` (${fmtOdds(a.close_within_30d)} in 30d)` : ""}`),
     a.owner && `owner ${a.owner.name ?? a.owner.email}`,
     a.country,
     a.last_activity_at && `active ${relAge(a.last_activity_at)}`,
@@ -713,7 +718,10 @@ export function createServer() {
     "health on Acme', 'will Acme close this month'.\n" +
     "The odds are the stage's base rate moved by what the graph recorded: open objections, competitors, stall, " +
     "silence, threading, ICP fit, intent. 'unknown' within N days means this stage has no closed deals to judge " +
-    "timing on yet: say so, never call it 0%. When a NOTE says the weights are defaults, pass that on.",
+    "timing on yet: say so, never call it 0%.\n" +
+    "Until the workspace has enough won and lost deals to learn from, the odds come back as a RANK (ODDS TO CLOSE: " +
+    "3rd most likely of 12 open deals) with what is helping and hurting, and NO percentage. Say it that way; never " +
+    "turn it into a percentage or call it a forecast, and don't explain model weights to the user.",
     {
       account: z.string().optional().describe("One account to judge: email, domain, LinkedIn URL, entity UUID, or name. Omit to rank the open deals."),
       within_days: z.number().optional().describe("The window for 'likely to close within N days'. Default 30."),
@@ -733,7 +741,14 @@ export function createServer() {
             `"${account}" matches several people. Call deals again with one of these entity ids:\n${opts}` }] };
         }
         const name = r.name ?? r.entity_id;
-        if (r.status === "open") {
+        if (r.status === "open" && r.odds === "rank") {
+          // Default weights (GET-832): a rank among the open deals and what moves it, no percentage.
+          lines.push(`${name} · ${r.entity_id} · stage ${r.stage}, ${r.days_in_stage}d in stage` +
+            (r.typical_days_in_stage != null ? ` (typical ${r.typical_days_in_stage}d)` : ""));
+          lines.push(`ODDS TO CLOSE: ${ordinal(r.rank)} most likely of ${r.of} open deal${r.of === 1 ? "" : "s"}`);
+          if (r.helping?.length) lines.push(`  HELPING: ${r.helping.join("; ")}`);
+          if (r.hurting?.length) lines.push(`  HURTING: ${r.hurting.join("; ")}`);
+        } else if (r.status === "open") {
           const windows = Object.entries(r.close_within_pct ?? {})
             .map(([d, v]) => `${pctTxt(v)} within ${d}d`).join(" · ");
           lines.push(`${name} · ${r.entity_id} · stage ${r.stage}, ${r.days_in_stage}d in stage` +
@@ -779,9 +794,17 @@ export function createServer() {
 
       const r = await get("/v2/accounts/outlook", { ...q, ...(limit ? { limit } : {}) });
       const deals = r.deals ?? [];
-      lines.push(`Open deals ranked by ${r.ranked_by}. Showing ${deals.length} of ${r.open_deals} open; ` +
-        `timing known for ${r.timing_known}.`);
+      lines.push(`Open deals ranked by ${r.ranked_by}. Showing ${deals.length} of ${r.open_deals} open` +
+        (r.odds === "rank" ? "." : `; timing known for ${r.timing_known}.`));
       deals.forEach((d, i) => {
+        if (d.odds === "rank") {
+          lines.push(`${i + 1}. ${d.name ?? "(unnamed)"} [${d.entity_id}] — ${d.stage}, ${d.days_in_stage}d · ` +
+            `health ${d.health?.score ?? "—"}${d.health?.band ? ` ${d.health.band}` : ""}`);
+          if (d.helping?.length) lines.push(`   helping: ${d.helping.join("; ")}`);
+          if (d.hurting?.length) lines.push(`   hurting: ${d.hurting.join("; ")}`);
+          if (d.health?.watch?.length) lines.push(`   watch: ${d.health.watch.join("; ")}`);
+          return;
+        }
         lines.push(`${i + 1}. ${d.name ?? "(unnamed)"} [${d.entity_id}] — ${d.stage}, ${d.days_in_stage}d · ` +
           `${pctTxt(d.close_within_pct?.[r.within_days])} within ${r.within_days}d · ${pctTxt(d.win_pct)} to win · ` +
           `health ${d.health?.score ?? "—"}${d.health?.band ? ` ${d.health.band}` : ""}`);

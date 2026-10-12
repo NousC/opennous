@@ -126,18 +126,26 @@ export function __setOutlookRunnerForTests(fn) { outlookRunner = fn ?? defaultOu
 const round3 = (p) => (p == null || !Number.isFinite(p) ? null : Math.round(p * 1000) / 1000);
 
 /**
- * { byAccount: Map<accountId, { win_probability, close_within_30d }>, ranked: accountId[], failed }
+ * { byAccount: Map<accountId, { win_probability, close_within_30d, win_rank, win_rank_of, odds_basis }>, ranked: accountId[], failed }
  * `ranked` is the outlook's own order: most likely to be won within 30 days first.
+ * `odds_basis` is 'rank' until the win model is fitted on this workspace's own closed deals
+ * (GET-832): the probabilities still order the book, but they are not a number to show a user,
+ * so a surface shows `win_rank` of `win_rank_of` instead.
  */
 export async function loadWinOdds(supabase, workspaceId) {
   try {
     const out = await outlookRunner(supabase, workspaceId);
     const byAccount = new Map();
     const ranked = [];
-    for (const d of out?.deals ?? []) {
-      byAccount.set(d.entityId, { win_probability: round3(d.pWin), close_within_30d: round3(d.pWinWithin?.[30] ?? null) });
+    const all = out?.deals ?? [];
+    const odds_basis = out?.winModel?.basis === 'fitted' ? 'percent' : 'rank';
+    all.forEach((d, i) => {
+      byAccount.set(d.entityId, {
+        win_probability: round3(d.pWin), close_within_30d: round3(d.pWinWithin?.[30] ?? null),
+        win_rank: i + 1, win_rank_of: all.length, odds_basis,
+      });
       ranked.push(d.entityId);
-    }
+    });
     return { byAccount, ranked, failed: false };
   } catch (err) {
     console.warn('[publicApi] deal outlook unavailable:', err?.message);
@@ -224,6 +232,9 @@ export function shapeListDeal(d) {
     health: d.health ?? null,
     win_probability: d.win_probability ?? null,
     close_within_30d: d.close_within_30d ?? null,
+    win_rank: d.win_rank ?? null,
+    win_rank_of: d.win_rank_of ?? null,
+    odds_basis: d.odds_basis ?? null,
     last_activity_at: d.last_activity_at ?? null,
     implied: !!d.implied,
   };
@@ -342,6 +353,9 @@ export function attachOdds(deals, odds) {
     const o = d.status === 'open' ? odds.byAccount.get(d.company_id) : null;
     d.win_probability = o?.win_probability ?? null;
     d.close_within_30d = o?.close_within_30d ?? null;
+    d.win_rank = o?.win_rank ?? null;
+    d.win_rank_of = o?.win_rank_of ?? null;
+    d.odds_basis = o?.odds_basis ?? null;
   }
 }
 
@@ -501,6 +515,7 @@ export async function loadPublicDeal(supabase, req, workspaceId, resolved, { wit
     pipeline_id: d.pipeline_id ?? null, pipeline: d.pipeline ?? null,
     health: full.health?.score ?? null,
     win_probability: o?.win_probability ?? null, close_within_30d: o?.close_within_30d ?? null,
+    win_rank: o?.win_rank ?? null, win_rank_of: o?.win_rank_of ?? null, odds_basis: o?.odds_basis ?? null,
     last_activity_at: full.activity?.[0]?.occurred_at ?? null,
   });
 

@@ -85,11 +85,36 @@ export function shapeHealth(dh, { full = false } = {}) {
   };
 }
 
+// How the odds are said (GET-832). A percentage is only shown once the win model is fitted on this
+// workspace's own closed deals. Before that it is the stage priors times hand-set nudges: every
+// early-stage deal lands near 10-15% whatever its health, and "8% to win" next to "health 79"
+// reads as nonsense. So until then the odds are a RANK among the open deals ("3rd of 12"), which
+// is all the number can honestly support, with what is helping and hurting in plain words.
+export const oddsBasis = (out) => (out?.winModel?.basis === 'fitted' ? 'percent' : 'rank');
+
+const ORD = { 1: 'st', 2: 'nd', 3: 'rd' };
+/** 1 → "1st", 12 → "12th", 23 → "23rd". */
+export function ordinal(n) {
+  const t = n % 100;
+  return `${n}${t >= 11 && t <= 13 ? 'th' : ORD[n % 10] ?? 'th'}`;
+}
+
+/** The drivers as plain facts, no points: what is helping the deal close, what is hurting it. */
+export function splitDrivers(deal, max = 4) {
+  const helping = [], hurting = [];
+  for (const d of deal.drivers || []) {
+    if (Math.abs(d.pts) < 0.5) continue; // too small to be worth saying
+    (d.logit > 0 ? helping : hurting).push(driverLabel(d.key, deal));
+  }
+  return { helping: helping.slice(0, max), hurting: hurting.slice(0, max) };
+}
+
 /** What the percentages rest on, said plainly so an assumption never reads like evidence. */
 export function modelNotes({ winModel, stageRatesBasis }) {
   const notes = [];
   if (winModel?.basis !== 'fitted') {
-    notes.push('Win-model weights are the hand-set defaults: this workspace has not closed enough deals (20 wins) to fit its own. Read the percentages as a ranking, not a promise.');
+    // No percentage is shown on default weights (see oddsBasis), so the note says why there isn't one.
+    return ["Odds are a rank among the open deals, not a percentage: a percentage only means something once it is learned from this workspace's own won and lost deals, and there are not enough of those yet."];
   }
   if (stageRatesBasis === 'prior') notes.push('Stage conversion rates are mostly assumed; there is little closed history per stage yet.');
   else if (stageRatesBasis === 'blended') notes.push("Stage conversion rates blend this workspace's own history with assumed rates.");
@@ -108,15 +133,24 @@ export function timingLabel(d) {
   return `not judged: no won deals from ${stageLabel(d.stage)} to learn timing from`;
 }
 
-function shapeDeal(d, horizons, { maxDrivers }) {
-  const within = {};
-  for (const h of horizons) within[h] = toPct(d.pWinWithin[h]);
-  return {
+function shapeDeal(d, horizons, { maxDrivers, odds = 'percent', rank = null, of = null }) {
+  const base = {
     entity_id: d.entityId,
     name: d.name,
     stage: d.stage,
     days_in_stage: whole(d.daysInStage),
     typical_days_in_stage: d.medianDaysInStage != null ? whole(d.medianDaysInStage) : null,
+    odds,
+    rank,
+    of,
+    ...(d.amount != null ? { amount: d.amount } : {}),
+  };
+  // No percentages at all on default weights: an agent handed one will say it.
+  if (odds === 'rank') return { ...base, ...splitDrivers(d, Math.min(maxDrivers, 4)) };
+  const within = {};
+  for (const h of horizons) within[h] = toPct(d.pWinWithin[h]);
+  return {
+    ...base,
     win_pct: toPct(d.pWin),
     stage_only_win_pct: toPct(d.pWinBase),
     // Keyed by days. null = timing not judged (see `timing`), so "within N days" cannot be
@@ -124,7 +158,6 @@ function shapeDeal(d, horizons, { maxDrivers }) {
     close_within_pct: within,
     timing: timingLabel(d),
     why: describeDrivers(d, maxDrivers),
-    ...(d.amount != null ? { amount: d.amount } : {}),
   };
 }
 
@@ -157,15 +190,22 @@ export async function dealOutlookList(supabase, workspaceId, { withinDays, limit
   const health = await mapLimit(top, HEALTH_CONCURRENCY,
     (d) => loadAccountHealth(supabase, workspaceId, d.entityId, { persist: persistHealth }).catch(() => null));
   const timingKnown = open.filter((d) => d.pWinWithin[within] != null).length;
+  const odds = oddsBasis(out);
 
   return {
     within_days: within,
-    ranked_by: timingKnown
+    odds,
+    ranked_by: odds === 'rank'
+      ? 'how likely each is to close, compared with the other open deals (stage, time in stage, engagement, objections, fit)'
+      : timingKnown
       ? `chance of closing within ${within} days; a deal whose timing can't be judged ranks by its overall chance to win, the most its ${within}-day chance could be`
       : `overall chance to win: no stage has enough won deals yet to judge timing within ${within} days`,
     open_deals: open.length,
     timing_known: timingKnown,
-    deals: top.map((d, i) => ({ ...shapeDeal(d, [within], { maxDrivers: 4 }), health: shapeHealth(health[i]) })),
+    deals: top.map((d, i) => ({
+      ...shapeDeal(d, [within], { maxDrivers: 4, odds, rank: i + 1, of: open.length }),
+      health: shapeHealth(health[i]),
+    })),
     model: { win_weights: out.winModel.basis, stage_rates: out.stageRatesBasis, notes: modelNotes(out) },
   };
 }
@@ -203,12 +243,12 @@ export async function dealOutlookForAccount(supabase, workspaceId, entityId, { w
   const base = { entity_id: accountId, ...(accountId !== entityId ? { via_person: entityId } : {}) };
   const model = { win_weights: out.winModel.basis, stage_rates: out.stageRatesBasis, notes: modelNotes(out) };
 
-  const deal = out.deals.find((d) => d.entityId === accountId);
-  if (deal) {
+  const idx = out.deals.findIndex((d) => d.entityId === accountId);
+  if (idx >= 0) {
     return {
       ...base,
       status: 'open',
-      ...shapeDeal(deal, horizons, { maxDrivers: 12 }),
+      ...shapeDeal(out.deals[idx], horizons, { maxDrivers: 12, odds: oddsBasis(out), rank: idx + 1, of: out.deals.length }),
       health: shapeHealth(dh, { full: true }),
       icp,
       model,

@@ -87,6 +87,50 @@ test('find deals: a deal with no currency reads as dollars, another currency kee
   assert.doesNotMatch(text, /· 450 /);
 });
 
+test('deals: on default weights the odds are a rank with what helps and hurts, never a percentage (GET-832)', async () => {
+  const one = await callTool('deals', { account: 'acme.com' }, {
+    'GET /v2/accounts/acme.com/outlook': () => [200, {
+      entity_id: ACC, name: 'Acme', status: 'open', stage: 'demo', days_in_stage: 41, typical_days_in_stage: 21,
+      odds: 'rank', rank: 3, of: 12, helping: ['engagement rising'], hurting: ['41d in demo (typical 21d)'],
+      health: { score: 79, band: 'Healthy', signals: [], engagement: {} },
+      model: { notes: ['Odds are a rank among the open deals, not a percentage: there are not enough won and lost deals yet.'] },
+    }],
+  });
+  assert.match(one.text, /ODDS TO CLOSE: 3rd most likely of 12 open deals/);
+  assert.match(one.text, /HELPING: engagement rising/);
+  assert.match(one.text, /HURTING: 41d in demo \(typical 21d\)/);
+  assert.doesNotMatch(one.text, /%|unknown|^CLOSE:/m);
+
+  const list = await callTool('deals', {}, {
+    'GET /v2/accounts/outlook': () => [200, {
+      within_days: 30, odds: 'rank', ranked_by: 'how likely each is to close, compared with the other open deals', open_deals: 12, timing_known: 0,
+      deals: [{ entity_id: ACC, name: 'Acme', stage: 'demo', days_in_stage: 41, odds: 'rank', rank: 1, of: 12,
+        helping: ['ICP fit 88'], hurting: [], health: { score: 79, band: 'Healthy', watch: [] } }],
+      model: { notes: [] },
+    }],
+  });
+  assert.match(list.text, /1\. Acme \[2222[^\]]*\] — demo, 41d · health 79 Healthy/);
+  assert.match(list.text, /helping: ICP fit 88/);
+  assert.doesNotMatch(list.text, /%|unknown within/);
+});
+
+test('find: rows on a rank basis say the rank, not a percentage (GET-832)', async () => {
+  const deals = await callTool('find', { kind: 'deals' }, {
+    'GET /v2/deals': () => [200, { deals: [{ id: UUID, name: 'Acme pilot', account: { entity_id: ACC, name: 'Acme', domain: 'acme.com' },
+      stage: 'Demo', canonical_stage: 'demo', status: 'open', amount: 450, currency: null, close_date: null, owner: null, pipeline: null,
+      health: 79, win_probability: 0.08, close_within_30d: null, win_rank: 3, win_rank_of: 12, odds_basis: 'rank',
+      last_activity_at: null, implied: false }], offset: 0, has_more: false }],
+  });
+  assert.match(deals.text, /· odds 3rd of 12 open · health 79/);
+  assert.doesNotMatch(deals.text, /win 8%/);
+  const accounts = await callTool('find', { kind: 'accounts', sort: 'win_chance' }, {
+    'GET /v2/accounts': () => [200, { accounts: [{ entity_id: ACC, name: 'Acme', domain: 'acme.com', open_deals: 1,
+      win_probability: 0.08, close_within_30d: null, win_rank: 1, win_rank_of: 12, odds_basis: 'rank' }], offset: 0, has_more: false }],
+  });
+  assert.match(accounts.text, /· odds 1st of 12 open/);
+  assert.doesNotMatch(accounts.text, /win 8%/);
+});
+
 test('find people: stage → pipeline_stage, include_all → include=all', async () => {
   const { text, calls } = await callTool('find', { kind: 'people', filters: { account: 'acme.com', stage: 'demo', include_all: true } }, {
     'GET /v2/people': () => [200, { people: [{ id: UUID, name: 'Sarah Lee', job_title: 'VP Sales', company: 'Acme', email: 'sarah@acme.com', pipeline_stage: 'demo', icp_score: 81, icp_fit: true }], offset: 0, has_more: false }],

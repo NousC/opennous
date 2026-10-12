@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   clampWithinDays, toPct, driverLabel, describeDrivers, shapeHealth, modelNotes, timingLabel,
+  oddsBasis, ordinal, splitDrivers,
 } from '../src/lib/dealOutlook.mjs';
 
 // The deal outlook's words. Pure: the numbers come from @nous/core; this is how they are said
@@ -76,6 +77,30 @@ test('timing says plainly when "within N days" could not be judged', () => {
 });
 
 test('the notes say when the numbers rest on assumptions', () => {
-  assert.equal(modelNotes({ winModel: { basis: 'default' }, stageRatesBasis: 'prior' }).length, 2);
+  // Default weights: no percentage is shown, so one note says why there is a rank instead.
+  const dflt = modelNotes({ winModel: { basis: 'default' }, stageRatesBasis: 'prior' });
+  assert.equal(dflt.length, 1);
+  assert.match(dflt[0], /rank among the open deals, not a percentage/);
+  assert.doesNotMatch(dflt[0], /weights|ranking, not a promise/);
+  assert.equal(modelNotes({ winModel: { basis: 'fitted' }, stageRatesBasis: 'prior' }).length, 1);
   assert.deepEqual(modelNotes({ winModel: { basis: 'fitted' }, stageRatesBasis: 'learned' }), []);
+});
+
+test('odds are a rank until the win model is fitted on the workspace (GET-832)', () => {
+  assert.equal(oddsBasis({ winModel: { basis: 'default' } }), 'rank');
+  assert.equal(oddsBasis({}), 'rank');
+  assert.equal(oddsBasis({ winModel: { basis: 'fitted' } }), 'percent');
+});
+
+test('ordinals read like a person says them', () => {
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 103, 111].map(ordinal),
+    ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '103rd', '111th']);
+});
+
+test('drivers split into what helps and what hurts, in plain words, tiny ones dropped', () => {
+  assert.deepEqual(splitDrivers(deal), {
+    helping: ['ICP fit 88'],
+    hurting: ['2 open objections', '42d in negotiation (typical 20d)'],
+  });
+  assert.deepEqual(splitDrivers({ drivers: [] }), { helping: [], hurting: [] });
 });
