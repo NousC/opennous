@@ -29,7 +29,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset=".github/assets/hero-graph-dark.png" />
     <source media="(prefers-color-scheme: light)" srcset=".github/assets/hero-graph.png" />
-    <img src=".github/assets/hero-graph.png" alt="The OpenNous Graph page: accounts linked to the claims recorded about them, grouped by kind" width="900" />
+    <img src=".github/assets/hero-graph.png" alt="The OpenNous Graph: every account with its logo, linked to its people and deals, beside the accounts ranked by ICP fit" width="900" />
   </picture>
 </p>
 
