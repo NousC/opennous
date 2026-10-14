@@ -324,15 +324,19 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const mineOnly = owners.length === 1 && owners[0] === meId;
   const setOwners = (ids: string[]) => { setOwnersState(ids); setPages(1); };
 
-  const { data: companiesPage, isPending: loadingCo } = useQuery<{ companies: any[]; total: number; applied: string | null; countries: { country: string; accounts: number }[] }>({
-    queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all"],
+  // ?revbox=<id> (GET-873): only that RevBox's accounts, its scope resolved by the server as the
+  // box resolves it. A chip in the toolbar names the box and clears it; the market and owner
+  // filters do not apply on top of a box's scope.
+  const revboxId = params.get("revbox") ?? "";
+  const clearRevbox = () => { const next = new URLSearchParams(params); next.delete("revbox"); setParams(next, { replace: true }); setPages(1); };
+  const { data: companiesPage, isPending: loadingCo } = useQuery<{ companies: any[]; total: number; applied: string | null; countries: { country: string; accounts: number }[]; revbox: { id: string; name: string } | null }>({
+    queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all", revboxId],
     enabled: !!token && !!workspaceId,
     placeholderData: (prev) => prev,
     queryFn: async () => {
       const url = `${apiUrl}/api/companies/list?workspaceId=${workspaceId}&limit=${PAGE * pages}`
         + (debouncedQ ? `&q=${encodeURIComponent(debouncedQ)}` : "")
-        + (mineOnly ? "&scope=mine" : "")
-        + (country ? `&country=${encodeURIComponent(country)}` : "");
+        + (revboxId ? `&revbox=${encodeURIComponent(revboxId)}` : (mineOnly ? "&scope=mine" : "") + (country ? `&country=${encodeURIComponent(country)}` : ""));
       const r = await fetch(url, { headers: auth });
       const d = r.ok ? await r.json() : {};
       return {
@@ -340,6 +344,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         total: Number(d.total) || 0,
         applied: (d.country ?? null) as string | null,
         countries: (Array.isArray(d.countries) ? d.countries : []) as { country: string; accounts: number }[],
+        revbox: d.revbox && typeof d.revbox === "object" ? d.revbox as { id: string; name: string } : null,
       };
     },
   });
@@ -927,7 +932,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {inShell && countryOptions.length > 0 && (
+      {inShell && !revboxId && countryOptions.length > 0 && (
         <ApiTopBarFilter active={appliedCountry ? 1 : 0}>
           <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>
           {[{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map((o) => ({ ...o, label: o.country }))].map((o) => {
@@ -956,6 +961,14 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         {!api && view === "accounts" && hasCustomerStatus && (
           <ViewTabs<Segment> aria-label="Account type" value={segment} onChange={setSegment} options={segmentOptions} />
         )}
+        {revboxId && (
+          <span className="inline-flex h-7 max-w-[260px] items-center gap-1 rounded-lg border border-border bg-card pl-2.5 pr-1 text-[12px] text-foreground">
+            <span className="truncate">RevBox: {companiesPage?.revbox?.name ?? "…"}</span>
+            <button type="button" onClick={clearRevbox} aria-label="Clear RevBox filter" className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground">
+              <X className="size-3.5" />
+            </button>
+          </span>
+        )}
         <div className="hidden flex-1 sm:block" />
         <label className="inline-flex h-7 w-full items-center gap-[7px] rounded-lg border border-border bg-card px-[9px] text-muted-foreground focus-within:border-foreground/30 sm:w-[200px]">
           <Search className="size-3.5 flex-shrink-0" />
@@ -969,14 +982,14 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
             </button>
           )}
         </label>
-        {view === "accounts" && (
+        {view === "accounts" && !revboxId && (
           <OwnerFilter people={ownerPeople} meId={meId} value={owners} onChange={setOwners}
             unassignedCount={ownerCounts.unassigned || undefined} />
         )}
         {/* Which market. Accounts, the pipeline tabs and the counts all follow it, and it
             survives a reload. The focus country also keeps accounts whose country the CRM never
             recorded — they are unrecorded, not foreign. */}
-        {!inShell && <LocationFilter quiet applied={appliedCountry} options={countryOptions} onChange={chooseCountry} />}
+        {!inShell && !revboxId && <LocationFilter quiet applied={appliedCountry} options={countryOptions} onChange={chooseCountry} />}
       </PageToolbar>
 
       {hasStrip && (

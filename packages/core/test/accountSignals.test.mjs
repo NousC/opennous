@@ -116,3 +116,32 @@ test('five signals from one call start ONE run of a signal automation, not five 
   assert.equal(runs.length, 1, 'one run for the conversation');
   assert.equal(runs[0].payload.dedupe_key, 'r1:signal-moment:a1:ref:https://notes.example/m/7');
 });
+
+test('a job that also starts on account signals (trigger_config.also, GET-873) runs once per conversation, with its own signal filter', async () => {
+  const now = new Date().toISOString();
+  const kinds = ['next_step', 'buying_signal', 'objection_raised'];
+  const signals = kinds.map((kind, i) => ({
+    id: `s${i}`, workspace_id: 'w1', entity_id: 'p1', account_id: 'a1', kind, claim_property: `note.${i}`,
+    title: kind, content: `${kind} said`, quote: null, speaker: 'Dana', source_ref: 'https://notes.example/m/8',
+    detail: {}, occurred_at: now, processed_at: null,
+  }));
+  const routine = (id, trigger_kind, trigger_config) => ({ id, workspace_id: 'w1', enabled: true, trigger_kind, name: id, trigger_config, steps: [], created_at: '2026-01-01T00:00:00Z' });
+  const db = fakeDb({
+    account_signals: signals,
+    claims: kinds.map((_, i) => ({ entity_id: 'p1', property: `note.${i}`, value: { metadata: { signal_type: 'call_transcript' } }, supporting_observation_ids: [] })),
+    agent_routines: [
+      routine('r_multi', 'deal_closed_won', { signal_keys: ['deal.won', 'signal.buying_signal'], also: [{ kind: 'account_signal', config: { signals: ['buying_signal'] } }] }),
+      // Two account-signal triggers of one job that both match: still one run.
+      routine('r_both', 'account_signal', { signals: ['next_step'], also: [{ kind: 'account_signal', config: { signals: ['objection_raised'] } }] }),
+      routine('r_miss', 'deal_closed_lost', { also: [{ kind: 'account_signal', config: { signals: ['churn_risk'] } }] }),
+      routine('r_deal', 'deal_closed_won', {}),
+    ],
+    agent_routine_runs: [],
+    trigger_subscriptions: [],
+    outbound_events: [],
+    entity_list_rows: [],
+  });
+  await processAccountSignals({ supabase: db }).catch(() => {});
+  const runs = db.writes.filter(w => w.table === 'agent_routine_runs' && w.op === 'insert').map(w => w.payload.dedupe_key);
+  assert.deepEqual(runs, ['r_multi:signal-moment:a1:ref:https://notes.example/m/8', 'r_both:signal-moment:a1:ref:https://notes.example/m/8']);
+});

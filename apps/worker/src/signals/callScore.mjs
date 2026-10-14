@@ -436,7 +436,7 @@ export async function scoreCall({
     // for a history import or a second recording. The transcript rides along for the write-up.
     const callAutomations = (summary = null) => (!existing && dispatch && externalAttendees.length
       ? runCallEndedAutomations(supabase, workspaceId, {
-          meetingId: target.meetingId, sourceMeetingId: String(meetingId), title: title ?? null, occurredAt: at, source: target.source ?? source ?? null,
+          meetingId: target.meetingId, sourceMeetingId: String(meetingId), sourceRef: sourceRef ?? null, title: title ?? null, occurredAt: at, source: target.source ?? source ?? null,
           url: sourceUrl ?? null, accountId: account || null, personId: primary || null, callType, summary, transcript,
           attendees: (Array.isArray(contacts) ? contacts : []).filter(c => c?.email && !ourEntityIds.has(c.id))
             .map(c => ({ name: c.name ?? ([c.first_name, c.last_name].filter(Boolean).join(' ') || null), email: c.email })),

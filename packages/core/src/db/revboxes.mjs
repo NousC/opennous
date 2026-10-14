@@ -337,6 +337,17 @@ export async function revboxAccountCatalog(sb, ws, allowed = null) {
   return out.map(a => ({ ...a, id: a.entity_id, ...byId.get(a.entity_id) }));
 }
 
+/**
+ * The accounts in a box's scope as the server resolves it (GET-873): its selected ids, or its saved
+ * filter (closed-won, ICP score, ...), among the accounts the viewer may see (`allowed`, null =
+ * unrestricted). The box's own access check (view rights). -> { box, accounts } (catalog rows).
+ */
+export async function revboxScopedAccounts(sb, ws, uid, boxId, allowed = null) {
+  const box = await loadRevbox(sb, ws, uid, boxId);
+  const accounts = await revboxAccountCatalog(sb, ws, allowed);
+  return { box, accounts: accounts.filter(a => revboxMatchesAccount(box.scope, a)) };
+}
+
 export async function revboxScopedGraph(sb, ws, scope, accounts) {
   const selected = accounts.filter(a => revboxMatchesAccount(scope, a));
   const nodes = selected.map(a => ({ id: a.id, type: 'account', label: a.name ?? 'Account', icp: a.icp_score, people: a.people_count }));

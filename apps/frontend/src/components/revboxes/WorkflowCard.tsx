@@ -12,7 +12,7 @@
 // 480px. Earlier proposals render dimmed with no actions; approved ones carry an Approved badge.
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Check, ChevronRight, Clock3, Mail, Sparkles, Webhook, Zap } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, Clock3, Mail, Sparkles, Table2, Webhook, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toolLogo } from '@/lib/toolLogo';
@@ -53,6 +53,8 @@ export function WorkflowCard({ proposal, destinations, editable, current, approv
     </ol>
 
     <Warnings warnings={proposal.warnings} />
+    {/* Chaining (GET-874): the jobs this chat sets up after this one, once it is approved. */}
+    {!!proposal.next_jobs?.length && !approved && <p className="mt-3 truncate px-5 text-[12px] text-muted-foreground">Then in this chat: {proposal.next_jobs.join(' · ')}</p>}
 
     {actionable ? <footer className="flex items-center justify-end gap-2 px-5 pb-4 pt-3">
       <Button variant="ghost" size="sm" onClick={onMakeChanges} disabled={blocked}>Make changes</Button>
@@ -116,6 +118,7 @@ function FixLink({ href, label }: { href: string; label: string }) {
 // ─── What the tiles say ───────────────────────────────────────────────────────────────────────
 
 /** "#cs-handoffs · Report": the Slack layout a Slack step posts in (GET-858), from its config. */
+const DATASET_WINDOWS: Record<string, string> = { last_7_days: 'Last 7 days', last_30_days: 'Last 30 days', last_month: 'Last month', last_quarter: 'Last quarter', all: 'All rows' };
 const SLACK_LAYOUTS: Record<string, string> = { report: 'Report', approval: 'Approval', alert: 'Alert', handoff: 'Handoff', digest: 'Digest', notification: 'Notification', plain: 'Plain' };
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const list = (...vs: unknown[]) => vs.flatMap(v => Array.isArray(v) ? v.map(String) : str(v).split(/[,;]/)).map(x => x.trim()).filter(Boolean);
@@ -136,9 +139,14 @@ function flowNodes(p: JobProposal, destinations: Delivery[]): Node[] {
 function triggerNode(t: JobProposal['trigger']): Node {
   const provider = str((t.config ?? {}).provider);
   const clock = t.kind === 'clock';
-  const title = clock ? 'Schedule' : t.kind === 'manual' ? 'By hand' : SIGNAL_CHOICES.find(([k]) => k === t.kind)?.[1] ?? titleCase(t.kind.replace(/_/g, ' '));
+  const kindTitle = (kind: string) => SIGNAL_CHOICES.find(([k]) => k === kind)?.[1] ?? titleCase(kind.replace(/_/g, ' '));
+  // Several signals (GET-873): the primary kind and every config.also kind, each named once.
+  const also = Array.isArray((t.config ?? {}).also) ? ((t.config ?? {}).also as unknown[]).map(x => str((x as { kind?: unknown } | null)?.kind)).filter(Boolean) : [];
+  const kinds = [...new Set([t.kind, ...also])];
+  const title = clock ? 'Schedule' : t.kind === 'manual' ? 'By hand' : kinds.map(kindTitle).join(' · ');
   const mark = clock ? <Clock3 className="h-4 w-4 text-muted-foreground" /> : provider ? <Logo tool={provider} /> : <Zap className="h-4 w-4 text-muted-foreground" />;
   const facts: Node['facts'] = [['When', t.label]];
+  if (kinds.length > 1 && !clock) facts.push(['Starts on', `${kinds.map(kindTitle).join(', ')} (once per event)`]);
   if (t.timezone) facts.push(['Time zone', t.timezone]);
   if (provider) facts.push(['Recorder', TOOL_NAMES[provider] ?? provider]);
   // "Every day at 08:00 (Toronto)" -> "Every day 08:00" on the tile; the time zone is in Details.
@@ -211,6 +219,17 @@ function stepNode(s: JobProposal['steps'][number], f: ProposalFact | undefined, 
       return { ...base, title: 'Webhook', subtitle: `→ ${host || 'no URL'}`, external: true, facts };
     }
     case 'approval': return { ...base, title: 'Approval', subtitle: 'Waits for a person', facts: [['Step', 'A person approves before the job goes on']] };
+    case 'dataset_append': case 'dataset_read': {
+      // A box table (GET-874). The title is the step type's; the subtitle the table's name from the
+      // server's fact (the box's own, or the one this proposal creates), else its key.
+      const key = f?.dataset_key ?? (str(c.dataset_key) || null);
+      const name = f?.dataset ?? key ?? 'No table';
+      const read = s.type === 'dataset_read';
+      const window = DATASET_WINDOWS[f?.window ?? (str(c.window) || 'all')] ?? 'All rows';
+      facts.push(['Table', name], ['Key', key ?? '(none)', true]);
+      if (read) facts.push(['Rows', window]);
+      return { ...base, title: read ? 'Read table' : 'Add to table', subtitle: `${name}${f?.new_dataset ? ' · new' : ''}${read ? ` · ${window}` : ''}`, facts };
+    }
     case 'only_if': {
       const rule = (f?.target ?? '').replace(/^Only if\s+/i, '');
       return { ...base, title: 'Only if', subtitle: rule || 'A condition', facts: rule ? [['Rule', rule]] : [] };
@@ -261,5 +280,6 @@ export function Logo({ tool, size = 'sm' }: { tool: string; size?: 'xs' | 'sm' }
   if (src) return <img src={src} alt="" className={cn(px, 'object-contain')} />;
   if (tool === 'agent') return <Sparkles className={cn(px, 'text-foreground')} />;
   if (tool === 'webhook' || tool === 'revbox_delivery') return <Webhook className={cn(px, 'text-muted-foreground')} />;
+  if (tool === 'dataset_append' || tool === 'dataset_read') return <Table2 className={cn(px, 'text-muted-foreground')} />;
   return <span className="text-[10px] font-medium text-muted-foreground">{(TOOL_NAMES[tool] ?? tool)[0]?.toUpperCase()}</span>;
 }

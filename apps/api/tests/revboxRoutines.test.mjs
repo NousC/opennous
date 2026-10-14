@@ -21,6 +21,10 @@ test('a routine job reads as the UI expects, with a trigger label', () => {
   assert.equal(routineTriggerLabel({ ...r, trigger_config: { frequency: 'weekly', at: '09:30' }, timezone: 'UTC' }), 'Every Monday at 09:30 (UTC)');
   assert.equal(routineTriggerLabel({ trigger_kind: 'before_meeting', trigger_config: { offset: 60 } }), '60 minutes before a meeting');
   assert.equal(routineTriggerLabel({ trigger_kind: 'deal_closed_won', trigger_config: {} }), 'When a deal is won');
+  // Several signals (GET-873): every one of them.
+  assert.equal(routineTriggerLabel({ trigger_kind: 'deal_closed_won', trigger_config: { signal_keys: ['deal.won', 'deal.lost'], also: [{ kind: 'deal_closed_lost', config: {} }] } }), 'When a deal is won or lost');
+  assert.equal(routineTriggerLabel({ trigger_kind: 'call_ended', trigger_config: { also: [{ kind: 'deal_closed_lost', config: {} }] } }), 'When a call ends or a deal is lost');
+  assert.equal(routineTriggerLabel({ trigger_kind: 'deal_closed_won', trigger_config: { signal_keys: ['deal.won'] } }), 'When a deal is won');
   const out = routineOut(r);
   assert.equal('plan' in out, false);
   assert.equal(out.trigger_label, 'Every day at 08:00 (Toronto)');

@@ -12,7 +12,6 @@ import { RevBoxJobs, jobRows, type JobRow } from '@/components/revboxes/RevBoxJo
 import { DeliveryDialogBody, DeliveryList, JobStepDialog, unfinished } from '@/components/revboxes/BoxDelivery';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { PersonAvatar } from '@/components/ui/owner-filter';
-import { AccountLogo } from '@/components/pipeline/DealBits';
 import { Switch } from '@/components/ui/switch';
 import { useAutosavedRevbox } from '@/components/revboxes/useAutosavedRevbox';
 import { when } from '@/lib/format';
@@ -61,7 +60,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
   const [file, setFile] = useState<ContextFile | null>(null);
   const [accountSearch, setAccountSearch] = useState('');
   const uploader = useRef<HTMLInputElement>(null);
-  const accounts = useQuery({ queryKey: ['revbox-accounts', ws, id, detail.data?.box.revision], queryFn: () => revboxesRequest<{ accounts: Catalog['accounts'] }>(ws, token, `/${id}/accounts`), enabled: !!detail.data });
+  const accounts = useQuery({ queryKey: ['revbox-accounts', ws, id, detail.data?.box.revision], queryFn: () => revboxesRequest<{ accounts: Catalog['accounts']; count?: number }>(ws, token, `/${id}/accounts`), enabled: !!detail.data });
   const runCounts=useQuery({queryKey:['revbox-results',ws,id],queryFn:()=>revboxesRequest<{results:{job_id:string;state:string;created_at:string;result:{kind:string}|null}[]}>(ws,token,`/${id}/results`),enabled:!!detail.data,refetchInterval:10000});
   const editable = box?.access !== 'viewer';
   const owner = catalog.data?.members.find(m => m.id === box?.owner_id);
@@ -127,11 +126,13 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
           {builder
             ? <JobBuilder key={builder.job?.id ?? 'new'} workspaceId={ws} token={token} boxId={id} job={builder.job} destinations={box.delivery} editable={editable}
                 onClose={() => setBuilder(null)}
+                onSaved={async ({ routine, enabled, reason }) => { setFresh(routine.id); setNotice(enabled === false ? `${routine.name} was saved but is off: ${reason ?? 'it could not be switched on.'}` : `${routine.name} is on. Setting up the next job…`); await reload(); }}
                 onApproved={async ({ routine, enabled, reason }) => { setBuilder(null); setFresh(routine.id); setNotice(enabled === false ? `${routine.name} was saved but is off: ${reason ?? 'it could not be switched on.'}` : `${routine.name} is on.`); await reload(); }} />
             : <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 md:px-10"><RevBoxJobs rows={rows} runs={runCounts.data?.results ?? []} editable={editable} busy={busy} fresh={fresh}
                 onNew={() => setBuilder({ job: null })}
                 onToggle={row => void jobAction(row, '/enabled', 'PUT', { enabled: !row.enabled })}
                 onChange={row => setBuilder({ job: { id: row.id, name: row.name } })}
+                onTest={row => { setBusy(row.id); setError(''); setNotice(''); void revboxesRequest(ws, token, `/${id}/jobs/${row.id}/test`, { method: 'POST' }).then(async () => { setNotice(`Testing ${row.name} on real data. Nothing is sent; the result shows in Results, labelled Test.`); await cache.invalidateQueries({ queryKey: ['revbox-results', ws, id] }); }).catch(e => setError(message(e))).finally(() => setBusy(null)); }}
                 onWebhookKey={row => void revboxesRequest<{ key: string }>(ws, token, `/${id}/jobs/${row.id}/webhook-key`, { method: 'POST' }).then(r => setWebhookKey(r.key)).catch(e => setError(message(e)))}
                 builtins={builtins} onRemoveBuiltin={key => void setBuiltins(builtins.map(b => b.key).filter(k => k !== key))} /></div>}
         </>}</div>
@@ -145,8 +146,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
           <input ref={uploader} type="file" className="hidden" accept=".md,.txt,.csv,.json" onChange={e => void upload(e.target.files)} />
         </RailSection>
         <RailSection title="Accounts" sub="The accounts this box works on." icon={Globe2}>
-          <div className="space-y-1"><Link to={`/accounts?revbox=${id}`} onClick={e => { if (dirty) { e.preventDefault(); void save().then(() => window.location.assign(`/accounts?revbox=${id}`)).catch(() => {}); } }} className="flex items-center gap-2 rounded-lg px-1 py-2.5 text-[12px] hover:bg-muted/50"><span className="flex-1">{SCOPE_LABELS[box.scope.mode]}</span><span className="text-[11px] text-muted-foreground">{accounts.data?.accounts.length ?? '…'} accounts</span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /></Link><Link to={`/graph?revbox=${id}`} onClick={e => { if (dirty) { e.preventDefault(); void save().then(() => window.location.assign(`/graph?revbox=${id}`)).catch(() => {}); } }} className="flex items-center gap-2 rounded-lg px-1 py-2.5 text-[12px] hover:bg-muted/50"><span className="flex-1">Account graph</span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /></Link></div>
-          <RunAccounts boxId={id} detail={detail.data} />
+          <div className="space-y-1"><Link to={`/accounts?revbox=${id}`} onClick={e => { if (dirty) { e.preventDefault(); void save().then(() => window.location.assign(`/accounts?revbox=${id}`)).catch(() => {}); } }} className="flex items-center gap-2 rounded-lg px-1 py-2.5 text-[12px] hover:bg-muted/50"><span className="flex-1">Selected accounts · <span className="tabular-nums">{accounts.data ? (accounts.data.count ?? accounts.data.accounts.length).toLocaleString() : '…'}</span></span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /></Link><Link to={`/graph?revbox=${id}`} onClick={e => { if (dirty) { e.preventDefault(); void save().then(() => window.location.assign(`/graph?revbox=${id}`)).catch(() => {}); } }} className="flex items-center gap-2 rounded-lg px-1 py-2.5 text-[12px] hover:bg-muted/50"><span className="flex-1">Account graph</span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /></Link></div>
         </RailSection>
         <RailSection title="Delivery" sub="Where finished work goes." icon={ArrowUpRight} action={editable && <button aria-label="Add delivery destination" className="rounded p-1 hover:bg-muted" onClick={() => { setDeliveryId(null); setDialog('delivery'); }}><Plus className="h-4 w-4" /></button>}>
           {/* The box's own destinations, then where its jobs deliver on their own (GET-868, read-only: Edit on the job). */}
@@ -185,25 +185,6 @@ function MemberLine({ id, avatar, name, sub }: { id: string; avatar: string | nu
 function Face({ id, avatar, name }: { id: string; avatar: string | null; name: string }) {
   const [broken, setBroken] = useState(false);
   return avatar && !broken ? <img src={avatar} alt="" aria-hidden onError={() => setBroken(true)} className="h-7 w-7 shrink-0 rounded-full object-cover" /> : <PersonAvatar person={{ id, name }} size={28} />;
-}
-/**
- * The accounts the box's jobs touched in their last 30 days of runs (GET-872), top 8 with logos and
- * "+N more" to the graph of them. When the runs name no account at all (a job reading data that is
- * not account-linked, e.g. a HubSpot custom object grouped by company name), it says so instead of 0.
- */
-function RunAccounts({ boxId, detail }: { boxId: string; detail?: BoxDetail }) {
-  if (!detail || detail.run_accounts === undefined) return null;
-  const list = detail.run_accounts ?? [];
-  const total = detail.run_accounts_total ?? list.length;
-  const runs = detail.run_accounts_runs ?? 0;
-  const graph = `/graph?revbox=${boxId}&source=runs`;
-  return <div className="mt-2 border-t border-border/70 pt-3">
-    <p className="mb-1.5 flex items-baseline justify-between px-1 text-[11px] font-medium text-muted-foreground"><span>Accounts in recent runs</span>{total > 0 && <span className="font-normal tabular-nums">{total} · 30 days</span>}</p>
-    {list.length ? <>
-      {list.slice(0, 8).map(a => <Link key={a.id} to={`/accounts/${a.id}`} className="flex items-center gap-2 rounded-lg px-1 py-1.5 text-[12px] hover:bg-muted/50"><AccountLogo name={a.name} domain={a.domain} size={16} /><span className="min-w-0 flex-1 truncate">{a.name}</span><span className="text-[10.5px] tabular-nums text-muted-foreground">{a.runs} {a.runs === 1 ? 'run' : 'runs'}</span></Link>)}
-      {total > 8 && <Link to={graph} className="mt-0.5 flex items-center gap-1 px-1 py-1 text-[11.5px] text-muted-foreground hover:text-foreground">+{total - 8} more<ArrowUpRight className="h-3 w-3" /></Link>}
-    </> : <p className="px-1 text-[11.5px] leading-snug text-muted-foreground">{!runs ? 'No runs in the last 30 days.' : detail.run_accounts_linked ? 'None of the accounts in recent runs are visible to you.' : 'This box’s jobs don’t link runs to accounts yet.'}</p>}
-  </div>;
 }
 function ErrorLine({ text }: { text: string }) { return <p role="alert" className="rounded-lg border border-risk/20 bg-risk/5 px-3 py-2 text-[12px] text-risk">{text}</p>; }
 function message(e: unknown): string { return e instanceof Error ? e.message : 'Something went wrong. Please try again.'; }

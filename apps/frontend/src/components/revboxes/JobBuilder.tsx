@@ -14,6 +14,11 @@
 // picked = most likely a schedule). Both ride along with every message as `hints`, and when the
 // agent settles the trigger itself ("after every meeting") its `trigger` event updates the chip; its
 // `integrations` event attaches the tools it settled on, so the user never has to.
+//
+// Several jobs in one chat (GET-874): a proposal may name the jobs still to set up (`next_jobs`, e.g.
+// the monthly and quarterly reports after the closed-deal analysis that fills their table). Approving
+// it answers with `next_session_id`: the card turns Approved, the page refreshes its jobs (onSaved),
+// the chat moves to that session and asks for the next job itself. The last approval closes as before.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -37,22 +42,26 @@ type Turn = {
   items: Activity[];
   ask?: BuilderQuestion[]; proposal?: JobProposal; credits?: number;
   error?: { message: string; code?: string }; stopped?: boolean; streaming: boolean;
+  /** Its proposal was approved and the chat went on to the next job. */
+  approved?: boolean;
 };
 
 const HUMAN_TOOL: Record<string, string> = {
   workspace_connections: 'Checking connected tools', revbox_context: 'Reading this box’s context', hubspot_objects: 'Listing HubSpot objects',
   hubspot_fields: 'Reading HubSpot fields', hubspot_find: 'Searching HubSpot', hubspot_access: 'Checking HubSpot access',
   hubspot_preview: 'Previewing a HubSpot read', slack_channels: 'Finding the Slack channel', mailboxes: 'Checking mailboxes',
-  search_accounts: 'Searching accounts', signal_catalog: 'Reading signals',
+  search_accounts: 'Searching accounts', signal_catalog: 'Reading signals', revbox_datasets: 'Reading this box’s tables',
 };
 
-export function JobBuilder({ workspaceId, token, boxId, job, destinations, editable, onApproved }: {
+export function JobBuilder({ workspaceId, token, boxId, job, destinations, editable, onApproved, onSaved }: {
   workspaceId: string; token: string; boxId: string;
   /** Set for Edit on an existing job: its earlier chat is reopened and continued. */
   job?: { id: string; name: string } | null;
   destinations: Delivery[]; editable: boolean;
   /** Kept for callers; the way out is the page's "Back to jobs" (no Close link under the input). */
   onApproved: (result: ApproveResult) => void; onClose?: () => void;
+  /** A job was saved and the chat goes on to the next one (GET-874): refresh, do not close. */
+  onSaved?: (result: ApproveResult) => void;
 }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
@@ -61,9 +70,10 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   /** Edit: the job's earlier chat, and whether it is still loading. */
   const [history, setHistory] = useState<BuilderHistoryItem[]>([]);
   const [opening, setOpening] = useState(!!job && editable);
-  /** Tools the user attached (slugs) and the signal that starts the job (catalog key; null = not chosen). */
+  /** Tools the user attached (slugs) and the signals that start the job (catalog keys, any of them;
+   *  ['schedule'] = on a clock; [] = not chosen). Several signals: GET-873. */
   const [integrations, setIntegrations] = useState<string[]>([]);
-  const [signal, setSignal] = useState<string | null>(null);
+  const [signalKeys, setSignalKeys] = useState<string[]>([]);
   const [signalFallback, setSignalFallback] = useState<string | null>(null);
   const connections = useQuery({ queryKey: ['revbox-catalog', workspaceId], enabled: editable && !!workspaceId, queryFn: () => revboxesRequest<Catalog>(workspaceId, token, '/catalog') });
   const signals = useQuery({ queryKey: ['signal-catalog', workspaceId], enabled: editable && !!workspaceId, queryFn: () => signalsRequest<SignalCatalog>(workspaceId, token, '/catalog') });
@@ -72,7 +82,8 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     for (const c of connections.data?.connections ?? []) if (!seen.has(c.slug)) seen.set(c.slug, TOOL_NAMES[c.slug] ?? (c.name && c.name !== c.slug ? c.name : c.slug.charAt(0).toUpperCase() + c.slug.slice(1)));
     return [...seen].map(([slug, name]) => ({ slug, name }));
   }, [connections.data]);
-  const signalText = signal ? signalKeyLabel(signal, signals.data) ?? signalFallback ?? signal : null;
+  // One label per signal; the agent's own label stands in for a single key the catalog does not know.
+  const signalTexts = signalKeys.map(k => signalKeyLabel(k, signals.data) ?? (signalKeys.length === 1 ? signalFallback : null) ?? k);
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState('');
   const abort = useRef<AbortController | null>(null);
@@ -136,9 +147,10 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
       case 'credits': patch(id, t => ({ ...t, credits: (t.credits ?? 0) + ev.credits })); break;
       case 'trigger': {
         // The agent picked or changed what starts the job: the Signals chip follows it.
-        const key = ev.signal || null;
-        setSignal(key); setSignalFallback(ev.label ?? null);
-        const label = key ? signalKeyLabel(key, signals.data) ?? ev.label ?? key : ev.label ?? 'On a schedule';
+        const keys = Array.isArray(ev.signals) && ev.signals.length ? ev.signals : ev.signal ? [ev.signal] : [];
+        setSignalKeys(keys); setSignalFallback(ev.label ?? null);
+        const label = keys.length > 1 ? ev.label ?? keys.map(k => signalKeyLabel(k, signals.data) ?? k).join(' · ')
+          : keys.length ? signalKeyLabel(keys[0], signals.data) ?? ev.label ?? keys[0] : ev.label ?? 'On a schedule';
         patch(id, t => ({ ...t, items: [...t.items, { kind: 'tool', name: 'trigger', label: `Starts when: ${label}`, state: 'done' }] }));
         break;
       }
@@ -155,16 +167,16 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     }
   }
 
-  async function run(user: string, body: { message: string; job_id?: string | null } | { answers: BuilderAnswer[] }) {
-    if (streaming || approving) return;
+  async function run(user: string, body: { message: string; job_id?: string | null } | { answers: BuilderAnswer[] }, session: string | null = sessionId) {
+    if (streaming) return;
     const id = crypto.randomUUID();
     setTurns(prev => [...prev, { id, user, items: [], streaming: true }]);
     setHint(''); setApproveError('');
     const controller = new AbortController();
     abort.current = controller;
     try {
-      const hints: BuilderHints = { integrations, signal };
-      await streamBuilderTurn({ workspaceId, token, boxId, sessionId, body: { ...body, hints }, signal: controller.signal, onEvent: ev => apply(id, ev) });
+      const hints: BuilderHints = { integrations, signals: signalKeys };
+      await streamBuilderTurn({ workspaceId, token, boxId, sessionId: session, body: { ...body, hints }, signal: controller.signal, onEvent: ev => apply(id, ev) });
     } catch (e) {
       if (controller.signal.aborted) patch(id, t => ({ ...t, stopped: true }));
       else patch(id, t => ({ ...t, error: { message: e instanceof Error ? e.message : 'The builder stopped unexpectedly.' } }));
@@ -177,7 +189,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   }
   function send() {
     const text = draft.trim();
-    if (!text || streaming || opening || !editable) return;
+    if (!text || streaming || approving || opening || !editable) return;
     setDraft('');
     if (input.current) input.current.style.height = 'auto';
     void run(text, { message: text, ...(!sessionId && job ? { job_id: job.id } : {}) });
@@ -194,9 +206,20 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     // A turn still streaming may change (or replace) the proposal: approve what is settled only.
     if (!sessionId || streaming || approving) return;
     setApproving(true); setApproveError('');
-    try { onApproved(await approveBuilderProposal(workspaceId, token, boxId, sessionId, name)); }
-    catch (e) { setApproveError(e instanceof Error ? e.message : 'Could not approve the job.'); }
-    finally { setApproving(false); }
+    let result: ApproveResult;
+    try { result = await approveBuilderProposal(workspaceId, token, boxId, sessionId, name); }
+    catch (e) { setApproveError(e instanceof Error ? e.message : 'Could not approve the job.'); setApproving(false); return; }
+    setApproving(false);
+    const next = result.next_session_id;
+    if (!next) { onApproved(result); return; }
+    // The chat goes on: this card is approved, the next job starts from its own trigger (a report is
+    // on a schedule, not on the deal signals the first job used), and the agent is asked for it.
+    const upcoming = result.next_jobs?.[0];
+    setTurns(prev => prev.map(t => t.id === latestProposalTurn ? { ...t, approved: true } : t));
+    setSessionId(next); setSignalKeys([]); setSignalFallback(null);
+    onSaved?.(result);
+    const say = upcoming ? `Approved. Now set up the next job: ${upcoming}.` : 'Approved. Now set up the next job.';
+    void run(upcoming ? `Next: ${upcoming}` : 'Next job', { message: say }, next);
   }
   function makeChanges() {
     if (streaming || approving) return;
@@ -210,10 +233,11 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   // bottom-right; what is attached sits above the box as soft grey tags.
   const composer = editable && <div className="shrink-0 bg-background px-6 pb-5 pt-3 md:px-10">
     <div className="mx-auto w-full max-w-[880px]">
-      {(integrations.length > 0 || signal) && <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {signal && <Tag onRemove={() => { setSignal(null); setSignalFallback(null); }} label={`Remove signal ${signalText}`}>
-          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', signal === 'schedule' ? 'bg-muted-foreground/60' : 'bg-emerald-500')} />
-          <span className="text-muted-foreground">Starts when</span><span className="text-muted-foreground/50">·</span><span className="text-foreground">{signalText}</span>
+      {(integrations.length > 0 || signalKeys.length > 0) && <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {signalKeys.length > 0 && <Tag onRemove={() => { setSignalKeys([]); setSignalFallback(null); }} label={`Remove ${signalKeys.length > 1 ? 'signals' : 'signal'} ${signalTexts.join(', ')}`}>
+          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', signalKeys[0] === 'schedule' ? 'bg-muted-foreground/60' : 'bg-emerald-500')} />
+          <span className="text-muted-foreground">Starts when</span>
+          {signalTexts.map((t, i) => <span key={signalKeys[i]} className="contents"><span className="text-muted-foreground/50">·</span><span className="text-foreground">{t}</span></span>)}
         </Tag>}
         {integrations.map(slug => <Tag key={slug} onRemove={() => setIntegrations(list => list.filter(x => x !== slug))} label={`Remove ${tools.find(t => t.slug === slug)?.name ?? slug}`}>
           <Logo tool={slug} size="xs" /><span className="text-foreground">{tools.find(t => t.slug === slug)?.name ?? TOOL_NAMES[slug] ?? slug}</span>
@@ -230,8 +254,8 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
         <div className="mt-3 flex items-center gap-1.5">
           <IntegrationsMenu tools={tools} loading={connections.isLoading} selected={integrations}
             onToggle={slug => setIntegrations(list => list.includes(slug) ? list.filter(x => x !== slug) : [...list, slug])} />
-          <SignalsMenu catalog={signals.data} loading={signals.isLoading} error={signals.error?.message} selected={signal}
-            onPick={key => { setSignal(key); setSignalFallback(null); }} />
+          <SignalsMenu catalog={signals.data} loading={signals.isLoading} error={signals.error?.message} selected={signalKeys}
+            onToggle={key => { setSignalKeys(list => toggleSignal(list, key)); setSignalFallback(null); }} />
           <span className="flex-1" />
           <span className="hidden text-[11px] text-muted-foreground/60 sm:inline">⌘↵</span>
           {streaming
@@ -260,7 +284,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
             ? <AskCard questions={turn.ask} disabled={streaming || !editable} onSubmit={answers => answer(turn.ask!, answers)} />
             : !turn.streaming && <p className="text-[11.5px] text-muted-foreground">Asked {turn.ask.length === 1 ? 'a question' : `${turn.ask.length} questions`}</p>)}
           {turn.proposal && <WorkflowCard proposal={turn.proposal} destinations={destinations} editable={editable}
-            current={turn.id === latestProposalTurn && !turn.streaming} approving={approving} busy={streaming}
+            current={turn.id === latestProposalTurn && !turn.streaming && !turn.approved} approved={turn.approved} approving={approving} busy={streaming}
             onApprove={name => void approve(name)} onMakeChanges={makeChanges} />}
           {turn.id === latestProposalTurn && approveError && <ErrorRow message={approveError} />}
           {turn.error && <ErrorRow message={turn.error.message} code={turn.error.code} />}
@@ -321,8 +345,18 @@ function IntegrationsMenu({ tools, loading, selected, onToggle }: { tools: { slu
   </Popover>;
 }
 
+/**
+ * The picked signals after one click (GET-873): signals combine (the job starts on any of them);
+ * "On a schedule" is exclusive, so picking it clears the signals and picking a signal clears it.
+ */
+export function toggleSignal(list: string[], key: string): string[] {
+  if (list.includes(key)) return list.filter(k => k !== key);
+  if (key === 'schedule') return ['schedule'];
+  return [...list.filter(k => k !== 'schedule'), key];
+}
+
 type SignalOption = { key: string; label: string; detail?: string; logo?: string; draft?: boolean };
-function SignalsMenu({ catalog, loading, error, selected, onPick }: { catalog?: SignalCatalog; loading: boolean; error?: string; selected: string | null; onPick: (key: string | null) => void }) {
+function SignalsMenu({ catalog, loading, error, selected, onToggle }: { catalog?: SignalCatalog; loading: boolean; error?: string; selected: string[]; onToggle: (key: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const groups = useMemo(() => {
@@ -340,20 +374,21 @@ function SignalsMenu({ catalog, loading, error, selected, onPick }: { catalog?: 
     push('custom', (catalog?.custom ?? []).map(e => ({ key: e.key, label: e.label, detail: e.description, draft: e.active === false })));
     return out;
   }, [catalog, query]);
-  const pick = (key: string | null) => { onPick(key); setOpen(false); setQuery(''); };
+  // A signal stays open for more picks; the schedule (exclusive) closes the menu.
+  const pick = (key: string) => { onToggle(key); if (key === 'schedule') { setOpen(false); setQuery(''); } };
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger type="button" className={cn(MENU_BUTTON, selected && 'text-foreground')}><Zap className="h-3.5 w-3.5" />Signals<ChevronDown className="h-3 w-3 opacity-60" /></PopoverTrigger>
+    <PopoverTrigger type="button" className={cn(MENU_BUTTON, selected.length > 0 && 'text-foreground')}><Zap className="h-3.5 w-3.5" />Signals<ChevronDown className="h-3 w-3 opacity-60" /></PopoverTrigger>
     <PopoverContent align="start" side="top" className="w-80 p-0">
       <label className="flex items-center gap-2 border-b border-border/70 px-3 py-2"><Search className="h-3.5 w-3.5 text-muted-foreground" />
         <input autoFocus aria-label="Search signals" value={query} onChange={e => setQuery(e.target.value)} placeholder="When should this job start?" className="w-full bg-transparent text-[12.5px] outline-none placeholder:text-muted-foreground/60" />
       </label>
       <div className="max-h-[320px] overflow-y-auto p-1.5">
-        <SignalRow active={selected === 'schedule'} onClick={() => pick('schedule')} icon={<Clock className="h-3.5 w-3.5 text-muted-foreground" />} label="No signal (scheduled)" detail="Runs on a clock; the builder asks when." />
+        <SignalRow active={selected.includes('schedule')} onClick={() => pick('schedule')} icon={<Clock className="h-3.5 w-3.5 text-muted-foreground" />} label="No signal (scheduled)" detail="Runs on a clock; the builder asks when." />
         {loading && <p className="px-2 py-2 text-[12px] text-muted-foreground">Loading signals…</p>}
         {error && <p role="alert" className="px-2 py-2 text-[12px] text-risk">{error}</p>}
         {groups.map(g => <div key={g.group} className="mt-1.5">
           <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">{SIGNAL_GROUP_LABEL[g.group]}</p>
-          {g.options.map(o => <SignalRow key={o.key} active={selected === o.key} onClick={() => pick(o.key)} label={o.label} detail={o.detail} draft={o.draft}
+          {g.options.map(o => <SignalRow key={o.key} multi active={selected.includes(o.key)} onClick={() => pick(o.key)} label={o.label} detail={o.detail} draft={o.draft}
             icon={o.logo ? <Logo tool={o.logo} /> : <Zap className="h-3.5 w-3.5 text-muted-foreground" />} />)}
         </div>)}
         {!loading && query && !groups.length && <p className="px-2 py-2 text-[12px] text-muted-foreground">No signal matches “{query}”.</p>}
@@ -365,14 +400,15 @@ function SignalsMenu({ catalog, loading, error, selected, onPick }: { catalog?: 
   </Popover>;
 }
 
-function SignalRow({ active, onClick, icon, label, detail, draft }: { active: boolean; onClick: () => void; icon: ReactNode; label: string; detail?: string; draft?: boolean }) {
-  return <button type="button" role="menuitemradio" aria-checked={active} onClick={onClick} className={cn('flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-hover', active && 'bg-hover')}>
+function SignalRow({ active, onClick, icon, label, detail, draft, multi = false }: { active: boolean; onClick: () => void; icon: ReactNode; label: string; detail?: string; draft?: boolean; multi?: boolean }) {
+  return <button type="button" role={multi ? 'menuitemcheckbox' : 'menuitemradio'} aria-checked={active} onClick={onClick} className={cn('flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-hover', active && 'bg-hover')}>
+    {multi && <span aria-hidden className={cn('mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[4px] border', active ? 'border-foreground bg-foreground text-background' : 'border-border')}>{active && <Check className="h-2.5 w-2.5" strokeWidth={3} />}</span>}
     <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
     <span className="min-w-0 flex-1">
       <span className="flex items-center gap-1.5 text-[12.5px] text-foreground">{label}{draft && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">Draft</span>}</span>
       {detail && <span className="block truncate text-[11px] text-muted-foreground">{detail}</span>}
     </span>
-    {active && <Check className="mt-1 h-3.5 w-3.5 shrink-0" />}
+    {active && !multi && <Check className="mt-1 h-3.5 w-3.5 shrink-0" />}
   </button>;
 }
 

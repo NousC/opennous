@@ -239,9 +239,14 @@ export * from './db/revboxUsage.mjs';
 export * from './db/revboxRuns.mjs';
 // The Job Builder's sessions and approve -> workflow-engine routine (GET-868).
 export * from './db/revboxBuilder.mjs';
+// RevBox datasets (GET-874): tables a box's jobs keep, the rows they add and read back.
+export * from './db/revboxDatasets.mjs';
+export * from './services/datasetFormats.mjs';
 export * from './services/revboxExecution.mjs';
 
 export * from './services/routineSchedule.mjs';
+// A job on several signals (GET-873): trigger_kind + trigger_config.also, matched by every runner.
+export * from './services/routineTriggers.mjs';
 
 export * from './db/customSignals.mjs';
 export * from './services/customSignalExtraction.mjs';

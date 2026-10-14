@@ -8,6 +8,10 @@
 import { loadRevbox } from './revboxes.mjs';
 import { JOB_PROMPTS, JOB_ARTIFACTS } from '../services/automationRun.mjs';
 import { nextRunAt } from '../services/routineSchedule.mjs';
+import { proposalFromRoutine, routineFactLookups, routineProposalCatalog, OUTSIDE_BUILDER_TEXT } from './revboxJobProposal.mjs';
+import { SOLO_TRIGGER_KINDS, MAX_ALSO_TRIGGERS } from '../services/routineTriggers.mjs';
+import { normalizeDatasetColumns, datasetSlug, DATASET_WINDOWS } from '../services/datasetFormats.mjs';
+import { createRevboxDataset } from './revboxDatasets.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 async function rows(q) { const { data, error } = await q; if (error) throw error; return data ?? []; }
@@ -19,7 +23,7 @@ const str = (v) => (typeof v === 'string' ? v.trim() : '');
 /** Triggers something actually dispatches today (LIVE_TRIGGERS in automations.mjs, plus manual). */
 export const BUILDER_TRIGGERS = new Set(['clock', 'manual', 'call_ended', 'deal_closed_won', 'deal_closed_lost', 'deal_stage_changed', 'icp_tier_changed', 'account_signal', 'hubspot_field_changed', 'before_meeting']);
 /** What a proposal may contain. `revbox_delivery` is not proposed: approve appends it (uses_box_delivery). */
-export const BUILDER_STEP_TYPES = new Set(['agent', 'hubspot', 'gmail', 'slack', 'email', 'webhook', 'only_if', 'wait', 'approval']);
+export const BUILDER_STEP_TYPES = new Set(['agent', 'hubspot', 'gmail', 'slack', 'email', 'webhook', 'only_if', 'wait', 'approval', 'dataset_append', 'dataset_read']);
 const AGENT_JOBS = new Set(['follow_up', 'call_summary', 'premeeting_brief', 'account_summary', 'deal_handoff']);
 const HUBSPOT_ACTIONS = new Set(['read', 'note', 'task', 'update_deal', 'update_contact', 'update_company']);
 const FREQUENCIES = new Set(['daily', 'weekly', 'monthly', 'quarterly']);
@@ -28,6 +32,12 @@ const STEP_ID = /^[A-Za-z0-9_-]{1,40}$/;
 const STEP_REF = /\{\{\s*steps\.([A-Za-z0-9_-]+)\.output\s*\}\}/g;
 const MAX_STEPS = 20;
 const MAX_FLOW_BYTES = 60_000;
+/** Datasets (GET-874): the tables one proposal may create, the jobs it may say are still to set up. */
+const MAX_PROPOSED_DATASETS = 5;
+const MAX_NEXT_JOBS = 5;
+const DATASET_KEY = /^[a-z][a-z0-9_]{0,62}$/;
+const DEDUPE_FROM = ['deal', 'account', 'none'];
+const WINDOW_WORDS = { last_7_days: 'the last 7 days', last_30_days: 'the last 30 days', last_month: 'last month', last_quarter: 'last quarter', all: 'all rows' };
 export const BOX_DELIVERY_STEP = 'box_delivery';
 
 function validTimezone(tz) {
@@ -35,7 +45,7 @@ function validTimezone(tz) {
 }
 
 /** Why one step would not run, or null. stepReady's rules plus what the server can check. */
-function stepProblem(s, { slackChannelIds, slackUserIds, mailboxIds }) {
+function stepProblem(s, { slackChannelIds, slackUserIds, mailboxIds, tables = null }) {
   const c = s.config;
   const name = `Step "${s.id}"`;
   switch (s.type) {
@@ -83,12 +93,23 @@ function stepProblem(s, { slackChannelIds, slackUserIds, mailboxIds }) {
       return `${name}: Wait steps do not run yet. Leave it out.`;
     case 'approval':
       return null;
+    case 'dataset_append':
+    case 'dataset_read': {
+      // A box table (GET-874): its key must be one the box has or this proposal creates.
+      const key = str(c.dataset_key);
+      if (!DATASET_KEY.test(key)) return `${name}: set dataset_key to the key of one of this box's tables (revbox_datasets) or of a table in this proposal's datasets.`;
+      if (tables && !tables.has(key)) return `${name}: this box has no table "${key}" and the proposal does not create one. Use a key from revbox_datasets, or add the table to datasets.`;
+      if (s.type === 'dataset_append') return c.dedupe_from == null || DEDUPE_FROM.includes(c.dedupe_from) ? null : `${name}: dedupe_from is one of ${DEDUPE_FROM.join(', ')}.`;
+      if (c.window != null && !DATASET_WINDOWS.includes(c.window)) return `${name}: window is one of ${DATASET_WINDOWS.join(', ')}.`;
+      if (c.limit != null && !(Number.isInteger(c.limit) && c.limit >= 1 && c.limit <= 500)) return `${name}: limit is a whole number of rows from 1 to 500.`;
+      return null;
+    }
     default:
       return `${name}: unknown step type "${s.type}".`;
   }
 }
 
-function triggerProblems(t) {
+function triggerProblems(t, { nested = false } = {}) {
   const out = [];
   if (!isObj(t)) return ['The proposal needs a trigger.'];
   if (!BUILDER_TRIGGERS.has(t.kind)) out.push(`Trigger "${t.kind}" has no runner. Use one of: ${[...BUILDER_TRIGGERS].join(', ')}.`);
@@ -101,14 +122,43 @@ function triggerProblems(t) {
   }
   if (t.kind === 'before_meeting' && c.offset != null && !(Number(c.offset) > 0)) out.push('"Before a meeting" needs a positive offset in minutes.');
   if (t.kind === 'hubspot_field_changed' && (!str(c.object) || !str(c.property))) out.push('A HubSpot field trigger needs the object and the property to watch.');
+  if (nested) return out;
+  // Several signals (GET-873): the extra triggers in config.also, each checked like the primary. A
+  // schedule runs on its slot and never also on an event.
+  if (c.also != null) {
+    if (!Array.isArray(c.also)) out.push('trigger.config.also must be a list of { kind, config } triggers.');
+    else {
+      if (c.also.length > MAX_ALSO_TRIGGERS) out.push(`A job starts on at most ${MAX_ALSO_TRIGGERS + 1} triggers.`);
+      if (c.also.length && SOLO_TRIGGER_KINDS.has(t.kind)) out.push('A schedule cannot be combined with signals: a job runs either on a schedule or when its signals happen. Drop trigger.config.also, or use only event signals.');
+      for (const x of c.also) {
+        if (!isObj(x) || typeof x.kind !== 'string') { out.push('Every trigger in trigger.config.also needs a kind and a config.'); continue; }
+        if (SOLO_TRIGGER_KINDS.has(x.kind)) { out.push(`"${x.kind}" cannot be combined with other triggers: a job runs either on a schedule or when its signals happen.`); continue; }
+        out.push(...triggerProblems(x, { nested: true }).map(e => `Extra trigger "${x.kind}": ${e}`));
+      }
+    }
+  }
+  if (t.signal_keys != null) {
+    const keys = t.signal_keys;
+    if (!Array.isArray(keys) || !keys.length || keys.length > MAX_ALSO_TRIGGERS + 1 || keys.some(k => !str(k))) out.push('trigger.signal_keys must be a list of signal_catalog keys.');
+    else if (keys.length > 1 && keys.includes('schedule')) out.push('A schedule cannot be combined with signals: a job runs either on a schedule or when its signals happen.');
+  }
   return out;
+}
+
+/** The trigger's config as it is saved: config.also as given, and the signal keys (GET-873) beside it. */
+function savedTriggerConfig(t) {
+  const config = isObj(t?.config) ? { ...t.config } : {};
+  const keys = Array.isArray(t?.signal_keys) ? t.signal_keys.map(str).filter(Boolean) : null;
+  if (keys?.length) config.signal_keys = [...new Set(keys)];
+  if (Array.isArray(config.also) && !config.also.length) delete config.also;
+  return config;
 }
 
 /** The proposal's steps without any box-delivery step (approve adds it back from uses_box_delivery). */
 const proposedSteps = (steps) => (Array.isArray(steps) ? steps.filter(s => s?.type !== 'revbox_delivery') : steps);
 
 /** Which display `tool` may label which step type. The card's title is the model's words; the tool is not. */
-export const DISPLAY_TOOLS = { hubspot: ['hubspot'], slack: ['slack'], gmail: ['gmail'], email: ['email'], webhook: ['webhook'], agent: ['ai', 'agent'], approval: ['approval'], only_if: ['only_if'], wait: ['wait'] };
+export const DISPLAY_TOOLS = { hubspot: ['hubspot'], slack: ['slack'], gmail: ['gmail'], email: ['email'], webhook: ['webhook'], agent: ['ai', 'agent'], approval: ['approval'], only_if: ['only_if'], wait: ['wait'], dataset_append: ['dataset_append', 'dataset'], dataset_read: ['dataset_read', 'dataset'] };
 
 const list = (v) => (Array.isArray(v) ? v : v ? [...v] : []);
 const byId = (items, key) => new Map(list(items).filter(x => isObj(x) && x.id).map(x => [String(x.id), x[key] ?? x.name ?? null]));
@@ -119,7 +169,7 @@ function urlParts(raw) {
 }
 
 /** What one real step touches, read from its config (never from `display`). */
-function stepFact(s, { channels, people, boxes }) {
+function stepFact(s, { channels, people, boxes, tables }) {
   const c = isObj(s.config) ? s.config : {};
   const base = { step_id: String(s.id ?? ''), type: String(s.type ?? ''), external: false };
   switch (s.type) {
@@ -165,6 +215,20 @@ function stepFact(s, { channels, people, boxes }) {
       const model = str(c.model) || 'opennous';
       return { ...base, model, mode: c.mode === 'pick' ? 'pick' : 'write', job: c.mode === 'pick' ? (c.job ?? null) : null, target: `AI (${model})${c.mode === 'pick' && c.job ? `: ${c.job}` : ''}` };
     }
+    case 'dataset_append':
+    case 'dataset_read': {
+      // The table's name is the box's own, or the one this proposal creates under that key.
+      const key = str(c.dataset_key);
+      const t = tables.get(key) ?? null;
+      const named = `the table ${t?.name ? `"${t.name}" (${key}${t.exists ? '' : ', new'})` : key || '(none)'}`;
+      const fact = { ...base, action: s.type === 'dataset_append' ? 'append' : 'read', dataset_key: key || null, dataset: t?.name ?? null, new_dataset: !!t && !t.exists };
+      if (s.type === 'dataset_append') {
+        const dedupe = DEDUPE_FROM.includes(c.dedupe_from) ? c.dedupe_from : 'deal';
+        return { ...fact, dedupe_from: dedupe, target: `Add a row to ${named}${dedupe === 'none' ? '' : `, one per ${dedupe}`}` };
+      }
+      const window = DATASET_WINDOWS.includes(c.window) ? c.window : 'all';
+      return { ...fact, window, target: `Read ${named}: ${WINDOW_WORDS[window]}` };
+    }
     case 'approval': return { ...base, target: 'Waits for a person to approve' };
     case 'only_if': return { ...base, target: `Only if ${list(c.rules).map(r => [r?.field, r?.op, r?.value].filter(x => x != null && x !== '').join(' ')).join(c.match === 'any' ? ' or ' : ' and ') || '(no rule)'}` };
     default: return { ...base, target: `${s.type} step` };
@@ -178,11 +242,52 @@ function stepFact(s, { channels, people, boxes }) {
  * the lookups, never from the model: `slackChannels` [{ id, name }], `slackPeople` [{ id, name }],
  * `mailboxes` [{ id, email }]. Pure.
  */
-export function proposalFacts(proposal, { slackChannels = null, slackPeople = null, mailboxes = null } = {}) {
+export function proposalFacts(proposal, { slackChannels = null, slackPeople = null, mailboxes = null, datasets = null } = {}) {
   const steps = proposedSteps(proposal?.steps);
   if (!Array.isArray(steps)) return [];
-  const ctx = { channels: byId(slackChannels, 'name'), people: byId(slackPeople, 'name'), boxes: byId(mailboxes, 'email') };
+  const ctx = { channels: byId(slackChannels, 'name'), people: byId(slackPeople, 'name'), boxes: byId(mailboxes, 'email'), tables: tableNames(proposal, datasets) };
   return steps.filter(isObj).map(s => stepFact(s, ctx));
+}
+
+/**
+ * The tables a proposal's steps may use (GET-874): key -> { name, exists }. The box's own (`datasets`,
+ * [{ key, name }]) win over a proposed one with the same key: approve reuses those, never changes them.
+ */
+function tableNames(proposal, datasets) {
+  const out = new Map();
+  for (const d of list(proposal?.datasets)) {
+    if (!isObj(d)) continue;
+    const key = str(d.key) || datasetSlug(d.name, 56);
+    if (key && !out.has(key)) out.set(key, { name: str(d.name) || key, exists: false });
+  }
+  for (const d of list(datasets)) if (isObj(d) && str(d.key)) out.set(str(d.key), { name: str(d.name) || str(d.key), exists: true });
+  return out;
+}
+
+/**
+ * The proposal's `datasets` checked: [{ key?, name, description?, columns }], up to 5, the key the name
+ * slugged when missing, columns as normalizeDatasetColumns has them. `exists` = the box already has that
+ * key (approve reuses it as it is). -> { errors, datasets }
+ */
+function proposedDatasets(raw, existing) {
+  if (raw == null) return { errors: [], datasets: [] };
+  if (!Array.isArray(raw)) return { errors: ['datasets must be a list of { key, name, description?, columns }.'], datasets: [] };
+  if (raw.length > MAX_PROPOSED_DATASETS) return { errors: [`A proposal creates at most ${MAX_PROPOSED_DATASETS} tables.`], datasets: [] };
+  const errors = [], out = [], seen = new Set();
+  for (const d of raw) {
+    if (!isObj(d)) { errors.push('Every table in datasets needs a name and columns.'); continue; }
+    const name = str(d.name);
+    if (!name || name.length > 120) { errors.push('Every table in datasets needs a name of up to 120 characters.'); continue; }
+    const key = d.key == null || d.key === '' ? datasetSlug(name, 56) : str(d.key);
+    if (!DATASET_KEY.test(key)) { errors.push(`Table "${name}": a key is lowercase letters, digits or underscores, starting with a letter.`); continue; }
+    if (seen.has(key)) { errors.push(`Table key "${key}" is proposed twice.`); continue; }
+    seen.add(key);
+    if (d.description != null && (typeof d.description !== 'string' || d.description.length > 2000)) { errors.push(`Table "${name}": the description is text of up to 2,000 characters.`); continue; }
+    const cols = normalizeDatasetColumns(d.columns);
+    if (cols.error) { errors.push(`Table "${name}": ${cols.error}`); continue; }
+    out.push({ key, name, description: str(d.description), columns: cols.columns, exists: !!existing?.has(key) });
+  }
+  return { errors, datasets: out };
 }
 
 /** A box destination's Slack target as an id or a bare channel name. */
@@ -202,16 +307,21 @@ const mailTargets = (boxDestinations) => new Set(list(boxDestinations).filter(d 
  * (and stand in for the id lists when those are not given). `boxDestinations` is the box's current
  * delivery list; with uses_box_delivery, an explicit Slack post to one of them is refused (it would post twice).
  */
-export function validateBuilderProposal(proposal, { slackChannelIds = null, slackUserIds = null, mailboxIds = null, slackChannels = null, slackPeople = null, mailboxes = null, boxDestinations = null } = {}) {
+export function validateBuilderProposal(proposal, { slackChannelIds = null, slackUserIds = null, mailboxIds = null, slackChannels = null, slackPeople = null, mailboxes = null, boxDestinations = null, datasets = null } = {}) {
   const errors = [];
   if (!isObj(proposal)) return { ok: false, errors: ['The proposal must be an object.'], facts: [] };
   const ids = (given, objs) => given ? new Set(given) : objs ? new Set(list(objs).map(x => x?.id).filter(Boolean)) : null;
+  // The box's tables (GET-874), when known; null = shape only (any well-formed key).
+  const boxTables = datasets ? new Set(list(datasets).map(d => str(d?.key)).filter(Boolean)) : null;
+  const tables = proposedDatasets(proposal.datasets, boxTables);
+  errors.push(...tables.errors);
   const lookups = {
     slackChannelIds: ids(slackChannelIds, slackChannels),
     slackUserIds: ids(slackUserIds, slackPeople),
     mailboxIds: ids(mailboxIds, mailboxes),
+    tables: boxTables ? new Set([...boxTables, ...tables.datasets.map(d => d.key)]) : null,
   };
-  const facts = proposalFacts(proposal, { slackChannels, slackPeople, mailboxes });
+  const facts = proposalFacts({ ...proposal, datasets: tables.datasets }, { slackChannels, slackPeople, mailboxes, datasets });
   if (!str(proposal.name) || proposal.name.length > 120) errors.push('Give the job a name of up to 120 characters.');
   if (proposal.summary != null && (typeof proposal.summary !== 'string' || proposal.summary.length > 2000)) errors.push('The summary must be text of up to 2,000 characters.');
   errors.push(...triggerProblems(proposal.trigger));
@@ -234,13 +344,18 @@ export function validateBuilderProposal(proposal, { slackChannelIds = null, slac
       clean.push({ id, type: s.type, config: isObj(s.config) ? s.config : {} });
     }
     for (const s of clean) { const p = stepProblem(s, lookups); if (p) errors.push(p); }
-    // {{steps.X.output}} reads a step that ran before it and wrote something: an AI step or a HubSpot read.
+    // Add to table writes the AI step before it as a row; Read table hands its rows to the AI step after it (GET-874).
+    clean.forEach((s, i) => {
+      if (s.type === 'dataset_append' && !clean.slice(0, i).some(x => x.type === 'agent')) errors.push(`Step "${s.id}": Add to table writes the output of an AI step before it as one row. Put an AI step (type agent) before it.`);
+      if (s.type === 'dataset_read' && !clean.slice(i + 1).some(x => x.type === 'agent')) errors.push(`Step "${s.id}": Read table hands its rows to an AI step after it. Put an AI step (type agent) after it.`);
+    });
+    // {{steps.X.output}} reads a step that ran before it and wrote something: an AI step or a read (HubSpot, a table).
     clean.forEach((s, i) => {
       for (const m of JSON.stringify(s.config).matchAll(STEP_REF)) {
         const at = clean.findIndex(x => x.id === m[1]);
         if (at < 0) errors.push(`Step "${s.id}" reads {{steps.${m[1]}.output}}, but there is no step "${m[1]}".`);
         else if (at >= i) errors.push(`Step "${s.id}" reads {{steps.${m[1]}.output}}, but that step runs after it.`);
-        else if (!(clean[at].type === 'agent' || (clean[at].type === 'hubspot' && clean[at].config.action === 'read'))) errors.push(`Step "${s.id}" reads {{steps.${m[1]}.output}}, but step "${m[1]}" writes no output.`);
+        else if (!(clean[at].type === 'agent' || clean[at].type === 'dataset_read' || (clean[at].type === 'hubspot' && clean[at].config.action === 'read'))) errors.push(`Step "${s.id}" reads {{steps.${m[1]}.output}}, but step "${m[1]}" writes no output.`);
       }
     });
     const tc = isObj(proposal.trigger?.config) ? proposal.trigger.config : {};
@@ -285,9 +400,11 @@ export function validateBuilderProposal(proposal, { slackChannelIds = null, slac
   if (proposal.warnings != null && (!Array.isArray(proposal.warnings) || proposal.warnings.some(w => !isObj(w) || !WARNING_KINDS.has(w.kind) || !str(w.message)))) errors.push(`Every warning needs a kind (${[...WARNING_KINDS].join(', ')}) and a message.`);
   if (proposal.assumptions != null && (!Array.isArray(proposal.assumptions) || proposal.assumptions.some(a => typeof a !== 'string'))) errors.push('Assumptions must be a list of sentences.');
   if (proposal.estimated_credits_per_run != null && !(Number.isFinite(proposal.estimated_credits_per_run) && proposal.estimated_credits_per_run >= 0)) errors.push('estimated_credits_per_run must be a number of credits.');
+  // The jobs still to set up in this chat (chaining): short names, shown under the card.
+  if (proposal.next_jobs != null && (!Array.isArray(proposal.next_jobs) || proposal.next_jobs.length > MAX_NEXT_JOBS || proposal.next_jobs.some(j => !str(j) || j.length > 120))) errors.push(`next_jobs must be a list of up to ${MAX_NEXT_JOBS} job names of up to 120 characters.`);
 
   if (errors.length) return { ok: false, errors, facts };
-  return { ok: true, errors: [], facts, steps: clean, trigger: { kind: proposal.trigger.kind, config: isObj(proposal.trigger.config) ? proposal.trigger.config : {}, timezone: proposal.trigger.timezone || 'UTC' } };
+  return { ok: true, errors: [], facts, steps: clean, datasets: tables.datasets, trigger: { kind: proposal.trigger.kind, config: savedTriggerConfig(proposal.trigger), timezone: proposal.trigger.timezone || 'UTC' } };
 }
 
 /** The legacy schedule columns. Mirrors scheduleColumns in apps/api/src/lib/flows.mjs. */
@@ -439,7 +556,9 @@ export async function approveBuilderProposal(sb, { workspaceId, revboxId, userId
   const base = proposal ?? session.proposal;
   if (!base) fail(400, 'There is no proposal to approve yet.');
   const p = str(name) ? { ...base, name: str(name) } : base;
-  const checked = validateBuilderProposal(p, { slackChannelIds, slackUserIds, mailboxIds, slackChannels, slackPeople, mailboxes, boxDestinations });
+  // The box's tables as they are now (GET-874), read here rather than taken from the caller.
+  const boxTables = await rows(sb.from('revbox_datasets').select('key, name, columns').eq('workspace_id', workspaceId).eq('revbox_id', revboxId));
+  const checked = validateBuilderProposal(p, { slackChannelIds, slackUserIds, mailboxIds, slackChannels, slackPeople, mailboxes, boxDestinations, datasets: boxTables });
   if (!checked.ok) throw Object.assign(new Error(`This job cannot run yet: ${checked.errors.join(' ')}`), { status: 400, errors: checked.errors });
   const cols = builderRoutineColumns(p, checked);
 
@@ -473,7 +592,21 @@ export async function approveBuilderProposal(sb, { workspaceId, revboxId, userId
     .eq('workspace_id', workspaceId).eq('id', sessionId).eq('user_id', userId).eq('state', 'open').select('*').maybeSingle());
   if (!claimed) fail(409, 'This proposal was already approved.');
   let routine;
+  const tables = [];
   try {
+    // The proposed tables first, so every step's dataset_key resolves when the job runs. A key the box
+    // already has is reused as it is (jobs read it by key; its name and columns never change here).
+    for (const d of checked.datasets ?? []) {
+      const had = boxTables.find(t => t.key === d.key);
+      if (had) { tables.push({ key: d.key, name: had.name, created: false }); continue; }
+      try {
+        const made = await createRevboxDataset(sb, { workspaceId, revboxId, userId, body: { key: d.key, name: d.name, description: d.description, columns: d.columns } });
+        tables.push({ key: made.key, name: made.name, created: true });
+      } catch (e) {
+        if (e?.status !== 409) throw e;   // made meanwhile (another approval): reuse it
+        tables.push({ key: d.key, name: d.name, created: false });
+      }
+    }
     const next = enabled ? nextRunAt({ ...cols, weekdays_only: cols.trigger_config?.weekdays_only === true }) : null;
     const write = { ...cols, enabled, next_run_at: next ? next.toISOString() : null, updated_at: now() };
     if (existing) {
@@ -490,7 +623,41 @@ export async function approveBuilderProposal(sb, { workspaceId, revboxId, userId
   }
   // The chat that made the job belongs to it from now on (Edit reopens it).
   if (!session.job_id) await rows(sb.from('revbox_builder_sessions').update({ job_id: routine.id, updated_at: now() }).eq('workspace_id', workspaceId).eq('id', sessionId));
-  return { routine, facts: checked.facts, enabled, ...(reason ? { reason } : {}), ...(warnings.length ? { warnings } : {}) };
+  const nextJobs = list(p.next_jobs).map(str).filter(Boolean);
+  const chained = nextJobs.length ? await continueBuilderChat(sb, { workspaceId, revboxId, userId, messages: session.messages, approved: stored, routine, enabled, tables, nextJobs }) : null;
+  return { routine, facts: checked.facts, enabled, ...(reason ? { reason } : {}), ...(warnings.length ? { warnings } : {}),
+    ...(tables.length ? { datasets: tables } : {}), ...(chained ? { next_session_id: chained.id, next_jobs: nextJobs } : {}) };
+}
+
+/** How every approval note starts (APPROVED_NOTE for an Edit, chainedNote for a chat that goes on). */
+const APPROVED_PREFIX = 'The user approved this proposal';
+const CHAINED_PREFIX = `${APPROVED_PREFIX}; it is now a live job.`;
+/** What the transcript records when a chat goes on to the next job after an approval. */
+export function chainedNote({ name, enabled = true, tables = [], nextJobs = [] }) {
+  const made = tables.map(t => `${t.key} ("${t.name}")`);
+  return [
+    `${CHAINED_PREFIX} It is saved as "${str(name)}"${enabled ? '' : ', switched off for now'}.`,
+    made.length ? `The box has these tables now: ${made.join(', ')}. A later job reads or adds to them by that key; do not propose them again.` : '',
+    `Jobs still to set up in this chat: ${nextJobs.join('; ')}.`,
+    'Set up the next one as a NEW job and propose it with propose_job. Do not change or propose the approved job again.',
+  ].filter(Boolean).join(' ');
+}
+
+/**
+ * Chaining (GET-874): after an approval whose proposal names `next_jobs`, the chat goes on in a NEW
+ * open session for the same person, on no job yet, seeded with this chat (the approved proposal
+ * answered with chainedNote), so the next proposal makes a new job and its own Edit chat. The approved
+ * session stays the first job's. A failure here never undoes the approval: no session, no chain.
+ */
+async function continueBuilderChat(sb, { workspaceId, revboxId, userId, messages, approved, routine, enabled, tables, nextJobs }) {
+  try {
+    const note = chainedNote({ name: routine?.name ?? approved?.name, enabled, tables, nextJobs });
+    const seeded = seedTranscriptFromApproved(messages, approved, note);
+    return await one(sb.from('revbox_builder_sessions').insert({ workspace_id: workspaceId, revbox_id: revboxId, user_id: userId, job_id: null, state: 'open', messages: seeded, proposal: null }).select('*').single());
+  } catch (e) {
+    console.error('[revbox-builder] continuing the chat failed', e?.message ?? e);
+    return null;
+  }
 }
 
 /**
@@ -565,7 +732,7 @@ function ownWords(t) {
  * propose_job call says (so the model sees the job as it is, renamed or not), and every tool call the
  * last turn left open is answered, the proposal with APPROVED_NOTE. Stays valid Anthropic format.
  */
-export function seedTranscriptFromApproved(messages, approved) {
+export function seedTranscriptFromApproved(messages, approved, note = APPROVED_NOTE) {
   const out = structuredClone(Array.isArray(messages) ? messages : []);
   const lastAt = out.length - 1;
   const last = out[lastAt];
@@ -574,7 +741,7 @@ export function seedTranscriptFromApproved(messages, approved) {
   if (!uses.length) return out;
   const proposed = uses.find(b => b.name === 'propose_job');
   if (proposed && isObj(approved)) { const { facts: _f, ...input } = approved; proposed.input = input; }
-  out.push({ role: 'user', content: uses.map(u => ({ type: 'tool_result', tool_use_id: u.id, content: u === proposed ? APPROVED_NOTE : NOT_RUN })) });
+  out.push({ role: 'user', content: uses.map(u => ({ type: 'tool_result', tool_use_id: u.id, content: u === proposed ? note : NOT_RUN })) });
   return out;
 }
 
@@ -606,7 +773,7 @@ export function sanitizeBuilderTranscript(messages, { keepText = false, approved
       else if (m.role === 'assistant' && b.type === 'tool_use' && b.id) content.push({ type: 'tool_use', id: b.id, name: b.name, input: isObj(b.input) ? structuredClone(b.input) : {} });
       else if (m.role === 'user' && b.type === 'tool_result' && b.tool_use_id) {
         const t = resultText(b);
-        content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: t === APPROVED_NOTE || t === NOT_RUN ? t : RESULT_NOT_CARRIED, ...(b.is_error ? { is_error: true } : {}) });
+        content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: t === APPROVED_NOTE || t === NOT_RUN || t.startsWith(CHAINED_PREFIX) ? t : RESULT_NOT_CARRIED, ...(b.is_error ? { is_error: true } : {}) });
       }
     }
     if (!content.length) continue;
@@ -687,7 +854,7 @@ export function builderSessionHistory(messages, { proposal = null, approved = fa
         if (item.kind === 'ask') {
           if (t.startsWith('The user answered:')) item.answers = parseAnswers(t.slice('The user answered:'.length).trim());
           else if (t.startsWith('The user did not pick an option and wrote instead:')) say('user', ownWords(t.slice(t.indexOf(':') + 1).trim()));
-        } else if (item.kind === 'proposal' && t === APPROVED_NOTE) item.approved = true;
+        } else if (item.kind === 'proposal' && t.startsWith(APPROVED_PREFIX)) item.approved = true;
       }
     }
   }
@@ -704,13 +871,25 @@ export function builderSessionHistory(messages, { proposal = null, approved = fa
 /**
  * Edit on a job: a NEW open session on it for `userId` (the editor; the session-creator rule holds),
  * seeded with the job's last approved chat (its messages, the approved proposal), plus that chat as
- * `history` for the UI. A job with no chat behind it (made before this, or elsewhere) starts empty.
+ * `history` for the UI. A job with no chat behind it (made before this, or elsewhere) opens on its
+ * current setup as an approved card (GET-873).
  * Box edit rights. -> { session, history, source_session_id }
  */
 export async function openBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId }) {
   const { job, session: source } = await latestJobSession(sb, { workspaceId, revboxId, userId, jobId, approvedOnly: true });
   const session = await createBuilderSession(sb, { workspaceId, revboxId, userId, jobId });
-  if (!source) return { session, history: [], source_session_id: null };
+  if (!source) {
+    // No chat made this job (GET-873): the chat opens on its current setup, as an approved card, so
+    // the person can ask for a change and approve to update the same routine.
+    const current = proposalFromRoutine(job, await routineProposalCatalog(sb, workspaceId));
+    const shown = { ...current, facts: proposalFacts(current, routineFactLookups(current.steps)) };
+    const seeded = seedTranscriptFromApproved([
+      { role: 'user', content: [{ type: 'text', text: `${HINT_HEADER}\nThe user opened this job to change it. It was set up outside the builder; its current setup follows.` }] },
+      { role: 'assistant', content: [{ type: 'text', text: OUTSIDE_BUILDER_TEXT }, { type: 'tool_use', id: 'toolu_current_job', name: 'propose_job', input: current }] },
+    ], shown);
+    await saveBuilderSession(sb, { workspaceId, sessionId: session.id, userId, messages: seeded, proposal: shown });
+    return { session: { ...session, messages: seeded, proposal: shown }, history: [{ role: 'assistant', text: OUTSIDE_BUILDER_TEXT }, { kind: 'proposal', proposal: shown, approved: true }], source_session_id: null };
+  }
   const approved = isObj(source.proposal) ? source.proposal : null;
   // Review 1: the seed is always sanitized; another person's words are not carried over at all.
   const same = source.user_id === userId;

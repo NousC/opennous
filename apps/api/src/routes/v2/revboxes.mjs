@@ -10,6 +10,8 @@
 //   POST /v2/revboxes/:id/jobs/builder/:sessionId/approve { name? } -> { routine, enabled, reason? }
 //        approving switches the job on; when a check (credits, plan limit) fails it is saved off and
 //        `reason` says why
+//        GET-874: `datasets` (tables created or reused) and, when the proposal named next_jobs,
+//        `next_session_id` + `next_jobs`: post the next message with session_id = next_session_id
 //
 // The builder is the in-app Job Builder, non-streaming: the same turn, its events collected. It runs
 // on our model bill, so it is Cloud's (cloud/lib/jobBuilder/); Cloud registers it at boot through
@@ -103,6 +105,9 @@ export function makeRevboxesV2Router({ getSb = getSupabaseClient, builder = () =
       ...(out?.reason ? { reason: out.reason } : {}),
       ...(Array.isArray(out?.facts) ? { facts: out.facts } : {}),
       ...(Array.isArray(out?.warnings) && out.warnings.length ? { warnings: out.warnings } : {}),
+      // GET-874: the tables approve created or reused, and the session the chat goes on in for the next job.
+      ...(Array.isArray(out?.datasets) && out.datasets.length ? { datasets: out.datasets } : {}),
+      ...(out?.next_session_id ? { next_session_id: out.next_session_id, next_jobs: Array.isArray(out.next_jobs) ? out.next_jobs : [] } : {}),
     });
   }));
 

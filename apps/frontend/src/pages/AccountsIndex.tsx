@@ -2,7 +2,6 @@
 // moved to their own pages (Pipeline, Customers), so this page is the record list only; the API
 // plan used to render a list of its own (GET-634) and now gets this one too.
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { ScopedAccounts } from "@/components/revboxes/ScopedAccounts";
 import AccountsList from "@/components/account/AccountsList";
 import { usePlan } from "@/hooks/usePlan";
 import { isApiTier } from "@/config/plans";
@@ -22,7 +21,6 @@ export default function AccountsIndex() {
   const { plan } = usePlan();
   const api = isApiTier(plan);
   const moved = !api && HAS_CLOUD ? MOVED[params.get("view") ?? ""] : undefined;
-  if (params.get("revbox")) return <ScopedAccounts revboxId={params.get("revbox")!} />;
   if (moved) return <Navigate to={moved} replace />;
 
   const openCompany = (id: string, name?: string, order?: string[]) => {

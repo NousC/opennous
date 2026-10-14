@@ -9,8 +9,9 @@ import {
   setRevboxMember, addRevboxContext, removeRevboxContext, saveRevboxJob,
   revboxWorkspaceMembers, revboxAccountCatalog, revboxScopedGraph, revboxAccountOverview,
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
-  compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxMatchesAccount, revboxConnections, revboxMembership,
-  listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+  compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxConnections, revboxMembership,
+  listRevboxDatasets, createRevboxDataset, updateRevboxDataset, listDatasetRows, exportDatasetCsv,
+  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxScopedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
 } from '@nous/core';
 import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
 import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
@@ -51,8 +52,18 @@ export function routineTriggerLabel(r) {
     const tz = r.timezone && r.timezone !== 'UTC' ? ` (${String(r.timezone).split('/').pop().replace(/_/g, ' ')})` : ' (UTC)';
     return `${FREQ_LABEL[tc.frequency ?? r.frequency] ?? 'Every day'} at ${at}${tz}`;
   }
+  // Several signals (GET-873): every one of them, from the catalog keys when saved, else the kinds.
+  const keys = Array.isArray(tc.signal_keys) ? tc.signal_keys.filter(k => typeof k === 'string' && k) : [];
+  if (keys.length > 1) return signalsLabel(keys);
+  const all = routineTriggers(r);
+  if (all.length > 1) return `When ${all.map(t => kindPhrase(t.kind)).join(' or ')}`;
   if (r.trigger_kind === 'before_meeting') return `${Number(tc.offset ?? r.offset_minutes) || 30} minutes before a meeting`;
   return FLOW_TRIGGERS.find(t => t.key === r.trigger_kind)?.label ?? r.trigger_kind;
+}
+/** "a call ends" from "When a call ends": a kind inside a several-trigger label. */
+function kindPhrase(kind) {
+  if (kind === 'before_meeting') return 'a meeting is coming up';
+  return (FLOW_TRIGGERS.find(t => t.key === kind)?.label ?? kind).replace(/^When /, '');
 }
 /** A box's routine as the Jobs list reads it. No `plan` key: that is how the UI tells it from a legacy job. */
 export const routineOut = (r) => ({
@@ -165,16 +176,14 @@ revboxesRouter.get('/:id', route(async (req, res, sb) => {
   // Where the box's jobs deliver (GET-868), derived here from their real steps, with the box's own
   // access (a private channel or recipient in a step is shown to the box's members only).
   const { routines, job_deliveries } = await listRevboxJobDeliveries(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, mailboxes: () => listMailboxes(sb, req.workspaceId) });
-  // The accounts the box's jobs touched in the last 30 days (GET-872), visible ones only, and the
-  // built-in jobs it lists with what they drafted.
+  // The built-in jobs it lists with what they drafted (GET-872). The rail's account count is the
+  // box's scope (GET /:id/accounts, GET-873), no longer the accounts in recent runs.
   const visible = await allowed(sb, req);
-  const [ran, taken, activity] = await Promise.all([
-    revboxRunAccounts(sb, req.workspaceId, { revboxId: req.params.id, routineIds: routines.map(r => r.id), allowed: visible }),
+  const [taken, activity] = await Promise.all([
     revboxBuiltinTaken(sb, req.workspaceId, req.internalUserId, req.params.id),
     revboxBuiltinActivity(sb, req.workspaceId, detail.box.builtin_jobs, { allowed: visible }),
   ]);
   res.json({ ...detail, context, routines: routines.map(routineOut), job_deliveries,
-    run_accounts: ran.accounts.slice(0, 200), run_accounts_total: ran.accounts.length, run_accounts_runs: ran.runs, run_accounts_linked: ran.linked,
     builtin_jobs: builtinJobsOut(detail.box.builtin_jobs, activity), builtin_taken: taken });
 }));
 revboxesRouter.patch('/:id', route(async (req, res, sb) => {
@@ -205,9 +214,8 @@ revboxesRouter.delete('/:id/context/:contextId', route(async (req, res, sb) => {
   await removeRevboxContext(sb, req.workspaceId, req.internalUserId, req.params.id, req.params.contextId); res.json({ ok: true });
 }));
 revboxesRouter.get('/:id/accounts', route(async (req, res, sb) => {
-  const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
-  const accounts = await revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req));
-  res.json({ accounts: accounts.filter(a => revboxMatchesAccount(box.scope, a)), box: { id: box.id, name: box.name, scope: box.scope } });
+  const { box, accounts } = await revboxScopedAccounts(sb, req.workspaceId, req.internalUserId, req.params.id, await allowed(sb, req));
+  res.json({ accounts, count: accounts.length, box: { id: box.id, name: box.name, scope: box.scope } });
 }));
 revboxesRouter.get('/:id/graph', route(async (req, res, sb) => {
   const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
@@ -283,6 +291,13 @@ export function routineRunDeliveries(runId, stepLog) {
     destination: { kind: String(d?.kind ?? ''), target: String(d?.target ?? '') },
   }));
 }
+/** A held test's step lines (runSteps' hold, GET-873) -> [{ step, text, rows }] for Results. Pure. */
+export function heldActions(stepLog) {
+  return (Array.isArray(stepLog) ? stepLog : []).filter(e => e?.status === 'held').map(e => ({
+    step: String(e.name ?? ''), text: String(e.detail ?? ''),
+    rows: (Array.isArray(e.preview) ? e.preview : []).filter(x => x?.label).map(x => ({ label: String(x.label), value: String(x.value ?? '') })),
+  }));
+}
 /**
  * The runs of these routines, newest first, as Results rows in the Run shape the UI reads (state,
  * result, deliveries, job_id, credits, created_at), plus routine extras. The result is the run's
@@ -296,7 +311,9 @@ export async function revboxRoutineRuns(sb, ws, routines, { limit = 200, allowed
   const runs = data ?? [];
   const credits = await creditsForRuns(sb, ws, runs);
   const names = new Map(routines.map(r => [r.id, r.name]));
-  const docIds = [...new Set(runs.map(r => r.document_id).filter(Boolean))];
+  // A scheduled run records its document on the AI step's log line only (runScheduledFlow): the last one is its output.
+  const docOf = (r) => r.document_id ?? (Array.isArray(r.step_log) ? r.step_log.findLast(e => e?.document_id)?.document_id : null) ?? null;
+  const docIds = [...new Set(runs.map(docOf).filter(Boolean))];
   const docs = new Map();
   for (let i = 0; i < docIds.length; i += 200) {
     const { data: rows, error: docError } = await sb.from('documents').select('id, title, body_md, subject_entity_id, status')
@@ -308,15 +325,18 @@ export async function revboxRoutineRuns(sb, ws, routines, { limit = 200, allowed
     }
   }
   return runs.map(r => {
-    const doc = r.document_id ? docs.get(r.document_id) : null;
+    const docId = docOf(r);
+    const doc = docId ? docs.get(docId) : null;
     return {
       id: r.id, kind: 'routine', job_id: r.routine_id, job_name: names.get(r.routine_id) ?? null,
       status: r.status, state: routineRunState(r.status), error: r.error ?? null,
-      created_at: r.started_at, finished_at: r.finished_at ?? null, document_id: doc ? r.document_id : null, step_log: r.step_log ?? [],
+      created_at: r.started_at, finished_at: r.finished_at ?? null, document_id: doc ? docId : null, step_log: r.step_log ?? [],
       result: doc ? { title: String(doc.title ?? 'Job run'), body: String(doc.body_md ?? ''), kind: 'report' } : null,
       deliveries: routineRunDeliveries(r.id, r.step_log),
       failure: routineRunState(r.status) === 'failed' ? runFailure(r.error, r.step_log) : null,
       test: !!r.state?.test, trigger: r.state?.trigger ?? null, credits: credits.get(r.id)?.credits ?? 0,
+      // A Test's held sends (GET-873): what each step would have done, in words, with its preview.
+      held: !!r.state?.held, held_actions: heldActions(r.step_log),
     };
   });
 }
@@ -333,6 +353,22 @@ revboxesRouter.post('/:id/jobs/:jobId/run', route(async (req,res,sb)=>{
   const {job,snapshot,accountIds}=await makeRevboxSnapshot(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.jobId);
   const run=await queueRevboxRun(sb,req.workspaceId,req.internalUserId,req.params.id,job.id,`manual:${randomUUID()}`,snapshot,accountIds);
   res.status(202).json({run});
+}));
+
+/**
+ * Test a job (GET-873): one run now, on real data (the latest real trigger, or now for a schedule),
+ * with every external send HELD: Slack, email, Gmail drafts and sends, webhooks, HubSpot writes and
+ * box delivery only record what they would do ("Would post to #channel"). Read and AI steps run and
+ * are metered as a normal run; the output is the run's document. Results marks it Test. Box edit
+ * rights, the credit gate. Workflow-engine jobs only (a legacy revbox_jobs row has no held mode).
+ */
+revboxesRouter.post('/:id/jobs/:jobId/test', route(async (req, res, sb) => {
+  const routineJob = await boxRoutineOrNull(sb, req, true);
+  if (!routineJob) invalid('Only jobs made in the builder can be tested.', 409);
+  await revboxCreditGate(sb, req.workspaceId);
+  const out = await startTestRun(sb, req.workspaceId, routineJob.routine.id, { holdSends: true });
+  if (!out.ok) invalid(out.message ?? 'This job could not start.', out.error === 'not_found' ? 404 : 409);
+  res.status(202).json({ run: { id: out.run_id, job_id: routineJob.routine.id, kind: 'routine', status: 'running', test: true, held: true, trigger: out.trigger } });
 }));
 
 revboxesRouter.put('/:id/jobs/:jobId/enabled',route(async(req,res,sb)=>{
@@ -468,6 +504,44 @@ const stepTarget = route(async (req, res, sb) => {
   const { job_deliveries } = await listRevboxJobDeliveries(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, mailboxes: () => listMailboxes(sb, req.workspaceId) });
   res.json({ job_deliveries });
 });
+
+// ── Datasets (GET-874): the tables the box's jobs keep ──────────────────────────────────────
+// Read with the box's access (any member who can open it), created and changed by an owner or editor.
+// Rows about an account or deal the viewer cannot see are left out (allowed(), as the box's accounts).
+revboxesRouter.get('/:id/datasets', route(async (req, res, sb) => {
+  res.json({ datasets: await listRevboxDatasets(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, allowed: await allowed(sb, req) }) });
+}));
+revboxesRouter.post('/:id/datasets', route(async (req, res, sb) => {
+  res.status(201).json({ dataset: await createRevboxDataset(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, body: req.body }) });
+}));
+/** A dataset key is a slug, not a uuid: checked here, the box id by route(). */
+const datasetRoute = (fn) => async (req, res, next) => {
+  if (!/^[a-z][a-z0-9_]{0,62}$/.test(req.params.key)) return res.status(400).json({ error: 'Invalid identifier.' });
+  const { key, ...ids } = req.params;
+  req.datasetKey = key; req.params = ids;
+  return route(fn)(req, res, next);
+};
+const one = (v) => (typeof v === 'string' ? v : undefined);
+revboxesRouter.put('/:id/datasets/:key', datasetRoute(async (req, res, sb) => {
+  res.json({ dataset: await updateRevboxDataset(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, key: req.datasetKey, body: req.body }) });
+}));
+// ?cursor=&limit=&window=&from=&to=&q= -> { dataset, rows, next_cursor }, newest first.
+revboxesRouter.get('/:id/datasets/:key/rows', datasetRoute(async (req, res, sb) => {
+  const q = req.query ?? {};
+  if (one(q.q) && q.q.length > 200) invalid('Search for up to 200 characters.');
+  res.json(await listDatasetRows(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, key: req.datasetKey,
+    cursor: one(q.cursor), limit: one(q.limit), window: one(q.window), from: one(q.from), to: one(q.to), q: one(q.q), allowed: await allowed(sb, req) }));
+}));
+// Every visible row (up to 10,000) as CSV, with the window and search the table shows.
+revboxesRouter.get('/:id/datasets/:key/export.csv', datasetRoute(async (req, res, sb) => {
+  const q = req.query ?? {};
+  const out = await exportDatasetCsv(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, key: req.datasetKey,
+    window: one(q.window), q: one(q.q)?.slice(0, 200), allowed: await allowed(sb, req) });
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${out.filename}"`);
+  res.set('Cache-Control', 'no-store');
+  res.send(`\uFEFF${out.csv}`);
+}));
 
 // Approve or deny a box job's run that waits at its approval step (GET-872), with the box's edit
 // rights: the run must belong to one of this box's routines.

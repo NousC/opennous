@@ -303,10 +303,10 @@ test('Edit: the approved chat is linked to its job and reopened as a new session
   assert.ok(third.history.filter(i => i.kind === 'proposal').every(i => i.approved));
 });
 
-test('Edit on a job with no chat behind it starts empty', async () => {
+test('Edit on a job with no chat behind it opens on its current setup (GET-873)', async () => {
   const sb = database({ agent_routines: [{ id: 'legacy', workspace_id: 'ws', revbox_id: 'box', user_id: 'owner', name: 'Old' }] });
   const opened = await openBuilderSessionForJob(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner', jobId: 'legacy' });
-  assert.deepEqual([opened.history, opened.source_session_id, opened.session.job_id], [[], null, 'legacy']);
+  assert.deepEqual([opened.history.map(i => i.kind ?? i.role), opened.source_session_id, opened.session.job_id], [['assistant', 'proposal'], null, 'legacy']);
   assert.deepEqual(seedTranscriptFromApproved([{ role: 'user', content: 'x' }], null), [{ role: 'user', content: 'x' }]);
 });
 

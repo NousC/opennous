@@ -111,7 +111,9 @@ export function varLabel(token: string, flow: Flow): string {
 
 // revbox_delivery (GET-868) is added by the RevBox Job Builder, never from the step picker: it posts the
 // last AI output to the box's destinations as they are at run time.
-export type StepType = "agent" | "hubspot" | "gmail" | "slack" | "email" | "webhook" | "only_if" | "wait" | "approval" | "revbox_delivery";
+export type StepType = "agent" | "hubspot" | "gmail" | "slack" | "email" | "webhook" | "only_if" | "wait" | "approval" | "revbox_delivery"
+  // A RevBox job's tables (GET-874), added by the Job Builder: add the AI step's row, read rows back.
+  | "dataset_append" | "dataset_read";
 export type Rule = { field: string; op: string; value: string };
 /** Every setting any step type takes; each type reads its own. */
 export type StepConfig = {
@@ -134,7 +136,7 @@ export type StepConfig = {
   channel_id?: string | null; user_id?: string | null; user_name?: string | null;
   /** HubSpot · Read records (GET-773): an object (custom ones too), its fields, a date window. */
   object?: string; object_label?: string; fields?: string[]; field_labels?: { name: string; label: string }[];
-  group_by?: string; date_property?: string; window?: "yesterday" | "last_7_days" | "last_30_days";
+  group_by?: string; date_property?: string; window?: "yesterday" | "last_7_days" | "last_30_days" | "last_month" | "last_quarter" | "all";
   /** Compare with the period before (default on). */
   compare?: boolean;
   /** AI step: Read steps (by id) NOT passed in on their own; their table goes only where {{steps.<id>.output}} is placed. */
@@ -156,6 +158,9 @@ export type StepConfig = {
   /** OpenNous Draft follow-up: put the draft in the owner's Gmail ("gmail", the default) or not. */
   draft_in?: "gmail" | "none";
   match?: string; rules?: Rule[]; amount?: number; unit?: string;
+  /** RevBox tables (GET-874): the box dataset's key; Add to table's dedupe; Read table's window and row cap. */
+  dataset_key?: string; dedupe_from?: "deal" | "account" | "none";
+  limit?: number;
 };
 /** Every setting any trigger takes; each trigger reads its own. */
 export type TriggerConfig = {
@@ -167,6 +172,7 @@ export type TriggerConfig = {
   object?: string; object_label?: string; property?: string; property_label?: string; from?: string; name_property?: string;
 };
 export type Step = { id: string; type: StepType; config: StepConfig };
+const DATASET_WINDOW_LABEL: Record<string, string> = { last_7_days: "last 7 days", last_30_days: "last 30 days", last_month: "last month", last_quarter: "last quarter", all: "all rows" };
 export type Flow = { trigger: { kind: string; config: TriggerConfig }; steps: Step[] };
 
 export const STEP_GROUPS: { label: string; types: StepType[] }[] = [
@@ -179,6 +185,7 @@ export const STEP_GROUPS: { label: string; types: StepType[] }[] = [
 export const STEP_LABEL: Record<StepType, string> = {
   agent: "AI", hubspot: "HubSpot", gmail: "Gmail", slack: "Slack", email: "Email",
   webhook: "Webhook", only_if: "Only if", wait: "Wait", approval: "Approval", revbox_delivery: "RevBox delivery",
+  dataset_append: "Add to table", dataset_read: "Read table",
 };
 export const STEP_HINT: Record<StepType, string> = {
   agent: "ChatGPT or Claude",
@@ -191,6 +198,8 @@ export const STEP_HINT: Record<StepType, string> = {
   wait: "Pause, then carry on",
   approval: "Hold until you approve",
   revbox_delivery: "Send to the RevBox's destinations",
+  dataset_append: "Add a row to a RevBox table",
+  dataset_read: "Read rows from a RevBox table",
 };
 
 /** Steps that act outside the app get an Approval in front of them when added. */
@@ -321,6 +330,8 @@ export function stepTitle(s: Step): string {
     case "wait": return c.mode === "until_reply" ? "Wait for a reply" : `Wait ${c.amount} ${c.amount === 1 ? String(c.unit).replace(/s$/, "") : c.unit}`;
     case "approval": return "Your approval";
     case "revbox_delivery": return "Send to the RevBox's destinations";
+    case "dataset_append": return "Add a row to the table";
+    case "dataset_read": return "Read the table";
   }
 }
 
@@ -344,6 +355,8 @@ export function stepSub(s: Step, flow: Flow): string {
     case "wait": return c.mode === "until_reply" ? `Up to ${c.amount} ${c.unit}` : "Then carry on";
     case "approval": return "Lands on Home until you approve";
     case "revbox_delivery": return "Every Slack channel and webhook the box delivers to";
+    case "dataset_append": return c.dataset_key ? `Table ${c.dataset_key}` : "Pick a table";
+    case "dataset_read": return c.dataset_key ? `Table ${c.dataset_key} · ${DATASET_WINDOW_LABEL[c.window ?? "all"] ?? "all rows"}` : "Pick a table";
   }
 }
 
@@ -363,6 +376,7 @@ export function stepReady(s: Step): boolean {
     case "wait": return Number(c.amount) > 0;
     case "approval": return true;
     case "revbox_delivery": return true;
+    case "dataset_append": case "dataset_read": return !!c.dataset_key;
   }
 }
 
@@ -402,6 +416,8 @@ function stepPhrase(s: Step): string {
     case "wait": return c.mode === "until_reply" ? "wait for a reply" : `wait ${c.amount} ${c.amount === 1 ? String(c.unit).replace(/s$/, "") : c.unit}`;
     case "approval": return "wait for my approval";
     case "revbox_delivery": return "send it to the RevBox's destinations";
+    case "dataset_append": return "add a row to the table";
+    case "dataset_read": return "read the table";
   }
 }
 
@@ -466,7 +482,7 @@ export function flowPayload(flow: Flow, name: string) {
 export type Issue = { level: "warn" | "note"; text: string };
 
 // What the runner executes today. Everything else saves and waits for the step runner.
-const RUNS_TODAY = new Set(["agent", "email", "webhook", "gmail", "slack", "only_if", "approval", "hubspot", "revbox_delivery"]);
+const RUNS_TODAY = new Set(["agent", "email", "webhook", "gmail", "slack", "only_if", "approval", "hubspot", "revbox_delivery", "dataset_append", "dataset_read"]);
 const LABEL: Record<string, string> = {
   hubspot: "HubSpot", gmail: "Gmail", slack: "Slack", only_if: "Only if", wait: "Wait", approval: "Approval",
 };

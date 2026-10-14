@@ -90,3 +90,84 @@ export function signalLabel(key, catalog = signalCatalog()) {
   if (!entry) return null;
   return provider && provider !== 'any' && PROVIDER_LABEL[provider] ? `${entry.label} · ${PROVIDER_LABEL[provider]}` : entry.label;
 }
+
+// ── Several signals on one job (GET-873) ─────────────────────────────────────
+
+const uniqueKeys = (keys) => [...new Set((Array.isArray(keys) ? keys : keys == null ? [] : [keys]).map(k => String(k ?? '').trim()).filter(Boolean))];
+
+/**
+ * Why these keys cannot start one job together, or null when they can: an unknown or archived key,
+ * or a schedule combined with signals (a clock job runs on its slot, never on an event too).
+ */
+export function signalKeysProblem(keys, catalog = signalCatalog()) {
+  const ks = uniqueKeys(keys);
+  if (ks.length > 20) return 'A job starts on at most 20 signals.';
+  const unknown = ks.filter(k => !triggerForSignal(k, catalog));
+  if (unknown.length) return `${unknown.map(k => `"${k}"`).join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not in the signal catalog.`;
+  if (ks.length > 1 && ks.some(k => triggerForSignal(k, catalog).kind === 'clock')) return 'A schedule cannot be combined with signals: a job runs either on a schedule or when its signals happen.';
+  return null;
+}
+
+/**
+ * The agent_routines trigger for one or more signal keys: `{ trigger_kind, trigger_config }`. The
+ * first key's kind is the primary (`trigger_kind`); each other kind goes into
+ * `trigger_config.also: [{ kind, config }]`, and `trigger_config.signal_keys` keeps the keys.
+ * Keys of one kind merge into one trigger, so one event runs the job once: two account signals are
+ * `{ signals: [a, b] }`, two recorders are `{ tools: [a, b] }`, and any recorder wins over a named
+ * one. No keys = a schedule. null when signalKeysProblem says no.
+ */
+export function triggersForSignals(keys, catalog = signalCatalog()) {
+  const ks = uniqueKeys(keys);
+  if (!ks.length) return { trigger_kind: 'clock', trigger_config: {} };
+  if (signalKeysProblem(ks, catalog)) return null;
+  const byKind = new Map();
+  for (const k of ks) {
+    const t = triggerForSignal(k, catalog);
+    const prev = byKind.get(t.kind);
+    if (!prev) { byKind.set(t.kind, structuredClone(t.config ?? {})); continue; }
+    if (t.kind === 'account_signal') prev.signals = [...new Set([...(prev.signals ?? []), ...(t.config.signals ?? [])])];
+    else if (t.kind === 'call_ended') {
+      // Plain meeting.done (no tools) is any recorder: it wins.
+      if (!prev.tools?.length || !t.config.tools?.length) { delete prev.tools; delete prev.provider; }
+      else { prev.tools = [...new Set([...prev.tools, ...t.config.tools])]; delete prev.provider; }
+    }
+  }
+  const [[kind, config], ...rest] = [...byKind.entries()];
+  const trigger_config = { ...config, signal_keys: ks };
+  if (rest.length) trigger_config.also = rest.map(([k, c]) => ({ kind: k, config: c }));
+  return { trigger_kind: kind, trigger_config };
+}
+
+// How a signal reads inside "When …". Unknown keys fall back to their label.
+const SIGNAL_PHRASE = {
+  'meeting.done': 'a meeting ends', 'deal.stage_changed': 'a deal changes stage',
+  'icp.tier_changed': 'an account changes ICP tier', 'hubspot.field_changed': 'a HubSpot field changes',
+};
+const joinOr = (xs) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)}`);
+
+/**
+ * One line for a job's signals: one key reads as its label ("Deal won"), several as a sentence
+ * ("When a deal is won or lost", "When a meeting ends or an account shows churn risk or buying
+ * signal"). Pure; custom keys need the workspace catalog for their names.
+ */
+export function signalsLabel(keys, catalog = signalCatalog()) {
+  const ks = uniqueKeys(keys);
+  if (!ks.length) return 'On a schedule';
+  if (ks.length === 1) return signalLabel(ks[0], catalog) ?? ks[0];
+  const outcomes = ['deal.won', 'deal.lost'].filter(k => ks.includes(k)).map(k => k.split('.')[1]);
+  const accounts = [];
+  const phrases = [];
+  for (const k of ks) {
+    const [base, provider] = k.split(':');
+    if (base === 'deal.won' || base === 'deal.lost') {
+      if (base === (ks.includes('deal.won') ? 'deal.won' : 'deal.lost')) phrases.push(`a deal is ${joinOr(outcomes)}`);
+    } else if (base.startsWith('signal.') || base.startsWith('custom.')) {
+      if (!accounts.length) phrases.push(accounts);   // filled below, kept in order of the first one
+      accounts.push(String(signalLabel(k, catalog) ?? base.split('.').slice(1).join('.').replace(/_/g, ' ')).toLowerCase());
+    } else if (base === 'meeting.done' && provider && provider !== 'any') {
+      phrases.push(`a ${PROVIDER_LABEL[provider] ?? provider} meeting ends`);
+    } else phrases.push(SIGNAL_PHRASE[base] ?? String(signalLabel(k, catalog) ?? k).toLowerCase());
+  }
+  const parts = phrases.map(p => (Array.isArray(p) ? `an account shows ${joinOr(p)}` : p));
+  return `When ${joinOr([...new Set(parts)])}`;
+}

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { COMPANIES, CONTACTS, DEALS, USERS, WS, GRAPH } from './world.mjs';
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount, revboxExecutionRequirements } from '../../../packages/core/src/services/revboxPlan.mjs';
 import { validateRevboxPatch, revboxAccess, REVBOX_BUILTIN_JOBS, builtinJobsOf } from '../../../packages/core/src/db/revboxes.mjs';
+import { normalizeDatasetColumns, datasetSlug, datasetRowsCsv, datasetValueText } from '../../../packages/core/src/services/datasetFormats.mjs';
 
 const storePath = process.env.REVBOX_PREVIEW_STATE ?? '/private/tmp/opennous-revboxes-preview.json';
 const stamp = () => new Date().toISOString();
@@ -89,6 +90,61 @@ if (!state.seeded.page_polish) {
     result: r.title ? { title: r.title, body: r.body, kind: 'report' } : null, deliveries: (r.deliveries ?? []).map(d => ({ id: randomUUID(), state: d.state, error: d.error ?? null, destination: { kind: d.kind, target: d.target } })) });
   state.seeded.page_polish = true;
 }
+// GET-874: a "Closed won/lost analysis" box. Job 1 analyses each won or lost deal against the box's ICP
+// and adds a row to "Win/loss deals"; job 2 writes the monthly win/loss report from last month's rows;
+// job 3 the quarterly one. ~25 fake rows, each linked to the deal-analysis run that added it.
+state.datasets ??= [];
+state.dataset_rows ??= [];
+if (!state.seeded.datasets) {
+  const H = 3_600_000, D = 24 * H, at = (ms) => new Date(Date.now() - ms).toISOString();
+  const wl = base('Closed won/lost analysis', 'Learn why we win and lose: every closed deal analysed against our ICP, a monthly win/loss report and a quarterly review.', true, { mode: 'all', account_ids: [], min_icp: 70 });
+  wl.blocks = [{ id: randomUUID(), title: 'What to look for', body: 'For every closed deal: did it fit the ICP, the one primary reason it was won or lost, and the competitor if one was in the deal.' }];
+  wl.members = [{ user_id: 'u2', role: 'editor' }];
+  wl.delivery = [{ id: randomUUID(), kind: 'slack', target: 'C07REVLEAD', channel: 'revenue-leadership' }];
+  state.boxes.unshift(wl);
+  state.context.push({ id: randomUUID(), revbox_id: wl.id, title: 'ICP.md', body: 'Ideal customer: B2B SaaS and logistics companies, 100-1,000 employees, a RevOps owner, already on HubSpot. Poor fit: under 50 employees, no CRM, agencies.', document_id: null });
+  const analyse = { id: randomUUID(), revbox_id: wl.id, source: 'routine', name: 'Analyse closed deals', enabled: true, trigger_kind: 'deal_closed_won', trigger_config: {}, timezone: 'UTC', trigger_label: 'When a deal is won or lost', last_run_at: at(2 * H), version: 1, created_by: 'u1', steps: [
+    { id: 'analyse', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Analyse this deal against our ICP: fit, the primary reason it was won or lost, the competitor.' } },
+    { id: 'row', type: 'dataset_append', config: { dataset_key: 'win_loss_deals', dedupe_from: 'deal' } },
+  ] };
+  const monthly = { id: randomUUID(), revbox_id: wl.id, source: 'routine', name: 'Monthly win/loss report', enabled: true, trigger_kind: 'clock', trigger_config: { frequency: 'monthly', at: '08:00' }, timezone: 'UTC', trigger_label: 'On the first of the month at 08:00 (UTC)', last_run_at: at(13 * D), version: 1, created_by: 'u1', steps: [
+    { id: 'rows', type: 'dataset_read', config: { dataset_key: 'win_loss_deals', window: 'last_month', limit: 200 } },
+    { id: 'report', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the monthly win/loss report: win rate, value won and lost, ICP fit of wins vs losses, the top reasons and competitors, and what to change.' } },
+    { id: 'box_delivery', type: 'revbox_delivery', config: { format: 'report' } },
+  ] };
+  const quarterly = { id: randomUUID(), revbox_id: wl.id, source: 'routine', name: 'Quarterly win/loss review', enabled: true, trigger_kind: 'clock', trigger_config: { frequency: 'quarterly', at: '08:00' }, timezone: 'UTC', trigger_label: 'At the start of each quarter at 08:00 (UTC)', last_run_at: at(13 * D), version: 1, created_by: 'u1', steps: [
+    { id: 'rows', type: 'dataset_read', config: { dataset_key: 'win_loss_deals', window: 'last_quarter', limit: 500 } },
+    { id: 'report', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the quarterly win/loss review: trends month over month, the patterns behind wins and losses, and three recommendations.' } },
+  ] };
+  state.routines.unshift(analyse, monthly, quarterly);
+  const ds = { id: randomUUID(), revbox_id: wl.id, key: 'win_loss_deals', name: 'Win/loss deals', description: 'One row per deal won or lost, analysed against the ICP.', created_by: 'u1', created_at: at(80 * D), updated_at: at(80 * D),
+    columns: normalizeDatasetColumns([
+      { key: 'deal', label: 'Deal', type: 'text' }, { key: 'outcome', label: 'Outcome', type: 'enum', options: ['Won', 'Lost'] }, { key: 'value', label: 'Value', type: 'number' },
+      { key: 'close_date', label: 'Close date', type: 'date' }, { key: 'icp_fit', label: 'ICP fit', type: 'enum', options: ['Strong', 'Partial', 'Poor'] },
+      { key: 'primary_reason', label: 'Primary reason', type: 'text' }, { key: 'competitor', label: 'Competitor', type: 'text' },
+    ]).columns };
+  state.datasets.push(ds);
+  const reasons = { Won: ['Reporting depth closed it', 'Fast HubSpot rollout', 'Champion pushed it through procurement', 'Pricing fit the seat count', 'Security review passed first time'], Lost: ['Chose a cheaper point tool', 'No budget owner', 'Went quiet after the demo', 'Too small for the platform', 'Lost to the incumbent CRM add-on'] };
+  const rivals = ['Lumen Track', 'Lumen Pipeline', '', 'Fernpoint CRM add-on', '', 'Harborline Insights'];
+  for (let i = 0; i < 25; i++) {
+    const co = COMPANIES[i % COMPANIES.length];
+    const won = (i * 7) % 5 < 3;
+    const outcome = won ? 'Won' : 'Lost';
+    const ago = (2 + i * 3.3) * D;
+    const fit = won ? (i % 4 ? 'Strong' : 'Partial') : (['Poor', 'Partial', 'Strong'][i % 3]);
+    const run = { id: randomUUID(), revbox_id: wl.id, job_id: analyse.id, job_name: analyse.name, kind: 'routine', state: 'completed', created_at: at(ago), error: null, failure: null, credits: 0.7, account_ids: [co.id],
+      result: { title: `${co.name}: closed ${outcome.toLowerCase()}`, kind: 'report', body: `## ${co.name} · closed ${outcome.toLowerCase()}\n\n**ICP fit: ${fit}.** ${reasons[outcome][i % 5]}.\n\n- ${co.employee_count} employees, ${co.industry}.\n- ${rivals[i % rivals.length] ? `Competing with ${rivals[i % rivals.length]}.` : 'No competitor in the deal.'}` }, deliveries: [] };
+    state.results.push(run);
+    state.dataset_rows.push({ id: randomUUID(), dataset_id: ds.id, entity_id: co.id, source_run_id: run.id, source_job_id: analyse.id, dedupe_key: `deal:preview-${i}`, created_at: at(ago),
+      data: { deal: `${co.name} · ${['Platform', 'RevOps seats', 'Pilot', 'Expansion'][i % 4]}`, outcome, value: 6000 + ((i * 7919) % 60) * 1000, close_date: at(ago).slice(0, 10), icp_fit: fit, primary_reason: reasons[outcome][i % 5], ...(rivals[i % rivals.length] ? { competitor: rivals[i % rivals.length] } : {}) } });
+  }
+  const month = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1)).toLocaleString('en', { month: 'long', timeZone: 'UTC' });
+  state.results.push({ id: randomUUID(), revbox_id: wl.id, job_id: monthly.id, job_name: monthly.name, kind: 'routine', state: 'completed', created_at: at(13 * D), error: null, failure: null, credits: 1.4, account_ids: [],
+    result: { title: `Win/loss report · ${month}`, kind: 'report', body: `## Win/loss report · ${month}\n\n**Won 6 of 9 deals (67%)**, $214,000 won and $61,000 lost. Win rate up from 55% the month before.\n\n| | Won | Lost |\n|---|---:|---:|\n| Strong ICP fit | 5 | 1 |\n| Partial fit | 1 | 1 |\n| Poor fit | 0 | 1 |\n\n### Why we won\n- Reporting depth closed three deals.\n- A fast HubSpot rollout mattered to logistics buyers.\n\n### Why we lost\n- Two of three losses were outside the ICP: under 50 employees, no RevOps owner.\n- Lumen Track undercut us once on price.\n\n### What to change\n- Qualify out sub-50-employee prospects before the demo.\n- Lead with the reporting walkthrough in logistics deals.` },
+    deliveries: [{ id: randomUUID(), state: 'sent', error: null, destination: { kind: 'slack', target: '#revenue-leadership' } }] });
+  state.seeded.datasets = true;
+}
+
 let writes = Promise.resolve();
 async function persist() { const snapshot = JSON.stringify(state, null, 2); writes = writes.then(async () => { await writeFile(`${storePath}.next`, snapshot); await rename(`${storePath}.next`, storePath); }); await writes; }
 
@@ -196,6 +252,47 @@ const connections = ['granola', 'hubspot', 'gmail', 'slack'].map(slug => ({ id: 
 function body(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', c => { raw += c; if (raw.length > 400000) reject(Object.assign(new Error('Reference is too large.'), { status: 413 })); }); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(Object.assign(new Error('Invalid JSON.'), { status: 400 })); } }); }); }
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 
+/** /api/revboxes/:id/datasets (GET-874): list, create, rename/columns, rows (cursor, q), export.csv. As the API. */
+async function datasetsPreview(req, res, json, box, access, parts, payload, url, uid) {
+  const [, , key, action] = parts;
+  const mine = () => state.datasets.filter(d => d.revbox_id === box.id);
+  const rowsOf = (d) => state.dataset_rows.filter(r => r.dataset_id === d.id).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
+  const out = (d) => { const r = rowsOf(d); return { ...d, row_count: r.length, row_count_capped: false, last_added_at: r[0]?.created_at ?? null }; };
+  if (!key && req.method === 'GET') return json(res, { datasets: mine().map(out) });
+  if (!key && req.method === 'POST') {
+    if (typeof payload.name !== 'string' || !payload.name.trim()) fail(400, 'Choose a name of up to 120 characters.');
+    const c = normalizeDatasetColumns(payload.columns); if (c.error) fail(400, c.error);
+    const taken = new Set(mine().map(d => d.key)); const b = datasetSlug(payload.name, 56) || 'dataset';
+    let k = payload.key ?? b; if (payload.key && taken.has(k)) fail(409, `This RevBox already has a dataset with the key "${k}".`);
+    for (let n = 2; taken.has(k); n++) k = `${b}_${n}`;
+    const d = { id: randomUUID(), revbox_id: box.id, key: k, name: payload.name.trim(), description: String(payload.description ?? ''), columns: c.columns, created_by: uid, created_at: stamp(), updated_at: stamp() };
+    state.datasets.push(d); await persist(); return json(res, { dataset: out(d) }, 201);
+  }
+  const d = mine().find(x => x.key === key);
+  if (!d) fail(404, 'Dataset not found.');
+  if (!action && req.method === 'PUT') {
+    if (access === 'viewer') fail(403, 'Only an owner or editor can change this RevBox.');
+    if ('key' in payload) fail(400, "A dataset's key cannot change: jobs read it by that key.");
+    if ('columns' in payload) { const c = normalizeDatasetColumns(payload.columns); if (c.error) fail(400, c.error); d.columns = c.columns; }
+    if ('name' in payload) { if (!String(payload.name ?? '').trim()) fail(400, 'Choose a name of up to 120 characters.'); d.name = payload.name.trim(); }
+    if ('description' in payload) d.description = String(payload.description ?? '');
+    d.updated_at = stamp(); await persist(); return json(res, { dataset: out(d) });
+  }
+  const words = String(url.searchParams.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  const all = rowsOf(d).filter(r => !words.length || words.every(w => d.columns.map(c => datasetValueText(c, r.data[c.key])).join(' ').toLowerCase().includes(w)));
+  if (action === 'export.csv' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${d.key}-${stamp().slice(0, 10)}.csv"` });
+    return res.end(`\uFEFF${datasetRowsCsv(d, all)}`);
+  }
+  if (action === 'rows' && req.method === 'GET') {
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const start = Number(url.searchParams.get('cursor') || 0) || 0;
+    const page = all.slice(start, start + limit);
+    return json(res, { dataset: d, rows: page.map(({ dedupe_key: _, dataset_id: __, ...r }) => r), next_cursor: start + limit < all.length ? String(start + limit) : null });
+  }
+  fail(404, 'Not found.');
+}
+
 export async function handleRevboxPreview(req, res, url, json) {
   const path = url.pathname;
   if (!path.startsWith('/api/revboxes') && path !== '/api/account-overview' && path !== '/api/signals' && !path.startsWith('/api/signals/')) return false;
@@ -247,10 +344,17 @@ export async function handleRevboxPreview(req, res, url, json) {
       return true;
     }
     if (routine && parts[3] === 'enabled') { routine.enabled = !!payload.enabled; await persist(); json(res, { job: routine }); return true; }
+    if (routine && parts[3] === 'test' && req.method === 'POST') {
+      // As POST /:id/jobs/:jobId/test (GET-873): one run on real data, every send held and listed instead.
+      const held = (routine.steps ?? []).filter(s => ['slack', 'gmail', 'email', 'webhook'].includes(s.type)).map(s => ({ step: s.id, text: s.type === 'slack' ? `Would post to #${s.config?.channel ?? 'channel'}` : s.type === 'webhook' ? 'Would call the webhook' : `Would draft to ${s.config?.to || 'the recipient'}` }));
+      const run = { id: randomUUID(), revbox_id: box.id, job_id: routine.id, kind: 'routine', state: 'completed', test: true, held: true, held_actions: held, created_at: stamp(), error: null, credits: 1.2, deliveries: [], result: { title: `${routine.name} (test)`, kind: 'report', body: 'Preview test: no model, HubSpot or Slack was called, and nothing was sent.' } };
+      state.results.unshift(run); await persist(); json(res, { run: { id: run.id, job_id: routine.id, kind: "routine", status: "running", test: true, held: true } }, 202); return true;
+    }
     if (routine && parts[3] === 'run') {
       const run = { id: randomUUID(), revbox_id: box.id, job_id: routine.id, state: 'completed', created_at: stamp(), error: null, credits: 1.8, deliveries: box.delivery.map(d => ({ id: randomUUID(), state: 'sent', error: null, destination: d })), result: { title: routine.name, kind: 'report', body: 'Preview output — no model, HubSpot or Slack was called.\n\nCredit Check pulls yesterday: 1,284 (+6% vs the day before). Biggest movers: Northside Motors (+41), Lakeshore Auto (-18).' } };
       state.results.unshift(run); routine.last_run_at = run.created_at; await persist(); json(res, { run }); return true;
     }
+    if (parts[1] === 'datasets') { await datasetsPreview(req, res, json, box, access, parts, payload, url, uid); return true; }
     const jobs = () => state.jobs.filter(j => j.revbox_id === box.id);
     const context = () => state.context.filter(c => c.revbox_id === box.id);
     let output;
@@ -349,6 +453,10 @@ export async function handleRevboxPreview(req, res, url, json) {
 //   summary -> Slack.
 // - won: "when a deal is won…". deal.won, a handoff layout to the box's Slack channel, no question.
 // - other: one clarifying question (where the result goes), then a sensible proposal.
+// - winloss (GET-874): "analyse every closed deal into a table, then monthly and quarterly reports".
+//   Reads the box's tables, starts on Deal won + Deal lost (no question), proposes the analysis job
+//   with its table (the box's own when it has one) and next_jobs; approving creates the table and
+//   answers next_session_id, and that session proposes the monthly report, then the quarterly one.
 // Every script emits `integrations` (the tools it settled on) so the composer attaches them. Any
 // later message revises the proposal. Each session keeps `log`, the chat as the server's history
 // items, so Edit (POST /:id/builder { job_id }, no message) can reopen it: a new session seeded from
@@ -400,6 +508,7 @@ function timeIn(words) {
 }
 /** Which script a request gets: the composer's signal first, then the words. */
 function scriptFor(words, hinted) {
+  if (/closed deals?|won (and|or) lost|win\/loss|win-loss|(into|to|in) a table|log of (closed|won|lost)/i.test(words)) return 'winloss';
   if (hinted?.startsWith('meeting.done')) return 'meeting';
   if (hinted === 'deal.won') return 'won';
   if (/\bmeetings?\b|\bcalls?\b/i.test(words)) return 'meeting';
@@ -408,10 +517,16 @@ function scriptFor(words, hinted) {
   return 'other';
 }
 /** The server's facts (core proposalFacts), restated for the steps this fake proposes. */
-function factsFor(steps) {
+function factsFor(steps, tables = new Map()) {
   return steps.map(st => {
     const c = st.config ?? {};
     const base = { step_id: st.id, type: st.type, external: false };
+    if (st.type === 'dataset_append' || st.type === 'dataset_read') {
+      const t = tables.get(c.dataset_key);
+      const named = t ? `the table "${t.name}" (${c.dataset_key}${t.exists ? '' : ', new'})` : `the table ${c.dataset_key}`;
+      const fact = { ...base, action: st.type === 'dataset_append' ? 'append' : 'read', dataset_key: c.dataset_key, dataset: t?.name ?? null, new_dataset: !!t && !t.exists };
+      return st.type === 'dataset_append' ? { ...fact, dedupe_from: c.dedupe_from ?? 'deal', target: `Add a row to ${named}, one per deal` } : { ...fact, window: c.window ?? 'all', target: `Read ${named}: ${String(c.window ?? 'all').replace(/_/g, ' ')}` };
+    }
     if (st.type === 'hubspot') return { ...base, action: c.action, access: c.action === 'read' ? 'read' : 'write', object: c.object, fields: c.fields ?? [], target: `HubSpot: Read Company Daily Stats (${c.object}): ${(c.fields ?? []).join(', ')}` };
     if (st.type === 'agent') return { ...base, model: c.model ?? 'opennous', mode: c.mode, target: `AI (${c.model ?? 'opennous'})` };
     if (st.type === 'slack') {
@@ -541,13 +656,72 @@ function reportProposal(s) {
     estimated_credits_per_run: 2,
   };
 }
+// The closed won/lost analysis (GET-874): the table its jobs share, the analysis job, the two reports.
+const WIN_LOSS_TABLE = { key: 'win_loss_deals', name: 'Win/loss deals', description: 'One row per deal won or lost, analysed against the ICP.', columns: [
+  { key: 'deal', label: 'Deal', type: 'text' }, { key: 'outcome', label: 'Outcome', type: 'enum', options: ['Won', 'Lost'] }, { key: 'value', label: 'Value', type: 'number' },
+  { key: 'close_date', label: 'Close date', type: 'date' }, { key: 'icp_fit', label: 'ICP fit', type: 'enum', options: ['Strong', 'Partial', 'Poor'] },
+  { key: 'primary_reason', label: 'Primary reason', type: 'text' }, { key: 'competitor', label: 'Competitor', type: 'text' },
+] };
+const WIN_LOSS_REPORTS = [
+  { name: 'Monthly win/loss report', frequency: 'monthly', window: 'last_month', label: 'On the first of the month at 08:00 (UTC)', prompt: 'Write the monthly win/loss report from {{steps.rows.output}}: win rate, value won and lost, ICP fit of wins vs losses, the top reasons and competitors, and what to change.' },
+  { name: 'Quarterly win/loss review', frequency: 'quarterly', window: 'last_quarter', label: 'At the start of each quarter at 08:00 (UTC)', prompt: 'Write the quarterly win/loss review from {{steps.rows.output}}: trends month over month, the patterns behind wins and losses, and three recommendations.' },
+];
+const boxTables = (boxId) => state.datasets.filter(d => d.revbox_id === boxId);
+const tableMap = (boxId, proposed = []) => new Map([...proposed.map(d => [d.key, { name: d.name, exists: false }]), ...boxTables(boxId).map(d => [d.key, { name: d.name, exists: true }])]);
+function winLossProposal(s) {
+  const has = boxTables(s.box).some(d => d.key === WIN_LOSS_TABLE.key);
+  const datasets = has ? [] : [WIN_LOSS_TABLE];
+  const steps = [
+    { id: 'analyse', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Analyse this closed deal against our ICP (the box context): the fit, the one primary reason it was won or lost, and the competitor if one was in the deal.' } },
+    { id: 'row', type: 'dataset_append', config: { dataset_key: WIN_LOSS_TABLE.key, dedupe_from: 'deal' } },
+  ];
+  return {
+    name: s.name ?? 'Analyse closed deals',
+    summary: `When a deal is won or lost: analyse it against the ICP and add one row to ${WIN_LOSS_TABLE.name}${has ? '' : ' (a new table)'}.`,
+    trigger: { signal_key: 'deal.won', signal_keys: ['deal.won', 'deal.lost'], kind: 'deal_closed_won', config: { also: [{ kind: 'deal_closed_lost', config: {} }] }, label: 'When a deal is won or lost' },
+    ...(datasets.length ? { datasets } : {}),
+    steps, facts: factsFor(steps, tableMap(s.box, datasets)),
+    display: [
+      { step_id: 'analyse', tool: 'ai', title: 'Analyse the deal against the ICP', detail: 'Fit, primary reason, competitor' },
+      { step_id: 'row', tool: 'dataset_append', title: `Add a row to ${WIN_LOSS_TABLE.name}` },
+    ],
+    uses_box_delivery: false, warnings: [],
+    assumptions: ['A deal that closes twice (won, then lost) gets a row for each outcome.', ...(s.changes ?? [])],
+    ...(s.wantsReports ? { next_jobs: WIN_LOSS_REPORTS.map(r => r.name) } : {}),
+    estimated_credits_per_run: 1,
+  };
+}
+function winLossReportProposal(s) {
+  const r = WIN_LOSS_REPORTS[s.report ?? 0];
+  const steps = [
+    { id: 'rows', type: 'dataset_read', config: { dataset_key: WIN_LOSS_TABLE.key, window: r.window, limit: 500 } },
+    { id: 'report', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: r.prompt } },
+  ];
+  const later = WIN_LOSS_REPORTS.slice((s.report ?? 0) + 1).map(x => x.name);
+  return {
+    name: s.name ?? r.name,
+    summary: `${r.label}: read ${r.window === 'last_month' ? 'last month’s' : 'last quarter’s'} rows from ${WIN_LOSS_TABLE.name}, write the ${r.frequency === 'monthly' ? 'report' : 'review'}, and send it to the box’s destinations.`,
+    trigger: { signal_key: 'schedule', kind: 'clock', config: { frequency: r.frequency, at: '08:00' }, timezone: 'UTC', label: r.label },
+    steps, facts: factsFor(steps, tableMap(s.box)),
+    display: [
+      { step_id: 'rows', tool: 'dataset_read', title: `Read ${WIN_LOSS_TABLE.name}` },
+      { step_id: 'report', tool: 'ai', title: `Write the ${r.frequency} ${r.frequency === 'monthly' ? 'report' : 'review'}` },
+    ],
+    uses_box_delivery: true, box_delivery_format: 'report', warnings: [], assumptions: [...(s.changes ?? [])],
+    ...(later.length ? { next_jobs: later } : {}),
+    estimated_credits_per_run: 2,
+  };
+}
 function proposalFor(s) {
+  if (s.script === 'winloss') return winLossProposal(s);
+  if (s.script === 'winloss_report') return winLossReportProposal(s);
   if (s.script === 'meeting') return meetingProposal(s);
   if (s.script === 'won') return wonProposal(s);
   if (s.script === 'other') return otherProposal(s);
   return reportProposal(s);
 }
 function integrationsFor(s) {
+  if (s.script === 'winloss' || s.script === 'winloss_report') return [];
   if (s.script === 'meeting') return [s.signal?.split(':')[1] ?? 'granola', 'gmail', 'slack'];
   if (s.script === 'won') return ['hubspot', 'slack'];
   if (s.script === 'other') { const o = String(s.answers?.output ?? ''); return /slack/i.test(o) ? ['slack'] : /gmail|email/i.test(o) ? ['gmail'] : []; }
@@ -571,7 +745,22 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     s.state = 'approved'; s.job_id = routine.id; s.proposal = p; s.approved_at = stamp();
     const last = [...(s.log ?? [])].reverse().find(i => i.kind === 'proposal');
     if (last) { last.proposal = p; last.approved = true; }
-    await persist(); json(res, { routine, enabled: !reason, ...(reason ? { reason } : {}) }); return;
+    // GET-874: the proposed tables are created first (a key the box has is reused, never changed).
+    const tables = (p.datasets ?? []).map(d => {
+      const had = boxTables(box.id).find(t => t.key === d.key);
+      if (had) return { key: had.key, name: had.name, created: false };
+      state.datasets.push({ id: randomUUID(), revbox_id: box.id, key: d.key, name: d.name, description: d.description ?? '', columns: normalizeDatasetColumns(d.columns).columns, created_by: uid, created_at: stamp(), updated_at: stamp() });
+      return { key: d.key, name: d.name, created: true };
+    });
+    // Chaining: the chat goes on in a new session that proposes the next job.
+    let chain = {};
+    if (p.next_jobs?.length) {
+      const report = s.script === 'winloss_report' ? (s.report ?? 0) + 1 : 0;
+      const nextSession = { id: randomUUID(), box: box.id, job_id: null, user: uid, state: 'open', stage: 0, script: 'winloss_report', report, request: s.request, chained: true, log: structuredClone(s.log) };
+      sessions.set(nextSession.id, nextSession);
+      chain = { next_session_id: nextSession.id, next_jobs: p.next_jobs };
+    }
+    await persist(); json(res, { routine, enabled: !reason, ...(reason ? { reason } : {}), ...(tables.length ? { datasets: tables } : {}), ...chain }); return;
   }
   // Edit: a new session on the job, seeded from its last approved chat.
   if (!sid && payload.job_id && payload.message === undefined && payload.answers === undefined) {
@@ -607,7 +796,8 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
   if (!sid) await send({ type: 'session', session_id: s.id });
   // What starts the job: the composer's pick wins; otherwise "meeting" in the words means a meeting
   // signal (Granola when named), anything else a schedule. Emitted as the real builder does.
-  const hinted = payload.hints && 'signal' in payload.hints ? payload.hints.signal : null;
+  // hints.signals (GET-873; the preview plays the first), or an older composer's hints.signal.
+  const hinted = payload.hints?.signals?.length ? payload.hints.signals[0] : payload.hints && 'signal' in payload.hints ? payload.hints.signal : null;
   const words = payload.message ?? '';
   const meant = /\bmeetings?\b|\bcalls?\b/i.test(words) ? (/fireflies/i.test(words) ? 'meeting.done:fireflies' : /fathom/i.test(words) ? 'meeting.done:fathom' : 'meeting.done:granola') : null;
   const announceTrigger = async (key) => {
@@ -615,14 +805,35 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     const entry = key ? previewCatalog().builtin.concat(previewCatalog().custom).find(e => e.key === key.split(':')[0]) : null;
     const provider = key?.split(':')[1];
     const label = !key || key === 'schedule' ? 'On a schedule' : `${entry?.label ?? key}${provider ? ` · ${PROVIDER_NAME[provider] ?? provider}` : ''}`;
-    await send({ type: 'trigger', signal: key === 'schedule' ? 'schedule' : key, label }, 150);
+    await send({ type: 'trigger', signal: key === 'schedule' ? 'schedule' : key, signals: key ? [key] : [], label }, 150);
   };
   const attached = payload.hints?.integrations?.length ? ` · you attached ${payload.hints.integrations.join(', ')}` : '';
-  if (s.stage === 0) {
+  const tablesTool = async () => {
+    const mine = boxTables(box.id);
+    const count = (d) => state.dataset_rows.filter(r => r.dataset_id === d.id).length;
+    await tool('Reading this box’s tables…', 'revbox_datasets', mine.length ? `${mine.length} ${mine.length === 1 ? 'table' : 'tables'}: ${mine.slice(0, 3).map(d => `${d.name} (${count(d)} rows)`).join(', ')}` : 'No tables yet');
+  };
+  if (s.stage === 0 && s.chained) {
+    // The chat after an approval (GET-874): the next report on the table the first job fills.
+    const r = WIN_LOSS_REPORTS[s.report ?? 0];
+    await tablesTool();
+    await announceTrigger('schedule');
+    await prose(`Next, the ${r.frequency} ${r.frequency === 'monthly' ? 'report' : 'review'}: on a schedule, reading ${WIN_LOSS_TABLE.name} and sending the result to this box’s destinations.`);
+    await propose();
+  } else if (s.stage === 0) {
     s.script = scriptFor(words, hinted);
     s.request = words;
     await tool('Reading this box’s context…', 'revbox_context', `Read ${box.name} · ${box.blocks.length} context blocks`);
-    if (s.script === 'meeting') {
+    if (s.script === 'winloss') {
+      s.wantsReports = /monthly|quarterly|reports?/i.test(words);
+      await tablesTool();
+      // Deal won + deal lost: an event job, so no time question.
+      s.signal = 'deal.won';
+      await send({ type: 'trigger', signal: 'deal.won', signals: ['deal.won', 'deal.lost'], label: 'When a deal is won or lost' }, 150);
+      const has = boxTables(box.id).some(d => d.key === WIN_LOSS_TABLE.key);
+      await prose(`Every time a deal is won or lost, I’ll analyse it against the ICP in this box’s context and add a row to ${WIN_LOSS_TABLE.name}${has ? '' : ', a new table'}.${s.wantsReports ? ' The monthly report and the quarterly review follow after you approve this one.' : ''}`);
+      await propose();
+    } else if (s.script === 'meeting') {
       const key = hinted?.startsWith('meeting.done') ? hinted : meant ?? 'meeting.done:granola';
       const recorder = PROVIDER_NAME[key.split(':')[1]] ?? 'your recorder';
       await tool('Checking connected tools…', 'workspace_connections', `${recorder}, Gmail and Slack are connected${attached}`);

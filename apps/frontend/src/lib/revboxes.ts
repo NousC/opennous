@@ -43,7 +43,6 @@ export type RevBox = {
 /** The box's owner and members with their profile photo (GET-872). */
 export type BoxPerson = { id: string; role: 'owner' | 'editor' | 'viewer'; name: string | null; email: string | null; avatar_url: string | null };
 /** An account the box's jobs touched in their last 30 days of runs (GET-872). */
-export type RunAccount = { id: string; name: string; domain: string | null; runs: number };
 
 // ─── Built-in jobs (GET-872) ─────────────────────────────────────────────────────────────────
 // The Workspace plan's default automations, run by OpenNous (detectors and the after-call
@@ -72,17 +71,17 @@ export type ContextFile = { id: string; title: string; body: string; document_id
 export type BoxDetail = {
   box: RevBox; context: ContextFile[]; jobs: (RevBoxJob | RevBoxRoutine)[]; routines?: RevBoxRoutine[]; job_deliveries?: JobDelivery[];
   people?: BoxPerson[];
-  /** Accounts in the box's jobs' recent runs, most runs first (viewer-visible only); `_linked`
-   *  false = the runs name no account at all (the jobs read data that is not account-linked). */
-  run_accounts?: RunAccount[]; run_accounts_total?: number; run_accounts_runs?: number; run_accounts_linked?: boolean;
   builtin_jobs?: BoxBuiltinJob[]; builtin_taken?: { key: BuiltinJobKey; box_id: string; box_name: string | null }[];
 };
 export type Account = { id: string; name: string; domain: string | null; icp_score: number | null; people_count: number; deal_count: number; won_deals: number; lost_deals: number; last_activity_at: string | null; latest_signal: { title: string; kind: string; at: string } | null };
 export type Catalog = { accounts: Account[]; members: { id: string; name: string; email: string }[]; documents: { id: string; title: string }[]; connections: { id: string; slug: string; name: string; email: string | null }[] };
 
 export async function revboxesRequest<T>(workspaceId: string, token: string, path = '', init: RequestInit = {}): Promise<T> {
-  const query = new URLSearchParams({ workspaceId });
-  const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/revboxes${path}?${query}`, {
+  // A path may carry its own query (GET-874: ?cursor=&q=); workspaceId is added to it.
+  const [route, own = ''] = path.split('?');
+  const query = new URLSearchParams(own);
+  query.set('workspaceId', workspaceId);
+  const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/revboxes${route}?${query}`, {
     ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await freshAccessToken() ?? token}`, ...(PREVIEW ? { 'X-Preview-User': localStorage.getItem('nous.preview.role') === 'member' ? 'u2' : 'u1' } : {}), ...init.headers },
   });
   const body = await res.json().catch(() => ({}));
@@ -124,11 +123,16 @@ export type ProposalFact = {
   url?: string; host?: string | null; recipients?: string[]; mailbox?: string | null; mode?: string;
   object?: string | null; fields?: string[]; model?: string; job?: string | null;
   sends_to?: string[];
+  /** A table step (GET-874): its key, the table's name (the box's, or the one this proposal creates), whether it is new. */
+  dataset_key?: string | null; dataset?: string | null; new_dataset?: boolean; window?: string; dedupe_from?: string;
 };
+/** A table the proposal creates on approval (GET-874). */
+export type ProposedDataset = { key?: string; name: string; description?: string; columns: { key?: string; label: string; type: string; options?: string[] }[] };
 export type JobProposal = {
   name: string; summary: string;
-  /** signal_key: the signal-catalog key the trigger came from ("schedule" for a clock job). */
-  trigger: { signal_key?: string; kind: string; config: Record<string, unknown>; timezone?: string; label: string };
+  /** signal_key: the signal-catalog key the trigger came from ("schedule" for a clock job). A job on
+   *  several signals (GET-873) lists them all in signal_keys (signal_key is the first). */
+  trigger: { signal_key?: string; signal_keys?: string[]; kind: string; config: Record<string, unknown>; timezone?: string; label: string };
   /** Exactly the agent_routines.steps format; the card draws `display`, never these. */
   steps: { id: string; type: string; config?: Record<string, unknown> }[];
   display: { step_id: string; tool: string; title: string; detail?: string }[];
@@ -137,6 +141,10 @@ export type JobProposal = {
   uses_box_delivery: boolean;
   /** The Slack layout the box's Slack destinations get for this job (the agent picks it, GET-872). */
   box_delivery_format?: string | null;
+  /** Tables created on approval, before the job, so its steps' dataset_key resolves (GET-874). */
+  datasets?: ProposedDataset[];
+  /** Jobs still to set up in this chat: after approval the chat goes on and proposes the next. */
+  next_jobs?: string[];
   warnings: ProposalWarning[]; assumptions: string[];
   estimated_credits_per_run: number | null;
 };
@@ -150,13 +158,13 @@ export type BuilderEvent =
   | { type: 'credits'; credits: number }
   | { type: 'error'; message: string; code?: string }
   /** The agent picked or changed what starts the job ("after every meeting" -> meeting.done). */
-  | { type: 'trigger'; signal: string | null; label?: string }
+  | { type: 'trigger'; signal: string | null; signals?: string[]; label?: string }
   /** The integrations the job will use, as the agent settled them (connection slugs). The composer
    *  attaches them like user picks, and they ride along as `hints.integrations` on the next turn. */
   | { type: 'integrations'; slugs: string[] }
   | { type: 'done' };
 /** What the composer's Integrations and Signals pickers add to every builder message. */
-export type BuilderHints = { integrations: string[]; signal: string | null };
+export type BuilderHints = { integrations: string[]; signals: string[] };
 /** A box job as the Jobs list shows it once jobs are engine routines (agent_routines.revbox_id).
  *  Legacy revbox_jobs rows carry `plan`; routine rows do not. */
 export type RevBoxRoutine = {
@@ -217,7 +225,13 @@ export async function streamBuilderTurn(opts: {
 }
 
 /** What approving answers: the routine, whether it was switched on, and why not when it was not. */
-export type ApproveResult = { routine: RevBoxRoutine; enabled?: boolean; reason?: string };
+export type ApproveResult = {
+  routine: RevBoxRoutine; enabled?: boolean; reason?: string;
+  /** The tables approve created or reused (GET-874). */
+  datasets?: { key: string; name: string; created: boolean }[];
+  /** Chaining: the session the chat goes on in for the next job, and the jobs still to set up. */
+  next_session_id?: string; next_jobs?: string[];
+};
 /** Approve the session's latest proposal: creates or updates the routine and switches it on (or says why not). */
 export function approveBuilderProposal(workspaceId: string, token: string, boxId: string, sessionId: string, name?: string) {
   return revboxesRequest<ApproveResult>(workspaceId, token, `/${boxId}/builder/${sessionId}/approve`, { method: 'POST', body: JSON.stringify(name ? { name } : {}) });
@@ -247,7 +261,7 @@ export function routineTriggerLabel(job: RevBoxRoutine): string {
 }
 
 /** Display name for a tool slug in builder rows and cards. */
-export const TOOL_NAMES: Record<string, string> = { hubspot: 'HubSpot', slack: 'Slack', gmail: 'Gmail', granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom', attio: 'Attio', instantly: 'Instantly', agent: 'OpenNous', revbox_delivery: 'RevBox delivery', webhook: 'Webhook' };
+export const TOOL_NAMES: Record<string, string> = { hubspot: 'HubSpot', slack: 'Slack', gmail: 'Gmail', granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom', attio: 'Attio', instantly: 'Instantly', agent: 'OpenNous', revbox_delivery: 'RevBox delivery', webhook: 'Webhook', dataset_append: 'Add to table', dataset_read: 'Read table' };
 
 // ─── Signals (GET-862) ───────────────────────────────────────────────────────────────────────
 // What can start a job: the catalog (core signalCatalog) and the workspace's own signals, at
@@ -285,4 +299,28 @@ export function signalKeyLabel(key: string | null, catalog?: SignalCatalog | nul
   const entry = [...(catalog?.builtin ?? []), ...(catalog?.custom ?? [])].find(e => e.key === base);
   if (!entry) return null;
   return provider && provider !== 'any' ? `${entry.label} · ${MEETING_PROVIDER_LABEL[provider] ?? provider}` : entry.label;
+}
+
+// ── Datasets (GET-874): the tables a box's jobs keep ──────────────────────────────────────────
+export type DatasetColumnType = 'text' | 'number' | 'date' | 'boolean' | 'enum';
+export type DatasetColumn = { key: string; label: string; type: DatasetColumnType; options?: string[]; description?: string };
+export type RevBoxDataset = {
+  id: string; revbox_id: string; key: string; name: string; description: string; columns: DatasetColumn[];
+  created_at: string | null; updated_at: string | null; row_count?: number; row_count_capped?: boolean; last_added_at?: string | null;
+};
+export type DatasetRow = { id: string; data: Record<string, string | number | boolean | null>; entity_id: string | null; source_run_id: string | null; source_job_id: string | null; created_at: string };
+export type DatasetRowsPage = { dataset: RevBoxDataset; rows: DatasetRow[]; next_cursor: string | null };
+
+/** Download the dataset's visible rows as CSV (the API sets the file name). */
+export async function downloadDatasetCsv(workspaceId: string, token: string, boxId: string, key: string, q = ''): Promise<void> {
+  const query = new URLSearchParams({ workspaceId, ...(q.trim() ? { q: q.trim() } : {}) });
+  const res = await fetch(`${import.meta.env.VITE_API_URL ?? ''}/api/revboxes/${boxId}/datasets/${encodeURIComponent(key)}/export.csv?${query}`, {
+    headers: { Authorization: `Bearer ${await freshAccessToken() ?? token}`, ...previewHeader() },
+  });
+  if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error ?? `Export failed (${res.status}).`); }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? `${key}.csv`;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

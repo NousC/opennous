@@ -45,7 +45,10 @@ import { readHubspotRecords } from './hubspotRead.mjs';
 import { hubspotFieldChanges, entityForHubspotId, changeText, FIELD_CHANGE_WINDOW_MS } from './hubspotFieldTrigger.mjs';
 import { crmFieldsFromConversation } from './crmFieldsFromConversation.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft } from './emailDraftBrief.mjs';
+import { routineListensTo, routineTriggers, triggerConfigsFor, listensToFilter, accountSignalKinds, callRecorders } from './routineTriggers.mjs';
 import { slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, approvalCardContent, boxSlackFormat } from './slackFormats.mjs';
+import { datasetRowInstruction, parseDatasetRow, datasetRowsTable, coerceDatasetRow, datasetValueText, DATASET_WINDOWS } from './datasetFormats.mjs';
+import { datasetForBox, appendDatasetRow, readDatasetRowsForRun } from '../db/revboxDatasets.mjs';
 
 /** Text into HTML. A report quoting a customer must not be able to close our own markup. */
 function escapeHtml(v) {
@@ -1412,7 +1415,7 @@ function draftsItself(step, steps) {
 // Where a run stopped, in words a person reads in History (GET-710): "Step 3 · HubSpot · Update the
 // deal: no open deal on this account in HubSpot". A stop on purpose (an Only-if that did not match)
 // is not a failure; everything else is.
-const STEP_NAME = { agent: 'AI', only_if: 'Only if', approval: 'Approval', email: 'Email', gmail: 'Gmail', webhook: 'Webhook', slack: 'Slack', hubspot: 'HubSpot', wait: 'Wait', __followup_draft: 'Gmail draft', revbox_delivery: 'RevBox delivery' };
+const STEP_NAME = { agent: 'AI', only_if: 'Only if', approval: 'Approval', email: 'Email', gmail: 'Gmail', webhook: 'Webhook', slack: 'Slack', hubspot: 'HubSpot', wait: 'Wait', __followup_draft: 'Gmail draft', revbox_delivery: 'RevBox delivery', dataset_append: 'Add to table', dataset_read: 'Read table' };
 const HUBSPOT_ACTION_NAME = { read: 'Read records', note: 'Add a note', task: 'Create a task', update_deal: 'Update the deal', update_contact: 'Update the contact', update_company: 'Update the company' };
 const REASON_TEXT = {
   condition_not_met: "the rules didn't match, so it stopped here",
@@ -1429,6 +1432,9 @@ const REASON_TEXT = {
   smtp_not_connected: "that SMTP mailbox isn't connected", smtp_no_recipient: 'no one to send it to', smtp_not_available_here: "the mailbox couldn't be reached",
   revbox_access_lost: "the job's owner can no longer open its RevBox", revbox_unavailable: "the RevBox couldn't be loaded",
   revbox_not_linked: "this automation isn't a RevBox job", revbox_nothing_to_deliver: 'nothing was written to deliver',
+  // RevBox datasets (GET-874).
+  dataset_not_set: 'pick the table', dataset_not_found: "the RevBox has no table with that key", dataset_nothing_to_add: 'nothing was written to add',
+  dataset_row_unusable: "the AI's answer didn't fit the table's columns",
 };
 export function describeStop(step, index, reason) {
   const words = REASON_TEXT[reason] ?? String(reason ?? '').replace(/^(hubspot|gmail|slack)_/, '').replace(/_/g, ' ');
@@ -1452,6 +1458,8 @@ export function describeDone(did) {
     if (k === 'hubspot_read') return `Read ${v} ${v === '1' ? 'row' : 'rows'} with activity`;
     if (k === 'webhook') return 'Sent to the webhook';
     if (k === 'revbox_delivery') return v === 'none' ? 'The RevBox has no destinations' : `Delivered to ${v.replace('/', ' of ')} RevBox destinations`;
+    if (k === 'dataset_append') return v === 'duplicate' ? 'Already in the table: nothing added' : `Added a row to ${v}`;
+    if (k === 'dataset_read') return `Read ${v} ${v === '1' ? 'row' : 'rows'} from the table`;
     if (k === 'hubspot_tasks') return `${v} HubSpot task${v === '1' ? '' : 's'} created`;
     if (k === 'hubspot_task' && v === 'no_next_steps') return 'No next steps on this call';
     if (k === 'hubspot' && v === 'nothing_to_update') return 'Nothing to update from this conversation';
@@ -1505,15 +1513,18 @@ Rules:
 // Where the words go decides their markup (GET-791). Slack reads its own: *bold*, no headings.
 const DIGEST_SLACK = `It is posted in Slack. Use Slack's markup only: *bold* (single asterisks) for the totals line and each group's name, "•" for bullets, a blank line between groups. No other markdown.`;
 
-async function writeDigest(supabase, workspaceId, { prompt, data, runId, agentStep, title, slack = false, format = null }) {
+async function writeDigest(supabase, workspaceId, { prompt, data, runId, agentStep, title, slack = false, format = null, dataset = null }) {
   const material = [`Today: ${new Date().toISOString().slice(0, 10)}`, ...data.map(d => d.text)].join('\n\n');
   let text = '';
   // A Slack layout after it (GET-858): the AI writes that layout's JSON instead of prose.
   const shape = structuredSlackFormat(format) ? slackFormatInstruction(format) : null;
+  // An Add to table step after it (GET-874): the AI writes that table's row as JSON. A Slack layout's
+  // JSON wins when both follow; the table step then shapes the words itself.
+  const rowShape = !shape && dataset?.columns?.length ? datasetRowInstruction(dataset) : null;
   try {
     const msg = await createMessage({
-      feature: 'automation-handoff', tier: 'writing', max_tokens: shape ? 1800 : 900,
-      system: [shape ? `${DIGEST_SYSTEM}\n\n${shape}` : slack ? `${DIGEST_SYSTEM}\n\n${DIGEST_SLACK}` : DIGEST_SYSTEM,
+      feature: 'automation-handoff', tier: 'writing', max_tokens: shape || rowShape ? 1800 : 900,
+      system: [shape ? `${DIGEST_SYSTEM}\n\n${shape}` : rowShape ? `${DIGEST_SYSTEM}\n\n${rowShape}` : slack ? `${DIGEST_SYSTEM}\n\n${DIGEST_SLACK}` : DIGEST_SYSTEM,
         prompt ? `---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}\n\nWhere that contradicts anything above, theirs wins.` : ''].filter(Boolean).join('\n\n'),
       messages: [{ role: 'user', content: material }],
     });
@@ -1535,13 +1546,21 @@ async function writeDigest(supabase, workspaceId, { prompt, data, runId, agentSt
     text = p.text || text;
     if (p.ok) slackOut = { format, content: p.content, text: p.text };
   }
-  const doc = { title, headline: null, sections: [{ label: '', body: text }], fallback, ...(slackOut ? { slack: slackOut } : {}) };
+  // The table's row, checked against its columns: the document keeps the summary and the row as words.
+  let rowOut = null;
+  if (rowShape && !fallback) {
+    const p = parseDatasetRow(dataset, text);
+    text = p.text || text;
+    if (p.ok) rowOut = { key: dataset.key, data: p.data };
+  }
+  const extra = { ...(slackOut ? { slack: slackOut } : {}), ...(rowOut ? { dataset: rowOut } : {}) };
+  const doc = { title, headline: null, sections: [{ label: '', body: text }], fallback, ...extra };
   if (!supabase) return doc;
   // Saved under a heading: a document keeps only labelled sections, and an unlabelled one was
   // dropped on save, so {{steps.<id>.output}} came out empty and Slack got the raw table instead
   // (GET-788). The steps after this one read the text itself, without the heading.
   return writeDocument(supabase, workspaceId, { kind: 'account_summary', title, headline: null, subjectEntityId: null, sections: [{ label: 'Summary', body: text }], sources: [], writtenBy: 'automation' })
-    .then(d => ({ ...d, sections: doc.sections, fallback, ...(slackOut ? { slack: slackOut } : {}) }), () => doc);
+    .then(d => ({ ...d, sections: doc.sections, fallback, ...extra }), () => doc);
 }
 
 // ── Slack layouts (GET-858) ──────────────────────────────────────────────────
@@ -1592,6 +1611,83 @@ async function shapeForSlack(supabase, workspaceId, { format, source = null, tex
     return p.ok ? { format, content: p.content, text: p.text } : null;
   } catch (err) {
     console.warn('[automations] Slack layout unavailable, posting plain text:', err?.message ?? err);
+    return null;
+  }
+}
+
+// ── RevBox datasets (GET-874) ────────────────────────────────────────────────
+// A box job's Add to table step (`dataset_append`) turns the AI step before it into one row of the
+// box's dataset; its Read table step (`dataset_read`) hands a window of rows to the AI step after it.
+// Both work only in a RevBox job, on its own box's datasets, as its owner.
+
+/** The Add to table step that reads AI step `i`: the first one after it, before another AI step. Pure. */
+function datasetAppendAfter(steps, i) {
+  for (const x of steps.slice(i + 1)) {
+    if (x?.type === 'agent') return null;
+    if (x?.type === 'dataset_append') return x;
+  }
+  return null;
+}
+
+/** For an account write-up an Add to table step reads: the fields it must state. '' when none. Pure. */
+function datasetCoverage(dataset) {
+  const cols = dataset?.columns ?? [];
+  if (!cols.length) return '';
+  return `This write-up also fills a row of the table "${dataset.name}". State each of these plainly where the material supports it: ${cols.map(c => c.type === 'enum' ? `${c.label} (one of: ${(c.options ?? []).join(', ')})` : c.label).join('; ')}.`;
+}
+
+/**
+ * The dedupe key of a row (GET-874): `deal` = one row per deal and outcome, `account` = one row per
+ * account, `none` = every run adds one. Default `deal`. A run with no deal keys by its EVENT
+ * (`event`, from datasetEventKey: the call, the signal and its conversation, or the run), so a
+ * "log every call" table keeps every call, not the first one per account. Only a deal run that names
+ * no deal id (a close read from the stage history, `event` undefined) falls back to the account and
+ * stage. Pure.
+ */
+export function datasetDedupeKey(from, { dealId = null, entityId = null, stage = null, event = undefined } = {}) {
+  const mode = ['deal', 'account', 'none'].includes(from) ? from : 'deal';
+  if (mode === 'none') return null;
+  if (mode === 'account') return entityId ? `account:${entityId}` : null;
+  if (dealId) return `deal:${dealId}${stage ? `:${stage}` : ''}`;
+  if (event !== undefined) return event ? String(event) : null;
+  return entityId ? `account:${entityId}${stage ? `:${stage}` : ''}` : null;
+}
+
+/**
+ * The event a run is about, as a dataset dedupe key: the call, the signal (and the conversation it
+ * came from), or the run itself. undefined for a deal run (ctx.dealEvent), which keys by the deal. Pure.
+ */
+function datasetEventKey(ctx) {
+  if (ctx?.dealEvent) return undefined;
+  if (ctx?.call?.meetingId) return `call:${ctx.call.meetingId}`;
+  if (ctx?.signal) return `signal:${ctx.signal.id ?? ''}:${signalMoment(ctx.signal)}`;
+  return ctx?.runId ? `run:${ctx.runId}` : null;
+}
+
+/** A shaped row as preview lines ({ label, value }), columns in order: what a test shows instead of adding it. Pure. */
+function datasetRowPreview(dataset, data) {
+  const checked = coerceDatasetRow(dataset?.columns ?? [], data);
+  if (!checked.ok) return [];
+  return (dataset.columns ?? []).filter(col => checked.data[col.key] != null && checked.data[col.key] !== '')
+    .map(col => ({ label: col.label, value: datasetValueText(col, checked.data[col.key]).slice(0, 300) }));
+}
+
+const DATASET_SHAPE_SYSTEM = 'You turn a write-up into one row of a table. Use only what the text says: never invent a number, a name or a date.';
+
+/** Words as the dataset's row data, or null. One call, metered like any AI step. */
+async function shapeForDataset(supabase, workspaceId, { dataset, text, runId = null, step = null }) {
+  try {
+    const msg = await createMessage({
+      feature: 'automation-handoff', tier: 'writing', max_tokens: 1500,
+      system: `${DATASET_SHAPE_SYSTEM}\n\n${datasetRowInstruction(dataset)}`,
+      messages: [{ role: 'user', content: `Today: ${new Date().toISOString().slice(0, 10)}\n\n${String(text).slice(0, 20_000)}` }],
+    });
+    Promise.resolve(STEP_HANDLERS.meter?.({ supabase, workspaceId, feature: 'automation-handoff', model: msg?.model ?? null, usage: msg?.usage ?? null,
+      requestId: runId ? `automation-run:${runId}:dataset:${step ?? 'x'}` : null })).catch(() => {});
+    const p = parseDatasetRow(dataset, messageText(msg));
+    return p.ok ? p.data : null;
+  } catch (err) {
+    console.warn('[automations] table row unavailable:', err?.message ?? err);
     return null;
   }
 }
@@ -1673,7 +1769,8 @@ async function withBoxContext(supabase, workspaceId, routine, prompt) {
 }
 export const withBoxContextForTest = withBoxContext;
 
-const isRead = (st) => st?.type === 'hubspot' && st?.config?.action === 'read';
+// A RevBox job's Read table step (GET-874) is a Read step too: the AI step after it writes from its rows.
+const isRead = (st) => (st?.type === 'hubspot' && st?.config?.action === 'read') || st?.type === 'dataset_read';
 
 /** A box destination's recipients ("a@x, b@y" or a list). */
 const recipientsOf = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,;]/)).map(x => String(x).trim()).filter(Boolean);
@@ -1705,6 +1802,14 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
   const boxCtx = automation?.revbox_id && supabase ? await revboxRoutineContext(supabase, workspaceId, automation) : null;
   // What the last revbox_delivery step did, per destination, for its log line.
   let lastDeliveries = null;
+  // The box's datasets the steps name (GET-874), read once per run.
+  const datasets = new Map();
+  const datasetFor = async (st) => {
+    const key = st?.config?.dataset_key;
+    if (!key || !supabase || !automation?.revbox_id) return null;
+    if (!datasets.has(key)) datasets.set(key, datasetForBox(supabase, { workspaceId, revboxId: automation.revbox_id, key }).catch(() => null));
+    return datasets.get(key);
+  };
   let vars = null;
   const varsFor = async (texts = []) => Object.assign(vars ?? (vars = await templateVars(automation, doc, { stage, at, ctx, texts })), extraVars);
   let gated = false;
@@ -1991,6 +2096,30 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
       return { ok: false, error: String(e?.message ?? e).slice(0, 200) };
     }
   };
+  // A test with its sends held (GET-873, a RevBox job's Test): read and AI steps run for real, every
+  // step that would reach outside OpenNous (Slack, email, Gmail drafts and sends, webhooks, HubSpot
+  // writes, box delivery) only records what it WOULD do, with its preview; nothing waits for approval.
+  // Add to table is held in ANY test run (ctx.test too), in its own case below: it shapes the row first.
+  const hold = !!ctx?.holdSends;
+  const heldWords = async (s, p) => {
+    const c = s?.config ?? {};
+    const row = (label) => p?.rows?.find(r => r.label === label)?.value ?? '';
+    const ch = `#${String(c.channel ?? c.channel_id ?? '').replace(/^#/, '') || 'a channel'}`;
+    switch (s?.type) {
+      case 'slack': return c.action === 'dm' ? `Would message ${c.user_name || 'a person'} in Slack` : slackFormatOf(c.format) === 'approval' ? `Would post the approval card to ${ch}` : `Would post to ${ch}`;
+      case 'gmail': case '__followup_draft': {
+        const to = p?.email?.to || row('To').replace(/^—$/, '') || 'no one yet';
+        return sendFromOf(s)?.kind === 'smtp' ? `Would send to ${to}${sendFromOf(s)?.email ? ` from ${sendFromOf(s).email}` : ''}` : `Would draft to ${to}`;
+      }
+      case 'email': return `Would email ${p?.email?.to || 'no one yet'}`;
+      case 'webhook': { let host = String(c.url ?? ''); try { host = new URL(host).host; } catch { /* as typed */ } return `Would send to the webhook at ${host || '(no URL)'}`; }
+      case 'hubspot': return c.action === 'task' ? `Would create ${p?.tasks?.length ?? 1} HubSpot task${(p?.tasks?.length ?? 1) === 1 ? '' : 's'}`
+        : String(c.action ?? '').startsWith('update_') ? `Would update the ${String(c.action).slice(7)} in HubSpot` : 'Would add a note in HubSpot';
+      case 'revbox_delivery': { const d = row('Destinations'); return d && d !== 'None yet' ? `Would deliver to ${d.split('\n').join(', ')}` : 'Would deliver to the box\'s destinations (none yet)'; }
+      default: return 'Held: not sent in a test';
+    }
+  };
+  const holdsSend = (s) => ['email', 'gmail', 'webhook', 'slack', '__followup_draft', 'revbox_delivery'].includes(s?.type) || (s?.type === 'hubspot' && s.config?.action !== 'read');
   if (boxCtx && !boxCtx.ok) { at_ = resume?.startAt ?? 0; return stop(plan[at_] ?? plan[0], boxCtx.reason); }
   for (const s of plan) {
     at_ += 1;
@@ -2004,9 +2133,15 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
       continue;
     }
     const dec = resume?.decisions?.[at_] ?? (resume?.approvedIndex === at_ ? { approve: true } : null);
-    if (!dec && needsOk(s, at_, gated)) return pause(s);
+    if (!dec && !hold && needsOk(s, at_, gated)) return pause(s);
     // Skipped in review: this step does nothing, the rest go on.
     if (dec && dec.approve === false) { note(s, 'skipped', 'Skipped in review'); continue; }
+    if (hold && holdsSend(s)) {
+      if (s.type === '__followup_draft') { const own = docs.get(steps.findIndex(x => draftsItself(x, steps))); if (own) doc = own; }
+      const p = await previewStep(s).catch(() => null);
+      note(s, 'held', await heldWords(s, p), { held: true, preview: p?.rows ?? [] });
+      continue;
+    }
     const doneBefore = done.length;
     switch (s?.type) {
       case 'agent': {
@@ -2034,6 +2169,8 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
               || (x?.type === 'revbox_delivery' && (boxCtx?.box?.delivery ?? []).some(d => d?.kind === 'slack'))),
             // ...and in a Slack layout's JSON when that step names one (GET-858).
             format: slackFormatAfter(steps, steps.indexOf(s), s.id, boxCtx?.box, automation.trigger_kind ?? null),
+            // ...and in a table's row JSON when an Add to table step reads it (GET-874).
+            dataset: await datasetFor(datasetAppendAfter(steps, steps.indexOf(s))),
           });
           docs.set(at_, doc);
           vars = null;
@@ -2043,7 +2180,9 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
           artifact: job ? (JOB_ARTIFACTS[job] ?? null) : null,
           // An account's writer keeps the account; earlier AI steps chosen as context ride in the ask.
           prompt: (await withBoxContext(ctx.supabase, ctx.workspaceId, automation, [job ? [JOB_PROMPTS[job], String(c.extra ?? '').trim()].filter(Boolean).join('\n\n') : String(c.prompt ?? '').trim(),
-            ...fromAi.map(d => `What step ${d.step} wrote:\n${d.text}`)].filter(Boolean).join('\n\n'))) || null,
+            ...fromAi.map(d => `What step ${d.step} wrote:\n${d.text}`),
+            // An Add to table step reads this write-up (GET-874): it must state what the table records.
+            datasetCoverage(await datasetFor(datasetAppendAfter(steps, steps.indexOf(s))))].filter(Boolean).join('\n\n'))) || null,
           entityId: c.account_id || ctx.entityId, stage: stage ?? 'automation', context: c.context ?? null,
           signal: ctx.signal ?? null, call: ctx.call ?? null, runId: ctx.runId ?? null, agentStep: shownAt(at_) + 1,
           format: job === 'follow_up' ? 'email' : 'brief',
@@ -2240,6 +2379,57 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
         }
         break;
       }
+      case 'dataset_append': {
+        // Add to table (GET-874): the AI step before it as one row of the box's dataset. A digest wrote
+        // the row's JSON itself; an account brief (or any other words) is shaped by one metered call.
+        if (!supabase) break;
+        if (!boxCtx) return stop(s, 'revbox_not_linked');
+        if (!c.dataset_key) return stop(s, 'dataset_not_set');
+        const ds = await datasetFor(s);
+        if (!ds) return stop(s, 'dataset_not_found');
+        let data = doc?.dataset?.key === ds.key ? doc.dataset.data : null;
+        if (!data) {
+          const words = documentText(doc) || stepData.map(d => d.text).join('\n\n');
+          if (!words.trim()) return stop(s, 'dataset_nothing_to_add');
+          const shaped = await shapeForDataset(supabase, workspaceId, { dataset: ds, text: words, runId: ctx?.runId ?? null, step: s.id ?? null });
+          if (!shaped) return stop(s, 'dataset_row_unusable');
+          data = shaped;
+        }
+        // A test never writes a row (held or not, GET-873/874): its row would take the dedupe key the
+        // real event needs and show up in the box's reports. The row is still shaped and shown.
+        if (hold || ctx?.test) {
+          const shown = datasetRowPreview(ds, data);
+          if (!shown.length) return stop(s, 'dataset_row_unusable');
+          note(s, 'held', `Would add a row to ${ds.name}`, { held: true, preview: shown });
+          continue;
+        }
+        const r = await appendDatasetRow(supabase, {
+          workspaceId, dataset: ds, data, entityId: ctx?.dealId ?? ctx?.entityId ?? null, sourceRunId: ctx?.runId ?? null, sourceJobId: automation.id ?? null,
+          dedupeKey: datasetDedupeKey(c.dedupe_from, { dealId: ctx?.dealId ?? null, entityId: ctx?.entityId ?? null, stage, event: datasetEventKey(ctx) }),
+        }).catch(e => (e?.status === 400 ? null : Promise.reject(e)));
+        if (!r) return stop(s, 'dataset_row_unusable');
+        done.push(r.duplicate ? 'dataset_append:duplicate' : `dataset_append:${ds.name}`);
+        break;
+      }
+      case 'dataset_read': {
+        // Read table (GET-874): a window of the box's dataset, as the job's owner sees it, handed to the
+        // AI step after it and to {{steps.<id>.output}}, like a HubSpot Read step's table.
+        if (!supabase) break;
+        if (!boxCtx) return stop(s, 'revbox_not_linked');
+        if (!c.dataset_key) return stop(s, 'dataset_not_set');
+        const ds = await datasetFor(s);
+        if (!ds) return stop(s, 'dataset_not_found');
+        const see = STEP_HANDLERS.revbox_visible_accounts;
+        // Without the visibility handler, rows about an account are left out rather than guessed at.
+        const allowed = see ? await Promise.resolve(see({ supabase, workspaceId, userId: automation.user_id ?? null })).catch(() => false) : false;
+        const window = DATASET_WINDOWS.includes(c.window) ? c.window : 'all';
+        const r = await readDatasetRowsForRun(supabase, { workspaceId, dataset: ds, window, limit: c.limit, allowed });
+        const text = datasetRowsTable(ds, r.rows, { window, range: r.range, total: r.total });
+        stepData.push({ id: s.id ?? null, step: shownAt(at_) + 1, label: ds.name, text });
+        if (s.id) extraVars[`steps.${s.id}.output`] = text;
+        done.push(`dataset_read:${r.rows.length}`);
+        break;
+      }
       default:
         // wait: not running yet. Stop here so nothing after it runs out of order.
         return stop(s, `${s?.type}_not_running_yet`);
@@ -2412,6 +2602,9 @@ export async function testTriggers(supabase, workspaceId, automation, { limit = 
       id: `${ch.objectId}|${ch.at}`, kind, label: changeText(cfg, ch), at: ch.at, source: 'hubspot', account: ch.name ? { name: ch.name, domain: null } : null,
     }));
   }
+  if (DEAL_TEST_KINDS.includes(kind)) {
+    return (await dealTestTriggers(supabase, workspaceId, automation, { limit })).map(({ id, kind: k, label, at, source, account }) => ({ id, kind: k, label, at, source, account }));
+  }
   if (kind === 'call_ended') {
     const tools = (automation.trigger_config?.tools ?? automation.tools ?? []).map(t => String(t).toLowerCase());
     const { data: obs } = await supabase.from('observations').select('entity_id, source, observed_at, value, raw')
@@ -2451,45 +2644,112 @@ export async function testTriggers(supabase, workspaceId, automation, { limit = 
   return [];
 }
 
+/** Deal triggers a Test can run on: the latest closed deal (GET-873 review). */
+const DEAL_TEST_KINDS = ['deal_closed_won', 'deal_closed_lost', 'deal_stage_changed'];
+
+/**
+ * The latest closed deals a deal-triggered job can be tested on, newest first: won and/or lost as
+ * its triggers (primary and `also`) say, on an account, visible to the job's owner (the
+ * `revbox_visible_accounts` handler; without it no account is assumed visible). One per account and
+ * outcome, like the daily pass. `pick` = one of these ids. -> [{ id, kind, label, at, source,
+ * entityId, dealId, stage, account }].
+ */
+async function dealTestTriggers(supabase, workspaceId, automation, { limit = 10, pick = null } = {}) {
+  const listens = (k) => routineListensTo(automation, k);
+  const outcomes = [...new Set([
+    ...(listens('deal_closed_won') || listens('deal_stage_changed') ? ['won'] : []),
+    ...(listens('deal_closed_lost') || listens('deal_stage_changed') ? ['lost'] : []),
+  ])];
+  if (!outcomes.length) return [];
+  const see = STEP_HANDLERS.revbox_visible_accounts;
+  const allowed = see ? await Promise.resolve(see({ supabase, workspaceId, userId: automation.user_id ?? null })).catch(() => false) : false;
+  if (allowed === false) return [];
+  const [, pickEntity, pickOutcome] = typeof pick === 'string' && pick.startsWith('deal:') ? pick.split(':') : [];
+  let q = supabase.from('deal_outcomes').select('entity_id, deal_id, outcome, closed_at')
+    .eq('workspace_id', workspaceId).in('outcome', pickOutcome && outcomes.includes(pickOutcome) ? [pickOutcome] : outcomes).not('entity_id', 'is', null);
+  if (pickEntity) q = q.eq('entity_id', pickEntity);
+  const { data } = await q.order('closed_at', { ascending: false }).limit(200);
+  const rows = (data ?? []).filter(d => d.entity_id && (allowed == null || (allowed instanceof Set && allowed.has(d.entity_id))));
+  const ids = [...new Set(rows.map(d => d.entity_id))];
+  const co = new Map();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data: cos } = await supabase.from('companies').select('id, name, domain').eq('workspace_id', workspaceId).in('id', ids.slice(i, i + 100));
+    for (const c of cos ?? []) co.set(c.id, c);
+  }
+  const seen = new Set();
+  const out = [];
+  for (const d of rows) {
+    const c = co.get(d.entity_id);
+    const key = `${d.entity_id}:${d.outcome}`;
+    if (!c || seen.has(key)) continue;
+    seen.add(key);
+    const stage = d.outcome === 'won' ? 'closed_won' : 'closed_lost';
+    out.push({
+      id: `deal:${d.entity_id}:${d.outcome}`, kind: d.outcome === 'won' ? 'deal_closed_won' : 'deal_closed_lost',
+      label: `${c.name ?? 'An account'}: closed ${d.outcome}`, at: d.closed_at, source: null,
+      entityId: d.entity_id, dealId: d.deal_id ?? null, stage, account: { id: c.id, name: c.name ?? null, domain: c.domain ?? null },
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * The trigger a Test runs on: the newest real event across EVERY trigger of the job (its primary
+ * and its `also` ones, GET-873): a call, an account signal, or a closed deal. `pick` is one of
+ * testTriggers' ids ("<source>|<at>" for a call, "deal:..." for a deal, else a signal id).
+ */
 export async function latestTestTrigger(supabase, workspaceId, automation, pick = null) {
-  const kind = automation.trigger_kind;
-  if (kind === 'call_ended') {
-    const tools = (automation.trigger_config?.tools ?? automation.tools ?? []).map(t => String(t).toLowerCase());
-    // A chosen call (GET-735): "<source>|<observed_at>", one of testTriggers' ids.
-    const [pickSource, pickAt] = typeof pick === 'string' && pick.includes('|') ? pick.split('|') : [null, null];
-    let q = supabase.from('observations').select('entity_id, source, observed_at, value, raw')
-      .eq('workspace_id', workspaceId).eq('kind', 'event').eq('property', 'interaction.meeting_held')
-      .in('source', tools.length ? tools : MEETING_SOURCES);
-    if (pickSource) q = q.eq('source', pickSource).eq('observed_at', pickAt);
-    const { data: obs } = await q.order('observed_at', { ascending: false }).limit(1);
-    const o = obs?.[0];
-    if (!o) return null;
-    const { data: sameCall } = await supabase.from('observations').select('entity_id')
-      .eq('workspace_id', workspaceId).eq('property', 'interaction.meeting_held').eq('source', o.source).eq('observed_at', o.observed_at);
-    const people = [...new Set((sameCall ?? []).map(x => x.entity_id))];
-    const { data: contacts } = people.length ? await supabase.from('contacts').select('id, first_name, last_name, email, company_id').in('id', people) : { data: [] };
-    const meeting = String(o.raw?.note_id ?? o.raw?.id ?? o.value?.meeting_id ?? o.raw?.meeting_id ?? '') || null;
-    const title = o.raw?.title ?? o.value?.title ?? 'A call';
-    const call = {
-      meetingId: `test:${Date.now()}`, sourceMeetingId: meeting, title, occurredAt: o.observed_at, source: o.source,
-      url: o.raw?.url ?? null, accountId: (contacts ?? []).find(c => c.company_id)?.company_id ?? null, personId: o.entity_id,
-      attendees: (contacts ?? []).filter(c => c.email).map(c => ({ name: [c.first_name, c.last_name].filter(Boolean).join(' ') || null, email: c.email })),
-      summary: o.value?.summary ?? null, transcript: null,
-    };
-    call.nextSteps = await loadCallNextSteps(supabase, workspaceId, meeting);
-    return { kind, label: title, at: o.observed_at, source: o.source, entityId: call.accountId || call.personId, call };
-  }
-  if (kind === 'account_signal') {
-    const kinds = automation.trigger_config?.signals ?? [];
-    let q = supabase.from('account_signals').select('*').eq('workspace_id', workspaceId).not('account_id', 'is', null).eq('team_readable', true);
-    if (kinds.length) q = q.in('kind', kinds);
-    if (pick) q = q.eq('id', String(pick));
-    const { data } = await q.order('occurred_at', { ascending: false }).limit(1);
-    const sig = data?.[0];
-    if (!sig) return null;
-    return { kind, label: `${SIGNAL_LABEL[sig.kind] ?? sig.kind}: ${sig.content ?? sig.title ?? ''}`.slice(0, 140), at: sig.occurred_at, entityId: sig.account_id, signal: sig };
-  }
-  return null;
+  const kinds = new Set(routineTriggers(automation).map(t => t.kind));
+  const p = typeof pick === 'string' && pick ? pick : null;
+  const found = [];
+  if (kinds.has('call_ended') && (!p || p.includes('|'))) found.push(await latestCallTestTrigger(supabase, workspaceId, automation, p));
+  if (kinds.has('account_signal') && (!p || (!p.includes('|') && !p.startsWith('deal:')))) found.push(await latestSignalTestTrigger(supabase, workspaceId, automation, p));
+  if (DEAL_TEST_KINDS.some(k => kinds.has(k)) && (!p || p.startsWith('deal:'))) found.push((await dealTestTriggers(supabase, workspaceId, automation, { limit: 1, pick: p }))[0] ?? null);
+  const time = (t) => Date.parse(t?.at ?? '') || 0;
+  return found.filter(Boolean).sort((x, y) => time(y) - time(x))[0] ?? null;
+}
+
+async function latestCallTestTrigger(supabase, workspaceId, automation, pick) {
+  const kind = 'call_ended';
+  // Every call_ended trigger's recorders, merged (null = any).
+  const tools = callRecorders(automation) ?? [];
+  // A chosen call (GET-735): "<source>|<observed_at>", one of testTriggers' ids.
+  const [pickSource, pickAt] = typeof pick === 'string' && pick.includes('|') ? pick.split('|') : [null, null];
+  let q = supabase.from('observations').select('entity_id, source, observed_at, value, raw')
+    .eq('workspace_id', workspaceId).eq('kind', 'event').eq('property', 'interaction.meeting_held')
+    .in('source', tools.length ? tools : MEETING_SOURCES);
+  if (pickSource) q = q.eq('source', pickSource).eq('observed_at', pickAt);
+  const { data: obs } = await q.order('observed_at', { ascending: false }).limit(1);
+  const o = obs?.[0];
+  if (!o) return null;
+  const { data: sameCall } = await supabase.from('observations').select('entity_id')
+    .eq('workspace_id', workspaceId).eq('property', 'interaction.meeting_held').eq('source', o.source).eq('observed_at', o.observed_at);
+  const people = [...new Set((sameCall ?? []).map(x => x.entity_id))];
+  const { data: contacts } = people.length ? await supabase.from('contacts').select('id, first_name, last_name, email, company_id').in('id', people) : { data: [] };
+  const meeting = String(o.raw?.note_id ?? o.raw?.id ?? o.value?.meeting_id ?? o.raw?.meeting_id ?? '') || null;
+  const title = o.raw?.title ?? o.value?.title ?? 'A call';
+  const call = {
+    meetingId: `test:${Date.now()}`, sourceMeetingId: meeting, title, occurredAt: o.observed_at, source: o.source,
+    url: o.raw?.url ?? null, accountId: (contacts ?? []).find(c => c.company_id)?.company_id ?? null, personId: o.entity_id,
+    attendees: (contacts ?? []).filter(c => c.email).map(c => ({ name: [c.first_name, c.last_name].filter(Boolean).join(' ') || null, email: c.email })),
+    summary: o.value?.summary ?? null, transcript: null,
+  };
+  call.nextSteps = await loadCallNextSteps(supabase, workspaceId, meeting);
+  return { kind, label: title, at: o.observed_at, source: o.source, entityId: call.accountId || call.personId, call };
+}
+
+async function latestSignalTestTrigger(supabase, workspaceId, automation, pick) {
+  const kind = 'account_signal';
+  // Every account_signal trigger's kinds, merged (null = any signal).
+  const kinds = accountSignalKinds(automation) ?? [];
+  let q = supabase.from('account_signals').select('*').eq('workspace_id', workspaceId).not('account_id', 'is', null).eq('team_readable', true);
+  if (kinds.length) q = q.in('kind', kinds);
+  if (pick) q = q.eq('id', String(pick));
+  const { data } = await q.order('occurred_at', { ascending: false }).limit(1);
+  const sig = data?.[0];
+  if (!sig) return null;
+  return { kind, label: `${SIGNAL_LABEL[sig.kind] ?? sig.kind}: ${sig.content ?? sig.title ?? ''}`.slice(0, 140), at: sig.occurred_at, entityId: sig.account_id, signal: sig };
 }
 
 /**
@@ -2502,13 +2762,13 @@ export async function latestTestTrigger(supabase, workspaceId, automation, pick 
  * single account. Read steps read, the AI step writes from what they read, Slack posts it.
  * Returns the run row's patch (status, step_log, error).
  */
-export async function runScheduledFlow(supabase, workspaceId, automation, { runId = null, onLog = null, meeting = null, entityId = null } = {}) {
+export async function runScheduledFlow(supabase, workspaceId, automation, { runId = null, onLog = null, meeting = null, entityId = null, holdSends = false, test = false } = {}) {
   // A before_meeting run (a RevBox job's, GET-868) is about THAT meeting: it goes in as what the
   // steps read first, and its account is the run's account.
   const seedData = meeting ? [{ step: 0, label: 'Meeting', text: meetingText(meeting) }] : undefined;
   const out = await runSteps(automation, null, {
     stage: meeting ? 'before_meeting' : 'scheduled', at: new Date().toISOString(),
-    ctx: { supabase, workspaceId, entityId: meeting?.entity_id ?? entityId ?? null, dealId: null, runId, writeAllInLoop: true, onLog, ...(seedData ? { seedData } : {}) },
+    ctx: { supabase, workspaceId, entityId: meeting?.entity_id ?? entityId ?? null, dealId: null, runId, writeAllInLoop: true, onLog, ...(seedData ? { seedData } : {}), ...(holdSends ? { holdSends: true } : {}), ...(test ? { test: true } : {}) },
   });
   return runOutcome(out);
 }
@@ -2535,7 +2795,9 @@ export function flowRunsSteps(automation) {
   return steps.some(st => st?.type && st.type !== 'agent');
 }
 
-export async function startTestRun(supabase, workspaceId, automationId, { pick = null } = {}) {
+export async function startTestRun(supabase, workspaceId, automationId, { pick = null, holdSends = false } = {}) {
+  // holdSends (GET-873): a test that sends nothing out (runSteps' hold); the run is marked `held`.
+  const mark = holdSends ? { test: true, held: true } : { test: true };
   const { data: a } = await supabase.from('agent_routines').select('*').eq('workspace_id', workspaceId).eq('id', automationId).maybeSingle();
   if (!a) return { ok: false, error: 'not_found' };
   // A field change tests on one of the last real changes (GET-781).
@@ -2547,24 +2809,28 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
     if (!ch) return { ok: false, error: 'no_trigger', message: r.ok ? 'That field has not changed in HubSpot in the last 7 days.' : (REASON_TEXT[r.reason] ?? r.reason) };
     const trig = { kind: 'hubspot_field_changed', label: changeText(cfg, ch), at: ch.at, source: 'hubspot' };
     const { data: run, error } = await supabase.from('agent_routine_runs').insert({
-      workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running', state: { test: true, trigger: trig },
+      workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running', state: { ...mark, trigger: trig },
     }).select('id').single();
     if (error) return { ok: false, error: 'run_not_created', message: error.message };
     const save = (patch) => supabase.from('agent_routine_runs').update(patch).eq('id', run.id).then(() => null, () => null);
     (async () => {
-      await runFieldChangeAutomation(supabase, workspaceId, a, ch, { test: true, runId: run.id, onLog: (log) => save({ step_log: log }) });
+      await runFieldChangeAutomation(supabase, workspaceId, a, ch, { test: true, holdSends, runId: run.id, onLog: (log) => save({ step_log: log }) });
       const { data: row } = await supabase.from('agent_routine_runs').select('state').eq('id', run.id).maybeSingle();
-      await save({ state: { ...(row?.state ?? {}), test: true, trigger: trig } });
+      await save({ state: { ...(row?.state ?? {}), ...mark, trigger: trig } });
     })();
     return { ok: true, run_id: run.id, trigger: trig };
   }
   // A schedule tests by running now (GET-772): nothing to pick, no account.
   const scheduled = ['clock', 'manual'].includes(a.trigger_kind) && flowRunsSteps(a);
   const trigger = scheduled ? { kind: a.trigger_kind, label: 'Run now', at: new Date().toISOString(), source: null } : await latestTestTrigger(supabase, workspaceId, a, pick);
-  if (!trigger) return { ok: false, error: 'no_trigger', message: a.trigger_kind === 'call_ended' ? 'No call from this recorder yet to test with.' : a.trigger_kind === 'account_signal' ? 'No matching account signal yet to test with.' : 'Testing on a live trigger works for calls and account signals.' };
+  if (!trigger) {
+    const kinds = new Set(routineTriggers(a).map(t => t.kind));
+    const wants = [kinds.has('call_ended') && 'a call from this recorder', kinds.has('account_signal') && 'a matching account signal', DEAL_TEST_KINDS.some(k => kinds.has(k)) && 'a closed deal you can see'].filter(Boolean);
+    return { ok: false, error: 'no_trigger', message: wants.length ? `Nothing to test with yet: no ${wants.join(', or ')}.` : 'Testing on a live trigger works for calls, account signals and closed deals.' };
+  }
   const { data: run, error } = await supabase.from('agent_routine_runs').insert({
     workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running',
-    state: { test: true, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: trigger.source ?? null } },
+    state: { ...mark, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: trigger.source ?? null } },
   }).select('id').single();
   if (error) return { ok: false, error: 'run_not_created', message: error.message };
   const runId = run.id;
@@ -2572,13 +2838,13 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
   (async () => {
     try {
       if (scheduled) {
-        const row = await runScheduledFlow(supabase, workspaceId, a, { runId, onLog: (log) => save({ step_log: log }) });
-        await save({ ...row, state: { ...(row.state ?? {}), test: true, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: null } } });
+        const row = await runScheduledFlow(supabase, workspaceId, a, { runId, holdSends, test: true, onLog: (log) => save({ step_log: log }) });
+        await save({ ...row, state: { ...(row.state ?? {}), ...mark, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: null } } });
         await supabase.from('agent_routines').update({ last_run_at: new Date().toISOString() }).eq('id', a.id);
         return;
       }
       const agentCfg = (Array.isArray(a.steps) ? a.steps : []).find(st => st?.type === 'agent')?.config ?? {};
-      const stage = trigger.kind === 'call_ended' ? 'call_ended' : (trigger.signal?.kind ?? 'automation');
+      const stage = trigger.stage ?? (trigger.kind === 'call_ended' ? 'call_ended' : (trigger.signal?.kind ?? 'automation'));
       const doc = await makeArtifact(supabase, workspaceId, {
         artifact: a.artifact, entityId: agentCfg.account_id || trigger.entityId, stage, prompt: await withBoxContext(supabase, workspaceId, a, a.prompt),
         context: agentCfg.context ?? null, call: trigger.call ?? null, signal: trigger.signal ?? null,
@@ -2587,11 +2853,12 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
       await save({ document_id: doc.id });
       const out = await deliver(a, doc, {
         stage, at: trigger.at,
-        ctx: { supabase, workspaceId, entityId: trigger.entityId, dealId: null, call: trigger.call ?? null, signal: trigger.signal ?? null, runId,
-          onLog: (log) => save({ step_log: log }) },
+        ctx: { supabase, workspaceId, entityId: trigger.entityId, dealId: trigger.dealId ?? null, ...(trigger.stage ? { dealEvent: true } : {}),
+          call: trigger.call ?? null, signal: trigger.signal ?? null, runId, test: true,
+          onLog: (log) => save({ step_log: log }), ...(holdSends ? { holdSends: true } : {}) },
       });
       const row = runOutcome(out);
-      await save({ ...row, state: { ...(row.state ?? {}), test: true, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: trigger.source ?? null } } });
+      await save({ ...row, state: { ...(row.state ?? {}), ...mark, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: trigger.source ?? null } } });
       await supabase.from('agent_routines').update({ last_run_at: new Date().toISOString() }).eq('id', a.id);
     } catch (err) {
       await save({ status: 'error', error: String(err?.message ?? err).slice(0, 500) });
@@ -2753,6 +3020,7 @@ export const runOutcomeForTest = (out) => runOutcome(out);
 
 async function deliver(automation, doc, opts = {}) {
   if (Array.isArray(automation.steps) && automation.steps.length) return runSteps(automation, doc, opts);
+  if (opts?.ctx?.holdSends) return { delivered: null, reason: 'held' };
   return deliverLegacy(automation, doc, opts);
 }
 
@@ -2794,8 +3062,10 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
     // A TEST RUN IGNORES THE SWITCH. You set one up, you want to see it work, and being
     // told to enable it first — on a schedule that next fires tomorrow — is not an answer.
     .or(onlyAutomation ? `id.eq.${onlyAutomation},enabled.eq.true` : 'enabled.eq.true');
+  // A job on several signals (GET-873) listens through trigger_config.also as well as trigger_kind.
+  const listens = (a, kind) => routineListensTo(a, kind);
   const dealAutomations = (routines ?? []).filter(r =>
-    EVENT_TRIGGERS.includes(r.trigger_kind)
+    EVENT_TRIGGERS.some(k => listens(r, k))
     && (!onlyAutomation || r.id === onlyAutomation));
   if (!dealAutomations.length) return { ran: 0, skipped: 0 };
 
@@ -2822,12 +3092,13 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
   // THE DAILY PASS READS FROM THE OLDEST AUTOMATION'S BIRTH, not from 1970. A deal that
   // closed before an automation existed is skipped below anyway, so reading them was only
   // ever cost — and reading all of them is what hit the row cap and hid every new deal.
-  const outcomeBirths = dealAutomations.filter(a => a.trigger_kind === 'deal_closed_won' || a.trigger_kind === 'deal_closed_lost')
+  const wantsOutcome = (a) => listens(a, 'deal_closed_won') || listens(a, 'deal_closed_lost');
+  const outcomeBirths = dealAutomations.filter(wantsOutcome)
     .map(a => a.created_at).filter(Boolean).sort();
   const EPOCH = outcomeBirths[0] ?? new Date(0).toISOString();
-  const wantsStageMoves = dealAutomations.some(a => a.trigger_kind === 'deal_stage_changed');
-  const wantsOutcomes = dealAutomations.some(a => a.trigger_kind === 'deal_closed_won' || a.trigger_kind === 'deal_closed_lost');
-  const wantsIcp = dealAutomations.some(a => a.trigger_kind === 'icp_tier_changed');
+  const wantsStageMoves = dealAutomations.some(a => listens(a, 'deal_stage_changed'));
+  const wantsOutcomes = dealAutomations.some(wantsOutcome);
+  const wantsIcp = dealAutomations.some(a => listens(a, 'icp_tier_changed'));
   let changes = [
     // A test keeps its 90-day window so it has something recent to show; the daily pass takes
     // the lot and lets created_at and the dedupe decide.
@@ -2839,6 +3110,9 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
   // first outing wrote hundreds of documents, which is a thing you find out afterwards.
   if (onlyAccount) changes = changes.filter(c => c.entityId === onlyAccount);
   let ran = 0;
+  // One event, one run per routine, even when it matches two of the routine's triggers (a close
+  // read both as an outcome and as a stage move): the dedupe key names the account and stage only.
+  const ranThisPass = new Set();
   for (const change of changes) {
     if (ran >= (max ?? MAX_RUNS_PER_PASS)) {
       console.warn(`[automations] stopping at ${MAX_RUNS_PER_PASS} runs — ${changes.length} changes in this window looks like a recompute, not a day's news`);
@@ -2847,8 +3121,8 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
     for (const a of dealAutomations) {
       // deal_stage_changed catches every deal move; the won/lost ones only their own; an ICP
       // automation only ICP moves, and no deal automation an ICP one.
-      if (change.trigger === 'icp_tier_changed' ? a.trigger_kind !== 'icp_tier_changed'
-        : (a.trigger_kind !== 'deal_stage_changed' && a.trigger_kind !== change.trigger)) continue;
+      if (change.trigger === 'icp_tier_changed' ? !listens(a, 'icp_tier_changed')
+        : (!listens(a, 'deal_stage_changed') && !listens(a, change.trigger))) continue;
       // A DEAL THAT CLOSED BEFORE THIS AUTOMATION EXISTED IS NOT NEWS FOR IT. This is what
       // keeps the back catalogue quiet without a seeding pass: hundreds of wins closed before you
       // set the thing up, and every one of them fails this line. A test ignores it, because
@@ -2861,6 +3135,8 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
       // automation fired again, and again the night after. A deal is won once; writing it up
       // is a thing that happens once. Moving to a new stage is a new key and fires properly.
       const dedupe = change.dedupe ? `${a.id}:${change.dedupe}` : `${a.id}:${change.entityId}:${change.stage}`;
+      if (ranThisPass.has(dedupe)) continue;
+      ranThisPass.add(dedupe);
       // A test may repeat itself; the daily pass may not.
       if (!onlyAutomation) {
         const { data: seen } = await supabase.from('agent_routine_runs')
@@ -2884,7 +3160,7 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
         // leaves the part that touches somebody else's inbox unproven.
         const out = await deliver(a, doc, {
           stage: change.stage, at: change.at,
-          ctx: { supabase, workspaceId, entityId: change.entityId, dealId: change.dealId ?? null, runId: run?.id ?? null },
+          ctx: { supabase, workspaceId, entityId: change.entityId, dealId: change.dealId ?? null, dealEvent: true, runId: run?.id ?? null },
         });
         const { delivered } = out;
         await supabase.from('agent_routine_runs').update({ ...runOutcome(out), document_id: doc.id }).eq('id', run?.id);
@@ -2910,10 +3186,10 @@ export async function runAutomationDailyPoll({ sinceHours = 26, onlyAccount = nu
   // anything that lands while it is running, and a duplicate is already impossible.
   const since = new Date(Date.now() - sinceHours * 3600_000).toISOString();
   const { data: rows } = await supabase.from('agent_routines')
-    .select('workspace_id')
+    .select('workspace_id, trigger_kind, trigger_config')
     .eq('enabled', true)
-    .in('trigger_kind', EVENT_TRIGGERS);
-  const workspaces = [...new Set((rows ?? []).map(r => r.workspace_id))]
+    .or(listensToFilter(EVENT_TRIGGERS));
+  const workspaces = [...new Set((rows ?? []).filter(r => EVENT_TRIGGERS.some(k => routineListensTo(r, k))).map(r => r.workspace_id))]
     .filter(ws => !onlyWorkspace || ws === onlyWorkspace);
   if (!workspaces.length) return;
   console.log(`[automations] daily poll — ${workspaces.length} workspace(s) since ${since}`);
@@ -3252,8 +3528,10 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
   for (const [ws, signals] of byWs) {
     try {
       const readable = await teamReadableSignals(supabase, ws, signals);
-      const { data: routines } = await supabase.from('agent_routines').select('*')
-        .eq('workspace_id', ws).eq('enabled', true).eq('trigger_kind', 'account_signal');
+      // Primary or `also` (GET-873); one run per routine and conversation either way.
+      const { data: listed } = await supabase.from('agent_routines').select('*')
+        .eq('workspace_id', ws).eq('enabled', true).or(listensToFilter('account_signal'));
+      const routines = (listed ?? []).filter(a => routineListensTo(a, 'account_signal'));
       const runnable = [];
       for (const s of signals) {
         const ok = readable.has(s.id);
@@ -3272,9 +3550,10 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
         await supabase.from('account_signals').update({ processed_at: new Date().toISOString(), team_readable: ok }).eq('id', s.id);
       }
       // Each routine once per account and conversation, not once per signal (GET-834).
-      for (const a of routines ?? []) {
-        const wanted = Array.isArray(a.trigger_config?.signals) ? a.trigger_config.signals : [];
-        const mine = runnable.filter((s) => s.account_id && (!wanted.length || wanted.includes(s.kind))
+      for (const a of routines) {
+        // Every account_signal trigger of the routine, merged: null = any signal.
+        const wanted = accountSignalKinds(a);
+        const mine = runnable.filter((s) => s.account_id && (wanted === null || wanted.includes(s.kind))
           && !(a.created_at && String(s.occurred_at) < String(a.created_at)));
         for (const g of groupSignalsForRuns(mine)) {
           if (ran >= SIGNAL_RUNS_PER_PASS) break;
@@ -3318,15 +3597,17 @@ export const CALL_TRANSCRIPT_CHARS = 60_000;
 export async function runCallEndedAutomations(supabase, workspaceId, call) {
   const entityId = call?.accountId || call?.personId || null;
   if (!workspaceId || !call?.meetingId || !entityId) return { ran: 0 };
-  const { data: autos, error } = await supabase.from('agent_routines').select('*')
-    .eq('workspace_id', workspaceId).eq('enabled', true).eq('trigger_kind', 'call_ended');
-  if (error || !autos?.length) return { ran: 0 };
+  const { data: listed, error } = await supabase.from('agent_routines').select('*')
+    .eq('workspace_id', workspaceId).eq('enabled', true).or(listensToFilter('call_ended'));
+  // Primary or `also` (GET-873); the call's dedupe key keeps it one run per routine.
+  const autos = (listed ?? []).filter(a => routineListensTo(a, 'call_ended'));
+  if (error || !autos.length) return { ran: 0 };
   if (!call.nextSteps) call = { ...call, nextSteps: await loadCallNextSteps(supabase, workspaceId, call.sourceMeetingId ?? call.meetingId) };
   const recorder = String(call.source ?? '').toLowerCase();
   let ran = 0;
   for (const a of autos) {
-    const tools = (a.trigger_config?.tools ?? a.tools ?? []).map(t => String(t).toLowerCase());
-    if (tools.length && recorder && !tools.some(t => recorder.includes(t) || t.includes(recorder))) continue;
+    const tools = callRecorders(a);   // null = any recorder, merged over the routine's call_ended triggers
+    if (tools?.length && recorder && !tools.some(t => recorder.includes(t) || t.includes(recorder))) continue;
     if (await runCallAutomation(supabase, workspaceId, a, call, entityId)) ran++;
   }
   return { ran };
@@ -3352,8 +3633,30 @@ export async function loadCallNextSteps(supabase, workspaceId, meetingId) {
     .slice(0, 10);
 }
 
+/**
+ * The conversation a call is, as account signals name it (their source_ref): the recording's own
+ * `source://<recorder>/<id>`. Null when the call does not say. Pure.
+ */
+export function callConversationRef(call) {
+  if (typeof call?.sourceRef === 'string' && call.sourceRef.trim()) return call.sourceRef.trim();
+  const id = call?.sourceMeetingId ?? call?.meetingId;
+  return call?.source && id ? `source://${call.source}/${id}` : null;
+}
+
+/**
+ * A call run's dedupe key. A job that ALSO starts on account signals (GET-873) would otherwise run
+ * twice for one call: on the call, and on the signals read from it a few minutes later. So for such
+ * a job the call claims the signal path's key for this account and conversation (signalRunKey), and
+ * whichever runs first is the one run. Any other job keeps one run per call. Pure.
+ */
+export function callRunKey(a, call) {
+  const ref = callConversationRef(call);
+  if (ref && call?.accountId && routineListensTo(a, 'account_signal')) return signalRunKey(a.id, call.accountId, signalMoment({ source_ref: ref }));
+  return `${a.id}:call:${call.meetingId}`;
+}
+
 async function runCallAutomation(supabase, workspaceId, a, call, entityId) {
-  const dedupe = `${a.id}:call:${call.meetingId}`;
+  const dedupe = callRunKey(a, call);
   const { data: seen } = await supabase.from('agent_routine_runs').select('id').eq('routine_id', a.id).eq('dedupe_key', dedupe).maybeSingle();
   if (seen) return false;
   const { data: run, error: claimError } = await supabase.from('agent_routine_runs').insert({
@@ -3395,7 +3698,7 @@ function fieldChangeSignal(cfg, ch, entityId) {
 }
 
 /** One change, one run: with the account when we know it, else from the change alone. */
-export async function runFieldChangeAutomation(supabase, workspaceId, a, ch, { test = false, runId: given = null, onLog = null } = {}) {
+export async function runFieldChangeAutomation(supabase, workspaceId, a, ch, { test = false, holdSends = false, runId: given = null, onLog = null } = {}) {
   const cfg = a.trigger_config ?? {};
   const dedupe = `${a.id}:hs:${ch.objectId}:${cfg.property}:${ch.at}`;
   let runId = given;
@@ -3417,11 +3720,11 @@ export async function runFieldChangeAutomation(supabase, workspaceId, a, ch, { t
         context: agentCfg.context ?? null, signal, runId, agentStep: agentStepOf(a), format: formatOf(a),
       });
       docId = doc.id;
-      out = await deliver(a, doc, { stage: 'hubspot_field_changed', at: ch.at, ctx: { supabase, workspaceId, entityId, dealId: null, signal, runId, onLog } });
+      out = await deliver(a, doc, { stage: 'hubspot_field_changed', at: ch.at, ctx: { supabase, workspaceId, entityId, dealId: null, signal, runId, onLog, ...(holdSends ? { holdSends: true } : {}), ...(test ? { test: true } : {}) } });
     } else {
       // A record we hold no account for (a custom object, a company not synced yet): the steps
       // run from the change itself.
-      out = await runSteps(a, null, { stage: 'hubspot_field_changed', at: ch.at, ctx: { supabase, workspaceId, entityId: null, dealId: null, signal, runId, onLog, writeAllInLoop: true, seedData: [{ step: 0, label: 'HubSpot', text: signal.content }] } });
+      out = await runSteps(a, null, { stage: 'hubspot_field_changed', at: ch.at, ctx: { supabase, workspaceId, entityId: null, dealId: null, signal, runId, onLog, writeAllInLoop: true, seedData: [{ step: 0, label: 'HubSpot', text: signal.content }], ...(holdSends ? { holdSends: true } : {}), ...(test ? { test: true } : {}) } });
     }
     await supabase.from('agent_routine_runs').update({ ...runOutcome(out), ...(docId ? { document_id: docId } : {}) }).eq('id', runId);
     if (!test) await supabase.from('agent_routines').update({ last_run_at: new Date().toISOString() }).eq('id', a.id);
@@ -3434,17 +3737,21 @@ export async function runFieldChangeAutomation(supabase, workspaceId, a, ch, { t
 }
 
 /** Every few minutes: each enabled field-change automation, the changes in the last half hour, one run each. */
-export async function processHubspotFieldChanges({ onlyWorkspace = null, supabase: given = null, now = Date.now() } = {}) {
+export async function processHubspotFieldChanges({ onlyWorkspace = null, supabase: given = null, now = Date.now(), readChanges = hubspotFieldChanges } = {}) {
   const supabase = given ?? getSupabaseClient();
-  let q = supabase.from('agent_routines').select('*').eq('enabled', true).eq('trigger_kind', 'hubspot_field_changed');
+  let q = supabase.from('agent_routines').select('*').eq('enabled', true).or(listensToFilter('hubspot_field_changed'));
   if (onlyWorkspace) q = q.eq('workspace_id', onlyWorkspace);
   const { data: routines, error } = await q;
   if (error || !routines?.length) return { ran: 0 };
   let ran = 0;
   for (const a of routines) {
-    const r = await hubspotFieldChanges(supabase, a.workspace_id, a.trigger_config ?? {}, { since: now - FIELD_CHANGE_WINDOW_MS });
-    if (!r.ok) { console.warn(`[hubspot-field] ${a.name}: ${r.reason}`); continue; }
-    for (const ch of r.changes.slice(0, 50)) if (await runFieldChangeAutomation(supabase, a.workspace_id, a, ch)) ran++;
+    // Each watched field of the routine (primary or `also`, GET-873) is its own event; the run's
+    // dedupe key names the record, field and moment, so one change still runs once.
+    for (const cfg of triggerConfigsFor(a, 'hubspot_field_changed')) {
+      const r = await readChanges(supabase, a.workspace_id, cfg, { since: now - FIELD_CHANGE_WINDOW_MS });
+      if (!r.ok) { console.warn(`[hubspot-field] ${a.name}: ${r.reason}`); continue; }
+      for (const ch of r.changes.slice(0, 50)) if (await runFieldChangeAutomation(supabase, a.workspace_id, { ...a, trigger_config: cfg }, ch)) ran++;
+    }
   }
   return { ran };
 }

@@ -40,9 +40,11 @@ export const STEP_TYPES = new Set([
   'agent', 'hubspot', 'gmail', 'slack', 'email', 'webhook', 'only_if', 'wait', 'approval',
   // A RevBox job's last step (GET-868): the box's destinations at run time. Added by the Job Builder.
   'revbox_delivery',
+  // A RevBox job's tables (GET-874): add the AI step's row to a box dataset, read a window of rows back.
+  'dataset_append', 'dataset_read',
 ]);
 /** Steps only the system writes: never offered on the public API, never accepted from it. */
-export const INTERNAL_STEP_TYPES = new Set(['revbox_delivery']);
+export const INTERNAL_STEP_TYPES = new Set(['revbox_delivery', 'dataset_append', 'dataset_read']);
 
 const MAX_STEPS = 20;
 const MAX_FLOW_BYTES = 60_000;

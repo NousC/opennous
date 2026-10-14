@@ -36,7 +36,8 @@ read, ask the time, and warn if the HubSpot connection cannot read custom object
 5. `proposal`: the UI shows the workflow card with **Approve** and **Make changes**.
 6. Approve: `POST /api/revboxes/:id/builder/:sessionId/approve` creates the job and switches it on,
    or updates the job (an Edit) keeping it on or paused as it was -> `{ routine, enabled, reason?,
-   facts?, warnings? }`. `warnings` (kind `mailbox_owner`, also in the session proposal's `warnings`)
+   facts?, warnings?, datasets?, next_session_id?, next_jobs? }` (the last three: GET-874, "Builder
+   integration" under Datasets). `warnings` (kind `mailbox_owner`, also in the session proposal's `warnings`)
    names a box Gmail draft destination whose mailbox belongs to someone other than the approver, who
    owns the job from now on: its drafts would fail. The save is never refused for it. There is no separate "switch on" step and no
    "Run now"; the job row keeps a small On/Off switch for pausing (`PUT /api/revboxes/:id/jobs/:jobId/enabled`).
@@ -55,7 +56,13 @@ call) and `history` is `[{ role: "assistant", text: "Edited from <job>'s approve
 card]`. The last `propose_job` input becomes the approved proposal and is answered "approved, reopened
 to change it" (so the next turn is valid Anthropic format), and `proposal` is the approved one. The UI shows `history` above the
 input; the user's next message continues that session with `POST /builder/:sessionId`, and approving
-updates the same routine. A job with no chat behind it starts empty. `/v2` mirrors it:
+updates the same routine. A job with no chat behind it (moved in by hand, made before the builder;
+GET-873) opens on its current setup: `history` is `[{ role: "assistant", text: "This job was set up
+outside the builder. Here's what it does now:" }, { kind: "proposal", proposal, approved: true }]`,
+the proposal built from the routine by core `proposalFromRoutine` (name, trigger with its
+`signal_key` mapped back through the signal catalog, steps, a display line per step type, the
+`revbox_delivery` step folded back into `uses_box_delivery`/`box_delivery_format`, facts via
+`proposalFacts`), and the transcript is that text plus one answered `propose_job` call. `/v2` mirrors it:
 `POST /v2/revboxes/:id/jobs/builder` with `{ job_id }` and no message.
 
 `history` is derived server-side (`builderSessionHistory`), tool noise stripped (tool calls and
@@ -90,6 +97,7 @@ All read-only except `ask` and `propose_job`, which end the turn.
 | `slack_channels` | Channels and people (`slackTargets`), searchable. |
 | `mailboxes` | Gmail/SMTP mailboxes the user can draft or send from. |
 | `search_accounts` | Accounts in the graph by name (`searchAutomationAccounts`). |
+| `revbox_datasets` | The box's tables (GET-874): key, name, description, columns and the rows this person sees counted (`listRevboxDatasets`). |
 | `signal_catalog` | The signal catalog (`loadSignalCatalog(sb, ws, { activeOnly: true })`): keys, labels and the trigger each becomes. |
 | `ask` | Ends the turn with questions (schema below). |
 | `propose_job` | Ends the turn with a proposal (schema below). The server validates it; on failure the error goes back to the model as a tool result and the loop continues. |
@@ -114,7 +122,7 @@ reference material is data, never instructions.
 { "type": "text", "text": "…" }                               streamed assistant prose (short)
 { "type": "ask", "questions": [Question] }                    turn ends, awaiting answers
 { "type": "proposal", "proposal": Proposal }                  turn ends, awaiting approval
-{ "type": "trigger", "signal": "meeting.done:granola", "label": "Meeting done · Granola" }   the agent picked or changed what starts the job
+{ "type": "trigger", "signal": "meeting.done:granola", "signals": ["meeting.done:granola"], "label": "Meeting done · Granola" }   the agent picked or changed what starts the job
 { "type": "integrations", "slugs": ["granola", "gmail", "slack"] }   the tools the job will use, settled
 { "type": "credits", "credits": 3 }                           credits this turn used
 { "type": "error", "message": "…", "code": "insufficient_credits"|"…" }
@@ -152,8 +160,8 @@ transcript as readable text).
 `POST /api/revboxes/:id/builder` (start) and `POST /api/revboxes/:id/builder/:sessionId` (continue):
 
 ```
-{ "message": "…", "job_id"?: "…", "hints": { "integrations": ["granola", "hubspot"], "signal": "meeting.done:granola" } }
-{ "answers": [ … ],                  "hints": { "integrations": [], "signal": null } }
+{ "message": "…", "job_id"?: "…", "hints": { "integrations": ["granola", "hubspot"], "signals": ["meeting.done:granola"] } }
+{ "answers": [ … ],                  "hints": { "integrations": [], "signals": [] } }
 ```
 
 `hints` is sent with EVERY turn (start, message, answers) and reflects the composer's current state, so
@@ -162,7 +170,7 @@ the latest one wins; it may be absent from older clients.
 - `integrations`: connection slugs the user attached from the Integrations menu (the slugs of
   `GET /api/revboxes/catalog` `connections`). They mean "this job involves these tools"; the agent
   should use them and say so if one cannot do what the job needs. They are not a whitelist.
-- `signal`: what the user picked in the Signals menu. A catalog key, `"schedule"` when the user picked
+- `signals` (older clients: `signal`): what the user picked in the Signals menu, catalog keys. A catalog key, `"schedule"` when the user picked
   "No signal (scheduled)" explicitly, or `null` when nothing was picked (the agent decides; most
   likely a schedule). A picked signal is authoritative: the proposal's trigger is
   `triggerForSignal(signal, catalog)` unless the user's words clearly contradict it, in which case the
@@ -185,6 +193,30 @@ catalog)` -> `{ kind, config }` (null for an unknown or archived key; no key = `
 | `signal.<kind>` for every kind in `SIGNAL_LABEL` | `account_signal`, config `{ signals: [kind] }` |
 | `custom.<key>` (workspace signal) | `account_signal`, config `{ signals: ['custom_<definition id>'] }` (the kind publishCustomSignal writes) |
 | `schedule` | `clock` (the agent fills frequency/at/timezone) |
+
+### Several signals on one job (GET-873)
+
+A job can start on several signals (Deal won and Deal lost) and runs once per matching event, also
+when one event matches two of them. No migration: `agent_routines.trigger_kind` is the primary kind
+(the first key's), the other kinds ride in `trigger_config.also: [{ kind, config }]`, and
+`trigger_config.signal_keys` keeps the catalog keys for display and round-trip.
+`triggersForSignals(keys, catalog)` -> `{ trigger_kind, trigger_config }` merges keys of one kind
+(two account signals = one `signals` list, two recorders = one `tools` list, plain `meeting.done`
+wins); `signalKeysProblem` refuses unknown keys and a schedule combined with signals;
+`signalsLabel` reads "When a deal is won or lost". Core `routineTriggers.mjs` is what every runner
+uses (`listensToFilter` for the query, `triggerConfigsFor` / `accountSignalKinds` / `callRecorders` /
+`beforeMeetingOffset` to decide); a clock never carries `also`. The builder's `set_trigger` takes
+`{ signals: [keys] }` (or `{ signal }`), a proposal carries `trigger.signal_keys`, the `trigger` event
+carries `signals` (with `signal` = the first), and `hints.signals` replaces `hints.signal` (still
+accepted). The composer's Signals menu is multi-select; "On a schedule" is exclusive.
+
+One conversation, one run: a job on a call (`call_ended`) AND on account signals would otherwise run
+twice for one call, once when the call ends and once on the signals read from it. For such a job the
+call's run claims the signal path's key for that account and conversation (core `callRunKey`:
+`signalRunKey(job, account, "ref:" + the recording's source_ref)`, the `source://<recorder>/<id>` the
+call's signals carry; the worker passes it as `call.sourceRef`), so whichever comes first is the one
+run, and the signal path's per-account cooldown sees the call run too. A job on calls only keeps
+`<job>:call:<meeting id>`.
 
 Workspace signals live in Settings > Signals and `/api/signals` (catalog, list, create, edit/review,
 archive, reprocess); they belong to the workspace, a RevBox only records where one was proposed.
@@ -259,12 +291,33 @@ references point at earlier steps; `display` covers every step.
   the caller's own mailbox, webhook `{ kind, url }` https and a public host). The kind never changes
   there; the routine is saved with `edited_by` and the database versions it (automation_versions).
   -> `{ job_deliveries }`. A DM or SMTP step (`editable: false`) is changed in the chat.
-- It also returns (GET-872) `people` (owner and members with `avatar_url` from users.profile_picture_url),
-  `run_accounts: [{ id, name, domain, runs }]` (accounts the box's runs touched in 30 days: a routine
-  run's entity_id, its document's subject and about/mentions links, a legacy run's account_ids; a
-  person or deal counts for its company; viewer-visible only) with `run_accounts_total`,
-  `run_accounts_runs` and `run_accounts_linked` (false = the runs name no account), and
-  `builtin_jobs` / `builtin_taken` (below). `GET /:id/graph?source=runs` graphs the run accounts.
+- It also returns (GET-872) `people` (owner and members with `avatar_url` from users.profile_picture_url)
+  and `builtin_jobs` / `builtin_taken` (below). The rail's Accounts card (GET-873) is "Selected
+  accounts · N", N = `GET /:id/accounts` `count` (the box's scope as core `revboxScopedAccounts`
+  resolves it: selected ids or the saved filter, viewer-visible only); it opens
+  `/accounts?revbox=<id>`, the Accounts list filtered server-side by `GET /api/companies/list?revbox=<id>`
+  (same resolution and access checks; returns `revbox: { id, name }` for the "RevBox: <name> ×" chip).
+  `GET /:id/graph?source=runs` still graphs the accounts in the box's recent runs (`revboxRunAccounts`).
+- **Test** (GET-873): `POST /api/revboxes/:id/jobs/:jobId/test` (box edit rights, credit gate) runs a
+  routine job once now on real data via core `startTestRun(..., { holdSends: true })`: read and AI
+  steps run and are metered as a normal run; every Slack post, email, Gmail draft or send, webhook,
+  HubSpot write and box delivery is HELD (runSteps' `ctx.holdSends`): its log line is status `held`
+  with "Would post to #channel" / "Would draft to x@…" and its preview rows, and nothing waits for
+  approval. The run's state is `{ test: true, held: true }`; Results rows carry `test`, `held` and
+  `held_actions: [{ step, text, rows }]` and show a "Test" tag. A scheduled run's output is its AI
+  step's document (from the step log when the run row has none).
+  Add to table is held too, in this Test AND in every other test run (the box's Run now and the
+  automations editor's test, `ctx.test`, which still send for real): the row is shaped (one metered
+  call when needed) and shown as "Would add a row to <table>" with its "Label: value" preview rows,
+  and nothing is inserted, so a test row never takes the dedupe key the real event needs and never
+  shows up in a report or the Results table.
+  What a Test runs on: the newest real event across EVERY trigger of the job, its primary and its
+  `trigger_config.also` ones (core `latestTestTrigger`): the latest call from its recorders, the latest
+  matching account signal, or the latest closed deal (won and/or lost as its triggers say; on an
+  account; visible to the job's owner through `revbox_visible_accounts`, none without it; one per
+  account and outcome). A deal Test runs on that deal like the daily pass (stage `closed_won` /
+  `closed_lost`, the deal id in the run). `testTriggers` lists closed deals for a deal-primary job
+  (ids `deal:<account>:<won|lost>`).
 - Results tab shows the routine runs (`agent_routine_runs`) for the box's jobs, with credits, as a
   compact list; a failed run carries `failure: { text, fix }` (the failed step's words, with Connect
   or Reconnect to /integrations for a connection). `POST /:id/results/:runId/decide { approve }`
@@ -276,6 +329,133 @@ references point at earlier steps; `display` covers every step.
   Listing one changes nothing about how it runs. The detail returns each with `drafts_30d` and
   `last_draft_at` (follow_ups for the after-call follow-up; ri_recommendations category
   'automation', rec_key automation.<detector> for the rest). Without the column it is empty.
+
+## Datasets (GET-874)
+
+A dataset is a table a box's jobs keep. Reference case, "Closed won/lost analysis": job 1, on a deal
+won or lost, analyses the deal against the box's context (an uploaded ICP file) and adds one row; job 2,
+monthly, reads last month's rows and writes the win/loss report (a run document, opened in Results;
+Slack through box delivery, optional); job 3, quarterly, reads the quarter's rows and writes the review.
+
+- Migration `2026_10_14_revbox_datasets.sql`: `revbox_datasets(id, workspace_id, revbox_id, key, name,
+  description, columns, created_by, created_at, updated_at)`, key unique per box (`^[a-z][a-z0-9_]{0,62}$`),
+  FK (revbox_id, workspace_id) -> revboxes cascade; `revbox_dataset_rows(id, dataset_id, workspace_id, data,
+  entity_id, source_run_id, source_job_id, dedupe_key, created_at)`, UNIQUE(dataset_id, dedupe_key) (NULLs
+  never collide), index (dataset_id, created_at desc, id desc). Service role only.
+- Columns: ordered `[{ key, label, type: text|number|date|boolean|enum, options?, description? }]`, 1-30,
+  keys slugged and unique, an enum has 1-50 options. Core `normalizeDatasetColumns`.
+- Core (`@nous/core`): `db/revboxDatasets.mjs` (`createRevboxDataset`, `updateRevboxDataset`,
+  `getRevboxDataset`, `listRevboxDatasets`, `listDatasetRows`, `exportDatasetCsv`, `appendDatasetRow`,
+  `readDatasetRowsForRun`, `datasetForBox`, `visibleDatasetRows`) and `services/datasetFormats.mjs` (pure:
+  columns, coercion, the AI row instruction and parse, windows, the compact table, CSV).
+- Access: the box's. Any member who can open it reads; owner or editor creates and changes (a key never
+  changes: jobs read it by key; a removed column stops showing, rows keep their data). A row whose
+  `entity_id` is an account, person or deal the viewer cannot see is hidden (`viewerVisibleAccountSet`, a
+  deal counts as its company); counts, pages and the CSV follow the same rule.
+
+### Steps (workflow engine, RevBox jobs only; `INTERNAL_STEP_TYPES`, never on `/v2/workflows`)
+
+- `dataset_append` `{ dataset_key, dedupe_from?: 'deal'|'account'|'none' }`: the previous AI step's output
+  as one row. An AI step written in the run (a digest) gets `datasetRowInstruction` (the row's JSON
+  shape, `{ row, summary }`) as its output instruction, like a Slack layout, and its document keeps the
+  summary and "Label: value" lines. Words not written as JSON (a deal's account brief from the event
+  runner) are shaped by one metered call (`automation-run:<run>:dataset:<step>`). Values are coerced to the
+  column types; unknown keys dropped. `entity_id` = the event's deal, else its account; source run and job
+  recorded. Dedupe (default `deal`): `deal` keys by the deal only when the run has one,
+  `deal:<deal id>:<stage>`; a deal run with no deal id (a close read from the stage history) keys
+  `account:<id>:<stage>`; any other run keys by its event (core `datasetEventKey`): `call:<meeting id>`,
+  `signal:<signal id>:<conversation>` (a field change's id names the record, field and moment), else
+  `run:<run id>`, so a "log every call" table keeps every call. `account` = `account:<id>`; `none` = no key.
+  A test run never adds a row (see Test).
+- `dataset_read` `{ dataset_key, window: last_7_days|last_30_days|last_month|last_quarter|all, limit (≤500, 200) }`:
+  the rows added in the window (calendar months and quarters in UTC), as the job's owner sees them
+  (`revbox_visible_accounts`; without it rows about accounts are left out), as a compact table in the step
+  data (the next AI step reads it; also `{{steps.<id>.output}}`). It is a Read step: the AI step after it
+  writes in the run.
+- Both stop with words when the routine is not a box job, the key is unset, or the box has no such dataset.
+
+### API (box access as above; key = the dataset key)
+
+```
+GET  /api/revboxes/:id/datasets                      -> { datasets: [Dataset & { row_count, row_count_capped, last_added_at }] }
+POST /api/revboxes/:id/datasets   { name, columns, key?, description? }  -> 201 { dataset }   (editors; 409 on a taken key)
+PUT  /api/revboxes/:id/datasets/:key   { name?, description?, columns? } -> { dataset }      (editors)
+GET  /api/revboxes/:id/datasets/:key/rows?cursor=&limit=(≤200)&window=&from=&to=&q=  -> { dataset, rows: [{ id, data, entity_id, source_run_id, source_job_id, created_at }], next_cursor }
+GET  /api/revboxes/:id/datasets/:key/export.csv?window=&q=   -> text/csv (≤10,000 rows; the columns, Added, Source run)
+```
+
+Rows come newest first; `q` keeps rows where every word appears in a value. The Results tab has a Runs |
+Datasets segment: each dataset as a row (name, rows, last added), opening a table (sticky header, typed
+values, search, Load more, Export CSV), each row linking to the run that added it.
+
+### Builder integration (GET-874 follow-up)
+
+One chat in a "Closed won/lost analysis" box sets up all three jobs of the reference case.
+
+- Tool `revbox_datasets` (read-only): the box's tables, key, name, description, columns, row count (the
+  rows the person sees), through `listRevboxDatasets`. The prompt has the agent call it before a job that
+  adds to or reads a table, and use an existing table by its key.
+- Proposal fields: `datasets: [{ key?, name, description?, columns }]` (at most 5) is the tables this job
+  needs that the box does not have; a missing key is the name slugged. `next_jobs: [name]` (at most 5,
+  120 chars each) is the jobs still to set up in this chat after this one.
+- `validateBuilderProposal` takes `datasets` (the box's tables, `[{ key, name }]`; null = shape only)
+  and returns the checked `datasets` (`{ key, name, description, columns, exists }`). It accepts
+  `dataset_append` (`dedupe_from` deal|account|none) and `dataset_read` (a window from `DATASET_WINDOWS`,
+  `limit` 1-500): a well-formed key that the box has or the proposal creates; an AI step somewhere before
+  an append, and after a read; `{{steps.<read>.output}}` is allowed (a read writes the table). Proposed
+  columns go through `normalizeDatasetColumns`; a key proposed twice is refused.
+- Facts (server-built, never from `display`): `dataset_append` -> `{ action: 'append', dataset_key,
+  dataset (name), new_dataset, dedupe_from, target: 'Add a row to the table "Win/loss deals"
+  (win_loss_deals, new), one per deal' }`; `dataset_read` -> `{ action: 'read', ..., window, target }`.
+  The table's name is the box's own, or the one the proposal creates under that key. Display tools are
+  `dataset_append` / `dataset_read` (or `dataset`); another tool on a table step is refused.
+- The card (WorkflowCard): tile title from the step type ("Add to table", "Read table"), a table icon,
+  subtitle the table name from the fact (" · new" for a table this approval creates; the window for a
+  read). A proposal with `next_jobs` shows one muted line "Then in this chat: Monthly … · Quarterly …".
+- Approve (core `approveBuilderProposal`) reads the box's tables itself, validates with them, claims the
+  session, creates every proposed table that the box does not have with `createRevboxDataset` (explicit
+  key), THEN writes the routine, so each step's `dataset_key` resolves. A key the box has is reused as it
+  is (name and columns never change; a 409 race is a reuse too). It returns `datasets: [{ key, name,
+  created }]`. A failure reopens the session as before; a table already created stays (the next approval
+  reuses it).
+- Edit of a job made outside the builder (`proposalFromRoutine`) names table steps from their type and key.
+
+#### Chaining several jobs in one chat
+
+Design: **approve continues the chat in a new session**. When the approved proposal has `next_jobs`,
+core `approveBuilderProposal` also inserts a new open session for the same person on the same box,
+`job_id` null, seeded with this chat's transcript (same person, same moment, so the transcript is
+carried as it is) whose last `propose_job` is answered with `chainedNote` ("The user approved this
+proposal; it is now a live job. It is saved as … The box has these tables now: win_loss_deals (…) …
+Jobs still to set up in this chat: … Set up the next one as a NEW job …"). Approve returns
+`next_session_id` and `next_jobs` (both doors: `approveBody` and `/v2` pass them, with `datasets`). The
+approved session stays the first job's (its Edit chat); the next proposal approves into a new routine, and
+that session becomes the second job's Edit chat. `builderSessionHistory` shows an earlier job answered with
+the chained note as approved, and `sanitizeBuilderTranscript` keeps that note. If inserting the session
+fails, the approval still stands and nothing chains.
+
+Why this and not one session making several jobs: a session is one job everywhere else (approve links
+`job_id`, Edit reopens "the chat that made it", approve's claim makes a double click one job). A follow-on
+session keeps all of that true with no migration and no new route, and the model keeps the whole
+conversation (and the prompt cache prefix).
+
+The app (JobBuilder): when approve answers `next_session_id`, the card turns Approved, the page refreshes
+its jobs without closing the builder (`onSaved`), the composer's signal chips are cleared (the next job,
+a report, is on a schedule, not on the first job's deal signals), and the chat sends "Approved. Now set up
+the next job: <name>." to the new session itself. That turn is an ordinary builder turn: gated and
+metered like any other. Without `next_session_id` approve closes the builder as before. Over `/v2`, the
+client posts its next message with `session_id: next_session_id`.
+
+The prompt: "add a row to a table / keep a log of closed deals / track every won and lost deal" means a
+`dataset_append` after the AI step that writes the row (`revbox_datasets` first; a new table only when none
+fits); a report "from that table" is a schedule job with `dataset_read` (last_month monthly, last_quarter
+quarterly) and an AI step; several jobs in one request are proposed one at a time, the first (the one that
+creates the table) listing the rest in `next_jobs`. Event triggers still never ask for a time.
+
+Preview (`apps/frontend/preview/revboxes.mjs`, script `winloss`): "analyse every closed deal into a table,
+then monthly and quarterly reports" reads the tables, starts on Deal won + Deal lost, proposes the analysis
+job (with the table when the box has none, reusing it in the seeded "Closed won/lost analysis" box), and
+each approval answers `next_session_id`, whose session proposes the monthly report, then the quarterly one.
 
 ## Workspace plan rollout (GET-864)
 
@@ -346,13 +526,13 @@ the card reads "#channel · Report layout". A box destination can carry its own 
 createBuilderSession(sb, { workspaceId, revboxId, userId, jobId = null })      // -> session row; checks edit rights via loadRevbox
 getBuilderSession(sb, { workspaceId, userId, sessionId })                      // -> session row or null; same access check
 saveBuilderSession(sb, { workspaceId, sessionId, messages, proposal, state }) // -> void
-approveBuilderProposal(sb, { workspaceId, revboxId, userId, sessionId, proposal, mailboxOwners?, enableCheck? }) // -> { routine, facts, enabled, reason?, warnings? } ; validates, creates or updates agent_routines, a new job on (an Edit keeps on/paused) unless a check fails, marks the session approved and links it to the job
+approveBuilderProposal(sb, { workspaceId, revboxId, userId, sessionId, proposal, mailboxOwners?, enableCheck? }) // -> { routine, facts, enabled, reason?, warnings?, datasets?, next_session_id?, next_jobs? } ; validates, creates the proposed tables, creates or updates agent_routines, a new job on (an Edit keeps on/paused) unless a check fails, marks the session approved and links it to the job; with next_jobs, opens the follow-on session
 latestBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId, approvedOnly? }) // -> the job's newest session (messages sanitized) or null; box edit rights (any editor)
 sanitizeBuilderTranscript(messages, { keepText, approved })                    // pure; no tool_result bodies, no thinking; keepText false = the approved proposal only
 openBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId })          // -> { session, history, source_session_id } ; Edit
 builderSessionHistory(messages, { proposal, approved })                        // pure; transcript -> history items
 listRevboxRoutines(sb, { workspaceId, revboxId, userId })                      // -> routines of the box (access-checked)
-validateBuilderProposal(proposal, { slackChannelIds, mailboxIds })             // pure; -> { ok, errors[] } ; used by both
+validateBuilderProposal(proposal, { slackChannelIds, mailboxIds, datasets? })   // pure; -> { ok, errors[], facts, steps?, trigger?, datasets? } ; used by both
 ```
 
 Rules for everyone: no prod access, no migrations applied anywhere but a local scratch database, no

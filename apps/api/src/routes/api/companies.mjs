@@ -10,13 +10,13 @@ import {
   computeAccountHealth, selectNextStep, loadEngagementActivity, loadAccountHealthTrend,
   getAccountRecord, fetchEntityOverlays, applyCompanyOverlay,
   getRelationshipOwners, getWorkspaceMemberProfiles, effectiveOwnerUserId, accountOwnerIds,
-  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal,
+  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, revboxScopedAccounts,
 } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { intelTopicsFor } from '../../lib/intelTopics.mjs';
 import { loadIntelTimeline, timelineDays } from '../../lib/intelTimeline.mjs';
 import { auditFromReq } from '../../lib/audit.mjs';
-import { getVisibilityScope, memberVisibleAccounts, entityVisibleToMember } from '../../lib/visibility.mjs';
+import { getVisibilityScope, memberVisibleAccounts, entityVisibleToMember, viewerVisibleAccountSet } from '../../lib/visibility.mjs';
 import { hasListRows, listRows, facesForAccounts, listDealRows, accountCountries, dealValueByCompany } from '../../lib/listRows.mjs';
 import { dealVerdict, stalePipeline } from '../../lib/dealSignals.mjs';
 import { listAccountDeals, getAccountDeal, withDealPipelines, readPrimaryPipelineRef, ACCOUNT_DEAL_ID } from '../../lib/accountDeals.mjs';
@@ -30,6 +30,46 @@ import { markCompanyClient } from './contacts.mjs';
 import { latestStages, lifecycleDeptScope, wonCompanyIds, ownerDeptForCompany } from './lifecycle.mjs';
 
 export const companiesApiRouter = Router();
+
+/** /list's account rows (entity_list_rows) as the page reads them, with faces, deal value and CS status. */
+async function accountRowsOut(supabase, workspaceId, rows) {
+  const [faces, dealValues, csBags] = await Promise.all([
+    facesForAccounts(supabase, workspaceId, rows.map(r => r.entity_id)),
+    dealValueByCompany(supabase, rows.map(r => r.entity_id)),
+    csBagsFor(supabase, workspaceId, rows.map(r => r.entity_id)),
+  ]);
+  return rows.map(r => {
+    const cs = csBags.get(r.entity_id) ?? null;
+    return {
+      id: r.entity_id, name: r.name, domain: r.domain, industry: r.industry ?? null,
+      icp_score: r.icp_score, deal_health_score: r.deal_health,
+      people_count: r.people_count, people: faces.get(r.entity_id) ?? [],
+      open_deals: r.open_deals, pipeline_value: r.pipeline_value, won_value: r.won_value,
+      // What the implied deal is worth, when someone has said. CRM deals carry their own
+      // amount in the deals payload; this is the account that has no CRM deal.
+      deal_value: dealValues.get(r.entity_id) ?? null,
+      last_activity_at: r.last_activity_at, lifecycle_stage: null,
+      activity_count: 0, meeting_count: 0,
+      // Already on the row listRows read and dropped here until the redesign asked for them.
+      // owner_name is the AE (the account's CRM owner), selected once the ownership columns exist.
+      owner_name: r.owner_name ?? null, country: r.country ?? null,
+      // Whether the CRM calls them a customer, in its own words (cs.status), and what they pay.
+      customer_status: customerStatusOf(cs), mrr: numOrNull(cs?.mrr),
+    };
+  });
+}
+
+/**
+ * One page of a RevBox's scoped accounts (GET-873): searched by name or domain, newest activity
+ * first (ties by id, so paging is stable), -> { ids, total }. Pure.
+ */
+export function revboxAccountPage(accounts, { q = '', limit = 200, offset = 0 } = {}) {
+  const needle = String(q ?? '').trim().toLowerCase();
+  const list = (Array.isArray(accounts) ? accounts : []).filter(a => !needle || `${a.name ?? ''} ${a.domain ?? ''}`.toLowerCase().includes(needle));
+  const t = (a) => (a.last_activity_at ? Date.parse(a.last_activity_at) || 0 : -1);
+  list.sort((a, b) => t(b) - t(a) || String(a.id).localeCompare(String(b.id)));
+  return { ids: list.slice(offset, offset + limit).map(a => a.id), total: list.length };
+}
 
 /** The CRM's owner names on an account's deals, open deals first, as the shape `owners` uses. */
 async function crmOwnersOfAccount(supabase, workspaceId, companyId, memberProfiles) {
@@ -248,6 +288,35 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const q = String(req.query.q ?? '').trim();
+    // ?revbox=<id> (GET-873): only the accounts in that RevBox's scope, resolved by core exactly as
+    // the box resolves it (its selected ids or saved filter), with the box's own access check and the
+    // viewer's account visibility. The box's scope replaces the market and owner filters.
+    const revboxId = String(req.query.revbox ?? '').trim();
+    if (revboxId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revboxId)) return res.status(400).json({ error: 'Invalid RevBox identifier.' });
+      let scoped;
+      try {
+        const set = await viewerVisibleAccountSet(supabase, workspaceId, req.internalUserId, { isAdmin: req.viewerScope === 'admin' });
+        scoped = await revboxScopedAccounts(supabase, workspaceId, req.internalUserId, revboxId, set.unrestricted ? null : set.ids);
+      } catch (e) {
+        if (e.status) return res.status(e.status).json({ error: e.message });
+        throw e;
+      }
+      const page = revboxAccountPage(scoped.accounts, { q, limit, offset });
+      const rows = [];
+      for (let i = 0; i < page.ids.length; i += 100) {
+        const chunk = page.ids.slice(i, i + 100);
+        rows.push(...(await listRows(supabase, workspaceId, 'account', { limit: chunk.length, refine: (qq) => qq.in('entity_id', chunk) })).rows);
+      }
+      const at = new Map(page.ids.map((id, i) => [id, i]));
+      rows.sort((a, b) => at.get(a.entity_id) - at.get(b.entity_id));
+      return res.json({
+        companies: await accountRowsOut(supabase, workspaceId, rows),
+        total: page.total, limit, offset, q: q || null, country: null, focus_country: null, countries: [],
+        revbox: { id: scoped.box.id, name: scoped.box.name ?? 'RevBox' },
+      });
+    }
+
     // `scope=mine|team` (optional): see /deals above. Asked before either path, because "mine"
     // for a viewer we cannot place is an empty page on both.
     const scope = readScope(req.query.scope);
@@ -286,31 +355,8 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
         const { companyIds } = await memberVisibleAccounts(supabase, workspaceId, vis.viewerUserId);
         visible = rows.filter(r => companyIds.has(r.entity_id));
       }
-      const [faces, dealValues, csBags] = await Promise.all([
-        facesForAccounts(supabase, workspaceId, visible.map(r => r.entity_id)),
-        dealValueByCompany(supabase, visible.map(r => r.entity_id)),
-        csBagsFor(supabase, workspaceId, visible.map(r => r.entity_id)),
-      ]);
       return res.json({
-        companies: visible.map(r => {
-          const cs = csBags.get(r.entity_id) ?? null;
-          return {
-            id: r.entity_id, name: r.name, domain: r.domain, industry: r.industry ?? null,
-            icp_score: r.icp_score, deal_health_score: r.deal_health,
-            people_count: r.people_count, people: faces.get(r.entity_id) ?? [],
-            open_deals: r.open_deals, pipeline_value: r.pipeline_value, won_value: r.won_value,
-            // What the implied deal is worth, when someone has said. CRM deals carry their own
-            // amount in the deals payload; this is the account that has no CRM deal.
-            deal_value: dealValues.get(r.entity_id) ?? null,
-            last_activity_at: r.last_activity_at, lifecycle_stage: null,
-            activity_count: 0, meeting_count: 0,
-            // Already on the row listRows read and dropped here until the redesign asked for them.
-            // owner_name is the AE (the account's CRM owner), selected once the ownership columns exist.
-            owner_name: r.owner_name ?? null, country: r.country ?? null,
-            // Whether the CRM calls them a customer, in its own words (cs.status), and what they pay.
-            customer_status: customerStatusOf(cs), mrr: numOrNull(cs?.mrr),
-          };
-        }),
+        companies: await accountRowsOut(supabase, workspaceId, visible),
         total, limit, offset, q: q || null,
         country, focus_country: wsRow?.focus_country ?? null, countries: await accountCountries(supabase, workspaceId),
         ...scopeFields(false),
