@@ -1188,9 +1188,10 @@ function useSlackTargets() {
 }
 
 const SLACK_WORDS: Record<string, string> = {
-  slack_not_in_channel: "The OpenNous bot isn't in that channel. In Slack, type /invite @OpenNous in it, then try again.",
+  slack_not_in_channel: "The Nous app isn't in that channel. In Slack, type /invite @Nous in it, then try again.",
   slack_not_connected: "Slack isn't connected. Connect it in Sources.",
-  slack_channel_not_found: "Slack can't find that channel.",
+  slack_channel_not_found: "Slack can't see that channel. If it's private, invite the Nous app: type /invite @Nous in the channel.",
+  slack_is_archived: "That channel is archived in Slack. Pick another one.",
   slack_user_not_found: "Slack can't find that person.",
   slack_invalid_auth: "The Slack connection expired. Reconnect Slack in Sources.",
   slack_missing_scope: "The Slack connection is missing a permission. Reconnect Slack in Sources.",
@@ -1250,7 +1251,7 @@ function SlackPanel({ step, vars, set }: PanelProps) {
           {data.channels.map(ch => <option key={ch.id} value={ch.id}>{ch.private ? "🔒 " : "#"}{ch.name}{ch.member ? "" : "  (invite the bot first)"}</option>)}
         </select>
         {chosen && !chosen.member && (
-          <span className="mt-1.5 block text-[11.5px] leading-snug text-muted-foreground">The OpenNous bot isn't in #{chosen.name} yet. In Slack, type <span className="font-mono text-foreground">/invite @OpenNous</span> in the channel.</span>
+          <span className="mt-1.5 block text-[11.5px] leading-snug text-muted-foreground">The Nous app isn't in #{chosen.name} yet. In Slack, type <span className="font-mono text-foreground">/invite @Nous</span> in the channel.</span>
         )}
         {data.error && <span className="mt-1.5 block text-[11.5px] text-risk">Slack said: {data.error.replace(/_/g, " ")}</span>}
       </label>

@@ -12,7 +12,7 @@ import {
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
   compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxConnections, revboxMembership,
   listRevboxDatasets, createRevboxDataset, updateRevboxDataset, listDatasetRows, exportDatasetCsv,
-  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxScopedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxScopedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
 } from '@nous/core';
 import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
 import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
@@ -343,7 +343,8 @@ export function builtinJobsOut(keys, activity = []) {
 export function routineRunDeliveries(runId, stepLog) {
   const entry = (Array.isArray(stepLog) ? stepLog : []).findLast(e => Array.isArray(e?.deliveries));
   return (entry?.deliveries ?? []).map((d, i) => ({
-    id: d?.id ?? `${runId}:${i}`, state: d?.ok ? 'sent' : 'failed', error: d?.ok ? null : String(d?.error ?? 'Not delivered'),
+    // The reason in words (GET-879): "slack_channel_not_found" reads as what to do about it.
+    id: d?.id ?? `${runId}:${i}`, state: d?.ok ? 'sent' : 'failed', error: d?.ok ? null : reasonWords(String(d?.error ?? 'Not delivered')),
     destination: { kind: String(d?.kind ?? ''), target: String(d?.target ?? '') },
   }));
 }

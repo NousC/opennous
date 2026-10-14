@@ -1418,14 +1418,17 @@ function draftsItself(step, steps) {
 // is not a failure; everything else is.
 const STEP_NAME = { agent: 'AI', only_if: 'Only if', approval: 'Approval', email: 'Email', gmail: 'Gmail', webhook: 'Webhook', slack: 'Slack', hubspot: 'HubSpot', wait: 'Wait', __followup_draft: 'Gmail draft', revbox_delivery: 'RevBox delivery', dataset_append: 'Add to table', dataset_read: 'Read table' };
 const HUBSPOT_ACTION_NAME = { read: 'Read records', note: 'Add a note', task: 'Create a task', update_deal: 'Update the deal', update_contact: 'Update the contact', update_company: 'Update the company' };
+// Slack answers channel_not_found for a private channel its app was never invited to, as well as for
+// one that is gone (GET-879): the likelier fix comes first.
+const SLACK_CANT_SEE = "Slack can't see that channel. If it's private, invite the Nous app: type /invite @Nous in the channel";
 const REASON_TEXT = {
   condition_not_met: "the rules didn't match, so it stopped here",
   hubspot_not_connected: "HubSpot isn't connected", hubspot_no_record: 'this account has no record in HubSpot',
   hubspot_read_not_set: 'pick what to read: the object and at least one field', hubspot_trigger_not_set: 'pick the HubSpot object and the field to watch', hubspot_expired: 'the HubSpot connection expired. Reconnect HubSpot', hubspot_missing_scope: "the HubSpot connection can't read that object. Reconnect HubSpot",
   hubspot_no_deal: 'no open deal on this account in HubSpot', hubspot_no_contact: "the person isn't in HubSpot",
   hubspot_no_company: "the company isn't in HubSpot", hubspot_no_fields: 'no fields to set',
-  slack_not_connected: "Slack isn't connected", slack_no_channel: 'no channel set', slack_channel_not_found: "Slack can't find that channel",
-  slack_not_in_channel: "the OpenNous bot isn't in that channel. In Slack, type /invite @OpenNous in it", slack_not_available_here: "Slack couldn't be reached",
+  slack_not_connected: "Slack isn't connected", slack_no_channel: 'no channel set', slack_channel_not_found: SLACK_CANT_SEE,
+  slack_not_in_channel: "the Nous app isn't in that channel. In Slack, type /invite @Nous in it", slack_not_available_here: "Slack couldn't be reached",
   slack_user_not_found: "Slack can't find that person", slack_cannot_dm_bot: "that's a bot, not a person", slack_is_archived: 'that channel is archived', slack_dm_failed: "Slack couldn't open a direct message",
   slack_missing_scope: 'the Slack connection is missing a permission. Reconnect Slack in Sources', slack_invalid_auth: 'the Slack connection expired. Reconnect Slack in Sources', slack_account_inactive: 'the Slack connection expired. Reconnect Slack in Sources',
   wait_not_running_yet: "Wait doesn't run yet", email_not_sent: "the email wasn't sent",
@@ -1437,6 +1440,10 @@ const REASON_TEXT = {
   dataset_not_set: 'pick the table', dataset_not_found: "the RevBox has no table with that key", dataset_nothing_to_add: 'nothing was written to add',
   dataset_row_unusable: "the AI's answer didn't fit the table's columns",
 };
+/** A step's stop reason in words ("slack_channel_not_found" -> what to do), or the reason itself. Pure. */
+export function reasonWords(reason) {
+  return REASON_TEXT[reason] ?? String(reason ?? '');
+}
 export function describeStop(step, index, reason) {
   const words = REASON_TEXT[reason] ?? String(reason ?? '').replace(/^(hubspot|gmail|slack)_/, '').replace(/_/g, ' ');
   return `${stepName(step, index)}: ${words}`;
@@ -2374,7 +2381,7 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
         const ok = sent.filter(x => x.ok).length;
         done.push(`revbox_delivery:${ok}/${dests.length}`);
         if (ok < dests.length) {
-          const out = stop(s, `revbox_delivery_failed: ${sent.filter(x => !x.ok).map(x => `${x.kind} ${x.target}: ${x.error}`).join('; ')}`);
+          const out = stop(s, `revbox_delivery_failed: ${sent.filter(x => !x.ok).map(x => `${x.kind} ${x.target}: ${REASON_TEXT[x.error] ?? x.error}`).join('; ')}`);
           log[log.length - 1].deliveries = sent;
           return out;
         }
@@ -2796,6 +2803,17 @@ export function flowRunsSteps(automation) {
   return steps.some(st => st?.type && st.type !== 'agent');
 }
 
+/**
+ * One run row's writes, landing in the order they were made (GET-879). The steps report progress
+ * without waiting (runSteps' onLog), so unqueued, a progress write issued before the final one could
+ * commit after it and put back a step log without its last steps: a held Test then showed the AI step
+ * but not the Slack post it held. Never throws (a lost progress write is not a failed run).
+ */
+function runWriter(supabase, runId) {
+  let queue = Promise.resolve();
+  return (patch) => (queue = queue.then(() => supabase.from('agent_routine_runs').update(patch).eq('id', runId)).then(() => null, () => null));
+}
+
 export async function startTestRun(supabase, workspaceId, automationId, { pick = null, holdSends = false } = {}) {
   // holdSends (GET-873): a test that sends nothing out (runSteps' hold); the run is marked `held`.
   const mark = holdSends ? { test: true, held: true } : { test: true };
@@ -2813,11 +2831,13 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
       workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running', state: { ...mark, trigger: trig },
     }).select('id').single();
     if (error) return { ok: false, error: 'run_not_created', message: error.message };
-    const save = (patch) => supabase.from('agent_routine_runs').update(patch).eq('id', run.id).then(() => null, () => null);
+    const save = runWriter(supabase, run.id);
+    let lastLog = null;
     (async () => {
-      await runFieldChangeAutomation(supabase, workspaceId, a, ch, { test: true, holdSends, runId: run.id, onLog: (log) => save({ step_log: log }) });
+      await runFieldChangeAutomation(supabase, workspaceId, a, ch, { test: true, holdSends, runId: run.id, onLog: (log) => { lastLog = log; return save({ step_log: log }); } });
       const { data: row } = await supabase.from('agent_routine_runs').select('state').eq('id', run.id).maybeSingle();
-      await save({ state: { ...(row?.state ?? {}), ...mark, trigger: trig } });
+      // Queued after every progress write, with the whole log: a late one cannot cut its tail (GET-879).
+      await save({ state: { ...(row?.state ?? {}), ...mark, trigger: trig }, ...(lastLog ? { step_log: lastLog } : {}) });
     })();
     return { ok: true, run_id: run.id, trigger: trig };
   }
@@ -2835,7 +2855,7 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
   }).select('id').single();
   if (error) return { ok: false, error: 'run_not_created', message: error.message };
   const runId = run.id;
-  const save = (patch) => supabase.from('agent_routine_runs').update(patch).eq('id', runId).then(() => null, () => null);
+  const save = runWriter(supabase, runId);
   (async () => {
     try {
       if (scheduled) {

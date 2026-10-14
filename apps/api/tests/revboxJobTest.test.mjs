@@ -2,7 +2,7 @@
 // output comes from its AI step's document, and the Accounts page pages a RevBox's scoped accounts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { revboxRoutineRuns, heldActions } from '../src/routes/api/revboxes.mjs';
+import { revboxRoutineRuns, heldActions, routineRunDeliveries } from '../src/routes/api/revboxes.mjs';
 import { revboxAccountPage } from '../src/routes/api/companies.mjs';
 
 const fakeSb = (runs, docs) => ({ from(table) {
@@ -43,6 +43,15 @@ test('heldActions reads only held lines and is safe on odd logs', () => {
   assert.deepEqual(heldActions(null), []);
   assert.deepEqual(heldActions([{ status: 'ok', detail: 'x' }, { status: 'held', name: 'Webhook', detail: 'Would send to the webhook at h.example', preview: [{ value: 'no label' }] }]),
     [{ step: 'Webhook', text: 'Would send to the webhook at h.example', rows: [] }]);
+});
+
+test('a box delivery Slack refused reads as what to do, not as Slack\'s code (GET-879)', () => {
+  const [d, e] = routineRunDeliveries('run-1', [{ status: 'failed', deliveries: [
+    { id: 'd-s', kind: 'slack', target: 'C0PRIV123', ok: false, error: 'slack_channel_not_found' },
+    { id: 'd-w', kind: 'webhook', target: 'https://h.example', ok: false, error: 'webhook_503' },
+  ] }]);
+  assert.equal(d.error, "Slack can't see that channel. If it's private, invite the Nous app: type /invite @Nous in the channel");
+  assert.equal(e.error, 'webhook_503');
 });
 
 test('a RevBox\'s scoped accounts page: search, newest activity first, stable ties, the real total', () => {

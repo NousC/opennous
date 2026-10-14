@@ -366,7 +366,15 @@ test('Slack posts to the picked channel by id, or as a direct message to a perso
 test('a Slack failure says what to do in words', async () => {
   registerStepHandler('slack', async () => ({ ok: false, reason: 'slack_not_in_channel' }));
   const r = await runSteps(auto([{ id: 's', type: 'slack', config: { channel: 'general', channel_id: 'C1' } }]), doc, { stage: 'x', ctx: ctxOf(fakeDb()) });
-  assert.match(r.message, /\/invite @OpenNous/);
+  assert.match(r.message, /\/invite @Nous in it$/);
+});
+
+test('a Slack channel it cannot see says to invite the app when the channel is private (GET-879)', async () => {
+  registerStepHandler('slack', async () => ({ ok: false, reason: 'slack_channel_not_found' }));
+  const r = await runSteps(auto([{ id: 's', type: 'slack', config: { channel: 'deals-private', channel_id: 'C1' } }]), doc, { stage: 'x', ctx: ctxOf(fakeDb()) });
+  assert.equal(r.failed, true);
+  assert.match(r.message, /Slack: Slack can't see that channel\. If it's private, invite the Nous app: type \/invite @Nous in the channel$/);
+  assert.match(r.log.at(-1).detail, /^Slack can't see that channel/);
 });
 
 test('a Read step with HubSpot not connected stops and says so; a Read step never waits for approval (GET-773)', async () => {

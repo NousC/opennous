@@ -149,7 +149,7 @@ export {
 export {
   runAutomationDailyPoll, runAutomationsForWorkspace, makeArtifactForTest, resendAutomationDocument,
   emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, icpChanges, previewAutomationVars, composeAutomationEmail, automationEmailPreview, automationContextPreview, searchAutomationAccounts, CONTEXT_PARTS,
-  processAccountSignals, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, saveApprovalChoices, testTriggers,
+  processAccountSignals, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, reasonWords, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, saveApprovalChoices, testTriggers,
   // RevBox jobs on the engine (GET-868): the box context an AI step reads.
   revboxContextText, revboxRoutineContext, REVBOX_CONTEXT_CHARS,
 } from './services/automationRun.mjs';
