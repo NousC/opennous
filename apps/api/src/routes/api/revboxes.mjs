@@ -1,0 +1,342 @@
+import { makeRevboxSnapshot, visibleDocument } from '../../lib/revboxSnapshot.mjs';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
+import { requireAiCredits } from '../../lib/plans.mjs';
+import { computeCost } from '../../lib/llmUsage.mjs';
+import { Router } from 'express';
+import {
+  getSupabaseClient, listDocuments, getDocument,
+  listRevboxes, createRevbox, patchRevbox, loadRevbox, revboxDetails,
+  setRevboxMember, addRevboxContext, removeRevboxContext, saveRevboxJob,
+  revboxWorkspaceMembers, revboxAccountCatalog, revboxScopedGraph, revboxAccountOverview,
+  reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
+  compileRevboxPlan, recordRevboxUsage, createMessage, revboxMatchesAccount, revboxConnections, revboxMembership,
+  listRevboxRoutines, loadRevboxRoutine, BUILDER_TRIGGERS, startTestRun, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+} from '@nous/core';
+import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
+import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
+import { viewerVisibleAccountSet } from '../../lib/visibility.mjs';
+import { safeFetch } from '../../lib/ssrf.mjs';
+import { resolveTeamAndPlan } from '../../lib/access.mjs';
+import { planName } from '../../lib/plans.mjs';
+import { automationLimitHit } from './automations.mjs';
+import { FLOW_TRIGGERS } from '../../lib/flows.mjs';
+import { creditsForRuns } from '../../lib/automationCredits.mjs';
+
+// A RevBox job on the workflow engine (GET-868) reads its box's references as its owner, and posts to
+// the box's webhooks through the SSRF guard. The engine lives in core, so the API hands it both.
+registerStepHandler('revbox_visible_accounts', async ({ supabase, workspaceId, userId }) => {
+  if (!userId) return new Set();
+  const member = await revboxWorkspaceRole(supabase, workspaceId, userId);
+  const set = await viewerVisibleAccountSet(supabase, workspaceId, userId, { isAdmin: ['admin', 'owner'].includes(member?.role) });
+  return set.unrestricted ? null : set.ids;
+});
+// safe_fetch(url, init, { maxRedirects, timeoutMs }) (pre-ship finding 4, GET-858): a box webhook asks
+// for nothing and follows no redirect, 8s; an automation's webhook step asks for 4 redirects and 30s,
+// as before the guard. Every hop is re-checked; the asks are clamped (0-4, 1-30s). The worker mirrors it.
+registerStepHandler('safe_fetch', (url, init, opts = {}) => {
+  const r = Number(opts?.maxRedirects), t = Number(opts?.timeoutMs);
+  return safeFetch(url, init, {
+    maxRedirects: Number.isFinite(r) ? Math.min(4, Math.max(0, Math.floor(r))) : 0,
+    timeoutMs: Number.isFinite(t) ? Math.min(30_000, Math.max(1_000, Math.floor(t))) : 8_000,
+  });
+});
+
+const FREQ_LABEL = { daily: 'Every day', weekly: 'Every Monday', monthly: 'On the first of the month', quarterly: 'At the start of each quarter' };
+/** "Every day at 08:00 (Toronto)", "30 minutes before a meeting", "When a deal is won". Pure. */
+export function routineTriggerLabel(r) {
+  const tc = r.trigger_config ?? {};
+  if (r.trigger_kind === 'clock') {
+    const at = String(tc.at ?? r.at_time ?? '08:00').slice(0, 5);
+    const tz = r.timezone && r.timezone !== 'UTC' ? ` (${String(r.timezone).split('/').pop().replace(/_/g, ' ')})` : ' (UTC)';
+    return `${FREQ_LABEL[tc.frequency ?? r.frequency] ?? 'Every day'} at ${at}${tz}`;
+  }
+  if (r.trigger_kind === 'before_meeting') return `${Number(tc.offset ?? r.offset_minutes) || 30} minutes before a meeting`;
+  return FLOW_TRIGGERS.find(t => t.key === r.trigger_kind)?.label ?? r.trigger_kind;
+}
+/** A box's routine as the Jobs list reads it. No `plan` key: that is how the UI tells it from a legacy job. */
+export const routineOut = (r) => ({
+  id: r.id, kind: 'routine', name: r.name, enabled: r.enabled, trigger_kind: r.trigger_kind, trigger_config: r.trigger_config ?? {},
+  timezone: r.timezone ?? 'UTC', trigger_label: routineTriggerLabel(r), last_run_at: r.last_run_at ?? null, next_run_at: r.next_run_at ?? null,
+  steps: Array.isArray(r.steps) ? r.steps : [], version: r.version ?? 1, created_at: r.created_at ?? null, updated_at: r.updated_at ?? null,
+});
+/**
+ * A box's delivery list as it is saved (GET-868). A Gmail destination that is new, or now points at
+ * another mailbox, must be one of the saver's OWN connected Gmail accounts (`sendable`, from
+ * sendableMailboxes), and its `mailbox_email` is set here from that list, never taken from the client.
+ * An unchanged one keeps its mailbox and address, so an editor saving the box does not drop or take
+ * over a colleague's draft destination. Throws 400. Pure.
+ */
+export function checkDeliveryMailboxes(delivery, current, sendable) {
+  if (!Array.isArray(delivery)) return delivery;
+  const before = new Map((Array.isArray(current) ? current : []).filter(d => d?.kind === 'gmail').map(d => [d.id, d]));
+  const mine = new Map((sendable ?? []).map(m => [m.id, m]));
+  const bare = (d) => { const { mailbox_email: _, ...rest } = d; return rest; };
+  return delivery.map(d => {
+    if (!d || typeof d !== 'object') return d;
+    if (d.kind !== 'gmail') return 'mailbox_email' in d ? bare(d) : d;
+    const target = typeof d.target === 'string' ? d.target.trim() : d.target;
+    if (!target) return bare(d);
+    const old = before.get(d.id);
+    if (old && old.target === target) return { ...d, target, mailbox_email: old.mailbox_email ?? null };
+    const m = mine.get(target);
+    if (!m) invalid('Choose one of your own connected Gmail mailboxes for this destination.');
+    return { ...d, target, mailbox_email: m.email ?? null };
+  });
+}
+/** The box's routine with this id, or null when the id is a legacy revbox_jobs id. */
+async function boxRoutineOrNull(sb, req, edit) {
+  try { return await loadRevboxRoutine(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, routineId: req.params.jobId, edit }); }
+  catch (e) { if (e.status === 404 && /^Job not found/.test(e.message)) return null; throw e; }
+}
+
+export const revboxesRouter = Router();
+export const accountOverviewRouter = Router();
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const invalid = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
+function route(fn) {
+  return async (req, res) => {
+    try {
+      if (!req.workspaceId || !req.internalUserId) return res.status(400).json({ error: 'Workspace and signed-in member are required.' });
+      if (Object.values(req.params).some(id => !uuid.test(id))) return res.status(400).json({ error: 'Invalid identifier.' });
+      const sb = getSupabaseClient();
+      await revboxMembership(sb, req.workspaceId, req.internalUserId);
+      await fn(req, res, sb);
+    } catch (e) {
+      if (e.code === '42P01' || e.code === 'PGRST205' || /revbox.*schema cache/i.test(e.message ?? '') || ((e.code === '42703' || e.code === 'PGRST204') && /revbox_id/.test(e.message ?? ''))) return res.status(409).json({ error: 'The RevBox database migration has not been applied.' });
+      if (!e.status) console.error('[revboxes]', e);
+      res.status(e.status ?? 500).json({ error: e.status ? e.message : 'Could not save or load the RevBox.' });
+    }
+  };
+}
+async function allowed(sb, req) {
+  const set = await viewerVisibleAccountSet(sb, req.workspaceId, req.internalUserId, { isAdmin: req.viewerScope === 'admin' });
+  return set.unrestricted ? null : set.ids;
+}
+async function documents(sb, req) {
+  const ids = await allowed(sb, req);
+  return (await listDocuments(sb, req.workspaceId, { limit: 500 })).filter(d => !d.subject_entity_id || !ids || ids.has(d.subject_entity_id));
+}
+async function accessibleDocument(sb, req, id) {
+  if (!uuid.test(id)) invalid('Invalid document identifier.');
+  const doc = visibleDocument(await getDocument(sb, req.workspaceId, id), await allowed(sb, req));
+  if (!doc) invalid('Document not found.', 404);
+  return doc;
+}
+
+accountOverviewRouter.post('/', route(async (req, res, sb) => {
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose up to 200 account identifiers.');
+  const visible = await allowed(sb, req);
+  res.json({ accounts: await revboxAccountOverview(sb, req.workspaceId, visible ? ids.filter(id => visible.has(id)) : ids) });
+}));
+
+revboxesRouter.get('/', route(async (req, res, sb) => res.json({ boxes: await listRevboxes(sb, req.workspaceId, req.internalUserId) })));
+revboxesRouter.post('/', route(async (req, res, sb) => res.status(201).json({ box: await createRevbox(sb, req.workspaceId, req.internalUserId) })));
+revboxesRouter.get('/context-library', route(async (req, res, sb) => {
+  const groups = [];
+  for (const box of await listRevboxes(sb, req.workspaceId, req.internalUserId)) {
+    const detail = await revboxDetails(sb, req.workspaceId, req.internalUserId, box.id);
+    const context = [];
+    for (const c of detail.context) {
+      if (!c.document_id) context.push(c);
+      else { try { const doc = await accessibleDocument(sb, req, c.document_id); context.push({ ...c, title: doc.title, body: doc.body_md ?? '' }); } catch (e) { if (e.status !== 404) throw e; } }
+    }
+    groups.push({ id: box.id, name: box.name, shared: box.shared, blocks: box.blocks, context });
+  }
+  res.json({ groups });
+}));
+revboxesRouter.get('/signals',route(async(req,res,sb)=>res.json({signals:await listCustomSignals(sb,req.workspaceId,req.internalUserId)})));
+revboxesRouter.post('/signals',route(async(req,res,sb)=>res.status(201).json({signal:await saveCustomSignal(sb,req.workspaceId,req.internalUserId,req.body)})));
+revboxesRouter.put('/signals/:signalId',route(async(req,res,sb)=>res.json({signal:await saveCustomSignal(sb,req.workspaceId,req.internalUserId,req.body,req.params.signalId)})));
+revboxesRouter.post('/signals/:signalId/reprocess',route(async(req,res,sb)=>{await revboxCreditGate(sb,req.workspaceId);res.json({signal:await reprocessCustomSignal(sb,req.workspaceId,req.internalUserId,req.params.signalId,req.body?.since)});}));
+revboxesRouter.get('/catalog', route(async (req, res, sb) => {
+  const [members, accounts, docs, connections] = await Promise.all([revboxWorkspaceMembers(sb, req.workspaceId), revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req)), documents(sb, req), revboxConnections(sb, req.workspaceId, req.internalUserId)]);
+  res.json({ members: members.map(m => ({ id: m.user_id, name: m.user?.name ?? m.user?.email ?? 'Member', email: m.user?.email ?? '', role: m.role })), accounts, documents: docs.map(d => ({ id: d.id, title: d.title })), connections });
+}));
+revboxesRouter.get('/:id', route(async (req, res, sb) => {
+  const detail = await revboxDetails(sb, req.workspaceId, req.internalUserId, req.params.id);
+  // Linked references inherit document visibility on every read, including after revocation.
+  const context = [];
+  for (const c of detail.context) {
+    if (!c.document_id) context.push(c);
+    else { try { const doc = await accessibleDocument(sb, req, c.document_id); context.push({ ...c, title: doc.title, body: doc.body_md ?? '' }); } catch (e) { if (e.status !== 404) throw e; } }
+  }
+  // Where the box's jobs deliver (GET-868), derived here from their real steps, with the box's own
+  // access (a private channel or recipient in a step is shown to the box's members only).
+  const { routines, job_deliveries } = await listRevboxJobDeliveries(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, mailboxes: () => listMailboxes(sb, req.workspaceId) });
+  res.json({ ...detail, context, routines: routines.map(routineOut), job_deliveries });
+}));
+revboxesRouter.patch('/:id', route(async (req, res, sb) => {
+  if (req.body?.scope?.mode === 'selected') {
+    const ids = req.body.scope.account_ids;
+    if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid accounts.');
+    const accounts = await revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req));
+    const valid = new Set(accounts.map(a => a.id));
+    if (ids.some(id => !valid.has(id))) invalid('An account is not accessible in this workspace.');
+  }
+  // A Gmail draft destination is made in one of the saver's own mailboxes (GET-868).
+  if (Array.isArray(req.body?.delivery) && req.body.delivery.some(d => d?.kind === 'gmail')) {
+    const current = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id, true);
+    req.body.delivery = checkDeliveryMailboxes(req.body.delivery, current.delivery, await sendableMailboxes(sb, req.workspaceId, req.internalUserId));
+  }
+  res.json({ box: await patchRevbox(sb, req.workspaceId, req.internalUserId, req.params.id, req.body) });
+}));
+revboxesRouter.put('/:id/members/:memberId', route(async (req, res, sb) => {
+  await setRevboxMember(sb, req.workspaceId, req.internalUserId, req.params.id, req.params.memberId, req.body?.role);
+  res.json({ ok: true });
+}));
+revboxesRouter.post('/:id/context', route(async (req, res, sb) => {
+  let body = req.body ?? {};
+  if (body.document_id) { const doc = await accessibleDocument(sb, req, body.document_id); body = { document_id: doc.id, title: doc.title, body: '' }; }
+  res.status(201).json({ context: await addRevboxContext(sb, req.workspaceId, req.internalUserId, req.params.id, body) });
+}));
+revboxesRouter.delete('/:id/context/:contextId', route(async (req, res, sb) => {
+  await removeRevboxContext(sb, req.workspaceId, req.internalUserId, req.params.id, req.params.contextId); res.json({ ok: true });
+}));
+revboxesRouter.get('/:id/accounts', route(async (req, res, sb) => {
+  const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
+  const accounts = await revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req));
+  res.json({ accounts: accounts.filter(a => revboxMatchesAccount(box.scope, a)), box: { id: box.id, name: box.name, scope: box.scope } });
+}));
+revboxesRouter.get('/:id/graph', route(async (req, res, sb) => {
+  const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
+  const accounts = await revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req));
+  res.json(await revboxScopedGraph(sb, req.workspaceId, box.scope, accounts));
+}));
+revboxesRouter.post('/:id/plan', route(async (req, res, sb) => {
+  await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id, true);
+  if (req.body?.tools && (!Array.isArray(req.body.tools) || req.body.tools.length > 12 || req.body.tools.some(t => typeof t !== 'string'))) invalid('Choose valid tools.');
+  const plan = await compileRevboxPlan(req.body?.prompt, { timezone: req.body?.timezone, tools: req.body?.tools }, {
+    gate: async () => { const gate = await requireAiCredits(sb, req.workspaceId); if (!gate.ok) invalid(gate.body.message ?? 'Credits are required to prepare this job.', gate.status); },
+    generate: createMessage,
+    meter: response => recordRevboxUsage(sb, { workspaceId:req.workspaceId, userId:req.internalUserId, boxId:req.params.id, feature:'revbox-plan', model:response.model, usage:response.usage, costUsd:computeCost(response.model,response.usage), requestId:`revbox-plan:${randomUUID()}` }),
+  });
+  const connections = await revboxConnections(sb, req.workspaceId, req.internalUserId);
+  for (const slug of plan.tools) {
+    const matches = connections.filter(c => c.slug === slug);
+    if (matches.length === 1) plan.bindings[slug] = matches[0].id;
+  }
+  res.json({ plan });
+}));
+revboxesRouter.post('/:id/jobs', route(async (req, res, sb) => res.status(201).json({ job: await saveRevboxJob(sb, req.workspaceId, req.internalUserId, req.params.id, req.body) })));
+revboxesRouter.put('/:id/jobs/:jobId', route(async (req, res, sb) => res.json({ job: await saveRevboxJob(sb, req.workspaceId, req.internalUserId, req.params.id, req.body, req.params.jobId) })));
+
+revboxesRouter.get('/:id/results', route(async (req,res,sb)=>{
+  const runs=await listRevboxRuns(sb,req.workspaceId,req.internalUserId,req.params.id,await allowed(sb,req));
+  const costs=await revboxRunCosts(sb,req.workspaceId,req.params.id,runs.map(r=>r.id));
+  const results=await Promise.all(runs.map(async run=>({...run,cost_usd:costs.get(run.id)??0,credits:(costs.get(run.id)??0)/REQUESTED_USD_PER_CREDIT,deliveries:await revboxDeliveries(sb,run.id)})));
+  // The box's workflow-engine jobs (GET-868): their runs, with what each cost in credits.
+  const routines=await listRevboxRoutines(sb,{workspaceId:req.workspaceId,revboxId:req.params.id,userId:req.internalUserId});
+  const routineRuns=await revboxRoutineRuns(sb,req.workspaceId,routines,{allowed:await allowed(sb,req)});
+  res.json({results:[...results,...routineRuns].sort((a,b)=>String(b.created_at??'').localeCompare(String(a.created_at??'')))});
+}));
+/** agent_routine_runs.status -> the Results row's `state` (revbox_runs' states, so one UI reads both). */
+const ROUTINE_RUN_STATE = { running: 'running', waiting: 'running', ok: 'completed', completed: 'completed', error: 'failed', failed: 'failed', awaiting_approval: 'needs_review' };
+export function routineRunState(status) {
+  return ROUTINE_RUN_STATE[status] ?? (typeof status === 'string' && status ? status : 'running');
+}
+/** The last box delivery the run recorded (its revbox_delivery step's per-destination results) as Results deliveries. */
+export function routineRunDeliveries(runId, stepLog) {
+  const entry = (Array.isArray(stepLog) ? stepLog : []).findLast(e => Array.isArray(e?.deliveries));
+  return (entry?.deliveries ?? []).map((d, i) => ({
+    id: d?.id ?? `${runId}:${i}`, state: d?.ok ? 'sent' : 'failed', error: d?.ok ? null : String(d?.error ?? 'Not delivered'),
+    destination: { kind: String(d?.kind ?? ''), target: String(d?.target ?? '') },
+  }));
+}
+/**
+ * The runs of these routines, newest first, as Results rows in the Run shape the UI reads (state,
+ * result, deliveries, job_id, credits, created_at), plus routine extras. The result is the run's
+ * document, only when the viewer may read it (`allowed` null = unrestricted, as listRevboxRuns).
+ */
+export async function revboxRoutineRuns(sb, ws, routines, { limit = 200, allowed = null } = {}) {
+  if (!routines.length) return [];
+  const { data, error } = await sb.from('agent_routine_runs').select('id, routine_id, status, error, started_at, finished_at, document_id, step_log, state')
+    .eq('workspace_id', ws).in('routine_id', routines.map(r => r.id)).order('started_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+  const runs = data ?? [];
+  const credits = await creditsForRuns(sb, ws, runs);
+  const names = new Map(routines.map(r => [r.id, r.name]));
+  const docIds = [...new Set(runs.map(r => r.document_id).filter(Boolean))];
+  const docs = new Map();
+  for (let i = 0; i < docIds.length; i += 200) {
+    const { data: rows, error: docError } = await sb.from('documents').select('id, title, body_md, subject_entity_id, status')
+      .eq('workspace_id', ws).in('id', docIds.slice(i, i + 200));
+    if (docError) throw docError;
+    for (const d of rows ?? []) {
+      const doc = d.status === 'deleted' ? null : visibleDocument({ document: d }, allowed);
+      if (doc) docs.set(doc.id, doc);
+    }
+  }
+  return runs.map(r => {
+    const doc = r.document_id ? docs.get(r.document_id) : null;
+    return {
+      id: r.id, kind: 'routine', job_id: r.routine_id, job_name: names.get(r.routine_id) ?? null,
+      status: r.status, state: routineRunState(r.status), error: r.error ?? null,
+      created_at: r.started_at, finished_at: r.finished_at ?? null, document_id: doc ? r.document_id : null, step_log: r.step_log ?? [],
+      result: doc ? { title: String(doc.title ?? 'Job run'), body: String(doc.body_md ?? ''), kind: 'report' } : null,
+      deliveries: routineRunDeliveries(r.id, r.step_log),
+      test: !!r.state?.test, trigger: r.state?.trigger ?? null, credits: credits.get(r.id)?.credits ?? 0,
+    };
+  });
+}
+revboxesRouter.post('/:id/jobs/:jobId/run', route(async (req,res,sb)=>{
+  // A routine job runs now on the automation engine's Run now (startTestRun), after the box's edit check.
+  const routineJob=await boxRoutineOrNull(sb,req,true);
+  if(routineJob){
+    await revboxCreditGate(sb,req.workspaceId);
+    const out=await startTestRun(sb,req.workspaceId,routineJob.routine.id);
+    if(!out.ok)invalid(out.message??'This job could not start.',out.error==='not_found'?404:409);
+    return res.status(202).json({run:{id:out.run_id,job_id:routineJob.routine.id,kind:'routine',status:'running',trigger:out.trigger}});
+  }
+  await revboxCreditGate(sb,req.workspaceId);
+  const {job,snapshot,accountIds}=await makeRevboxSnapshot(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.jobId);
+  const run=await queueRevboxRun(sb,req.workspaceId,req.internalUserId,req.params.id,job.id,`manual:${randomUUID()}`,snapshot,accountIds);
+  res.status(202).json({run});
+}));
+
+revboxesRouter.put('/:id/jobs/:jobId/enabled',route(async(req,res,sb)=>{
+  if(typeof req.body?.enabled!=='boolean')invalid('Choose enabled or paused.');
+  const routineJob=await boxRoutineOrNull(sb,req,true);
+  if(routineJob){
+    // The automation endpoint's rules: a trigger with a runner, credits, and the plan's automation ladder.
+    const r=routineJob.routine;
+    if(req.body.enabled){
+      if(!BUILDER_TRIGGERS.has(r.trigger_kind))invalid('This trigger is not connected yet.');
+      await revboxCreditGate(sb,req.workspaceId);
+      const {plan}=await resolveTeamAndPlan(req);
+      const hit=await automationLimitHit(sb,req.workspaceId,plan.id,{excludeId:r.id});
+      if(hit!==null)invalid(`Your plan (${planName(plan.id)}) includes ${hit} automation${hit===1?'':'s'}. Pause or delete one first.`,402);
+    }
+    // A clock job's next slot from the routine runner's scheduler, as approving computes it (core approveBuilderProposal).
+    const next=req.body.enabled?nextRunAt({...r,weekdays_only:r.weekdays_only===true||r.trigger_config?.weekdays_only===true}):null;
+    const {data,error}=await sb.from('agent_routines').update({enabled:req.body.enabled,...(req.body.enabled?{next_run_at:next?next.toISOString():null}:{}),updated_at:new Date().toISOString()})
+      .eq('workspace_id',req.workspaceId).eq('revbox_id',req.params.id).eq('id',r.id).select('*').maybeSingle();
+    if(error)throw error;
+    if(!data)invalid('Job not found.',404);
+    return res.json({job:routineOut(data)});
+  }
+  const {job}=await loadRevboxJob(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.jobId,true);
+  const t=job.plan.trigger;
+  const next=revboxNextRunAt(t);
+  if(req.body.enabled && !['clock','manual','call_ended','deal_closed_won','deal_closed_lost','deal_stage_changed','account_signal','campaign_completed','webhook_in'].includes(t.kind))invalid('This signal dispatcher is not connected yet.');
+  if(req.body.enabled)await revboxCreditGate(sb,req.workspaceId);
+  res.json({job:await enableRevboxJob(sb,req.workspaceId,req.internalUserId,req.params.id,job.id,req.body.enabled,next?.toISOString()??null)});
+}));
+
+revboxesRouter.post('/:id/results/:runId/approve',route(async(req,res,sb)=>{
+  const run=await approveRevboxRun(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.runId,await allowed(sb,req));
+  if(!run)invalid('This result changed. Reload before approving.',409);
+  await deliverRevboxRun(sb,run);res.json({run});
+}));
+
+revboxesRouter.post('/:id/jobs/:jobId/webhook-key',route(async(req,res,sb)=>{
+  const key=randomBytes(32).toString('hex');
+  await setRevboxWebhookKey(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.jobId,createHash('sha256').update(key).digest('hex'));
+  res.json({key,path:'/hooks/revboxes',header:'x-revbox-key'});
+}));
+
+revboxesRouter.post('/:id/results/:runId/retry-delivery',route(async(req,res,sb)=>{
+  const run=await loadRevboxRunForEdit(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.runId,await allowed(sb,req));
+  if(run.state!=='completed')invalid('Approve the result before delivering it.');
+  await deliverRevboxRun(sb,run);res.json({ok:true});
+}));

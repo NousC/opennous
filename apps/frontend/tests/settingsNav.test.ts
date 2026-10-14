@@ -101,3 +101,20 @@ test("Custom plan keeps the Connections rows in the rail: its sidebar has no Int
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
   for (const id of ["integrations", "company-sources", "webhooks", "api-keys"]) assert.ok(rail.includes(id), id);
 });
+
+test("RevBoxes on: Context then Signals, in Workspace, on API and Workspace plans (GET-862, GET-864)", () => {
+  for (const tier of ["api", "custom"] as const) {
+    for (const isWorkspaceAdmin of [true, false]) {
+      const nav = settingsNav({ tier, isWorkspaceAdmin, isOwner: false, revboxes: true });
+      const workspace = groupNav(nav).find((g) => g.group === "Workspace")!;
+      const at = ids(workspace.items).indexOf("context");
+      assert.ok(at >= 0, `${tier} admin=${isWorkspaceAdmin}: Context in the rail`);
+      assert.equal(ids(workspace.items)[at + 1], "signals", `${tier}: Signals right after Context`);
+      assert.equal(resolveSection("context", nav), "context");
+      assert.equal(resolveSection("signals", nav), "signals");
+    }
+  }
+  const off = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
+  assert.ok(!ids(off).includes("context") && !ids(off).includes("signals"));
+  assert.equal(resolveSection("signals", off), "profile");
+});

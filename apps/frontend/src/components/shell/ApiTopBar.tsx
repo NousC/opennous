@@ -50,6 +50,8 @@ const INTEGRATIONS: Parent = { label: "Integrations", href: "/integrations" };
 const ROUTES: [pattern: string, meta: RouteMeta][] = [
   ["/",                { title: "Home",              icon: HomeIcon }],
   ["/activity",        { title: "Activity",          icon: Activity }],
+  ["/inbox", { title: "Inbox", icon: Activity }],
+  ["/tasks", { title: "Inbox", icon: Activity }],
   ["/accounts",        { title: "Accounts",          icon: Building2 }],
   ["/accounts/:id",    { title: "Account",           icon: Building2, parent: { label: "Accounts", href: "/accounts" } }],
   ["/people",          { title: "People",            icon: Users2 }],

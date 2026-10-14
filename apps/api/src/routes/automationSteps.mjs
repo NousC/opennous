@@ -1,7 +1,7 @@
 // Internal worker→api endpoint for automation steps that need the API's connections (GET-543).
 //
-// POST /internal/automation-steps/slack        { workspaceId, channel, text }             →  { ok, reason? }
-// POST /internal/automation-steps/gmail-draft  { workspaceId, userId, to, subject, body }  →  { status, … }
+// POST /internal/automation-steps/slack        { workspaceId, channel, text, format?, content? } →  { ok, reason? }
+// POST /internal/automation-steps/gmail-draft  { workspaceId, userId, to, cc?, subject, body, connectionId? }  →  { status, … }
 //
 // Mounted unauthenticated and guarded by WORKER_SECRET, like /internal/detector-drafts.
 import { Router } from 'express';
@@ -18,21 +18,31 @@ automationStepsInternalRouter.use((req, res, next) => {
 });
 
 automationStepsInternalRouter.post('/slack', async (req, res) => {
-  const { workspaceId, channel, channelId, userId, text } = req.body ?? {};
+  const { workspaceId, channel, channelId, userId, text, format, content, runId, stepId, revboxId, accountId } = req.body ?? {};
   if (typeof workspaceId !== 'string' || !workspaceId) return res.status(400).json({ ok: false, reason: 'workspace_required' });
+  // A Slack layout (GET-858): the step's format and the AI's content; the poster renders the blocks.
+  const id = (v) => (typeof v === 'string' && v.length <= 80 ? v : null);
+  const layout = typeof format === 'string' && content && typeof content === 'object' && !Array.isArray(content)
+    ? { format: format.slice(0, 20), content, runId: id(runId), stepId: id(stepId), revboxId: id(revboxId), accountId: id(accountId) } : {};
   try {
-    return res.json(await postAutomationSlack({ supabase: getSupabaseClient(), workspaceId, channel: String(channel ?? ''), channelId: channelId ?? null, userId: userId ?? null, text }));
+    return res.json(await postAutomationSlack({ supabase: getSupabaseClient(), workspaceId, channel: String(channel ?? ''), channelId: channelId ?? null, userId: userId ?? null, text, ...layout }));
   } catch (err) {
     console.error('[POST /internal/automation-steps/slack]', err);
     return res.status(500).json({ ok: false, reason: 'internal_error' });
   }
 });
 
+/** The worker's gmail-draft body as automationGmailDraft's arguments, Cc included (review 5). Pure. */
+export function gmailDraftArgs(b) {
+  const { workspaceId, userId, to, cc, subject, body, connectionId } = b ?? {};
+  return { workspaceId, userId: userId ?? null, to: to ?? null, cc: cc ?? null, subject, body, connectionId: connectionId ?? null };
+}
+
 automationStepsInternalRouter.post('/gmail-draft', async (req, res) => {
-  const { workspaceId, userId, to, subject, body, connectionId } = req.body ?? {};
+  const { workspaceId } = req.body ?? {};
   if (typeof workspaceId !== 'string' || !workspaceId) return res.status(400).json({ status: 'failed', error: 'workspace_required' });
   try {
-    return res.json(await automationGmailDraft({ supabase: getSupabaseClient(), workspaceId, userId: userId ?? null, to: to ?? null, subject, body, connectionId: connectionId ?? null }));
+    return res.json(await automationGmailDraft({ supabase: getSupabaseClient(), ...gmailDraftArgs(req.body) }));
   } catch (err) {
     console.error('[POST /internal/automation-steps/gmail-draft]', err);
     return res.status(500).json({ status: 'failed', error: 'internal_error' });

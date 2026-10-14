@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
-import { getSupabaseClient, logActivity, hasActivityWithExternalId } from '@nous/core';
+import {
+  getSupabaseClient, logActivity, hasActivityWithExternalId,
+  revboxMembership, listCustomSignals, saveCustomSignal, archiveCustomSignal, reprocessCustomSignal, customSignalHits, signalCatalog, SIGNAL_GROUPS,
+} from '@nous/core';
+import { requireFeature } from '../../lib/access.mjs';
+import { revboxCreditGate } from '../../lib/revboxRuntime.mjs';
 import { resolveContact } from '../../services/enrichment.mjs';
 
 export const signalsRouter = Router();
@@ -138,3 +143,57 @@ publicSignalsRouter.post('/ingest', async (req, res) => {
     console.error('[SIGNALS_INGEST]', e.message);
   }
 });
+
+// ─── Workspace signals (GET-862) ─────────────────────────────────────────────────────────────
+// What can start a RevBox job, and the workspace's own custom signals. A custom signal belongs to
+// the workspace (Settings > Signals), not to a RevBox. Same membership and owner rules as the
+// older /api/revboxes/signals routes, which stay for the box page.
+//
+// These share /api/signals with the webhook-url route above, so this router is mounted FIRST and
+// guards each of its own routes (auth, then the revboxes feature): a path it does not own, like
+// /webhook-url, falls through to signalsRouter untouched.
+//
+//   GET  /api/signals/catalog          { builtin: [entry], custom: [entry], groups }   (signalCatalog in core)
+//   GET  /api/signals                  { signals: [definition + archived] }
+//   POST /api/signals                  { signal }   create; revbox_id optional ("proposed in")
+//   PUT  /api/signals/:id              { signal }   edit, review, activate (owner, version-checked)
+//   POST /api/signals/:id/archive      { signal }   retire: inactive, key never reused
+//   POST /api/signals/:id/reprocess    { signal }   credit-gated, like the box route
+
+const SIGNAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The router with its collaborators injectable, so the tests run it without a database or plan. */
+export function makeWorkspaceSignalsRouter({ getSb = getSupabaseClient, guards = [verifySupabaseAuth, requireFeature('revboxes')], creditGate = revboxCreditGate } = {}) {
+  const router = Router();
+  const route = (fn) => [...guards, async (req, res) => {
+    try {
+      if (!req.workspaceId || !req.internalUserId) return res.status(400).json({ error: 'Workspace and signed-in member are required.' });
+      if (req.params.id && !SIGNAL_ID.test(req.params.id)) return res.status(400).json({ error: 'Invalid identifier.' });
+      const sb = getSb();
+      await revboxMembership(sb, req.workspaceId, req.internalUserId);
+      await fn(req, res, sb);
+    } catch (e) {
+      if (e.code === '42P01' || e.code === 'PGRST205' || ((e.code === '42703' || e.code === 'PGRST204') && /archived_at|\bkey\b|sources/.test(e.message ?? ''))) return res.status(409).json({ error: 'The workspace signals migration has not been applied.' });
+      if (!e.status) console.error('[signals]', e);
+      res.status(e.status ?? 500).json({ error: e.status ? e.message : 'Could not save or load the signal.' });
+    }
+  }];
+  router.get('/catalog', ...route(async (req, res, sb) => {
+    const custom = await listCustomSignals(sb, req.workspaceId, req.internalUserId);
+    res.json({ ...signalCatalog({ custom }), groups: SIGNAL_GROUPS });
+  }));
+  router.get('/', ...route(async (req, res, sb) => {
+    const signals = await listCustomSignals(sb, req.workspaceId, req.internalUserId);
+    const hits = await customSignalHits(sb, req.workspaceId, signals.slice(0, 100).map(s => s.id));
+    res.json({ signals: signals.map(s => ({ ...s, hits: hits[s.id] ?? null })) });
+  }));
+  router.post('/', ...route(async (req, res, sb) => res.status(201).json({ signal: await saveCustomSignal(sb, req.workspaceId, req.internalUserId, req.body ?? {}) })));
+  router.put('/:id', ...route(async (req, res, sb) => res.json({ signal: await saveCustomSignal(sb, req.workspaceId, req.internalUserId, req.body ?? {}, req.params.id) })));
+  router.post('/:id/archive', ...route(async (req, res, sb) => res.json({ signal: await archiveCustomSignal(sb, req.workspaceId, req.internalUserId, req.params.id) })));
+  router.post('/:id/reprocess', ...route(async (req, res, sb) => {
+    await creditGate(sb, req.workspaceId);
+    res.json({ signal: await reprocessCustomSignal(sb, req.workspaceId, req.internalUserId, req.params.id, req.body?.since) });
+  }));
+  return router;
+}
+export const workspaceSignalsRouter = makeWorkspaceSignalsRouter();

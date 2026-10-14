@@ -69,6 +69,7 @@ export interface PlanFeatures {
    *  workspace may keep is the plan's `automationLimit`; this is only whether the surface
    *  exists at all, and it exists everywhere. */
   automations: boolean;
+  revboxes: boolean;
 
   // ── The team layer. Headless only. The surfaces that run on OUR Sonnet bill —
   //    which is the entire reason this block exists. ──
@@ -130,6 +131,7 @@ const GRAPH = {
   // Sonnet bill is the only thing the team layer was ever drawing, and these do not touch it.
   tasks: true,
   automations: true,
+  revboxes: false,
 } as const;
 
 // The team layer. Adoption + Insights joined it 2026-07-31: on the API plan the
@@ -160,7 +162,7 @@ const API_TIER_OFF = {
   // automation is a schedule over the same reads, which is the thing an operator running their
   // own agent most wants us to hold. Tasks stay off: a worklist is the app deciding what you
   // should do next, which is what Custom sells.
-  tasks: false,
+  tasks: true,
 } as const;
 
 const TEAM_OFF = {
@@ -231,7 +233,7 @@ export const PLANS: Record<PlanId, Plan> = {
     workspaceLimit: 5,
     memberLimit: null,
     stripePriceEnv: 'STRIPE_SELF_SERVE_49_PRICE_ID',
-    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, supportTier: 'priority' },
+    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, revboxes: true, supportTier: 'priority' },
   },
 
   custom: {
@@ -247,7 +249,8 @@ export const PLANS: Record<PlanId, Plan> = {
     workspaceLimit: null,
     memberLimit: null,
     stripePriceEnv: null,
-    features: { ...GRAPH, ...TEAM_ON, insights: true, supportTier: 'priority' },
+    // RevBoxes on Workspace too (GET-864); mirrors the revboxes flag in apps/api/src/lib/plans.mjs.
+    features: { ...GRAPH, ...TEAM_ON, insights: true, revboxes: true, supportTier: 'priority' },
   },
 };
 

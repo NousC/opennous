@@ -254,6 +254,17 @@
 2026_10_08_hubspot_field_changed_trigger_kind.sql
 2026_10_08_insight_items_kind.sql
 2026_10_09_linear_issue_links.sql
+2026_10_13_custom_signal_versions.sql
+2026_10_13_custom_signals.sql
+2026_10_13_revbox_campaign_dispatch.sql
+2026_10_13_revbox_costs.sql
+2026_10_13_revbox_events.sql
+2026_10_13_revbox_runs.sql
+2026_10_13_revbox_signal_visibility.sql
+2026_10_13_revbox_usage.sql
+2026_10_13_revbox_webhooks.sql
+2026_10_13_revboxes.sql
+2026_10_13_workspace_signal_ownership.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql

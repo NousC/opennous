@@ -150,7 +150,11 @@ export {
   runAutomationDailyPoll, runAutomationsForWorkspace, makeArtifactForTest, resendAutomationDocument,
   emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, icpChanges, previewAutomationVars, composeAutomationEmail, automationEmailPreview, automationContextPreview, searchAutomationAccounts, CONTEXT_PARTS,
   processAccountSignals, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, saveApprovalChoices, testTriggers,
+  // RevBox jobs on the engine (GET-868): the box context an AI step reads.
+  revboxContextText, revboxRoutineContext, REVBOX_CONTEXT_CHARS,
 } from './services/automationRun.mjs';
+// Slack layouts for automation output (GET-858): the formats, the AI's JSON shape, parse and text.
+export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
 // Record events (GET-559): every detector emits through one door; the trigger worker delivers.
 export { emitEvent, buildEventRecord, eventEnvelope, EVENT_API_VERSION } from './services/events.mjs';
 // HubSpot fields as automation variables (GET-567): listed from the stored schema, read live.
@@ -218,3 +222,22 @@ export { previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMe
 export { autoCloseActionItems, personNamedIn, promisedAtOf } from './services/actionItemClosure.mjs';
 export { hubspotObjects, hubspotObjectFields, readHubspotRecords, summarizeRecords, periodsFor } from './services/hubspotRead.mjs';
 export { hubspotFieldChanges, changesFromHistory, changeText } from './services/hubspotFieldTrigger.mjs';
+
+// RevBox configuration and reviewable job proposals (API-first).
+export * from "./db/revboxes.mjs";
+export * from "./services/revboxPlan.mjs";
+
+export * from './services/revboxCompiler.mjs';
+export * from './db/revboxUsage.mjs';
+
+export * from './db/revboxRuns.mjs';
+// The Job Builder's sessions and approve -> workflow-engine routine (GET-868).
+export * from './db/revboxBuilder.mjs';
+export * from './services/revboxExecution.mjs';
+
+export * from './services/routineSchedule.mjs';
+
+export * from './db/customSignals.mjs';
+export * from './services/customSignalExtraction.mjs';
+// What can start a job (GET-862): built-in + workspace signals, each with its routine trigger.
+export * from './services/signalCatalog.mjs';

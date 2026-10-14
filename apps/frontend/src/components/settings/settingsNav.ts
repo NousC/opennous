@@ -29,6 +29,8 @@ export interface SettingsNavInput {
   isOwner: boolean;
   /** A self-hosted install: its owner/admins get Instance setup (GET-837). */
   selfHosted?: boolean;
+  /** The workspace has RevBoxes (API and Workspace plans, GET-864): Context and Signals show. */
+  revboxes?: boolean;
 }
 
 export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
@@ -73,6 +75,11 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // rows sit before Billing (off in v1, GET-211).
     // Self-host: what nous.env has configured, AI models, integrations, email (GET-837).
     { id: "instance",        label: "Instance setup",        group: "Workspace", show: !!input.selfHosted && isWorkspaceAdmin },
+    // What every RevBox job may read (GET-858), then the workspace's signals right below it (GET-862).
+    // Both follow the revboxes feature, so they show on API and Workspace alike (GET-864), to
+    // members too: jobs and signals are not admin-only.
+    { id: "context",         label: "Context",               group: "Workspace", show: !!input.revboxes },
+    { id: "signals",         label: "Signals",               group: "Workspace", show: !!input.revboxes },
     { id: "general",         label: "General",               group: "Workspace", show: isWorkspaceAdmin },
     { id: "members",         label: "Members",               group: "Workspace", show: isWorkspaceAdmin },
     // Billing IS the Usage page on every plan (GET-660), so the row says so and goes there.

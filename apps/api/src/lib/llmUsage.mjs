@@ -146,6 +146,10 @@ export const AI_CREDIT_FEATURES = [
 
   // A canvas automation's run (GET-710): the write-up its OpenNous or AI step makes. About a credit.
   'automation-handoff',
+
+  // The RevBox Job Builder (GET-868): each model call of a turn that sets up a job. Billed through
+  // recordRevboxUsage (the RevBox ledger), listed here as the record of what is metered.
+  'revbox-job-builder',
 ];
 
 // Our own telemetry — never a customer's billable work (the Haiku turn-classifier).

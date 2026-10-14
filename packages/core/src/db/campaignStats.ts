@@ -54,6 +54,7 @@ export async function upsertCampaignStats(
     .from('campaign_stats')
     .upsert(payload, { onConflict: 'workspace_id,provider,campaign_id' });
   if (error) throw error;
+
 }
 
 /** Latest stats per campaign → Map<campaign_id, row>. */

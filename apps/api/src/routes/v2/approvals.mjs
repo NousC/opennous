@@ -7,13 +7,24 @@
 // POST /v2/approvals/:runId/reject         → ends the run as rejected
 import { Router } from 'express';
 import { getSupabaseClient, listAutomationApprovals, decideAutomationRun } from '@nous/core';
+import { boxJobAccess, canSeeRoutineRuns, boxRunGuard } from '../../lib/boxJobAccess.mjs';
 
 export const approvalsV2Router = Router();
+
+// A RevBox job's runs (GET-868) only for a key whose member may see the box; deciding one needs its
+// owner or an editor. Ordinary automations' approvals are unchanged.
+const keyUser = (req) => req.memberUserId ?? req.internalUserId ?? null;
+approvalsV2Router.param('runId', boxRunGuard(keyUser));
 
 approvalsV2Router.get('/', async (req, res) => {
   try {
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
-    return res.json({ approvals: await listAutomationApprovals(getSupabaseClient(), req.workspaceId, { limit }) });
+    const supabase = getSupabaseClient();
+    const [approvals, access] = await Promise.all([
+      listAutomationApprovals(supabase, req.workspaceId, { limit }),
+      boxJobAccess(supabase, req.workspaceId, keyUser(req)),
+    ]);
+    return res.json({ approvals: approvals.filter(a => canSeeRoutineRuns(access, a.automation?.id)) });
   } catch (err) {
     console.error('[GET /v2/approvals]', err);
     return res.status(500).json({ error: 'internal_error' });

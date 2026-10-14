@@ -14,7 +14,8 @@ const DEFAULT_FROM = process.env.RESEND_FROM_EMAIL || 'Nous <noreply@opennous.cl
 const DEFAULT_REPLY_TO = process.env.RESEND_REPLY_TO || DEFAULT_FROM;
 
 export interface SendEmailParams {
-  to: string;
+  /** One address, or several (all on the To line). */
+  to: string | string[];
   /** Everyone else who should see it, on the same thread. */
   cc?: string[];
   subject: string;
@@ -62,7 +63,7 @@ export async function sendEmail({
       },
       body: JSON.stringify({
         from,
-        to: [to],
+        to: Array.isArray(to) ? to : [to],
         // Cc, so everyone who needs to see it is on ONE thread and a reply-all reaches the
         // room. Sending each person their own copy is three conversations (GET-426).
         ...(cc?.length ? { cc } : {}),

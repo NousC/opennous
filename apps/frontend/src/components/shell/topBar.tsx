@@ -5,7 +5,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import {
-  Activity, BarChart3, Brain, Building2, CheckSquare, Columns3, GraduationCap, HeartHandshake,
+  Activity, BarChart3, Brain, Building2, Columns3, GraduationCap, HeartHandshake, Inbox,
   Home as HomeIcon, KeyRound, Lightbulb, MessageCircle, Network, Plug, Webhook, Zap,
 } from "lucide-react";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
@@ -51,7 +51,7 @@ const SECTIONS: { prefix: string; icon: typeof HomeIcon; label: string }[] = [
   { prefix: "/pipeline", icon: Columns3, label: "Pipeline" },
   { prefix: "/customers", icon: HeartHandshake, label: "Customers" },
   { prefix: "/accounts", icon: Building2, label: "Accounts" },
-  { prefix: "/tasks", icon: CheckSquare, label: "Tasks" },
+  { prefix: "/tasks", icon: Inbox, label: "Inbox" },
   { prefix: "/reporting", icon: BarChart3, label: "Reporting" },
   { prefix: "/coaching", icon: GraduationCap, label: "Coaching" },
   { prefix: "/insights", icon: Lightbulb, label: "Insights" },
@@ -87,7 +87,9 @@ export function AppTopBar() {
   const crumbs = ctx?.override?.crumbs ?? fallback;
   // The API plan's pages draw their own bar (ApiTopBar, GET-621) with the same title; two bars
   // naming the page twice is one too many (polish pass, GET-657). Its other paths keep this one.
-  const apiBar = isApiTier(plan) && !!apiTopBarRoute(pathname);
+  // A RevBox draws its own breadcrumb bar on every plan (GET-864): on Workspace too, where the
+  // box's job builder is the job-scoped chat.
+  const apiBar = (isApiTier(plan) && !!apiTopBarRoute(pathname)) || pathname.startsWith('/revboxes/');
 
   if (apiBar) return null;
   return (

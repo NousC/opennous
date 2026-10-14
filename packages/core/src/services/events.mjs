@@ -1,3 +1,4 @@
+import { enqueueRevboxEvent } from '../db/revboxRuns.mjs';
 // Record events (GET-559) — something happened on an account, pushed to the workspace's own
 // stack (n8n, Clay, their agent) with the record attached.
 //
@@ -197,7 +198,7 @@ export function eventEnvelope({ type, workspaceId, occurredAt, record, data = {}
  */
 export async function emitEvent(supabase, {
   workspaceId, type, accountId = null, personId = null, dealId = null,
-  occurredAt = null, data = {}, dedupeKey, maxAgeHours = DEFAULT_MAX_AGE_HOURS,
+  occurredAt = null, data = {}, revboxData = null, dedupeKey, maxAgeHours = DEFAULT_MAX_AGE_HOURS,
 }) {
   try {
     if (!workspaceId || !type || !dedupeKey) return 0;
@@ -205,6 +206,7 @@ export async function emitEvent(supabase, {
     if (Number.isNaN(at.getTime())) return 0;
     if (Date.now() - at.getTime() > maxAgeHours * 3_600_000) return 0;
 
+    await enqueueRevboxEvent(supabase,{workspaceId,type,accountId,occurredAt:at.toISOString(),data:{...data,...(revboxData??{})},dedupeKey}).catch(err=>console.warn('[revbox-events]',err.message));
     const externalId = `${type}:${dedupeKey}`;
     let subs = (await subscribersFor(supabase, workspaceId, type))
       .filter(s => at.getTime() >= new Date(s.created_at).getTime() - SUBSCRIBE_GRACE_MS);

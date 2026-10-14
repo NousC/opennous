@@ -227,6 +227,7 @@ const GRAPH = {
   // an automation is a trigger plus a template. Keep in step with GRAPH_ON in plans.ts.
   tasks: true,
   automations: true,
+  revboxes: false,
 };
 
 const TEAM = {
@@ -251,7 +252,7 @@ const API_TIER_OFF = {
   // automation is a schedule over the same reads, which is the thing an operator running their
   // own agent most wants us to hold. Tasks stay off: a worklist is the app deciding what you
   // should do next, which is what Custom sells.
-  tasks: false,
+  tasks: true,
 };
 
 /**
@@ -283,7 +284,7 @@ export const PLANS = {
     enrichmentsPerMonth: 0,
     workspaceLimit: 5,
     stripePriceEnv: 'STRIPE_SELF_SERVE_49_PRICE_ID',
-    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, supportTier: 'priority' },
+    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, revboxes: true, supportTier: 'priority' },
   },
 
   // ── Free — $0 (GET-682). The self-serve product with a small, hard allowance: new
@@ -324,7 +325,8 @@ export const PLANS = {
     enrichmentsPerMonth: 0,
     workspaceLimit: null,
     stripePriceEnv: null,
-    features: { ...GRAPH, ...TEAM, insights: true, supportTier: 'priority' },
+    // RevBoxes on Workspace too (GET-864), the same flag the API plan has.
+    features: { ...GRAPH, ...TEAM, insights: true, revboxes: true, supportTier: 'priority' },
   },
 };
 

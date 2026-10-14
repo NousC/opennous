@@ -11,6 +11,7 @@
 // of silently blanking a page.
 import http from "node:http";
 import { existsSync } from "node:fs";
+import { handleRevboxPreview } from "./revboxes.mjs";
 import {
   WS, USERS, COMPANIES, CONTACTS, FLAGS, TASKS, PORTFOLIO, GRAPH, CAMPAIGNS,
   companyDetail, personRecord, icpRecord,
@@ -141,7 +142,7 @@ const apiPlanRoutes = !API_PLAN ? [] : [
     crm: { done: true, provider: "hubspot", imported: true, accounts: 12 },
     mail: { done: true, providers: ["gmail"] }, notes: { done: true, providers: ["fireflies"] },
     backfill: { state: "done", started: true }, plan: { live: true }, seat: "founder",
-    api_key: { created: true, used: false },
+    api_key: { created: true, used: true },
   })],
 ];
 
@@ -171,6 +172,9 @@ const apiDataRoutes = !API_DATA ? [] : [
 // open-source export leaves out; loaded only when the folder is here.
 const cloudPreviewRoutes = existsSync(new URL("./cloud/index.mjs", import.meta.url))
   ? (await import("./cloud/index.mjs")).routes : [];
+// The Slack layouts page (GET-858): /preview/slack-blocks, Cloud's renderer.
+const slackBlocksPreview = existsSync(new URL("./cloud/slackBlocks.mjs", import.meta.url))
+  ? (await import("./cloud/slackBlocks.mjs")).handleSlackBlocksPreview : null;
 
 // ── Route table ──────────────────────────────────────────────────────────────
 // [method, regex, handler(match, query, req, res)]
@@ -376,6 +380,13 @@ const routes = [
     { id: "mb-1", kind: "gmail", email: "avery@opennous.example" },
     { id: "mb-2", kind: "gmail", email: "test.user.0001@gmail.com" },
   ], default_id: "mb-1" })],
+  // The connected Slack's channels (GET-771 shape), for the Slack step and the RevBox Delivery picker.
+  ["GET", /^\/api\/slack\/targets$/, () => ({ connected: true, channels: [
+    { id: "C07CSHANDOFFS", name: "cs-handoffs", private: false, member: true },
+    { id: "C07TU1HANDOFF", name: "credit-check-cs-handoff", private: false, member: true },
+    { id: "C07LEADERSHIP", name: "cs-leadership", private: true, member: true },
+    { id: "C07GENERAL", name: "general", private: false, member: false },
+  ], people: [{ id: "U07AVERY", name: "Avery Example", email: "avery@opennous.example" }] })],
   // The simple editor's email preview (GET-664), by the live route's shape: the email a run
   // would send for a recent trigger, notice + PDF or the AI's words, as the step says.
   ["POST", /^\/api\/automations\/email-preview$/, async (_m, _q, req) => previewEmail(await readBody(req))],
@@ -838,6 +849,8 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
+  if (await handleRevboxPreview(req, res, url, json)) return;
+  if (slackBlocksPreview && (await slackBlocksPreview(req, res, url))) return;
 
   if (req.method === "POST" && path === "/api/playground/chat/stream") return chatStream(req, res);
   if (path === "/health") return json(res, { ok: true, preview: true });

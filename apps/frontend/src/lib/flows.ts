@@ -109,7 +109,9 @@ export function varLabel(token: string, flow: Flow): string {
 
 // ── Steps ────────────────────────────────────────────────────────────────────
 
-export type StepType = "agent" | "hubspot" | "gmail" | "slack" | "email" | "webhook" | "only_if" | "wait" | "approval";
+// revbox_delivery (GET-868) is added by the RevBox Job Builder, never from the step picker: it posts the
+// last AI output to the box's destinations as they are at run time.
+export type StepType = "agent" | "hubspot" | "gmail" | "slack" | "email" | "webhook" | "only_if" | "wait" | "approval" | "revbox_delivery";
 export type Rule = { field: string; op: string; value: string };
 /** Every setting any step type takes; each type reads its own. */
 export type StepConfig = {
@@ -176,7 +178,7 @@ export const STEP_GROUPS: { label: string; types: StepType[] }[] = [
 
 export const STEP_LABEL: Record<StepType, string> = {
   agent: "AI", hubspot: "HubSpot", gmail: "Gmail", slack: "Slack", email: "Email",
-  webhook: "Webhook", only_if: "Only if", wait: "Wait", approval: "Approval",
+  webhook: "Webhook", only_if: "Only if", wait: "Wait", approval: "Approval", revbox_delivery: "RevBox delivery",
 };
 export const STEP_HINT: Record<StepType, string> = {
   agent: "ChatGPT or Claude",
@@ -188,6 +190,7 @@ export const STEP_HINT: Record<StepType, string> = {
   only_if: "Stop unless a rule holds",
   wait: "Pause, then carry on",
   approval: "Hold until you approve",
+  revbox_delivery: "Send to the RevBox's destinations",
 };
 
 /** Steps that act outside the app get an Approval in front of them when added. */
@@ -317,6 +320,7 @@ export function stepTitle(s: Step): string {
     case "only_if": return "Only if";
     case "wait": return c.mode === "until_reply" ? "Wait for a reply" : `Wait ${c.amount} ${c.amount === 1 ? String(c.unit).replace(/s$/, "") : c.unit}`;
     case "approval": return "Your approval";
+    case "revbox_delivery": return "Send to the RevBox's destinations";
   }
 }
 
@@ -339,6 +343,7 @@ export function stepSub(s: Step, flow: Flow): string {
     }
     case "wait": return c.mode === "until_reply" ? `Up to ${c.amount} ${c.unit}` : "Then carry on";
     case "approval": return "Lands on Home until you approve";
+    case "revbox_delivery": return "Every Slack channel and webhook the box delivers to";
   }
 }
 
@@ -357,6 +362,7 @@ export function stepReady(s: Step): boolean {
     case "only_if": return (c.rules ?? []).length > 0 && (c.rules as Rule[]).every(r => r.field);
     case "wait": return Number(c.amount) > 0;
     case "approval": return true;
+    case "revbox_delivery": return true;
   }
 }
 
@@ -395,6 +401,7 @@ function stepPhrase(s: Step): string {
     case "only_if": return "check the rules";
     case "wait": return c.mode === "until_reply" ? "wait for a reply" : `wait ${c.amount} ${c.amount === 1 ? String(c.unit).replace(/s$/, "") : c.unit}`;
     case "approval": return "wait for my approval";
+    case "revbox_delivery": return "send it to the RevBox's destinations";
   }
 }
 
@@ -459,7 +466,7 @@ export function flowPayload(flow: Flow, name: string) {
 export type Issue = { level: "warn" | "note"; text: string };
 
 // What the runner executes today. Everything else saves and waits for the step runner.
-const RUNS_TODAY = new Set(["agent", "email", "webhook", "gmail", "slack", "only_if", "approval", "hubspot"]);
+const RUNS_TODAY = new Set(["agent", "email", "webhook", "gmail", "slack", "only_if", "approval", "hubspot", "revbox_delivery"]);
 const LABEL: Record<string, string> = {
   hubspot: "HubSpot", gmail: "Gmail", slack: "Slack", only_if: "Only if", wait: "Wait", approval: "Approval",
 };

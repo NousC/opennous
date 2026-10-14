@@ -344,6 +344,21 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
   });
   const rawCompanies = companiesPage?.companies ?? NO_COMPANIES;
+  const accountOverview = useQuery<{ accounts: { id: string; deal_count: number; latest_signal: { title: string | null; kind: string; at: string | null } | null }[] }>({
+    queryKey: ['account-overview', workspaceId, rawCompanies.map(c => c.id)],
+    // Deals and the latest signal per account: the API plan's table, and the Workspace table since GET-864.
+    enabled: !!token && rawCompanies.length > 0,
+    queryFn: async () => {
+      const accounts = [];
+      for (let i = 0; i < rawCompanies.length; i += 200) {
+        const res = await fetch(`${apiUrl}/api/account-overview?workspaceId=${encodeURIComponent(workspaceId)}`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: rawCompanies.slice(i, i + 200).map(c => c.id) }) });
+        if (!res.ok) throw new Error('Could not load account signals.');
+        accounts.push(...(await res.json()).accounts);
+      }
+      return { accounts };
+    },
+  });
+  const overviewById = new Map((accountOverview.data?.accounts ?? []).map(a => [a.id, a]));
   const accountsTotal = companiesPage?.total ?? 0;
   // What the server actually filtered by, so the control shows the truth on first load — before the
   // user has chosen anything, that is the workspace's own focus.
@@ -462,7 +477,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   };
   // All / Prospects / Customers. In the URL like the view, so Back from an account keeps it.
   type Segment = "all" | "prospects" | "customers";
-  const segment: Segment = hasCustomerStatus && (params.get("type") === "prospects" || params.get("type") === "customers")
+  const segment: Segment = !api && hasCustomerStatus && (params.get("type") === "prospects" || params.get("type") === "customers")
     ? (params.get("type") as Segment) : "all";
   const setSegment = (s: Segment) => {
     const next = new URLSearchParams(params);
@@ -805,7 +820,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const dash = <span className="text-muted-foreground/50">—</span>;
   // Rows are a plain page of the list (not a filter over it) only with no segment and no person.
   const plainPage = segment === "all" && (owners.length === 0 || mineOnly);
-  const accountColumns: Column<AccountRow>[] = [
+  const workspaceAccountColumns: Column<AccountRow>[] = [
     {
       key: "company", header: "Company", width: "24%",
       cell: (c) => {
@@ -875,6 +890,27 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
   ];
 
+  const col = (key: string) => workspaceAccountColumns.find(c => c.key === key)!;
+  const dealsColumn: Column<AccountRow> = { key: 'deals', header: 'Deals', cell: c => {
+    const total = overviewById.get(c.id)?.deal_count;
+    if (total === undefined) return accountOverview.error ? 'Unavailable' : accountOverview.isLoading ? '…' : dash;
+    // Workspace shows how many are still open beside the total; the API plan, the total alone.
+    const open = api ? 0 : (pipelineByCompany.get(c.id)?.count ?? 0);
+    return total ? <span className="tabular-nums">{total}{open ? <span className="text-muted-foreground"> · {open} open</span> : null}</span> : dash;
+  } };
+  const signalColumn: Column<AccountRow> = { key: 'signal', header: 'Latest signal', cell: c => { const signal = overviewById.get(c.id)?.latest_signal; return signal ? <span className="block max-w-[240px] truncate text-[12px] text-ink-2" title={signal.title ?? signal.kind}>{signal.title ?? signal.kind.replace(/_/g, ' ')}</span> : accountOverview.error ? <span className="text-[11px] text-risk">Unavailable</span> : accountOverview.isLoading ? '…' : dash; } };
+  const accountColumns: Column<AccountRow>[] = api ? [
+    col('company'), { ...col('people'), header: 'Contacts' }, dealsColumn, signalColumn,
+    { ...col('activity'), header: 'Last activity' }, col('icp'),
+  ] : [
+    // Workspace (GET-864): the API plan's columns plus what sales works from, Pipeline and Owner.
+    // Tier is the ICP bar's colour already; Closed revenue and MRR belong to the Customers tab.
+    col('company'), { ...col('people'), header: 'Contacts' }, dealsColumn, signalColumn,
+    col('pipeline'), col('owner'), col('activity'), col('icp'),
+    ...(segment === 'customers' ? [col('won'), col('mrr')] : []),
+    col('menu'),
+  ];
+
   const segmentOptions = ([["all", "All"], ["prospects", "Prospects"], ["customers", "Customers"]] as const).map(([k, label]) => {
     const n = segmentCounts[k];
     const more = k !== "all" && hasMore;
@@ -917,7 +953,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         {filterChips.length > 1 && view === "accounts" && hasCustomerStatus && <span aria-hidden className="mx-1 hidden h-4 w-px bg-border sm:block" />}
         {/* Prospect or customer, from the CRM's own customer status. Hidden until the server
             sends that status, because a filter that sorts everything into one bucket lies. */}
-        {view === "accounts" && hasCustomerStatus && (
+        {!api && view === "accounts" && hasCustomerStatus && (
           <ViewTabs<Segment> aria-label="Account type" value={segment} onChange={setSegment} options={segmentOptions} />
         )}
         <div className="hidden flex-1 sm:block" />
@@ -1024,7 +1060,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
           rowKey={(c) => c.id}
           onRowClick={(c) => onOpen(c.id, c.name, uniquePaths(accountRows.map((x) => accountPath(x.id))))}
           keyboard
-          minWidth={segment === "prospects" ? 1000 : 1090}
+          minWidth={segment === "customers" ? 1120 : 980}
           loading={loadingCo && companies.length === 0}
           empty={
             <EmptyState className="mx-4 mt-4"

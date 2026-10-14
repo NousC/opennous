@@ -427,6 +427,7 @@ export async function scoreCall({
           workspaceId, type: 'conversation.call_ended',
           accountId: account || null, personId: primary || null, occurredAt: at,
           dedupeKey: target.meetingId,
+          revboxData:{owner_user_id:recorder?.userId??repUserId??null,transcript:transcript.slice(0,60000),attendees:(Array.isArray(contacts)?contacts:[]).filter(c=>c?.email&&!ourEntityIds.has(c.id)).map(c=>({name:c.name??null,email:c.email}))},
           data: { meeting_id: target.meetingId, title: title ?? null, source: target.source ?? source ?? null, source_ref: sourceRef ?? null, url: sourceUrl ?? null, call_type: callType, ...data },
         }).catch(() => 0)
       : Promise.resolve(0));

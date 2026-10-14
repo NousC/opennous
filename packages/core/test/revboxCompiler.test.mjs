@@ -1,0 +1,10 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { compileRevboxPlan } from '../src/services/revboxCompiler.mjs';
+import { proposeRevboxPlan } from '../src/services/revboxPlan.mjs';
+const prompt='Every morning at 7am create a report';
+const response=()=>({model:'test',usage:{cost:0.01},content:[{type:'text',text:JSON.stringify(proposeRevboxPlan(prompt))}]});
+test('credit gate blocks compute',async()=>{let called=false;await assert.rejects(compileRevboxPlan(prompt,{}, {gate:async()=>{throw new Error('credits');},generate:async()=>{called=true;},meter:async()=>{}}),/credits/);assert.equal(called,false);});
+test('persist usage before accepting a reviewed plan',async()=>{const calls=[];const plan=await compileRevboxPlan(prompt,{}, {gate:async()=>calls.push('gate'),generate:async()=>{calls.push('generate');return response();},meter:async()=>calls.push('meter')});assert.deepEqual(calls,['gate','generate','meter']);assert.equal(plan.execution_enabled,false);});
+test('invalid output still bills consumed compute',async()=>{let metered=false;await assert.rejects(compileRevboxPlan(prompt,{}, {gate:async()=>{},generate:async()=>({content:[{type:'text',text:'invalid'}]}),meter:async()=>{metered=true;}}),/invalid plan/);assert.equal(metered,true);});
+test('meter failure prevents accepting configuration',async()=>{await assert.rejects(compileRevboxPlan(prompt,{}, {gate:async()=>{},generate:async()=>response(),meter:async()=>{throw new Error('ledger unavailable');}}),/ledger unavailable/);});

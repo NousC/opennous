@@ -18,6 +18,7 @@ import {
 } from './intelligence/index.mjs';
 import { getSupabaseClient, sweepSupportAccess, registerCrmPushHandler, pushActivityToAllCrms, logWorkerRun, registerActivityHook, pipelineStageHook, crmAgentHook, registerCommitteeProvider, loadBuyingCommittee } from '@nous/core';
 import { registerEvidenceLayer } from './lib/evidence/index.mjs';
+import { registerRevboxStepHandlers } from './lib/revboxStepHandlers.mjs';
 // Gmail and Google Calendar are scheduled scans through Composio (services/gmailSync.mjs,
 // services/calendarSync.mjs); their push triggers only get new items in sooner — GET-221, GET-234.
 import { syncAllCalendars } from './services/calendarSync.mjs';
@@ -96,6 +97,9 @@ registerStepHandler('slack', viaApi('slack', (r) => ({ ok: false, reason: `slack
 registerStepHandler('gmail_draft', viaApi('gmail-draft', (r) => ({ status: 'failed', error: r })));
 registerStepHandler('meter', viaApi('meter', () => ({ ok: false })));
 registerStepHandler('smtp_send', viaApi('smtp-send', (r) => ({ ok: false, reason: `smtp_${r}` })));
+// A RevBox job run here (GET-868): its box webhooks (and every webhook step) go through the SSRF
+// guard, and its account-scoped box references are read as its owner may see them.
+registerRevboxStepHandlers(registerStepHandler);
 
 // Pipeline-stage advancement + outcome resolution are a PRODUCT hook on the substrate's activity
 // seam (context-graph decouple #1). MUST be registered here too — the worker logs the bulk of

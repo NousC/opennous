@@ -34,6 +34,7 @@ export const CREDIT_SCALE = 2;
  */
 export const REQUESTED_USD_PER_CREDIT = 0.01 / CREDIT_SCALE;
 export const REQUESTED_FEATURES = [
+  'revbox-plan', 'revbox-run', 'revbox-custom-signal',
   'home-agent-turn', 'home-agent-close', 'playground-agent-turn',       // the agent, and what it drafts inline
   'studio-email-draft', 'studio-linkedin-draft', 'studio-email-brief', 'studio-campaign-brief',
   'sequence-ai-step',
@@ -162,7 +163,7 @@ export async function conversationCredits(
       const usd = Number(r.cost_usd) || 0;
       requestedUsd += usd;
       const day = String(r.occurred_at ?? '').slice(0, 10);
-      const auto = String(r.feature ?? '').startsWith('automation-');
+      const auto = String(r.feature ?? '').startsWith('automation-') || ['revbox-run','revbox-custom-signal'].includes(String(r.feature));
       if (auto) automationsUsd += usd;
       if (day) {
         out.byDay.set(day, (out.byDay.get(day) ?? 0) + usd / REQUESTED_USD_PER_CREDIT);

@@ -24,6 +24,8 @@ import Webhooks from "@/pages/Webhooks";
 import { AutomationsPanel } from "@/components/AutomationsPanel";
 import { RepositoriesPane } from "@/components/settings/RepoPane";
 import MarketFocus from "@/pages/MarketFocus";
+import { ContextLibrary } from "@/components/settings/ContextLibrary";
+import { SignalsSettings } from "@/components/settings/SignalsSettings";
 import { activeTeam } from "@/lib/activeTeam";
 import { cloud } from "@/lib/cloud";
 import { cn } from "@/lib/utils";
@@ -202,12 +204,14 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
   // tested without React: API vs Custom, admin gating, the hidden sections staying hidden.
   // Core = the API plan (CORE_PLAN_IDS). It is where Repo shows, and where Billing is the
   // Usage page.
-  const { planId: __planIdForNav, selfHosted } = usePlan();
+  const { planId: __planIdForNav, selfHosted, can: canForNav } = usePlan();
+  // Context and Signals follow the revboxes feature: API and Workspace plans alike (GET-864).
+  const revboxesOn = canForNav("revboxes");
   const core = isCorePlan(__planIdForNav);
   const tier = planTier(__planIdForNav);
   const SECTIONS = useMemo(
-    () => settingsNav({ tier, isWorkspaceAdmin, isOwner, selfHosted }, cloud.settings?.navRows),
-    [tier, isWorkspaceAdmin, isOwner, selfHosted],
+    () => settingsNav({ tier, isWorkspaceAdmin, isOwner, selfHosted, revboxes: revboxesOn }, cloud.settings?.navRows),
+    [tier, isWorkspaceAdmin, isOwner, selfHosted, revboxesOn],
   );
 
   // Two surfaces, one component. `/connect` shows the PERSONAL groups; `/settings` shows
@@ -1402,6 +1406,8 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {section === "company-sources" && <SectionShell wide><Integrations embedded scope="company" onWrongScope={forwardSource} /></SectionShell>}
           {section === "webhooks"     && <SectionShell wide><Webhooks embedded /></SectionShell>}
           {/* Full width, like the other connection pages (GET-668). */}
+          {section === "context" && <SectionShell title="Context"><ContextLibrary /></SectionShell>}
+          {section === "signals" && <SectionShell title="Signals"><SignalsSettings /></SectionShell>}
           {section === "repo"         && <RepositoriesPane token={token ?? ""} workspaceId={workspaceId} />}
           {/* The Workspace layer's sections (memory, skills, config, models, changes, spend,
               adoption, reporting, insights, categories, agents, runs), each with its own shell. */}

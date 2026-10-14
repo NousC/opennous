@@ -9,7 +9,7 @@ import { useSearchParams } from "react-router-dom";
 import { Search, X } from "lucide-react";
 import { PageToolbar } from "@/components/ui/page-top-bar";
 import { ViewTabs } from "@/components/ui/view-tabs";
-import { ContextGraph, useContextGraph, type Lens } from "./ContextGraph";
+import { ContextGraph, useContextGraph, type GraphSource, type Lens } from "./ContextGraph";
 import { InsightsGraph } from "./InsightsGraph";
 
 type View = Lens | "insights";
@@ -22,7 +22,8 @@ const VIEWS: { id: View; label: string; param: string }[] = [
 // The Claims tab became Insights; an old link still lands somewhere.
 const ALIASES: Record<string, string> = { claims: "insights" };
 
-export function RelationshipsGraph() {
+/** `source` narrows the graph to one RevBox's accounts (GET-858); Insights stays workspace-wide. */
+export function RelationshipsGraph({ source, banner }: { source?: GraphSource; banner?: React.ReactNode } = {}) {
   const [params, setParams] = useSearchParams();
   const asked = params.get("view") ?? "";
   const view = VIEWS.find((v) => v.param === (ALIASES[asked] ?? asked))?.id ?? "account";
@@ -32,7 +33,7 @@ export function RelationshipsGraph() {
     setParams(next, { replace: true });
   };
   const [search, setSearch] = useState("");
-  const { data } = useContextGraph();
+  const { data } = useContextGraph(source);
   const count = (t: Lens) => data?.nodes.filter((n) => n.type === t).length;
 
   return (
@@ -40,6 +41,7 @@ export function RelationshipsGraph() {
       <PageToolbar>
         <ViewTabs<View> aria-label="Graph views" value={view} onChange={setView}
           options={VIEWS.map((v) => ({ value: v.id, label: v.label, count: v.id === "insights" ? undefined : count(v.id) }))} />
+        {banner}
         <div className="hidden flex-1 sm:block" />
         {(
           <label className="inline-flex h-7 w-full items-center gap-[7px] rounded-lg border border-border bg-card px-[9px] text-muted-foreground focus-within:border-foreground/30 sm:w-[200px]">
@@ -57,7 +59,7 @@ export function RelationshipsGraph() {
       <div className="relative flex min-h-0 flex-1 flex-col md:flex-row">
         {view === "insights"
           ? <InsightsGraph search={search} />
-          : <ContextGraph key={view} lens={view} search={search} />}
+          : <ContextGraph key={view} lens={view} search={search} source={source} />}
       </div>
     </div>
   );

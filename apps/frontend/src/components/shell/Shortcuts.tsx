@@ -20,7 +20,9 @@ export function AppShortcuts() {
   // New task from anywhere: the Tasks page opens its form on ?new=1. From an account (or one of its
   // deals) the form opens with that account picked (GET-607).
   const accountId = /^\/accounts\/([^/]+)/.exec(pathname)?.[1];
-  useHotkey("c", () => navigate(accountId ? `/tasks?new=1&account=${encodeURIComponent(accountId)}` : "/tasks?new=1"));
+  // Not on a RevBox page: its job chat is where people type, and a stray "c" before the input has
+  // focus jumped to the Inbox's New task (GET-868).
+  useHotkey("c", () => { if (pathname.startsWith("/revboxes")) return; navigate(accountId ? `/tasks?new=1&account=${encodeURIComponent(accountId)}` : "/tasks?new=1"); });
   return (
     <>
       {Object.entries(GO_TO).map(([combo, to]) => <GoTo key={combo} combo={combo} to={to} />)}

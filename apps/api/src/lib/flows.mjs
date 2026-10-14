@@ -38,7 +38,11 @@ export const FLOW_TRIGGER_KEYS = new Set(FLOW_TRIGGERS.map(t => t.key));
 
 export const STEP_TYPES = new Set([
   'agent', 'hubspot', 'gmail', 'slack', 'email', 'webhook', 'only_if', 'wait', 'approval',
+  // A RevBox job's last step (GET-868): the box's destinations at run time. Added by the Job Builder.
+  'revbox_delivery',
 ]);
+/** Steps only the system writes: never offered on the public API, never accepted from it. */
+export const INTERNAL_STEP_TYPES = new Set(['revbox_delivery']);
 
 const MAX_STEPS = 20;
 const MAX_FLOW_BYTES = 60_000;

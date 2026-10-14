@@ -112,7 +112,7 @@ export function eventTime(iso: string | null, type?: string): string {
 // The sections of the Attio-style Settings surface (see pages/Settings.tsx).
 // Driven by the `?section=` query param. "team"/"usage" are kept as accepted
 // aliases so old deep-links (e.g. /settings?section=usage) still resolve.
-export type SettingsTab =
+export type SettingsTab = "context" | "signals"
   | "profile" | "agent" | "skills" | "appearance" | "preferences" | "sequences" | "memory" | "notifications" | "security" | "privacy"
   | "general" | "members" | "instance" | "governance" | "data" | "vault-sync" | "categories" | "icp" | "insights" | "adoption" | "reporting" | "agents" | "runs" | "integrations" | "company-sources" | "webhooks" | "repo" | "config" | "api-keys" | "billing"
   | "agora" | "admin" | "market" | "models" | "changes" | "spend" | "brains"

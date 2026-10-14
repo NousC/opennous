@@ -1,3 +1,5 @@
+import { revboxWebhooksRouter } from './routes/revboxWebhooks.mjs';
+import { startRevboxRuntime } from './lib/revboxRuntime.mjs';
 import './bootEnv.mjs'; // first — normalizes APP_URL/API_URL from domains before any module reads them
 import express from 'express';
 import cors from 'cors';
@@ -76,6 +78,7 @@ import { membersV2Router } from './routes/v2/members.mjs';
 import { icpV2Router } from './routes/v2/icp.mjs';
 import { usageV2Router } from './routes/v2/usage.mjs';
 import { workflowsV2Router } from './routes/v2/workflows.mjs';
+import { revboxesV2Router } from './routes/v2/revboxes.mjs';
 import { approvalsV2Router } from './routes/v2/approvals.mjs';
 import { webhooksV2Router } from './routes/v2/webhooks.mjs';
 
@@ -113,7 +116,7 @@ import { flagsApiRouter } from './routes/api/flags.mjs';
 import { conflictsApiRouter } from './routes/api/conflicts.mjs';
 import { identityProposalsApiRouter } from './routes/api/identityProposals.mjs';
 import { graphApiRouter } from './routes/api/graph.mjs';
-import { signalsRouter, publicSignalsRouter } from './routes/api/signals.mjs';
+import { signalsRouter, publicSignalsRouter, workspaceSignalsRouter } from './routes/api/signals.mjs';
 import { skillDownloadsRouter } from './routes/public/skillDownloads.mjs';
 import { installRouter } from './routes/public/install.mjs';
 import { requestsRouter } from './routes/api/requests.mjs';
@@ -130,6 +133,7 @@ import { actionsRouter } from './routes/api/actions.mjs';
 import { leadListsRouter } from './routes/api/leadLists.mjs';
 import { campaignMessagesRouter } from './routes/api/campaignMessages.mjs';
 import { triggersRouter } from './routes/api/triggers.mjs';
+import { revboxesRouter, accountOverviewRouter } from './routes/api/revboxes.mjs';
 import { automationsRouter, automationsInternalRouter } from './routes/api/automations.mjs';
 import { workflowProvidersRouter } from './routes/api/workflowProviders.mjs';
 import { systemLogRouter } from './routes/api/systemLog.mjs';
@@ -403,6 +407,9 @@ app.use('/v2/members',         verifyApiKey,     requireOpsBalance, logV2Op, mem
 app.use('/v2/icp',             verifyApiKey,     logV2Op, icpV2Router);
 app.use('/v2/usage',           verifyApiKey,     logV2Op, usageV2Router);
 app.use('/v2/workflows',       verifyApiKey,     requireOpsBalance, logV2Op, workflowsV2Router);
+// RevBoxes and their Job Builder (GET-868). The builder is Cloud's, registered by cloud/index.mjs;
+// self-host answers its routes 501 job_builder_unavailable.
+app.use('/v2/revboxes',        verifyApiKey,     requireOpsBalance, logV2Op, requireFeature('revboxes'), revboxesV2Router);
 app.use('/v2/approvals',       verifyApiKey,     requireOpsBalance, logV2Op, approvalsV2Router);
 // Events pushed to your own stack (GET-559). Same outbox as /v2/workspace/triggers, so the
 // same self-host block: a self-hosted install has no delivery worker reaching the internet.
@@ -439,6 +446,9 @@ app.use('/api/identity-proposals',    identityProposalsApiRouter);
 app.use('/api/graph',                 graphApiRouter);
 // publicSignalExtraction gates the authenticated setup/configuration routes.
 // The public ingest endpoint stays open (its own HMAC token guards it).
+// Workspace signals (GET-862) first: it guards its own routes (auth + the revboxes feature) and
+// lets everything else (/webhook-url) fall through to signalsRouter.
+app.use('/api/signals',               workspaceSignalsRouter);
 app.use('/api/signals',               verifySupabaseAuth, requireFeature('publicSignalExtraction'), signalsRouter);
 app.use('/api/public/signals',        publicSignalsRouter);
 app.use('/api/public/skill-downloads', skillDownloadsRouter);
@@ -473,6 +483,9 @@ app.use('/api/actions',               actionsRouter);
 app.use('/api/lead-lists',            verifyAuthEither, requireFeature('leadLists'), leadListsRouter);
 app.use('/api/campaign-messages',     verifyAuthEither, requireFeature('leadLists'), campaignMessagesRouter);
 app.use('/api/triggers',              verifyAuthEither, triggersRouter);
+app.use('/hooks/revboxes', revboxWebhooksRouter);
+app.use('/api/revboxes', verifySupabaseAuth, requireFeature('revboxes'), revboxesRouter);
+app.use('/api/account-overview', verifySupabaseAuth, accountOverviewRouter);
 app.use('/api/automations',           verifyAuthEither, automationsRouter);
 // Worker→API, secret-guarded: rebuild the derived ledger the deal triggers read.
 app.use('/internal/automations',       automationsInternalRouter);
@@ -601,5 +614,6 @@ import { fileURLToPath } from 'url';
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const PORT = process.env.PORT ?? 3000;
   bootstrapProviders();
+  startRevboxRuntime(getSupabaseClient());
   app.listen(PORT, () => console.log(`Nous API running on :${PORT}`));
 }

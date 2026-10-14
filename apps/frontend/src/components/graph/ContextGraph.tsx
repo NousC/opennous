@@ -48,8 +48,12 @@ const KIND = new Map(CLAIM_KINDS.map((k) => [k.id, k]));
 // On a deal with nobody named yet, the account's claims that bear on closing it.
 const DEAL_KINDS = new Set(["objection", "budget", "timeline", "authority", "buying_signal", "competitor"]);
 
-export function useContextGraph() {
-  return useGraphApi<Graph>("context", "/api/graph/context");
+/** The graph's source: the workspace by default, or one RevBox's accounts (GET-858). */
+export type GraphSource = { path: string; key: string };
+const WORKSPACE: GraphSource = { path: "/api/graph/context", key: "context" };
+
+export function useContextGraph(source: GraphSource = WORKSPACE) {
+  return useGraphApi<Graph>(source.key, source.path);
 }
 
 const ago = (d: number | null | undefined) => d == null ? null : d <= 0 ? "today" : d < 14 ? `${d}d ago` : d < 60 ? `${Math.round(d / 7)}w ago` : `${Math.round(d / 30)}mo ago`;
@@ -83,8 +87,8 @@ const toLinks = (edges: GEdge[]): CanvasLink[] => edges.map((e) => ({
   color: e.type === "knows" ? "rgba(224,90,140,0.45)" : undefined,
 }));
 
-export function ContextGraph({ lens, search }: { lens: Lens; search: string }) {
-  const q = useContextGraph();
+export function ContextGraph({ lens, search, source }: { lens: Lens; search: string; source?: GraphSource }) {
+  const q = useContextGraph(source);
   const claimsQ = useGraphApi<ClaimsData>("claims", "/api/graph/claims");
   const [focus, setFocus] = useState<string | null>(null);
   const [centerOn, setCenterOn] = useState<{ id: string } | null>(null);
