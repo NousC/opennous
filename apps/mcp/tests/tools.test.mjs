@@ -54,11 +54,11 @@ test('tools/list leads with the documented core, list_people is gone', async () 
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
   // Cloud's module adds read_brain and write_brain after score (GET-839); the open-source edition has neither.
-  const core = ['whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'get_insights',
+  const core = ['whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
     'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain'] : []), 'set_icp', 'webhooks'];
   assert.deepEqual(names.slice(0, core.length), core);
   assert.ok(!names.includes('list_people'));
-  assert.equal(names.length, HAS_CLOUD ? 22 : 20);
+  assert.equal(names.length, HAS_CLOUD ? 23 : 21);
 });
 
 test('find deals: filters map to GET /v2/deals and rows render on one line', async () => {
@@ -299,4 +299,40 @@ test('attention shows the task id on an open commitment', async () => {
       age_days: 2, task_id: TASK }], meta: { open_commitments: 1 } }],
   });
   assert.ok(text.includes(`task: ${TASK}`));
+});
+
+// GET-846: a rep's rules, said once. Checked rules are evaluated in the background; guidance only
+// reaches the agent. The tool maps a stated rule onto a check or keeps it guidance.
+const RULE = { id: 'r1', statement: 'Every meeting ends with a dated next step within 48 hours', kind: 'checked',
+  check: { type: 'next_step_after_meeting', params: { hours: 48 }, label: 'Dated next step after every meeting', verifies: 'x' },
+  weight: 'normal', status: 'active', created_at: '2026-10-12T10:00:00Z' };
+
+test('rules add: POST /v2/rules with the mapped check; says whether it is checked', async () => {
+  const { text, calls } = await callTool('rules', { action: 'add', statement: RULE.statement, check: 'next_step_after_meeting', hours: 48 }, {
+    'POST /v2/rules': () => [201, { rule: RULE }],
+  });
+  assert.deepEqual(calls[0].body, { statement: RULE.statement, check: { type: 'next_step_after_meeting', params: { hours: 48 } } });
+  assert.match(text, /Rule saved, checked in the background: Dated next step after every meeting \(48h\)/);
+  const g = await callTool('rules', { action: 'add', statement: 'Lead with ROI for CFOs' }, {
+    'POST /v2/rules': () => [201, { rule: { ...RULE, statement: 'Lead with ROI for CFOs', kind: 'guidance', check: null } }],
+  });
+  assert.deepEqual(g.calls[0].body, { statement: 'Lead with ROI for CFOs' });
+  assert.match(g.text, /Rule saved as guidance/);
+});
+
+test('rules list, pause and remove; checks lists the catalogue', async () => {
+  const list = await callTool('rules', {}, { 'GET /v2/rules': () => [200, { rules: [RULE], count: 1 }] });
+  assert.match(list.text, /1 rule/);
+  assert.match(list.text, /Every meeting ends with a dated next step within 48 hours/);
+  assert.match(list.text, /id: r1/);
+  const paused = await callTool('rules', { action: 'pause', id: 'r1' }, { 'PATCH /v2/rules/r1': () => [200, { rule: { ...RULE, status: 'paused' } }] });
+  assert.deepEqual(paused.calls[0].body, { status: 'paused' });
+  assert.match(paused.text, /Paused/);
+  const removed = await callTool('rules', { action: 'remove', id: 'r1' }, { 'DELETE /v2/rules/r1': () => [200, { status: 'removed', id: 'r1' }] });
+  assert.equal(removed.calls[0].method, 'DELETE');
+  assert.match(removed.text, /Removed/);
+  const checks = await callTool('rules', { action: 'checks' }, { 'GET /v2/rules/checks': () => [200, { checks: [{ type: 'reply_to_buyer_email', label: 'Reply to buyer emails', verifies: 'Every thread…', param: 'hours', default: 24 }] }] });
+  assert.match(checks.text, /reply_to_buyer_email \(hours, default 24\)/);
+  const bad = await callTool('rules', { action: 'pause' }, {});
+  assert.match(bad.text, /Pass `id`/);
 });

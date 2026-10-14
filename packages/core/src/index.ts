@@ -200,6 +200,12 @@ export {
 export {
   addPreference, listPreferences, removePreference, renderPreferences,
 } from './db/preferences.mjs';
+// Rules — what a rep said their deals must do (GET-846). Guidance reaches the agent; a checked
+// rule is evaluated in the background against the check catalogue.
+export {
+  buildRuleRow, addRule, listRules, updateRule, removeRule, renderRules,
+} from './db/rules.mjs';
+export * from './services/ruleChecks.js';
 // Deal scoring — P(win), timing and the deal outlook. The revenue forecast that rolls it up
 // for a period is Nous Cloud's, in '@nous/core/cloud' (GET-843).
 export * from './services/funnelTimeline.js';

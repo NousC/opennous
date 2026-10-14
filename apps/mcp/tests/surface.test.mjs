@@ -18,7 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // PLUGIN_TOOLS so tools/list leads with them. Cloud adds read_brain and write_brain from its own
 // module (src/cloud/index.js, GET-839), so they are not in this literal set.
 const DOCUMENTED = [
-  'whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'get_insights',
+  'whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
   'add_note', 'enrich', 'score', 'set_icp',
   'webhooks',
 ];

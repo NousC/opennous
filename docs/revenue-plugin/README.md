@@ -72,7 +72,8 @@ per door of the public API: `whoami`, `find`, `get_context`, `query`, `attention
 `get_insights`, `add_note`, `enrich`, `score`, `set_icp`, and
 `webhooks` (2026-10-01, GET-559: subscribe the operator's stack to events), plus `tasks`
 (2026-10-11, GET-830: list the task list and close or reopen tasks; closing cannot fold into
-`record` or `add_note`, which only append). Nous Cloud adds `read_brain` and `write_brain` for
+`record` or `add_note`, which only append) and `rules` (2026-10-12, GET-846: the operator's own
+rules, guidance or checked in the background). Nous Cloud adds `read_brain` and `write_brain` for
 the GTM brain, which the open-source edition does not have (GET-839). They come
 first in `PLUGIN_TOOLS`, so an agent's tool list leads with them. `find` replaces `list_people`
 (added on the public-API branch, never released) and covers the accounts and deals lists too.
@@ -96,6 +97,7 @@ as before and are described under **Legacy** below.
 | `query` | Patterns across many accounts. Also carries the scopes that would otherwise be tools: `reporting`, `attention`, and `foundation:'icp'` — the ICP **as written**, so a skill can explain a score rather than just report it. |
 | `attention` | What needs attention now (`GET /v2/attention`): going dark, decayed facts, upcoming meetings, open commitments, hot intent, flags, each with a suggested action. Open commitments carry a task id. |
 | `tasks` | The task list (`GET /v2/action-items`) and closing it (`POST /v2/action-items/status`): list by owner, status, account or due date; `done` / `reopen` by task id. The same edit as ticking a task on the Tasks page, HubSpot write-back included. |
+| `rules` | The operator's own rules (`/v2/rules`), said once: `add` with an optional check (`next_step_after_meeting`, `reply_to_buyer_email`, `stage_without_meeting`) and its window, `list`, `pause`, `resume`, `remove`, `checks`. A checked rule is evaluated hourly; a broken one raises the account in attention and opens a task, and both clear once it is met. A rule with no check is guidance the agent applies. |
 | `get_insights` | The Insights board (`GET /v2/insights`): customer insights by lane and subtype, tagged, tied to the account that said them, filterable by account and date. |
 | `read_brain` | Cloud only. The GTM brain (`GET /v2/brain`, `/search`, `/page`): no arguments for the Overview and every page path, `search` for the pages that say it, `path` for one page. |
 

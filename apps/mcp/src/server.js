@@ -42,7 +42,7 @@ const APP_URL = () => (process.env.NOUS_APP_URL || "https://app.opennous.cloud")
 const OAUTH_CONNECT = { gmail: "gmail", gmail_oauth: "gmail", google: "gmail", "google-mail": "gmail", googlemail: "gmail", linkedin: "linkedin" };
 const connectLink = (slug) => `${APP_URL()}/settings?section=integrations&connect=${slug}`;
 
-export const SERVER_VERSION = "0.76.0";
+export const SERVER_VERSION = "0.77.0";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -404,7 +404,7 @@ export function createServer() {
   // Claude Code already has. See docs/revenue-plugin/README.md §3.
   const PLUGIN_TOOLS = new Set([
     // The documented core (2026-09-30): one tool per door of the public API.
-    "whoami", "find", "get_context", "query", "attention", "tasks", "get_insights",
+    "whoami", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",
     "add_note", "enrich", "score",
     // The Workspace layer's (Cloud) tools: read_brain, write_brain (GET-839). None in the open-source edition.
     ...CLOUD_TOOL_NAMES,
@@ -1749,6 +1749,80 @@ export function createServer() {
         lines.push(`   task: ${t.task_id ?? `${t.entity_id}:${t.id}`}`);
       }
       if (!items.length) lines.push("No tasks match.");
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    }
+  );
+
+  // ===========================================================================
+  // rules — the operator's own rules, said once (GET-846). A CHECKED rule is evaluated in the
+  // background: a broken one opens a flag (attention) and a task (tasks) on the account and closes
+  // them once met. A GUIDANCE rule only reaches the agent. The agent maps what the user said onto a
+  // check from the catalogue, or keeps it guidance; it never invents a check.
+  // ===========================================================================
+  tool(
+    "rules",
+    "The user's RULES for their own deals, said once. Add one the moment the user states how their deals " +
+    "must go (\"every meeting ends with a dated next step within 48 hours\", \"I reply to buyers within a " +
+    "day\", \"lead with ROI for CFOs\"). If it matches a check, pass `check` (and its number) and the engine " +
+    "holds them to it in the background: a broken rule raises the account in attention and opens a task, " +
+    "and both clear once it is met. Checks: next_step_after_meeting (hours), reply_to_buyer_email (hours), " +
+    "stage_without_meeting (days); action 'checks' says what each verifies. A rule that matches none is " +
+    "guidance: pass no check, tell the user it is guidance, and apply it yourself. action 'list' (default) " +
+    "shows their rules with ids; 'pause', 'resume', 'remove' take `id`. Rules are personal (a member key).",
+    {
+      action: z.enum(["list", "add", "pause", "resume", "remove", "checks"]).optional().describe("list (default), add, pause, resume, remove, or checks."),
+      statement: z.string().optional().describe("For add: the rule in the user's words."),
+      check: z.enum(["next_step_after_meeting", "reply_to_buyer_email", "stage_without_meeting"]).optional()
+        .describe("For add: the check this rule maps onto. Omit for guidance."),
+      hours: z.number().optional().describe("For add: the window in hours (next_step_after_meeting, reply_to_buyer_email)."),
+      days: z.number().optional().describe("For add: the window in days (stage_without_meeting)."),
+      weight: z.enum(["low", "normal", "high"]).optional().describe("For add: how hard a broken rule pushes the account up. Default normal."),
+      id: z.string().optional().describe("For pause/resume/remove: the rule id from list."),
+    },
+    async ({ action = "list", statement, check, hours, days, weight, id }) => {
+      const unit = (r) => {
+        const p = r.check?.params ?? {};
+        return p.hours != null ? `${p.hours}h` : p.days != null ? `${p.days} days` : "";
+      };
+      if (action === "checks") {
+        const r = await get("/v2/rules/checks");
+        const lines = ["Checks a rule can map onto:"];
+        for (const c of r.checks ?? []) lines.push(`• ${c.type} (${c.param}, default ${c.default}): ${c.label}. ${c.verifies}`);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+      if (action === "add") {
+        if (!statement?.trim()) {
+          return { isError: true, content: [{ type: "text", text: "Pass `statement`: the rule in the user's words." }] };
+        }
+        const params = check === "stage_without_meeting" ? (days != null ? { days } : {}) : (hours != null ? { hours } : {});
+        const body = { statement, ...(check ? { check: { type: check, params } } : {}), ...(weight ? { weight } : {}) };
+        const r = await post("/v2/rules", body);
+        const rule = r.rule ?? {};
+        const how = rule.kind === "checked"
+          ? `Rule saved, checked in the background: ${rule.check?.label ?? rule.check?.type} (${unit(rule)})`
+          : "Rule saved as guidance (nothing checks it; apply it yourself)";
+        return { content: [{ type: "text", text: `${how}.\n"${rule.statement}"\nid: ${rule.id}` }] };
+      }
+      if (action === "pause" || action === "resume" || action === "remove") {
+        if (!id) return { isError: true, content: [{ type: "text", text: "Pass `id`: the rule id from rules (action 'list')." }] };
+        if (action === "remove") {
+          await del(`/v2/rules/${encodeURIComponent(id)}`);
+          return { content: [{ type: "text", text: `Removed rule ${id}. Its open flags and tasks clear on the next check.` }] };
+        }
+        const r = await patch(`/v2/rules/${encodeURIComponent(id)}`, { status: action === "pause" ? "paused" : "active" });
+        const verb = action === "pause" ? "Paused" : "Resumed";
+        return { content: [{ type: "text", text: `${verb}: "${r.rule?.statement ?? id}".` }] };
+      }
+      const r = await get("/v2/rules");
+      const rules = r.rules ?? [];
+      const lines = [`${rules.length} rule${rules.length === 1 ? "" : "s"}`];
+      for (const rule of rules) {
+        const how = rule.kind === "checked" ? `checked: ${rule.check?.label ?? rule.check?.type} (${unit(rule)})` : "guidance";
+        lines.push(`• ${rule.statement}`);
+        lines.push(`   ${how} · ${rule.weight} · ${rule.status}`);
+        lines.push(`   id: ${rule.id}`);
+      }
+      if (!rules.length) lines.push("No rules yet. Add one when the user says how their deals must go.");
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
   );

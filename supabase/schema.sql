@@ -7979,6 +7979,28 @@ CREATE TABLE public.ri_recommendations (
 
 
 --
+-- Name: ri_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ri_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    scope text DEFAULT 'person'::text NOT NULL,
+    user_id uuid,
+    statement text NOT NULL,
+    kind text DEFAULT 'guidance'::text NOT NULL,
+    check_type text,
+    params jsonb DEFAULT '{}'::jsonb NOT NULL,
+    weight text DEFAULT 'normal'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    source text DEFAULT 'stated'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    removed_at timestamp with time zone
+);
+
+
+--
 -- Name: roadmap_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10768,6 +10790,22 @@ ALTER TABLE ONLY public.ri_recommendations
 
 
 --
+-- Name: ri_rules ri_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ri_rules
+    ADD CONSTRAINT ri_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ri_rules ri_rules_workspace_id_scope_user_id_statement_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ri_rules
+    ADD CONSTRAINT ri_rules_workspace_id_scope_user_id_statement_key UNIQUE (workspace_id, scope, user_id, statement);
+
+
+--
 -- Name: roadmap_items roadmap_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13144,6 +13182,20 @@ CREATE INDEX ri_recommendations_ws_status_idx ON public.ri_recommendations USING
 --
 
 CREATE INDEX ri_recommendations_ws_status_priority_idx ON public.ri_recommendations USING btree (workspace_id, status, priority DESC);
+
+
+--
+-- Name: ri_rules_checked_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ri_rules_checked_idx ON public.ri_rules USING btree (workspace_id) WHERE ((removed_at IS NULL) AND (kind = 'checked'::text) AND (status = 'active'::text));
+
+
+--
+-- Name: ri_rules_lookup_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ri_rules_lookup_idx ON public.ri_rules USING btree (workspace_id, user_id) WHERE (removed_at IS NULL);
 
 
 --
@@ -16304,6 +16356,12 @@ ALTER TABLE public.ri_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ri_recommendations ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: ri_rules; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.ri_rules ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: roadmap_items; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -18698,6 +18756,15 @@ GRANT ALL ON TABLE public.ri_preferences TO service_role;
 --
 
 GRANT ALL ON TABLE public.ri_recommendations TO service_role;
+
+
+--
+-- Name: TABLE ri_rules; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.ri_rules TO anon;
+GRANT ALL ON TABLE public.ri_rules TO authenticated;
+GRANT ALL ON TABLE public.ri_rules TO service_role;
 
 
 --

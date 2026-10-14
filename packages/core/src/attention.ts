@@ -182,6 +182,9 @@ export async function getAttention(
   for (const r of (aiVisible as any[]) ?? []) {
     const v = r.value ?? {};
     if (v.owner_kind !== 'user' || (v.status ?? 'open') !== 'open' || !v.title) continue;
+    // A broken rule's task (GET-846) is already in attention as its rule flag; listing it again as
+    // something owed would say the same thing twice.
+    if (String(r.property ?? '').startsWith('action_item.rule_')) continue;
     const item: AttentionItem = {
       kind: 'open_commitment', entity_id: r.entity_id, entity_name: null,
       age_days: Math.round((now - +new Date(r.computed_at)) / DAY),
@@ -260,7 +263,7 @@ export async function getAttention(
     journey: 'Book the conversation',
     outbound: 'Rework the sequence',
   };
-  const flagItems: AttentionItem[] = ((recRows as any[]) ?? [])
+  const recItems: AttentionItem[] = ((recRows as any[]) ?? [])
     .filter(r => r.target_type === 'deal' || r.target_type === 'account')
     .map(r => ({
       kind: 'flag' as const, entity_id: r.target_id, entity_name: null, age_days: 0,
@@ -268,6 +271,30 @@ export async function getAttention(
       suggested_action: REC_ACTION[r.category] ?? 'Act on this recommendation',
       source: 'recommendation',
     }));
+
+  // ── broken rules (GET-846) — the operator's own rules, checked in the background
+  // (worker ruleChecks.mjs). They lead the flags: the rep said these must happen. A rule is
+  // personal, so a viewer sees their own; a workspace-wide caller with no person sees them all.
+  // Highest priority first: the rule's weight, then how late it is. ──
+  let ruleQ = supabase
+    .from('flags')
+    .select('entity_id, reason, evidence, priority, owner_user_id, last_fired_at')
+    .eq('workspace_id', workspaceId)
+    .like('flag_type', 'rule:%')
+    .eq('status', 'open')
+    .order('priority', { ascending: false })
+    .order('last_fired_at', { ascending: false })
+    .limit(50);
+  if (ctx?.viewerUserId) ruleQ = ruleQ.eq('owner_user_id', ctx.viewerUserId);
+  const { data: ruleRows } = await ruleQ;
+  const ruleItems: AttentionItem[] = ((ruleRows as any[]) ?? []).map(r => ({
+    kind: 'flag' as const, entity_id: r.entity_id, entity_name: null,
+    age_days: r.last_fired_at ? Math.max(0, Math.floor((now - Date.parse(r.last_fired_at)) / DAY)) : 0,
+    what: r.reason ?? 'One of your rules is not met',
+    suggested_action: r.evidence?.statement ? `Meet your rule: ${r.evidence.statement}` : 'Meet your rule',
+    source: 'rule',
+  }));
+  const flagItems: AttentionItem[] = [...ruleItems, ...recItems];
 
   for (const c of (decayedRaw as any[]) ?? []) {
     const obsId = (c.supporting_observation_ids ?? [])[0];

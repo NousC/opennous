@@ -23,6 +23,7 @@
 import { hashBody } from './decisions.mjs';
 import { listConstraints, renderConstraints } from './constraints.mjs';
 import { listPreferences, renderPreferences } from './preferences.mjs';
+import { listRules, renderRules } from './rules.mjs';
 
 // Below this a pattern is an anecdote. Deliberately stricter than the page's display floor:
 // showing someone a thin number they can interpret is fine, telling an agent to act on it is
@@ -56,6 +57,9 @@ export async function learnedInstructions(supabase, workspaceId, { limit = MAX_R
   // what is in front of you. Flattened into one list they read alike and the strongest gets
   // averaged into the weakest.
   const preferences = await listPreferences(supabase, workspaceId, { userId });
+  // A person's own rules (GET-846). Only theirs: a rule binds the person who set it, and a read
+  // with no person (a workspace key) gets none rather than everyone's.
+  const rules_ = userId ? await listRules(supabase, workspaceId, { userId, includePaused: false }) : [];
   const { data, error } = await supabase.from('ri_observations')
     .select('question_key, category, recommendation_template, effect, confidence, sample_size, conditions, updated_at')
     .eq('workspace_id', workspaceId)
@@ -68,7 +72,7 @@ export async function learnedInstructions(supabase, workspaceId, { limit = MAX_R
     // Never let this fail a session start or a context read. No instructions is a working
     // system with nothing to say yet; an error here would break the thing it is decorating.
     console.error('[instructions] read failed:', error.message);
-    return { rules: [], as_of: null, source_count: 0 };
+    return { rules: [], operatorRules: rules_, as_of: null, source_count: 0 };
   }
 
   const usable = (data ?? [])
@@ -94,6 +98,7 @@ export async function learnedInstructions(supabase, workspaceId, { limit = MAX_R
     rules,
     constraints,
     preferences,
+    operatorRules: rules_,
     as_of: usable[0]?.updated_at ?? null,
     source_count: usable.length,
   };
@@ -109,7 +114,8 @@ export async function learnedInstructions(supabase, workspaceId, { limit = MAX_R
 export function renderInstructions(block) {
   const constraintText = renderConstraints(block?.constraints);
   const preferenceText = renderPreferences(block?.preferences);
-  const head = [constraintText, preferenceText].filter(Boolean).join('\n\n');
+  const ruleText = renderRules(block?.operatorRules);
+  const head = [constraintText, ruleText, preferenceText].filter(Boolean).join('\n\n');
   // Constraints and preferences are worth sending on their own. Mined rules never are — an
   // empty statistical block is just noise in the context.
   if (!block?.rules?.length) return head;   // constraints alone are worth sending

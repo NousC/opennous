@@ -57,6 +57,7 @@ import { campaignStatsRefreshCron } from './campaignStatsRefresh.mjs';
 import { processEmbeddings } from './workers/embeddings.mjs';
 import { runCrmAutoSync } from './workers/crmSync.mjs';
 import { runCrmHygieneSweep } from './workers/crmHygiene.mjs';
+import { runRuleChecks } from './workers/ruleChecks.mjs';
 import { runStageDerivation } from './workers/stageDerivation.mjs';
 import { runApiNotificationEmails } from './workers/apiNotificationEmails.mjs';
 import { runAuditSweep } from './workers/auditSweep.mjs';
@@ -816,6 +817,17 @@ console.log('[WORKER] CRM hygiene — daily tick at 08:00 UTC (per-workspace cad
 // aware). Only promotes — never downgrades; the daily decay worker owns
 // regression. Writes a state observation per advancement, so the claim engine
 // re-derives the pipeline_stage claim downstream. See workers/stageDerivation.mjs.
+// ── Rules — hourly at :25 (GET-846) ───────────────────────────────────────────
+// A rep's checked rules against what the graph holds: a broken rule opens a flag and a task on
+// the account, a met one resolves them. After the stage derivation (:15), so a stage that just
+// moved is read fresh. See workers/ruleChecks.mjs.
+async function runRuleChecksSafe() {
+  try { await runRuleChecks(); }
+  catch (err) { console.error('[WORKER] rule checks error:', err.message); }
+}
+cron.schedule('25 * * * *', runRuleChecksSafe);
+console.log('[WORKER] Rules — hourly at :25');
+
 async function runStageDerivationSafe() {
   try { await runStageDerivation(); }
   catch (err) { console.error('[WORKER] stage derivation error:', err.message); }

@@ -71,6 +71,7 @@ import { peopleV2Router } from './routes/v2/people.mjs';
 import { leadsV2Router } from './routes/v2/leads.mjs';
 import { leadListsV2Router } from './routes/v2/leadLists.mjs';
 import { actionItemsV2Router } from './routes/v2/actionItems.mjs';
+import { rulesV2Router } from './routes/v2/rules.mjs';
 import { unresolvedV2Router } from './routes/v2/unresolved.mjs';
 import { crmAgentV2Router } from './routes/v2/crmAgent.mjs';
 import { draftsV2Router } from './routes/v2/drafts.mjs';
@@ -385,6 +386,10 @@ app.use('/v2/foundations',       verifyApiKey,     foundationsV2Router);
 // writes arrive from the plugin's extraction after the call happened, and an out-of-credit
 // workspace would lose them for good. It was ungated before the v2 contract (GET-544).
 app.use('/v2/insights',        verifyApiKey,     logV2Op, insightsV2Router);
+// Rules (GET-846): a rep's own rules, guidance or checked. Same auth as the decision loop it sits
+// beside (an agent's key or a signed-in member), and like it no ops metering: a rule is a
+// sentence and a row, not a read of the graph.
+app.use('/v2/rules',           verifyAuthEither, logV2Op, rulesV2Router);
 // The decision loop. Metered logging, but deliberately NOT behind requireOpsBalance: a
 // confirmation arrives AFTER the message has already gone out, and an out-of-credit
 // workspace dropping it would lose the label permanently while the action stayed real.
