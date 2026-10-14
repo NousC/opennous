@@ -8,7 +8,7 @@ function database() {
   const tables = {
     workspace_members: [{ workspace_id: 'a', user_id: 'owner' }, { workspace_id: 'a', user_id: 'guest' }, { workspace_id: 'b', user_id: 'other' }],
     revboxes: [{ id: 'box-a', workspace_id: 'a', owner_id: 'owner', shared: false, name: 'Private operation', revision: 1, scope: { mode: 'selected', account_ids: [], min_icp: 70 }, blocks: [], delivery: [] }, { id: 'box-b', workspace_id: 'b', owner_id: 'other', shared: true, name: 'Other tenant', revision: 1 }],
-    revbox_members: [], revbox_jobs: [], revbox_context: [],
+    revbox_members: [], revbox_jobs: [], revbox_context: [], revbox_context_links: [], workspace_context_files: [],
   };
   class Query {
     constructor(table) { this.table = table; this.filters = []; }

@@ -6,6 +6,7 @@ import { Router } from 'express';
 import {
   getSupabaseClient, listDocuments, getDocument,
   listRevboxes, createRevbox, patchRevbox, loadRevbox, revboxDetails,
+  listContextLibrary, loadContextFile, createContextFile, updateContextFile, deleteContextFile,
   setRevboxMember, addRevboxContext, removeRevboxContext, saveRevboxJob,
   revboxWorkspaceMembers, revboxAccountCatalog, revboxScopedGraph, revboxAccountOverview,
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
@@ -23,6 +24,7 @@ import { planName } from '../../lib/plans.mjs';
 import { automationLimitHit } from './automations.mjs';
 import { FLOW_TRIGGERS, checkFlow } from '../../lib/flows.mjs';
 import { creditsForRuns } from '../../lib/automationCredits.mjs';
+import { icpScoringFromFile, mirrorIcpFile } from '../../lib/icpContextFile.mjs';
 
 // A RevBox job on the workflow engine (GET-868) reads its box's references as its owner, and posts to
 // the box's webhooks through the SSRF guard. The engine lives in core, so the API hands it both.
@@ -144,18 +146,71 @@ accountOverviewRouter.post('/', route(async (req, res, sb) => {
 
 revboxesRouter.get('/', route(async (req, res, sb) => res.json({ boxes: await listRevboxes(sb, req.workspaceId, req.internalUserId) })));
 revboxesRouter.post('/', route(async (req, res, sb) => res.status(201).json({ box: await createRevbox(sb, req.workspaceId, req.internalUserId) })));
-revboxesRouter.get('/context-library', route(async (req, res, sb) => {
-  const groups = [];
-  for (const box of await listRevboxes(sb, req.workspaceId, req.internalUserId)) {
-    const detail = await revboxDetails(sb, req.workspaceId, req.internalUserId, box.id);
-    const context = [];
-    for (const c of detail.context) {
-      if (!c.document_id) context.push(c);
-      else { try { const doc = await accessibleDocument(sb, req, c.document_id); context.push({ ...c, title: doc.title, body: doc.body_md ?? '' }); } catch (e) { if (e.status !== 404) throw e; } }
-    }
-    groups.push({ id: box.id, name: box.name, shared: box.shared, blocks: box.blocks, context });
+/**
+ * A library file that is a linked document is changed only by someone who can still read that
+ * document (GET-875): to them it is "not found", as in the list. `open(id)` throws a 404 for a
+ * document the viewer cannot read; any other error propagates.
+ */
+export async function contextFileDocumentGate(file, open) {
+  if (!file?.document_id) return;
+  try { await open(file.document_id); } catch (e) { if (e.status === 404) invalid('Context file not found.', 404); throw e; }
+}
+/** A saved library file as the response returns it: a linked document's title and text only while the
+ * viewer can read it, otherwise a neutral stand-in (never the raw row's document title). */
+export async function readableContextFile(file, open) {
+  if (!file?.document_id) return file;
+  try { const doc = await open(file.document_id); return { ...file, title: doc.title ?? file.title, body: doc.body_md ?? '' }; }
+  catch (e) { if (e.status !== 404) throw e; return { ...file, title: 'Linked document', body: '' }; }
+}
+// Settings > Context (GET-875): the workspace context library. Files are saved once and tagged to
+// RevBoxes; a linked document is shown only while the viewer may still read it.
+async function withDocumentBodies(sb, req, files) {
+  const out = [];
+  for (const f of files) {
+    if (!f.document_id) { out.push(f); continue; }
+    try { const doc = await accessibleDocument(sb, req, f.document_id); out.push({ ...f, title: doc.title ?? f.title, body: doc.body_md ?? '' }); } catch (e) { if (e.status !== 404) throw e; }
   }
-  res.json({ groups });
+  return out;
+}
+revboxesRouter.get('/context-library', route(async (req, res, sb) => {
+  const library = await listContextLibrary(sb, req.workspaceId, req.internalUserId);
+  const icp = library.files.find(f => f.kind === 'icp') ?? null;
+  res.json({ ...library, files: await withDocumentBodies(sb, req, library.files), icp_file_id: icp?.id ?? null });
+}));
+revboxesRouter.post('/context-files', route(async (req, res, sb) => {
+  let body = req.body ?? {};
+  if (Array.isArray(body.revbox_ids) && body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
+  if (body.document_id) { const doc = await accessibleDocument(sb, req, body.document_id); body = { ...body, document_id: doc.id, title: body.title || doc.title, body: '' }; }
+  const file = await createContextFile(sb, req.workspaceId, req.internalUserId, body);
+  // Marked ICP on creation: build the first scorecard if there is none (never a silent re-score).
+  // The workspace ICP (foundation, ICP note) follows the file, then scoring is built if there is none.
+  const icp = file.kind === 'icp' ? { ...(await icpScoringFromFile(sb, req.workspaceId)), foundation: (await mirrorIcpFile(sb, req.workspaceId)).status } : null;
+  res.status(201).json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), ...(icp ? { icp } : {}) });
+}));
+revboxesRouter.patch('/context-files/:fileId', route(async (req, res, sb) => {
+  if (Array.isArray(req.body?.revbox_ids) && req.body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
+  const before = await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId);
+  await contextFileDocumentGate(before.file, id => accessibleDocument(sb, req, id));
+  const file = await updateContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId, req.body ?? {});
+  // Marked now, or the ICP file's text changed: the workspace ICP follows it (unmarking leaves the
+  // last text). Only a fresh mark builds scoring when the workspace has none; never a re-score.
+  const foundation = file.kind === 'icp' ? (await mirrorIcpFile(sb, req.workspaceId)).status : null;
+  const icp = file.kind === 'icp' && before.file.kind !== 'icp' ? { ...(await icpScoringFromFile(sb, req.workspaceId)), foundation }
+    : foundation ? { status: 'saved', foundation } : null;
+  res.json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), ...(icp ? { icp } : {}) });
+}));
+revboxesRouter.delete('/context-files/:fileId', route(async (req, res, sb) => {
+  await contextFileDocumentGate((await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId)).file, id => accessibleDocument(sb, req, id));
+    await deleteContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId); res.json({ ok: true });
+}));
+// "Rebuild scoring from this ICP": the explicit trigger that rebuilds the scorecard from the file.
+revboxesRouter.post('/context-files/:fileId/icp-rebuild', route(async (req, res, sb) => {
+  const { file, role } = await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId);
+  await contextFileDocumentGate(file, id => accessibleDocument(sb, req, id));
+  if (!['owner', 'admin'].includes(role)) invalid('Only a workspace owner or admin can rebuild ICP scoring.', 403);
+  if (file.kind !== 'icp') invalid('Mark this file as the ICP first.');
+  const foundation = (await mirrorIcpFile(sb, req.workspaceId)).status;
+  res.json({ icp: { ...(await icpScoringFromFile(sb, req.workspaceId, { rebuild: true })), foundation } });
 }));
 revboxesRouter.get('/signals',route(async(req,res,sb)=>res.json({signals:await listCustomSignals(sb,req.workspaceId,req.internalUserId)})));
 revboxesRouter.post('/signals',route(async(req,res,sb)=>res.status(201).json({signal:await saveCustomSignal(sb,req.workspaceId,req.internalUserId,req.body)})));
@@ -207,7 +262,8 @@ revboxesRouter.put('/:id/members/:memberId', route(async (req, res, sb) => {
 }));
 revboxesRouter.post('/:id/context', route(async (req, res, sb) => {
   let body = req.body ?? {};
-  if (body.document_id) { const doc = await accessibleDocument(sb, req, body.document_id); body = { document_id: doc.id, title: doc.title, body: '' }; }
+  if (body.file_id) { if (typeof body.file_id !== 'string' || !uuid.test(body.file_id)) invalid('Choose a valid context file.'); body = { file_id: body.file_id }; await contextFileDocumentGate((await loadContextFile(sb, req.workspaceId, req.internalUserId, body.file_id)).file, id => accessibleDocument(sb, req, id)); }   // tag an existing library file (GET-875)
+  else if (body.document_id) { const doc = await accessibleDocument(sb, req, body.document_id); body = { document_id: doc.id, title: doc.title, body: '' }; }
   res.status(201).json({ context: await addRevboxContext(sb, req.workspaceId, req.internalUserId, req.params.id, body) });
 }));
 revboxesRouter.delete('/:id/context/:contextId', route(async (req, res, sb) => {

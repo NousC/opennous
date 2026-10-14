@@ -186,7 +186,10 @@ export async function listNotes(
   let notes = (data ?? []).map(c => noteFromClaim(c as unknown as Record<string, unknown>));
   if (opts.categories?.length) {
     const set = new Set(opts.categories);
-    notes = notes.filter(n => set.has(n.category));
+    // saveNote stores a label outside the taxonomy ('ICP', 'Market') as 'general' and keeps the
+    // label in metadata.category_raw (GET-346). A filter by that label still means those notes:
+    // the ICP scorecard seed and the per-contact ICP scorers read them this way (GET-875).
+    notes = notes.filter(n => set.has(n.category) || (n.category === 'general' && typeof n.metadata?.category_raw === 'string' && set.has(n.metadata.category_raw)));
   }
   if (opts.subject) {
     notes = notes.filter(n => n.subject === opts.subject);

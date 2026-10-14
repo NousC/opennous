@@ -231,6 +231,7 @@ export { hubspotFieldChanges, changesFromHistory, changeText } from './services/
 
 // RevBox configuration and reviewable job proposals (API-first).
 export * from "./db/revboxes.mjs";
+export * from "./db/contextLibrary.mjs";
 export * from "./services/revboxPlan.mjs";
 
 export * from './services/revboxCompiler.mjs';

@@ -30,6 +30,7 @@ import { randomBytes } from 'node:crypto';
 import { citeKey } from '../evidenceDetail.js';
 import { writeDocument } from '../db/documents.js';
 import { loadRevbox } from '../db/revboxes.mjs';
+import { revboxContextRows } from '../db/contextLibrary.mjs';
 import { sendEmail } from '../utils/email.js';
 import { createMessage, messageText } from '../llm/modelDoor.mjs';
 import { renderDocumentPdf } from './briefPdf.mjs';
@@ -1735,8 +1736,8 @@ export async function revboxRoutineContext(supabase, workspaceId, routine) {
     try { box = await loadRevbox(supabase, workspaceId, routine.user_id ?? null, routine.revbox_id); } catch (e) {
       return { ok: false, reason: [401, 403, 404].includes(e?.status) ? 'revbox_access_lost' : 'revbox_unavailable', box: null, text: '' };
     }
-    const { data: rows } = await supabase.from('revbox_context').select('id, title, body, document_id')
-      .eq('workspace_id', workspaceId).eq('revbox_id', box.id).order('created_at');
+    // Only the files tagged to THIS box in the context library (GET-875), plus legacy rows.
+    const rows = await revboxContextRows(supabase, workspaceId, box.id).catch(() => []);
     const references = [];
     let visible;   // undefined: not looked up yet
     for (const r of rows ?? []) {

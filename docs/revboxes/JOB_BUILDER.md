@@ -88,7 +88,7 @@ All read-only except `ask` and `propose_job`, which end the turn.
 | Tool | What it returns |
 |---|---|
 | `workspace_connections` | Connected integrations with slugs and connection ids (`/api/automations/tools` logic). |
-| `revbox_context` | Box name, objective, blocks, scope summary, delivery destinations, and the **text of context documents and uploaded references** (truncated per doc). |
+| `revbox_context` | Box name, objective, blocks, scope summary, delivery destinations, and the **text of context documents and uploaded references** (truncated per doc): the library files tagged to this box (CONTEXT_LIBRARY.md). |
 | `hubspot_objects` | Standard + custom objects (`hubspotObjects`). |
 | `hubspot_fields` | Fields of one object (`hubspotObjectFields`), searchable by a query string. |
 | `hubspot_find` | Searches objects and fields by keyword (e.g. "credit-check") and returns matches; the fast way to locate a custom object. |

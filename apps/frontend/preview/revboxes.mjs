@@ -145,6 +145,75 @@ if (!state.seeded.datasets) {
   state.seeded.datasets = true;
 }
 
+// The workspace context library (GET-875), as 2026_10_15_context_library.sql: every per-box context
+// row becomes a file with the same id plus one link. Then, once, the ICP file tagged to two boxes.
+state.files ??= [];
+state.links ??= [];
+for (const c of state.context ?? []) {
+  if (!state.files.some(f => f.id === c.id)) state.files.push({ id: c.id, title: c.title, kind: 'reference', body: c.body ?? '', document_id: c.document_id ?? null, visibility: 'boxes', created_by: c.created_by ?? 'u1', created_at: c.created_at ?? stamp(), updated_at: c.created_at ?? stamp(), icp_marked_at: null });
+  if (!state.links.some(l => l.revbox_id === c.revbox_id && l.file_id === c.id)) state.links.push({ revbox_id: c.revbox_id, file_id: c.id, created_at: c.created_at ?? stamp() });
+}
+state.context = [];
+if (!state.seeded.context_library) {
+  const icp = state.files.find(f => f.title === 'ICP.md') ?? (() => { const f = { id: randomUUID(), title: 'ICP.md', kind: 'reference', body: 'Ideal customer: B2B SaaS and logistics companies, 100-1,000 employees, a RevOps owner, already on HubSpot. Poor fit: under 50 employees, no CRM, agencies.', document_id: null, visibility: 'boxes', created_by: 'u1', created_at: stamp(), updated_at: stamp(), icp_marked_at: null }; state.files.push(f); return f; })();
+  Object.assign(icp, { kind: 'icp', visibility: 'workspace', icp_marked_at: stamp() });
+  for (const b of state.boxes.filter(b => /won\/lost|onboarding/i.test(b.name)).slice(0, 2)) if (!state.links.some(l => l.revbox_id === b.id && l.file_id === icp.id)) state.links.push({ revbox_id: b.id, file_id: icp.id, created_at: stamp() });
+  state.files.push({ id: randomUUID(), title: 'Email voice', kind: 'instructions', body: 'Plain, short sentences. One ask per email. No exclamation marks.', document_id: null, visibility: 'workspace', created_by: 'u1', created_at: stamp(), updated_at: stamp(), icp_marked_at: null });
+  state.seeded.context_library = true;
+}
+const boxFiles = (boxId) => state.links.filter(l => l.revbox_id === boxId).map(l => state.files.find(f => f.id === l.file_id)).filter(Boolean)
+  .map(f => ({ id: f.id, title: f.title, body: f.body, document_id: f.document_id, kind: f.kind, visibility: f.visibility }));
+/** Settings > Context and its edits, as the API's library routes (core contextLibrary.mjs). */
+async function libraryPreview(req, json, parts, payload, uid) {
+  const admin = USERS.find(u => u.id === uid)?.role === 'admin';
+  const access = new Map(state.boxes.map(b => [b.id, revboxAccess(b, uid, b.members)]).filter(([, a]) => a));
+  const tags = (f) => state.links.filter(l => l.file_id === f.id).map(l => l.revbox_id);
+  const visible = (f) => f.visibility === 'workspace' || f.created_by === uid || tags(f).some(id => access.has(id));
+  const editable = (f) => f.kind === 'icp' ? admin : (f.created_by === uid || admin || (tags(f).length > 0 && tags(f).every(id => ['owner', 'editor'].includes(access.get(id)))));
+  const out = (f) => ({ ...f, boxes: tags(f).filter(id => access.has(id)).map(id => { const b = state.boxes.find(x => x.id === id); return { id, name: b.name, shared: b.shared }; }), hidden_boxes: tags(f).filter(id => !access.has(id)).length, can_edit: editable(f) });
+  const retag = (f, ids) => {
+    for (const id of ids) if (!['owner', 'editor'].includes(access.get(id)) && !tags(f).includes(id)) fail(403, 'Only an owner or editor of a RevBox can change its context.');
+    state.links = state.links.filter(l => l.file_id !== f.id || !access.has(l.revbox_id) || ids.includes(l.revbox_id));
+    for (const id of ids) if (!tags(f).includes(id)) state.links.push({ revbox_id: id, file_id: f.id, created_at: stamp() });
+  };
+  const markIcp = (f, on) => {
+    if (!admin) fail(403, 'Only a workspace owner or admin can choose the ICP file.');
+    if (on && state.files.some(x => x.kind === 'icp' && x.id !== f.id)) fail(409, 'This workspace already has an ICP file. Unmark it first.');
+    Object.assign(f, on ? { kind: 'icp', visibility_before_icp: f.visibility, visibility: 'workspace', icp_marked_at: stamp() } : { kind: 'reference', visibility: f.visibility_before_icp ?? f.visibility, visibility_before_icp: null, icp_marked_at: null });
+  };
+  if (parts[0] === 'context-library') {
+    const files = state.files.filter(visible).sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).map(out);
+    return json({ files, icp_file_id: files.find(f => f.kind === 'icp')?.id ?? null, is_admin: admin, boxes: state.boxes.filter(b => access.has(b.id)).map(b => ({ id: b.id, name: b.name, shared: b.shared, access: access.get(b.id), blocks: b.blocks })) });
+  }
+  const file = parts[1] ? state.files.find(f => f.id === parts[1] && visible(f)) : null;
+  if (parts[1] && !file) fail(404, 'Context file not found.');
+  if (req.method === 'POST' && !parts[1]) {
+    if (!payload.title?.trim()) fail(400, 'Give the file a title of up to 200 characters.');
+    const f = { id: randomUUID(), title: payload.title.trim(), kind: payload.kind === 'instructions' ? 'instructions' : 'reference', body: payload.body ?? '', document_id: null, visibility: payload.visibility === 'workspace' ? 'workspace' : 'boxes', created_by: uid, created_at: stamp(), updated_at: stamp(), icp_marked_at: null };
+    state.files.push(f); retag(f, payload.revbox_ids ?? []);
+    if (payload.kind === 'icp') markIcp(f, true);
+    await persist(); return json({ file: out(f), ...(f.kind === 'icp' ? { icp: { status: 'exists', signals: 6 } } : {}) }, 201);
+  }
+  if (req.method === 'POST' && parts[2] === 'icp-rebuild') { if (!admin) fail(403, 'Only a workspace owner or admin can rebuild ICP scoring.'); if (file.kind !== 'icp') fail(400, 'Mark this file as the ICP first.'); return json({ icp: { status: 'created', signals: 7 } }); }
+  if (req.method === 'PATCH') {
+    const wasIcp = file.kind === 'icp';
+    if (['title', 'body', 'visibility'].some(k => k in payload) && !editable(file)) fail(403, 'You cannot change this file.');
+    if ('kind' in payload && (payload.kind === 'icp') !== wasIcp) markIcp(file, payload.kind === 'icp');
+    if ('kind' in payload && payload.kind !== 'icp') file.kind = payload.kind;
+    if ('title' in payload) file.title = String(payload.title).trim();
+    if ('body' in payload && !file.document_id) file.body = payload.body;
+    if ('visibility' in payload && file.kind !== 'icp') file.visibility = payload.visibility;
+    if (Array.isArray(payload.revbox_ids)) retag(file, payload.revbox_ids);
+    file.updated_at = stamp(); await persist();
+    return json({ file: out(file), ...(!wasIcp && file.kind === 'icp' ? { icp: { status: 'exists', signals: 6 } } : {}) });
+  }
+  if (req.method === 'DELETE') {
+    if (file.kind === 'icp' ? !admin : (file.created_by !== uid && !admin)) fail(403, 'Only the person who added this file or a workspace admin can delete it.');
+    state.files = state.files.filter(f => f.id !== file.id); state.links = state.links.filter(l => l.file_id !== file.id); await persist(); return json({ ok: true });
+  }
+  fail(404, 'Not found.');
+}
+
 let writes = Promise.resolve();
 async function persist() { const snapshot = JSON.stringify(state, null, 2); writes = writes.then(async () => { await writeFile(`${storePath}.next`, snapshot); await rename(`${storePath}.next`, storePath); }); await writes; }
 
@@ -303,7 +372,7 @@ export async function handleRevboxPreview(req, res, url, json) {
     const payload = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await body(req) : {};
     if (path === '/api/signals' || path.startsWith('/api/signals/')) { await signalsPreview(req, res, json, parts, payload, uid); return true; }
     if (path === '/api/account-overview') { json(res, { accounts: previewRevboxAccounts.filter(a => payload.ids?.includes(a.id)) }); return true; }
-    if (parts[0] === 'context-library') { json(res, { groups: state.boxes.filter(b => revboxAccess(b, uid, b.members)).map(b => ({ id: b.id, name: b.name, shared: b.shared, blocks: b.blocks, context: state.context.filter(c => c.revbox_id === b.id) })) }); return true; }
+    if (parts[0] === 'context-library' || parts[0] === 'context-files') { await libraryPreview(req, (body, status) => json(res, body, status), parts, payload, uid); return true; }
     if (parts[0] === 'signals') {
       if(req.method==='GET')json(res,{signals:state.signals});
       else {const old=state.signals.find(s=>s.id===parts[1]);if(old&&old.owner_id!==uid)fail(403,'Only the signal owner can edit.');if(!payload.name?.trim()||!payload.rule?.trim())fail(400,'Add a name and rules.');const signal={...payload,id:old?.id??randomUUID(),version:(old?.version??0)+1};if(old)Object.assign(old,signal);else state.signals.push(signal);await persist();json(res,{signal});}return true;
@@ -356,7 +425,7 @@ export async function handleRevboxPreview(req, res, url, json) {
     }
     if (parts[1] === 'datasets') { await datasetsPreview(req, res, json, box, access, parts, payload, url, uid); return true; }
     const jobs = () => state.jobs.filter(j => j.revbox_id === box.id);
-    const context = () => state.context.filter(c => c.revbox_id === box.id);
+    const context = () => boxFiles(box.id);
     let output;
     if (parts.length === 1 && req.method === 'GET') {
       const routines = state.routines.filter(r => r.revbox_id === box.id);
@@ -393,8 +462,10 @@ export async function handleRevboxPreview(req, res, url, json) {
       const people = CONTACTS.filter(p => ids.has(p.company_id)); const deals = DEALS.filter(d => ids.has(d.company_id));
       output = { nodes: [...accounts.map(a => ({ id: a.id, label: a.name, type: 'account', icp: a.icp_score })), ...people.map(p => ({ id: p.id, label: `${p.first_name} ${p.last_name}`, type: 'person' })), ...deals.map(d => ({ id: d.id, label: d.name, type: 'deal' }))], edges: [...people.map(p => ({ s: p.id, t: p.company_id, type: 'works_at' })), ...deals.map(d => ({ s: d.id, t: d.company_id, type: 'deal_of' }))] };
     } else if (parts[1] === 'context') {
-      if (req.method === 'DELETE') { state.context = state.context.filter(c => c.revbox_id !== box.id || c.id !== parts[2]); output = { ok: true }; }
-      else { const ref = payload.document_id ? refs.find(r => r.id === payload.document_id) : null; if (payload.document_id && !ref) fail(404, 'Document not found.'); const entry = { id: randomUUID(), revbox_id: box.id, title: ref?.title ?? payload.title, body: ref?.body ?? payload.body, document_id: payload.document_id ?? null }; state.context.push(entry); output = { context: entry }; }
+      // GET-875: untag from this box (the file stays in the library); add = a new library file tagged here, or an existing one.
+      if (req.method === 'DELETE') { state.links = state.links.filter(l => l.revbox_id !== box.id || l.file_id !== parts[2]); output = { ok: true }; }
+      else if (payload.file_id) { const f = state.files.find(x => x.id === payload.file_id); if (!f) fail(404, 'Context file not found.'); if (!state.links.some(l => l.revbox_id === box.id && l.file_id === f.id)) state.links.push({ revbox_id: box.id, file_id: f.id, created_at: stamp() }); output = { context: f }; }
+      else { const ref = payload.document_id ? refs.find(r => r.id === payload.document_id) : null; if (payload.document_id && !ref) fail(404, 'Document not found.'); const f = { id: randomUUID(), title: ref?.title ?? payload.title, kind: 'reference', body: ref?.body ?? payload.body, document_id: payload.document_id ?? null, visibility: 'boxes', created_by: uid, created_at: stamp(), updated_at: stamp(), icp_marked_at: null }; state.files.push(f); state.links.push({ revbox_id: box.id, file_id: f.id, created_at: stamp() }); output = { context: f }; }
     } else if (parts[1] === 'plan') {
       const plan = proposeRevboxPlan(payload.prompt, { timezone: payload.timezone, tools: payload.tools });
       for (const slug of plan.tools) { const connection = connections.find(c => c.slug === slug); if (connection) plan.bindings[slug] = connection.id; }

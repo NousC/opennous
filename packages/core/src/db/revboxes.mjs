@@ -1,4 +1,5 @@
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount } from '../services/revboxPlan.mjs';
+import { revboxContextRows, addBoxContext, unlinkContext } from './contextLibrary.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 async function rows(q) { const { data, error } = await q; if (error) throw error; return data ?? []; }
@@ -118,7 +119,8 @@ async function touch(sb, ws, id) { await rows(sb.from('revboxes').update({ updat
 export async function revboxDetails(sb, ws, uid, id) {
   const box = await loadRevbox(sb, ws, uid, id);
   const [context, jobs, people] = await Promise.all([
-    rows(sb.from('revbox_context').select('*').eq('workspace_id', ws).eq('revbox_id', id).order('created_at')),
+    // The files tagged to this box in the workspace context library (GET-875), plus legacy rows.
+    revboxContextRows(sb, ws, id),
     rows(sb.from('revbox_jobs').select('*').eq('workspace_id', ws).eq('revbox_id', id).order('created_at')),
     revboxPeople(sb, box),
   ]);
@@ -261,16 +263,16 @@ export async function revboxBuiltinActivity(sb, ws, keys, { allowed = null, days
 }
 
 
+/** Add context to a box (GET-875): a new library file tagged to it, or { file_id } an existing one. */
 export async function addRevboxContext(sb, ws, uid, id, body) {
-  await loadRevbox(sb, ws, uid, id, true);
-  if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200 || typeof body.body !== 'string' || Buffer.byteLength(body.body) > 262144) fail(400, 'Upload a text reference up to 256 KB.');
-  const data = await one(sb.from('revbox_context').insert({ workspace_id: ws, revbox_id: id, created_by: uid, title: clean(body.title, 200), body: body.document_id ? '' : body.body, document_id: body.document_id ?? null }).select('*').single());
+  const data = await addBoxContext(sb, ws, uid, id, body ?? {});
   await touch(sb, ws, id); return data;
 }
 
+/** Untag a file from a box (GET-875). The file stays in the library and on its other boxes. */
 export async function removeRevboxContext(sb, ws, uid, id, contextId) {
   await loadRevbox(sb, ws, uid, id, true);
-  await rows(sb.from('revbox_context').delete().eq('workspace_id', ws).eq('revbox_id', id).eq('id', contextId));
+  await unlinkContext(sb, ws, id, contextId);
   await touch(sb, ws, id);
 }
 
@@ -291,7 +293,7 @@ export async function saveRevboxJob(sb, ws, uid, id, body, jobId = null) {
     if(!signal)fail(400,'Choose an active signal from this workspace.');
   }
   plan.execution_enabled = false;
-  const references = await rows(sb.from('revbox_context').select('id, document_id').eq('workspace_id', ws).eq('revbox_id', id));
+  const references = (await revboxContextRows(sb, ws, id)).map(r => ({ id: r.id, document_id: r.document_id ?? null }));
   const old = jobId ? await one(sb.from('revbox_jobs').select('*').eq('workspace_id', ws).eq('revbox_id', id).eq('id', jobId).maybeSingle()) : null;
   if (jobId && !old) fail(404, 'Job not found.');
   if (old && body.version !== old.version) fail(409, 'This job changed. Reload before saving.');

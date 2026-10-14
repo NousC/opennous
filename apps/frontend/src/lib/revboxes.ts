@@ -65,7 +65,19 @@ export type JobPlan = {
   questions: string[]; compiler: string; execution_enabled: false;
 };
 export type RevBoxJob = { enabled?: boolean; id: string; name: string; prompt: string; plan: JobPlan; state: 'draft' | 'reviewed'; version: number; reviewed_at: string | null; snapshots: { version: number; reviewed_at: string }[] };
-export type ContextFile = { id: string; title: string; body: string; document_id: string | null };
+export type ContextKind = 'reference' | 'instructions' | 'icp';
+export type ContextFile = { id: string; title: string; body: string; document_id: string | null; kind?: ContextKind };
+// The workspace context library (GET-875): a file saved once and tagged to RevBoxes. `boxes` are the
+// tags this viewer can see; `hidden_boxes` counts tags on boxes they cannot open.
+export type LibraryFile = ContextFile & {
+  kind: ContextKind; visibility: 'boxes' | 'workspace'; created_by: string; updated_at: string; icp_marked_at: string | null;
+  boxes: { id: string; name: string; shared: boolean }[]; hidden_boxes: number; can_edit: boolean;
+};
+export type ContextLibraryData = {
+  files: LibraryFile[]; icp_file_id: string | null; is_admin: boolean;
+  boxes: { id: string; name: string; shared: boolean; access: 'owner' | 'editor' | 'viewer'; blocks: ContextBlock[] }[];
+};
+export const CONTEXT_KIND_LABEL: Record<ContextKind, string> = { reference: 'Reference', instructions: 'Instructions', icp: 'ICP' };
 // jobs: legacy revbox_jobs rows (with `plan`) and, since GET-868, the box's engine routines; a
 // server may also return the routines under their own key. The Jobs list reads both.
 export type BoxDetail = {
