@@ -3,7 +3,7 @@ import { readFile, writeFile, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { COMPANIES, CONTACTS, DEALS, USERS, WS, GRAPH } from './world.mjs';
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount, revboxExecutionRequirements } from '../../../packages/core/src/services/revboxPlan.mjs';
-import { validateRevboxPatch, revboxAccess } from '../../../packages/core/src/db/revboxes.mjs';
+import { validateRevboxPatch, revboxAccess, REVBOX_BUILTIN_JOBS, builtinJobsOf } from '../../../packages/core/src/db/revboxes.mjs';
 
 const storePath = process.env.REVBOX_PREVIEW_STATE ?? '/private/tmp/opennous-revboxes-preview.json';
 const stamp = () => new Date().toISOString();
@@ -51,6 +51,43 @@ if (!state.seeded.delivery_cc) {
     if (d.kind === 'slack' && d.target === '#cs-handoffs') { d.target = 'C07CSHANDOFFS'; d.channel = 'cs-handoffs'; }
   }
   state.seeded.delivery_cc = true;
+}
+// GET-872: a Credit Check-like reporting box with a daily report over many dealers, a second job with
+// a failed run, a run waiting for review, one still running; built-in jobs; members with photos.
+if (!state.seeded.page_polish) {
+  const tu = base('Credit Check Reporting', 'Daily Credit Check reporting for the dealer network.', true, { mode: 'selected', account_ids: [], min_icp: 70 });
+  tu.delivery = [{ id: randomUUID(), kind: 'slack', target: 'C07TU1HANDOFF', channel: 'credit-check-cs-handoff' }];
+  tu.members = [{ user_id: 'u2', role: 'editor' }, { user_id: 'u3', role: 'viewer' }];
+  tu.builtin_jobs = ['stale_deal'];
+  state.boxes.unshift(tu);
+  const daily = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Credit Check daily summary', enabled: true, trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', trigger_label: 'Every day at 08:00 (Toronto)', last_run_at: stamp(), version: 3, created_by: 'u1', steps: [
+    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-100000001', object_label: 'Company Daily Stats', group_by: 'company_name', window: 'yesterday' } },
+    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the daily Credit Check report.' } },
+    { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C07TU1HANDOFF', channel: 'credit-check-cs-handoff', text: '{{steps.summary.output}}', format: 'report' } },
+    { id: 'box_delivery', type: 'revbox_delivery', config: { format: 'report' } },
+  ] };
+  const risk = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Dealer risk alert', enabled: true, trigger_kind: 'account_signal', trigger_config: {}, timezone: 'UTC', trigger_label: 'When an account signal fires', last_run_at: stamp(), version: 1, created_by: 'u1', steps: [
+    { id: 'brief', type: 'agent', config: { mode: 'write', prompt: 'Say what changed and why it matters.' } },
+    { id: 'approve', type: 'approval', config: {} },
+    { id: 'alert', type: 'slack', config: { action: 'channel', channel_id: 'C07LEADERSHIP', channel: 'cs-leadership', text: '{{steps.brief.output}}', format: 'alert' } },
+    { id: 'mail', type: 'gmail', config: { mode: 'draft', to: 'dealer-success@credit_check.example', cc: '', body: '{{steps.brief.output}}', send_from: { id: 'mb-1', kind: 'gmail' } } },
+    { id: 'hook', type: 'webhook', config: { url: 'https://hooks.credit_check.example/risk?key=preview' } },
+  ] };
+  state.routines.unshift(daily, risk);
+  const H = 3_600_000, at = (h) => new Date(Date.now() - h * H).toISOString();
+  const dealers = COMPANIES.map(c => c.id);
+  const report = (n) => `## Credit Check daily · ${new Date(Date.now() - n * 24 * H).toDateString()}\n\n**1,284 pulls** yesterday across 41 dealers, up 6% on the day before.\n\n| Dealer | Pulls | Change |\n|---|---:|---:|\n| Meridian Analytics | 142 | +41 |\n| Northwind Logistics | 96 | -18 |\n| Cobalt Systems | 88 | +7 |\n\n- Northwind is down for the third day: worth a call.\n- Meridian's jump follows their new F&I hire.`;
+  const runs = [
+    { job: daily, h: 2, state: 'completed', title: 'Credit Check daily · up 6%', body: report(0), accounts: dealers.slice(0, 14), credits: 1.8, deliveries: [{ kind: 'slack', target: '#credit-check-cs-handoff', state: 'sent' }] },
+    { job: risk, h: 5, state: 'needs_review', title: 'Northwind Logistics: pulls down 3 days running', body: 'Northwind Logistics pulled 96 reports yesterday, down 18%, the third drop in a row. Their F&I manager left last week.\n\n**Suggested:** a check-in from the account owner today.', accounts: ['c2'], credits: 0.6 },
+    { job: risk, h: 9, state: 'failed', title: null, error: "Step 3 · Slack: Slack isn't connected", failure: { text: "Slack isn't connected", fix: { label: 'Connect Slack', href: '/integrations' } }, accounts: ['c3'], credits: 0.4 },
+    { job: daily, h: 26, state: 'completed', title: 'Credit Check daily · flat', body: report(1), accounts: dealers.slice(2, 16), credits: 1.7, deliveries: [{ kind: 'slack', target: '#credit-check-cs-handoff', state: 'sent' }] },
+    { job: daily, h: 50, state: 'completed', title: 'Credit Check daily · down 2%', body: report(2), accounts: dealers.slice(4, 20), credits: 1.9, deliveries: [{ kind: 'slack', target: '#credit-check-cs-handoff', state: 'failed', error: 'channel_not_found' }] },
+    { job: daily, h: 0.05, state: 'running', title: null, accounts: [], credits: 0 },
+  ];
+  for (const r of runs) state.results.push({ id: randomUUID(), revbox_id: tu.id, job_id: r.job.id, job_name: r.job.name, kind: 'routine', state: r.state, created_at: at(r.h), error: r.error ?? null, failure: r.failure ?? null, credits: r.credits, account_ids: r.accounts,
+    result: r.title ? { title: r.title, body: r.body, kind: 'report' } : null, deliveries: (r.deliveries ?? []).map(d => ({ id: randomUUID(), state: d.state, error: d.error ?? null, destination: { kind: d.kind, target: d.target } })) });
+  state.seeded.page_polish = true;
 }
 let writes = Promise.resolve();
 async function persist() { const snapshot = JSON.stringify(state, null, 2); writes = writes.then(async () => { await writeFile(`${storePath}.next`, snapshot); await rename(`${storePath}.next`, storePath); }); await writes; }
@@ -121,6 +158,39 @@ export const previewRevboxAccounts = COMPANIES.map((c, i) => {
   const pattern = GRAPH.nodes.find(n => n.i === c.id)?.pat?.[0];
   return { ...c, people_count: CONTACTS.filter(p => p.company_id === c.id).length, deal_count: deals.length, won_deals: deals.filter(d => d.status === 'won').length, lost_deals: deals.filter(d => d.status === 'lost').length, last_activity_at: CONTACTS.filter(p => p.company_id === c.id).map(p => p.last_activity_at).filter(Boolean).sort().at(-1) ?? null, latest_signal: pattern ? { title: pattern.label, kind: pattern.cat, at: stamp() } : null };
 });
+// Profile photos for the Owners rail (GET-872): inline SVGs, so the preview needs no network.
+const face = (a, b) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="64" height="64" fill="url(#g)"/><circle cx="32" cy="25" r="11" fill="#fff" fill-opacity=".85"/><path d="M12 60c3-12 11-18 20-18s17 6 20 18" fill="#fff" fill-opacity=".85"/></svg>`)}`;
+const AVATARS = { u1: face('#f59e0b', '#b45309'), u2: face('#60a5fa', '#1d4ed8') };   // u3 has none: initials
+function previewPeople(box) {
+  const list = [{ user_id: box.owner_id, role: 'owner' }, ...(box.members ?? []).filter(m => m.user_id !== box.owner_id)];
+  return list.map(m => { const u = USERS.find(x => x.id === m.user_id); return { id: m.user_id, role: m.role, name: u?.name ?? null, email: u?.email ?? null, avatar_url: AVATARS[m.user_id] ?? null }; });
+}
+/** As core revboxRunAccounts: accounts the box's runs touched in the last 30 days, most runs first. */
+function previewRunAccounts(box) {
+  const since = Date.now() - 30 * 86_400_000;
+  const runs = state.results.filter(r => r.revbox_id === box.id && Date.parse(r.created_at) >= since);
+  const counts = new Map();
+  for (const r of runs) for (const id of new Set(r.account_ids ?? [])) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const accounts = [...counts].map(([id, n]) => { const c = COMPANIES.find(x => x.id === id); return c ? { id, name: c.name, domain: c.domain, runs: n } : null; }).filter(Boolean)
+    .sort((a, b) => b.runs - a.runs || a.name.localeCompare(b.name));
+  return { run_accounts: accounts, run_accounts_total: accounts.length, run_accounts_runs: runs.length, run_accounts_linked: accounts.length > 0 };
+}
+const AGO = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
+const BUILTIN_ACTIVITY = { sales_follow_up: [12, 3], stale_deal: [7, 30], deal_signals: [4, 5], deal_risk: [2, 52], expansion: [0, null] };
+function previewBuiltins(box) {
+  const keys = builtinJobsOf(box);
+  return { builtin_jobs: REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({ ...j, drafts_30d: BUILTIN_ACTIVITY[j.key][0], last_draft_at: BUILTIN_ACTIVITY[j.key][1] == null ? null : AGO(BUILTIN_ACTIVITY[j.key][1]) })),
+    builtin_taken: state.boxes.filter(b => b.id !== box.id).flatMap(b => builtinJobsOf(b).map(key => ({ key, box_id: b.id, box_name: b.name }))) };
+}
+/** The connected Slack as /api/slack/targets answers in the preview (server.mjs). */
+export const PREVIEW_SLACK = { connected: true,
+  team: { id: 'T07OPENNOUS', name: 'OpenNous', icon: face('#111827', '#4b5563') },
+  channels: [
+    { id: 'C07CSHANDOFFS', name: 'cs-handoffs', private: false, member: true },
+    { id: 'C07TU1HANDOFF', name: 'credit-check-cs-handoff', private: false, member: true },
+    { id: 'C07LEADERSHIP', name: 'cs-leadership', private: true, member: true },
+    { id: 'C07GENERAL', name: 'general', private: false, member: false },
+  ], people: [{ id: 'U07AVERY', name: 'Avery Example', email: 'avery@opennous.example' }] };
 const refs = [{ id: 'doc-email-voice', title: 'Email voice', body: 'Write like a helpful colleague. Short paragraphs, concrete next steps, no filler. Do not promise anything that was not agreed.' }, { id: 'doc-cs-playbook', title: 'Customer onboarding playbook', body: 'Before kickoff, confirm the champion, implementation owner, key promises and success measure. Highlight open risks and who owns the first next step.' }];
 const connections = ['granola', 'hubspot', 'gmail', 'slack'].map(slug => ({ id: `preview-${slug}`, slug, name: slug, email: slug === 'gmail' ? USERS[0].email : null }));
 function body(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', c => { raw += c; if (raw.length > 400000) reject(Object.assign(new Error('Reference is too large.'), { status: 413 })); }); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(Object.assign(new Error('Invalid JSON.'), { status: 400 })); } }); }); }
@@ -153,6 +223,29 @@ export async function handleRevboxPreview(req, res, url, json) {
     if (req.method !== 'GET' && access === 'viewer') fail(403, 'Only an owner or editor can change this RevBox.');
     if (parts[1] === 'builder') { await builderPreview(req, res, json, box, parts, payload, uid); return true; }
     const routine = parts[1] === 'jobs' && parts[2] ? state.routines.find(r => r.revbox_id === box.id && r.id === parts[2]) : null;
+    if (routine && parts[3] === 'steps' && parts[5] === 'target' && req.method === 'PUT') {
+      // As the API's saveJobStepTarget (GET-872): the kind is fixed, the target is checked, the job is versioned.
+      const step = (routine.steps ?? []).find(s => s.id === decodeURIComponent(parts[4]));
+      if (!step) fail(404, 'Step not found.');
+      const kind = step.type === 'gmail' ? (step.config?.send_from?.kind === 'smtp' ? 'smtp' : 'gmail') : step.type;
+      if (!['slack', 'gmail', 'email', 'webhook'].includes(kind) || (kind === 'slack' && step.config?.action === 'dm')) fail(400, "Change this step in the job's chat.");
+      if (payload.kind !== kind) fail(400, `This step delivers by ${kind}; change its kind in the job's chat.`);
+      const c = { ...step.config };
+      if (kind === 'slack') { const ch = PREVIEW_SLACK.channels.find(x => x.id === payload.channel_id); if (!ch) fail(400, "Slack can't find that channel. Choose one from the list."); Object.assign(c, { action: 'channel', channel_id: ch.id, channel: ch.name }); }
+      else if (kind === 'webhook') { if (!/^https:\/\/[^/]+\.[^/]+/.test(payload.url ?? '') || /localhost|\/\/(10|127|169\.254|192\.168)\./.test(payload.url)) fail(400, 'That webhook address is not a public host.'); c.url = payload.url.trim(); }
+      else {
+        const list = (v) => String(v ?? '').split(/[,;]/).map(x => x.trim()).filter(Boolean);
+        const to = list(payload.to), cc = list(payload.cc);
+        if (!to.length) fail(400, 'Add at least one recipient.');
+        const bad = [...to, ...cc].find(a => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a)); if (bad) fail(400, `"${bad}" is not an email address.`);
+        c.to = to.join(', '); c.cc = cc.join(', ');
+        if (kind === 'gmail' && payload.mailbox_id && payload.mailbox_id !== c.send_from?.id) { const m = PREVIEW_MAILBOXES.find(x => x.id === payload.mailbox_id); if (!m) fail(400, 'Choose one of your own connected Gmail mailboxes.'); c.send_from = { id: m.id, kind: 'gmail', email: m.email }; }
+      }
+      step.config = c; routine.version = (routine.version ?? 1) + 1; routine.edited_by = uid;
+      await persist();
+      json(res, { job_deliveries: builderModule?.revboxJobDeliveries(state.routines.filter(r => r.revbox_id === box.id), { mailboxes: PREVIEW_MAILBOXES }) ?? [] });
+      return true;
+    }
     if (routine && parts[3] === 'enabled') { routine.enabled = !!payload.enabled; await persist(); json(res, { job: routine }); return true; }
     if (routine && parts[3] === 'run') {
       const run = { id: randomUUID(), revbox_id: box.id, job_id: routine.id, state: 'completed', created_at: stamp(), error: null, credits: 1.8, deliveries: box.delivery.map(d => ({ id: randomUUID(), state: 'sent', error: null, destination: d })), result: { title: routine.name, kind: 'report', body: 'Preview output — no model, HubSpot or Slack was called.\n\nCredit Check pulls yesterday: 1,284 (+6% vs the day before). Biggest movers: Northside Motors (+41), Lakeshore Auto (-18).' } };
@@ -163,7 +256,8 @@ export async function handleRevboxPreview(req, res, url, json) {
     let output;
     if (parts.length === 1 && req.method === 'GET') {
       const routines = state.routines.filter(r => r.revbox_id === box.id);
-      output = { box: { ...box, access }, jobs: [...routines, ...jobs()], context: context(), job_deliveries: builderModule?.revboxJobDeliveries(routines, { mailboxes: PREVIEW_MAILBOXES }) ?? [] };
+      output = { box: { ...box, builtin_jobs: builtinJobsOf(box), access }, jobs: [...routines, ...jobs()], context: context(), job_deliveries: builderModule?.revboxJobDeliveries(routines, { mailboxes: PREVIEW_MAILBOXES }) ?? [],
+        people: previewPeople(box), ...previewRunAccounts(box), ...previewBuiltins(box) };
     }
     else if (parts.length === 1 && req.method === 'PATCH') {
       const error = validateRevboxPatch(payload); if (error) fail(400, error);
@@ -178,6 +272,10 @@ export async function handleRevboxPreview(req, res, url, json) {
         if (!mine) fail(400, 'Choose one of your own connected Gmail mailboxes for this destination.');
         return { ...d, mailbox_email: mine.email };
       });
+      // A built-in job is in one box per workspace (core patchRevbox, GET-872).
+      const added = (payload.builtin_jobs ?? []).filter(k => !builtinJobsOf(box).includes(k));
+      const clash = state.boxes.find(b => b.id !== box.id && builtinJobsOf(b).some(k => added.includes(k)));
+      if (clash) fail(409, `${REVBOX_BUILTIN_JOBS.find(j => added.includes(j.key) && builtinJobsOf(clash).includes(j.key)).name} is already in the RevBox "${clash.name}". Remove it there first.`);
       Object.assign(box, payload, { revision: box.revision + 1, updated_at: stamp() }); output = { box: { ...box, access } };
     } else if (parts[1] === 'members') {
       if (access !== 'owner') fail(403, 'Only the owner can manage members.');
@@ -186,7 +284,8 @@ export async function handleRevboxPreview(req, res, url, json) {
       if (payload.role) box.members.push({ user_id: parts[2], role: payload.role }); output = { ok: true };
     } else if (parts[1] === 'accounts') output = { accounts: previewRevboxAccounts.filter(a => revboxMatchesAccount(box.scope, a)), box: { id: box.id, name: box.name, scope: box.scope } };
     else if (parts[1] === 'graph') {
-      const accounts = previewRevboxAccounts.filter(a => revboxMatchesAccount(box.scope, a)); const ids = new Set(accounts.map(a => a.id));
+      const ran = url.searchParams.get('source') === 'runs' ? new Set(previewRunAccounts(box).run_accounts.map(a => a.id)) : null;
+      const accounts = previewRevboxAccounts.filter(a => ran ? ran.has(a.id) : revboxMatchesAccount(box.scope, a)); const ids = new Set(accounts.map(a => a.id));
       const people = CONTACTS.filter(p => ids.has(p.company_id)); const deals = DEALS.filter(d => ids.has(d.company_id));
       output = { nodes: [...accounts.map(a => ({ id: a.id, label: a.name, type: 'account', icp: a.icp_score })), ...people.map(p => ({ id: p.id, label: `${p.first_name} ${p.last_name}`, type: 'person' })), ...deals.map(d => ({ id: d.id, label: d.name, type: 'deal' }))], edges: [...people.map(p => ({ s: p.id, t: p.company_id, type: 'works_at' })), ...deals.map(d => ({ s: d.id, t: d.company_id, type: 'deal_of' }))] };
     } else if (parts[1] === 'context') {
@@ -197,7 +296,16 @@ export async function handleRevboxPreview(req, res, url, json) {
       for (const slug of plan.tools) { const connection = connections.find(c => c.slug === slug); if (connection) plan.bindings[slug] = connection.id; }
       output = { plan };
     }
-    else if (parts[1] === 'results') {if(parts[3]==='approve'){const run=state.results.find(r=>r.revbox_id===box.id&&r.id===parts[2]);if(!run)fail(404,'Result not found.');if(run.state!=='needs_review')fail(409,'This result was already reviewed.');run.state='completed';output={run};}else output={results:state.results.filter(r=>r.revbox_id===box.id)};}
+    else if (parts[1] === 'results' && parts[3] === 'decide') {
+      // A routine run waiting at its approval step (GET-872): approve or deny it.
+      const run = state.results.find(r => r.revbox_id === box.id && r.id === parts[2] && r.kind === 'routine');
+      if (!run) fail(404, 'Result not found.');
+      if (run.state !== 'needs_review') fail(409, 'This run was already decided. Reload to see it.');
+      run.state = payload.approve ? 'completed' : 'rejected';
+      if (payload.approve) run.deliveries = [{ id: randomUUID(), state: 'sent', error: null, destination: { kind: 'slack', target: '#cs-leadership' } }];
+      output = { ok: true, status: payload.approve ? 'ok' : 'rejected' };
+    }
+    else if (parts[1] === 'results') {if(parts[3]==='approve'){const run=state.results.find(r=>r.revbox_id===box.id&&r.id===parts[2]);if(!run)fail(404,'Result not found.');if(run.state!=='needs_review')fail(409,'This result was already reviewed.');run.state='completed';output={run};}else output={results:state.results.filter(r=>r.revbox_id===box.id).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))};}
     else if (parts[1] === 'jobs' && parts[3] === 'enabled') {
       const job=jobs().find(j=>j.id===parts[2]);if(!job)fail(404,'Job not found.');
       if(payload.enabled){const error=revboxExecutionRequirements(job,box);if(error)fail(400,error);if(job.plan.questions.length)fail(400,'Resolve the open questions before enabling this job.');}

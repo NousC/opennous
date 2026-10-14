@@ -5,13 +5,14 @@
 // type does (never the model's words), its subtitle the human target. Anything that leaves the
 // workspace (webhook hosts, email recipients) is named in its tile's subtitle, read from the server's
 // `facts` (or the raw step config when facts are missing), so a step the model mislabelled cannot
-// hide where it sends things behind Details (GET-858 review); HubSpot writes carry a "writes" tag.
-// Details (collapsed) lists each step's facts and the assumptions; warnings are one muted line with
-// the fix as a link, "+N more" for the rest. The row scrolls sideways when narrow and stacks under
+// hide where it sends things (GET-858 review); HubSpot writes carry a "writes" tag. There is no
+// Details disclosure (GET-872): the tiles are the whole story. Warnings are one muted line with
+// the fix as a link, "+N more" for the rest. A tile is compact: the logo inline before its one-line
+// title, the subtitle under it. The row scrolls sideways when narrow and stacks under
 // 480px. Earlier proposals render dimmed with no actions; approved ones carry an Approved badge.
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, Clock3, Mail, Sparkles, Webhook, Zap } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, Clock3, Mail, Sparkles, Webhook, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toolLogo } from '@/lib/toolLogo';
@@ -27,8 +28,6 @@ export function WorkflowCard({ proposal, destinations, editable, current, approv
 }) {
   const [name, setName] = useState(proposal.name);
   useEffect(() => setName(proposal.name), [proposal.name]);
-  const [open, setOpen] = useState(false);
-  const detailsId = useId();
   const nodes = flowNodes(proposal, destinations);
   const blocked = !!approving || !!busy;
   const actionable = editable && current && !approved;
@@ -55,54 +54,29 @@ export function WorkflowCard({ proposal, destinations, editable, current, approv
 
     <Warnings warnings={proposal.warnings} />
 
-    <footer className="flex items-center gap-2 px-5 pb-4 pt-3">
-      <button type="button" aria-expanded={open} aria-controls={detailsId} onClick={() => setOpen(o => !o)}
-        className="-ml-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        Details<ChevronDown className={cn('h-3.5 w-3.5 transition-transform duration-fast', open && 'rotate-180')} />
-      </button>
-      <span className="flex-1" />
-      {actionable && <>
-        <Button variant="ghost" size="sm" onClick={onMakeChanges} disabled={blocked}>Make changes</Button>
-        <Button size="sm" onClick={() => { if (!blocked) onApprove(name.trim() || proposal.name); }} disabled={blocked || !name.trim()}>{approving ? 'Approving…' : 'Approve'}</Button>
-      </>}
-    </footer>
-
-    {open && <div id={detailsId} className="space-y-4 border-t border-hairline px-5 pb-5 pt-4">
-      {nodes.map(n => n.facts.length > 0 && <div key={n.key}>
-        <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-medium text-foreground"><span className="flex h-4 w-4 items-center justify-center">{n.mark}</span>{n.title}
-          {n.unchecked && <span className="font-normal text-muted-foreground">· not checked by the server</span>}</p>
-        <dl className="grid grid-cols-[minmax(84px,max-content)_1fr] gap-x-4 gap-y-1 pl-[22px] text-[12px] leading-[1.5]">
-          {n.facts.map(([k, v, mono]) => <div key={k} className="contents">
-            <dt className="text-muted-foreground">{k}</dt>
-            <dd className={cn('min-w-0 break-words text-ink-2', mono && 'break-all font-mono text-[11.5px]')}>{v}</dd>
-          </div>)}
-        </dl>
-      </div>)}
-      {proposal.assumptions.length > 0 && <div>
-        <p className="mb-1.5 text-[12px] font-medium text-foreground">Assumes</p>
-        <ul className="space-y-1 pl-[22px] text-[12px] leading-[1.5] text-ink-2">{proposal.assumptions.map(a => <li key={a}>{a}</li>)}</ul>
-      </div>}
-    </div>}
+    {actionable ? <footer className="flex items-center justify-end gap-2 px-5 pb-4 pt-3">
+      <Button variant="ghost" size="sm" onClick={onMakeChanges} disabled={blocked}>Make changes</Button>
+      <Button size="sm" onClick={() => { if (!blocked) onApprove(name.trim() || proposal.name); }} disabled={blocked || !name.trim()}>{approving ? 'Approving…' : 'Approve'}</Button>
+    </footer> : <div className="h-4" />}
   </section>;
 }
 
-/** One tile of the flow. `facts` are its Details rows: [label, value, mono?]. */
+
+/** One tile of the flow. `facts`: what the step touches as [label, value, mono?]; not drawn since Details went (GET-872). */
 type Node = { key: string; mark: ReactNode; title: string; subtitle: string; external: boolean; writes: boolean; unchecked: boolean; facts: [string, string, boolean?][] };
 
 function FlowNode({ node }: { node: Node }) {
   const label = [node.title, node.subtitle, node.writes && 'writes to HubSpot', node.external && 'sends data outside the workspace'].filter(Boolean).join(', ');
   return <div tabIndex={0} aria-label={label} title={`${node.title}\n${node.subtitle}`}
-    className={cn('flex min-h-[88px] snap-start flex-col justify-between gap-2 rounded-xl bg-muted/60 p-3 outline-none ring-offset-card focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 max-[480px]:min-h-0 max-[480px]:w-full max-[480px]:max-w-none',
+    className={cn('flex snap-start flex-col justify-center gap-0.5 self-center rounded-xl bg-muted/60 px-2.5 py-2.5 outline-none ring-offset-card focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 max-[480px]:w-full max-[480px]:max-w-none',
       // A tile that sends data out may grow (to 240px) so its addresses are read, not cut.
       node.external ? 'w-max min-w-[164px] max-w-[240px]' : 'w-[164px]')}>
-    <span className="flex items-center justify-between gap-2">
-      <span className="flex h-4 w-4 items-center justify-center">{node.mark}</span>
-      {node.writes && <span className="rounded-[5px] bg-warning/10 px-1 text-[10px] font-medium leading-[15px] text-warning">writes</span>}
+    <span className="flex min-w-0 items-center gap-1.5">
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">{node.mark}</span>
+      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-[18px] text-foreground">{node.title}</span>
+      {node.writes && <span className="shrink-0 rounded-[5px] bg-warning/10 px-1 text-[10px] font-medium leading-[15px] text-warning">writes</span>}
     </span>
-    <span className="min-w-0">
-      <span className="block truncate text-[13px] font-medium leading-[18px] text-foreground">{node.title}</span>
-      {node.subtitle && <span className={cn('mt-0.5 block text-[12px] leading-4', node.external ? 'line-clamp-3 text-ink-2 [overflow-wrap:anywhere]' : 'truncate text-muted-foreground')}>{node.subtitle}</span>}
-    </span>
+    {node.subtitle && <span className={cn('block pl-[22px] text-[12px] leading-4', node.external ? 'line-clamp-3 text-ink-2 [overflow-wrap:anywhere]' : 'truncate text-muted-foreground')}>{node.subtitle}</span>}
   </div>;
 }
 
@@ -155,7 +129,7 @@ function flowNodes(p: JobProposal, destinations: Delivery[]): Node[] {
   const facts = new Map((p.facts ?? []).map(f => [f.step_id, f] as const));
   const display = new Map((p.display ?? []).map(d => [d.step_id, d] as const));
   const steps = (p.steps ?? []).filter(s => s.type !== 'revbox_delivery').map(s => stepNode(s, facts.get(s.id), display.get(s.id)));
-  const delivery: Node[] = p.uses_box_delivery && destinations.length ? [deliveryNode(destinations)] : [];
+  const delivery: Node[] = p.uses_box_delivery && destinations.length ? [deliveryNode(destinations, boxDeliveryLayout(p, destinations))] : [];
   return [triggerNode(p.trigger), ...steps, ...delivery];
 }
 
@@ -251,15 +225,29 @@ function stepNode(s: JobProposal['steps'][number], f: ProposalFact | undefined, 
   }
 }
 
+/**
+ * The Slack layout the box's Slack destinations get from this job, as the engine decides it (core
+ * boxSlackFormat, GET-872): an older destination's own layout, else the one the agent chose, else
+ * the job's own Slack step's, else a report for a schedule and a notification for an event.
+ */
+function boxDeliveryLayout(p: JobProposal, destinations: Delivery[]): string | null {
+  const slack = destinations.filter(d => d.kind === 'slack');
+  if (!slack.length) return null;
+  const usable = (v: unknown) => typeof v === 'string' && v !== 'approval' && SLACK_LAYOUTS[v] ? v : null;
+  const own = (p.steps ?? []).find(s => s.type === 'slack' && usable(s.config?.format));
+  const key = usable(slack.find(d => usable(d.format))?.format) ?? usable(p.box_delivery_format) ?? usable(own?.config?.format) ?? (p.trigger.kind === 'clock' ? 'report' : 'notification');
+  return SLACK_LAYOUTS[key];
+}
+
 /** The box's destinations, at run time (only drawn when there are some). Outside targets first. */
-function deliveryNode(destinations: Delivery[]): Node {
+function deliveryNode(destinations: Delivery[], layout: string | null = null): Node {
   const outside = (d: Delivery) => d.kind !== 'slack';
   const sorted = [...destinations].sort((a, b) => Number(outside(b)) - Number(outside(a)));
   // Every outside address or host is named (never cut to a count); Slack channels follow, counted past one.
   const mail = sorted.filter(d => d.kind === 'email' || d.kind === 'gmail').flatMap(d => recipients(d.kind === 'email' ? d.to ?? d.target : d.to));
   const hooks = sorted.filter(d => d.kind === 'webhook').map(d => `→ ${hostOf(d.target)}`);
   const slack = sorted.filter(d => d.kind === 'slack').map(deliveryLabel);
-  const subtitle = [mail.length ? `to ${[...new Set(mail)].join(', ')}` : '', ...hooks, slack.length > 1 ? `${slack[0]} +${slack.length - 1}` : slack[0] ?? ''].filter(Boolean).join(' · ');
+  const subtitle = [mail.length ? `to ${[...new Set(mail)].join(', ')}` : '', ...hooks, slack.length > 1 ? `${slack[0]} +${slack.length - 1}` : slack[0] ?? '', slack.length && layout ? layout : ''].filter(Boolean).join(' · ');
   const first = sorted[0];
   const mark = first.kind === 'slack' || first.kind === 'gmail' ? <Logo tool={first.kind} /> : first.kind === 'email' ? <Mail className="h-4 w-4 text-muted-foreground" /> : <Webhook className="h-4 w-4 text-muted-foreground" />;
   return { key: '__delivery', mark, title: 'Box delivery', subtitle, external: sorted.some(outside), writes: false, unchecked: false,

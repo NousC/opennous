@@ -83,9 +83,13 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 // The footer's power-user surfaces on the Workspace plan. There is no Workspace group any more and
 // no Automations row on either plan: jobs live in RevBoxes now (GET-864). /automations still opens
 // for old links.
+// Workspace plan (GET-872): Activity sits in the footer; Graph, Reporting, Forecast and Insights in a
+// collapsible Workspace group under RevBoxes.
 const footerNavItemsWorkspace: NavItem[] = [
   { title: "Activity", url: "/activity", icon: Activity },
-  { title: "Graph",    url: "/graph",    icon: Network },
+];
+const workspaceGroupItems: NavItem[] = [
+  { title: "Graph", url: "/graph", icon: Network },
 ];
 // Core (plugin) plan — the agent lives in the operator's own coding tool, so there is no
 // in-app chat. Sources moved into Settings with every other plan's (GET-426): connecting one
@@ -112,7 +116,6 @@ const integrationNavItemsApi: NavItem[] = [
   { title: "Webhooks", url: "/webhooks",        icon: Webhook },
   { title: "API keys", url: "/keys",            icon: KeyRound },
 ];
-const USAGE_API: NavItem = { title: "Usage and billing", url: "/usage", icon: BarChart3 };
 
 /** "https://www.acme.example/about" → "acme.example"; null when there's nothing usable. */
 function domainOf(website?: string | null): string | null {
@@ -191,7 +194,8 @@ export function AppSidebar() {
   // Workspace (GET-665): on the workspace plan Reporting (the Workspace layer's) leads it; the API
   // plan has no Activity row because Activity is its Home.
   // Workspace footer: Activity and Graph, then Cloud's Reporting and Forecast (they sat in the old Workspace group).
-  const footerItemsWorkspace = api ? [] : [...footerNavItemsWorkspace, ...cloudRows(cloud.nav?.workspace, tier)];
+  const footerItemsWorkspace = api ? [] : footerNavItemsWorkspace;
+  const workspaceItems = api ? [] : [...workspaceGroupItems, ...cloudRows(cloud.nav?.workspace, tier)];
   const viewNavItems = cloudRows(cloud.nav?.views, tier).filter((v): v is ViewItem => !!v.swatch && !!v.match);
   const showViews = !api && viewNavItems.length > 0;
   // Every plan gets the Workspace section (Activity, Automations, Graph), collapsible; the API plan
@@ -201,6 +205,8 @@ export function AppSidebar() {
   // Group folds stick per workspace (usePref, GET-595).
   const [viewsOpen, setViewsOpen] = usePref<boolean>("sidebar.views.open", true, (v): v is boolean => typeof v === "boolean");
   const [integrationsOpen, setIntegrationsOpen] = usePref<boolean>("sidebar.integrations.open", true, (v): v is boolean => typeof v === "boolean");
+  const [workspaceOpen, setWorkspaceOpen] = usePref<boolean>("sidebar.workspace.open", true, (v): v is boolean => typeof v === "boolean");
+  const [revboxesOpen, setRevboxesOpen] = usePref<boolean>("sidebar.revboxes.open", true, (v): v is boolean => typeof v === "boolean");
   // API plan: the credits card in the foot, from the same payload the Usage page reads.
   const credits = useCredits(api);
 
@@ -344,9 +350,9 @@ export function AppSidebar() {
   // RevBoxes (GET-858, GET-864 for Workspace): one block, placed per plan below.
   const revboxSection = can("revboxes") && (
     <>
-      {sectionLabel("RevBoxes", undefined, <button aria-label="Create RevBox" title="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Plus className="h-3.5 w-3.5" /></button>)}
+      {sectionLabel("RevBoxes", { open: revboxesOpen || collapsed, toggle: () => setRevboxesOpen((o) => !o) }, <button aria-label="Create RevBox" title="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Plus className="h-3.5 w-3.5" /></button>)}
       {collapsed && withTip(<button aria-label="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="mx-auto flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted"><Plus className="h-4 w-4" /></button>, "Create RevBox")}
-      {<ul className="flex flex-col gap-px">{revboxes.data?.boxes.map(box => renderOpenItem({ title: box.name, url: `/revboxes/${box.id}`, icon: Boxes }))}</ul>}
+      {(revboxesOpen || collapsed) && <ul className="flex flex-col gap-px">{revboxes.data?.boxes.map(box => renderOpenItem({ title: box.name, url: `/revboxes/${box.id}`, icon: Boxes }))}</ul>}
       {!collapsed && (revboxError || revboxes.error) && <p role="alert" className="px-2 py-1 text-[11px] text-risk">{revboxError || "Could not load RevBoxes."}</p>}
     </>
   );
@@ -443,6 +449,12 @@ export function AppSidebar() {
             the main nav, as before. */}
         {!api && revboxSection}
 
+        {/* WORKSPACE (GET-872): Graph, Reporting, Forecast, Insights, collapsible, under RevBoxes. */}
+        {!api && workspaceItems.length > 0 && sectionLabel("Workspace", { open: workspaceOpen || collapsed, toggle: () => setWorkspaceOpen((o) => !o) })}
+        {!api && workspaceItems.length > 0 && (workspaceOpen || collapsed) && (
+          <ul className="flex flex-col gap-px">{workspaceItems.map((i) => renderOpenItem(i))}</ul>
+        )}
+
         {/* BRAINS — the company's own knowledge of how it sells (GET-431): Cloud's (GET-839). */}
         {Brains && (
           <Brains tier={tier} sectionLabel={(t) => sectionLabel(t)} buttonRow={buttonRow}
@@ -451,7 +463,8 @@ export function AppSidebar() {
 
         {/* CHATS — your conversations with Ask Nous: the Workspace layer's (GET-754). Mounted on the
             workspace plans, shown where the agent runs in the app (Custom). */}
-        {!api && Recents && <Recents show={showRecents} collapsed={collapsed} sectionLabel={sectionLabel} />}
+        {/* Hidden for now (GET-872); chats come back once there's a better place for them. */}
+        {false && !api && Recents && <Recents show={showRecents} collapsed={collapsed} sectionLabel={sectionLabel} />}
       </div>
 
       {/* Self-host version / update status (only renders when self_hosted) */}
@@ -511,7 +524,8 @@ export function AppSidebar() {
           "API docs",
         )}
         {/* Graph, then Usage and billing; no Usage on self-host, where nothing is billed (GET-839). */}
-        {api && <ul className="flex flex-col gap-px">{renderOpenItem({ title: "Graph", url: "/graph", icon: Network })}{!selfHosted && renderOpenItem(USAGE_API)}</ul>}
+        {/* No Usage and billing row on the API plan (GET-872): the credits meter above opens it. */}
+        {api && <ul className="flex flex-col gap-px">{renderOpenItem({ title: "Graph", url: "/graph", icon: Network })}</ul>}
         {/* Workspace plan: Activity, Graph, Reporting and Forecast, where the Workspace group used to be (GET-864). */}
         {!api && footerItemsWorkspace.length > 0 && <ul className="flex flex-col gap-px">{footerItemsWorkspace.map((i) => renderOpenItem(i))}</ul>}
         {/* Invite a member (GET-571) — founders and admins; the member onboards their own sources. */}

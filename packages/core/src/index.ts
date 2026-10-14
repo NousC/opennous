@@ -154,7 +154,7 @@ export {
   revboxContextText, revboxRoutineContext, REVBOX_CONTEXT_CHARS,
 } from './services/automationRun.mjs';
 // Slack layouts for automation output (GET-858): the formats, the AI's JSON shape, parse and text.
-export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
+export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, boxSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
 // Record events (GET-559): every detector emits through one door; the trigger worker delivers.
 export { emitEvent, buildEventRecord, eventEnvelope, EVENT_API_VERSION } from './services/events.mjs';
 // HubSpot fields as automation variables (GET-567): listed from the stored schema, read live.

@@ -11,7 +11,7 @@
 // of silently blanking a page.
 import http from "node:http";
 import { existsSync } from "node:fs";
-import { handleRevboxPreview } from "./revboxes.mjs";
+import { handleRevboxPreview, PREVIEW_SLACK } from "./revboxes.mjs";
 import {
   WS, USERS, COMPANIES, CONTACTS, FLAGS, TASKS, PORTFOLIO, GRAPH, CAMPAIGNS,
   companyDetail, personRecord, icpRecord,
@@ -381,12 +381,7 @@ const routes = [
     { id: "mb-2", kind: "gmail", email: "test.user.0001@gmail.com" },
   ], default_id: "mb-1" })],
   // The connected Slack's channels (GET-771 shape), for the Slack step and the RevBox Delivery picker.
-  ["GET", /^\/api\/slack\/targets$/, () => ({ connected: true, channels: [
-    { id: "C07CSHANDOFFS", name: "cs-handoffs", private: false, member: true },
-    { id: "C07TU1HANDOFF", name: "credit-check-cs-handoff", private: false, member: true },
-    { id: "C07LEADERSHIP", name: "cs-leadership", private: true, member: true },
-    { id: "C07GENERAL", name: "general", private: false, member: false },
-  ], people: [{ id: "U07AVERY", name: "Avery Example", email: "avery@opennous.example" }] })],
+  ["GET", /^\/api\/slack\/targets$/, () => PREVIEW_SLACK],
   // The simple editor's email preview (GET-664), by the live route's shape: the email a run
   // would send for a recent trigger, notice + PDF or the AI's words, as the step says.
   ["POST", /^\/api\/automations\/email-preview$/, async (_m, _q, req) => previewEmail(await readBody(req))],

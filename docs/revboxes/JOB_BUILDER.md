@@ -199,6 +199,7 @@ archive, reprocess); they belong to the workspace, a RevBox only records where o
   "steps": [ WorkflowStep ],                 // exactly the agent_routines.steps format above
   "display": [ { "step_id": "read", "tool": "hubspot", "title": "Read Company Daily Stats", "detail": "5 Credit Check fields · per dealer · yesterday vs the day before" } ],
   "uses_box_delivery": true,                 // also deliver to the box's destinations at run time
+  "box_delivery_format": "report",           // with uses_box_delivery: the Slack layout the box's Slack destinations get (never "approval")
   "warnings": [ { "kind": "missing_access"|"missing_connection"|"unverified"|"cost", "message": "…", "fix": { "label": "Reconnect HubSpot", "href": "/company-sources?connect=hubspot" } } ],
   "assumptions": [ "Weekends are reported as quiet days." ],
   "estimated_credits_per_run": 2
@@ -243,11 +244,38 @@ references point at earlier steps; `display` covers every step.
     (`sendableMailboxes`); the API sets its `mailbox_email`. With `uses_box_delivery`,
     `validateBuilderProposal` refuses an explicit slack step to a destination's channel and a
     gmail/email step to a destination's recipient (it would arrive twice).
-- `GET /api/revboxes/:id` also returns `job_deliveries: [{ job_id, job_name, kind, label, target }]`:
+  - the Slack layout a box Slack destination posts in is the job's, not the destination's (GET-872,
+    core `boxSlackFormat`): an older destination's own `format` (still read, no longer written), else
+    the delivery step's `config.format` (approve copies the proposal's `box_delivery_format` there),
+    else the job's own Slack step's format, else `report` for a clock job and `notification` for an
+    event job. Never `approval`. The destination dialog asks only the Slack workspace (read-only,
+    `team` from `/api/slack/targets` via team.info) and the channel.
+- `GET /api/revboxes/:id` also returns `job_deliveries: [{ job_id, job_name, step_id, step_type, editable, kind, label, target, channel_id?, channel?, to?, cc?, mailbox_id? }]`:
   where the box's jobs deliver on their own, derived server-side from the routines' real steps
-  (`revboxJobDeliveries` / `listRevboxJobDeliveries`, same access as the box). The sidebar's Delivery
-  list shows them read-only ("via <job>") under the box's own, removable destinations.
-- Results tab shows the routine runs (`agent_routine_runs`) for the box's jobs, with credits.
+  (`revboxJobDeliveries` / `listRevboxJobDeliveries`, same access as the box). The rail lists them
+  ("via <job>") under the box's own, removable destinations; clicking one edits that step's target in
+  place: `PUT /api/revboxes/:id/jobs/:jobId/steps/:stepId/target` (box edit rights; slack `{ kind,
+  channel_id }` checked against slackTargets, gmail/email `{ kind, to, cc, mailbox_id? }` up to 20,
+  the caller's own mailbox, webhook `{ kind, url }` https and a public host). The kind never changes
+  there; the routine is saved with `edited_by` and the database versions it (automation_versions).
+  -> `{ job_deliveries }`. A DM or SMTP step (`editable: false`) is changed in the chat.
+- It also returns (GET-872) `people` (owner and members with `avatar_url` from users.profile_picture_url),
+  `run_accounts: [{ id, name, domain, runs }]` (accounts the box's runs touched in 30 days: a routine
+  run's entity_id, its document's subject and about/mentions links, a legacy run's account_ids; a
+  person or deal counts for its company; viewer-visible only) with `run_accounts_total`,
+  `run_accounts_runs` and `run_accounts_linked` (false = the runs name no account), and
+  `builtin_jobs` / `builtin_taken` (below). `GET /:id/graph?source=runs` graphs the run accounts.
+- Results tab shows the routine runs (`agent_routine_runs`) for the box's jobs, with credits, as a
+  compact list; a failed run carries `failure: { text, fix }` (the failed step's words, with Connect
+  or Reconnect to /integrations for a connection). `POST /:id/results/:runId/decide { approve }`
+  approves or denies a routine run waiting at its approval step (box edit rights).
+- Built-in jobs (GET-872): `revboxes.builtin_jobs text[]` (migration
+  `2026_10_14_revbox_builtin_jobs.sql`) lists OpenNous's default automations (`sales_follow_up`,
+  `stale_deal`, `deal_signals`, `deal_risk`, `expansion`; core `REVBOX_BUILTIN_JOBS`) on a box, each in
+  at most one box per workspace (a 409 on save names the other box when the saver can open it).
+  Listing one changes nothing about how it runs. The detail returns each with `drafts_30d` and
+  `last_draft_at` (follow_ups for the after-call follow-up; ri_recommendations category
+  'automation', rec_key automation.<detector> for the rest). Without the column it is empty.
 
 ## Workspace plan rollout (GET-864)
 

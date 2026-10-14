@@ -265,7 +265,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
           {turn.id === latestProposalTurn && approveError && <ErrorRow message={approveError} />}
           {turn.error && <ErrorRow message={turn.error.message} code={turn.error.code} />}
           {turn.stopped && <p className="text-[11.5px] text-muted-foreground">Stopped.</p>}
-          {turn.credits != null && !turn.streaming && <p className="text-[10.5px] text-muted-foreground/70">{turn.credits.toFixed(turn.credits % 1 ? 1 : 0)} {turn.credits === 1 ? 'credit' : 'credits'}</p>}
+          {/* No per-turn credits line (GET-872): a job's cost per run is on its card; a turn's is noise. */}
         </div>)}
       </div>
     </div>}

@@ -457,6 +457,16 @@ test('builderRoutineColumns gives the box-delivery step an id no proposed step u
   assert.deepEqual(cols.steps.map(s => s.id), ['read', 'summary', 'box_delivery', 'box_delivery_2']);
 });
 
+test('the Slack layout the agent chose for box delivery lands on the revbox_delivery step (GET-872)', () => {
+  const p = { ...dailyReport(), uses_box_delivery: true, box_delivery_format: 'report' };
+  const checked = validateBuilderProposal(p, lookups);
+  assert.ok(checked.ok !== false, JSON.stringify(checked.errors ?? []));
+  assert.deepEqual(builderRoutineColumns(p, checked).steps.at(-1).config, { format: 'report' });
+  assert.deepEqual(builderRoutineColumns({ ...p, box_delivery_format: undefined }, checked).steps.at(-1).config, {});
+  const bad = validateBuilderProposal({ ...p, box_delivery_format: 'approval' }, lookups);
+  assert.ok((bad.errors ?? []).some(e => /box_delivery_format/.test(e)));
+});
+
 // ── Run time ──────────────────────────────────────────────────────────────────
 
 const doc = { id: 'd1', title: 'Credit Check daily', headline: null, sections: [{ label: 'Summary', body: 'Dealer A pulled 12 (+3).' }] };

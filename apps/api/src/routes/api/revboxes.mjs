@@ -9,17 +9,18 @@ import {
   setRevboxMember, addRevboxContext, removeRevboxContext, saveRevboxJob,
   revboxWorkspaceMembers, revboxAccountCatalog, revboxScopedGraph, revboxAccountOverview,
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
-  compileRevboxPlan, recordRevboxUsage, createMessage, revboxMatchesAccount, revboxConnections, revboxMembership,
-  listRevboxRoutines, loadRevboxRoutine, BUILDER_TRIGGERS, startTestRun, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+  compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxMatchesAccount, revboxConnections, revboxMembership,
+  listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
 } from '@nous/core';
 import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
 import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
 import { viewerVisibleAccountSet } from '../../lib/visibility.mjs';
-import { safeFetch } from '../../lib/ssrf.mjs';
+import { safeFetch, assertPublicUrl } from '../../lib/ssrf.mjs';
+import { loadCloud } from '../../lib/cloud.mjs';
 import { resolveTeamAndPlan } from '../../lib/access.mjs';
 import { planName } from '../../lib/plans.mjs';
 import { automationLimitHit } from './automations.mjs';
-import { FLOW_TRIGGERS } from '../../lib/flows.mjs';
+import { FLOW_TRIGGERS, checkFlow } from '../../lib/flows.mjs';
 import { creditsForRuns } from '../../lib/automationCredits.mjs';
 
 // A RevBox job on the workflow engine (GET-868) reads its box's references as its owner, and posts to
@@ -102,7 +103,7 @@ function route(fn) {
       await revboxMembership(sb, req.workspaceId, req.internalUserId);
       await fn(req, res, sb);
     } catch (e) {
-      if (e.code === '42P01' || e.code === 'PGRST205' || /revbox.*schema cache/i.test(e.message ?? '') || ((e.code === '42703' || e.code === 'PGRST204') && /revbox_id/.test(e.message ?? ''))) return res.status(409).json({ error: 'The RevBox database migration has not been applied.' });
+      if (e.code === '42P01' || e.code === 'PGRST205' || /revbox.*schema cache/i.test(e.message ?? '') || ((e.code === '42703' || e.code === 'PGRST204') && /revbox_id|builtin_jobs/.test(e.message ?? ''))) return res.status(409).json({ error: 'The RevBox database migration has not been applied.' });
       if (!e.status) console.error('[revboxes]', e);
       res.status(e.status ?? 500).json({ error: e.status ? e.message : 'Could not save or load the RevBox.' });
     }
@@ -164,7 +165,17 @@ revboxesRouter.get('/:id', route(async (req, res, sb) => {
   // Where the box's jobs deliver (GET-868), derived here from their real steps, with the box's own
   // access (a private channel or recipient in a step is shown to the box's members only).
   const { routines, job_deliveries } = await listRevboxJobDeliveries(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, mailboxes: () => listMailboxes(sb, req.workspaceId) });
-  res.json({ ...detail, context, routines: routines.map(routineOut), job_deliveries });
+  // The accounts the box's jobs touched in the last 30 days (GET-872), visible ones only, and the
+  // built-in jobs it lists with what they drafted.
+  const visible = await allowed(sb, req);
+  const [ran, taken, activity] = await Promise.all([
+    revboxRunAccounts(sb, req.workspaceId, { revboxId: req.params.id, routineIds: routines.map(r => r.id), allowed: visible }),
+    revboxBuiltinTaken(sb, req.workspaceId, req.internalUserId, req.params.id),
+    revboxBuiltinActivity(sb, req.workspaceId, detail.box.builtin_jobs, { allowed: visible }),
+  ]);
+  res.json({ ...detail, context, routines: routines.map(routineOut), job_deliveries,
+    run_accounts: ran.accounts.slice(0, 200), run_accounts_total: ran.accounts.length, run_accounts_runs: ran.runs, run_accounts_linked: ran.linked,
+    builtin_jobs: builtinJobsOut(detail.box.builtin_jobs, activity), builtin_taken: taken });
 }));
 revboxesRouter.patch('/:id', route(async (req, res, sb) => {
   if (req.body?.scope?.mode === 'selected') {
@@ -200,7 +211,14 @@ revboxesRouter.get('/:id/accounts', route(async (req, res, sb) => {
 }));
 revboxesRouter.get('/:id/graph', route(async (req, res, sb) => {
   const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
-  const accounts = await revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req));
+  const visible = await allowed(sb, req);
+  const accounts = await revboxAccountCatalog(sb, req.workspaceId, visible);
+  // ?source=runs: the accounts the box's jobs touched in their last 30 days of runs (GET-872).
+  if (req.query.source === 'runs') {
+    const routines = await listRevboxRoutines(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId });
+    const ran = await revboxRunAccounts(sb, req.workspaceId, { revboxId: box.id, routineIds: routines.map(r => r.id), allowed: visible });
+    return res.json(await revboxScopedGraph(sb, req.workspaceId, { mode: 'selected', account_ids: ran.accounts.map(a => a.id), min_icp: 0 }, accounts));
+  }
   res.json(await revboxScopedGraph(sb, req.workspaceId, box.scope, accounts));
 }));
 revboxesRouter.post('/:id/plan', route(async (req, res, sb) => {
@@ -224,7 +242,7 @@ revboxesRouter.put('/:id/jobs/:jobId', route(async (req, res, sb) => res.json({ 
 revboxesRouter.get('/:id/results', route(async (req,res,sb)=>{
   const runs=await listRevboxRuns(sb,req.workspaceId,req.internalUserId,req.params.id,await allowed(sb,req));
   const costs=await revboxRunCosts(sb,req.workspaceId,req.params.id,runs.map(r=>r.id));
-  const results=await Promise.all(runs.map(async run=>({...run,cost_usd:costs.get(run.id)??0,credits:(costs.get(run.id)??0)/REQUESTED_USD_PER_CREDIT,deliveries:await revboxDeliveries(sb,run.id)})));
+  const results=await Promise.all(runs.map(async run=>({...run,failure:run.state==='failed'?runFailure(run.error,[]):null,cost_usd:costs.get(run.id)??0,credits:(costs.get(run.id)??0)/REQUESTED_USD_PER_CREDIT,deliveries:await revboxDeliveries(sb,run.id)})));
   // The box's workflow-engine jobs (GET-868): their runs, with what each cost in credits.
   const routines=await listRevboxRoutines(sb,{workspaceId:req.workspaceId,revboxId:req.params.id,userId:req.internalUserId});
   const routineRuns=await revboxRoutineRuns(sb,req.workspaceId,routines,{allowed:await allowed(sb,req)});
@@ -234,6 +252,28 @@ revboxesRouter.get('/:id/results', route(async (req,res,sb)=>{
 const ROUTINE_RUN_STATE = { running: 'running', waiting: 'running', ok: 'completed', completed: 'completed', error: 'failed', failed: 'failed', awaiting_approval: 'needs_review' };
 export function routineRunState(status) {
   return ROUTINE_RUN_STATE[status] ?? (typeof status === 'string' && status ? status : 'running');
+}
+const CONNECTION_TOOLS = { slack: 'Slack', hubspot: 'HubSpot', gmail: 'Gmail', smtp: 'the mailbox', email: 'the mailbox' };
+/**
+ * Why a run failed, in words (GET-872): the failed step's own text (automationRun's REASON_TEXT,
+ * e.g. "Slack isn't connected"), else the run's error without its "Step 3 · Slack: " prefix, with a
+ * Reconnect link to Integrations when the cause is a connection. -> { text, fix: { label, href } | null }. Pure.
+ */
+export function runFailure(error, stepLog) {
+  const step = (Array.isArray(stepLog) ? stepLog : []).findLast(e => e?.status === 'failed');
+  let text = String(step?.detail ?? error ?? '').replace(/^Step \d+ · [^:]+: /, '').trim();
+  if (!text) text = 'The run stopped before it finished.';
+  const connection = /not connected|isn't connected|expired|missing a permission|can't read that object|reconnect/i.test(text);
+  // "the Slack connection expired. Reconnect Slack in Sources" -> "The Slack connection expired" + Reconnect.
+  if (connection) text = text.replace(/[.,]?\s*reconnect\b.*$/i, '').trim();
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  const tool = CONNECTION_TOOLS[step?.type] ?? null;
+  return { text, fix: connection ? { label: /isn't connected|not connected/i.test(text) ? `Connect${tool && tool !== 'the mailbox' ? ` ${tool}` : ''}` : 'Reconnect', href: '/integrations' } : null };
+}
+/** The box's built-in jobs as the Jobs list reads them: definition plus what each drafted lately. Pure. */
+export function builtinJobsOut(keys, activity = []) {
+  const byKey = new Map(activity.map(a => [a.key, a]));
+  return REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({ ...j, drafts_30d: byKey.get(j.key)?.drafts ?? 0, last_draft_at: byKey.get(j.key)?.last_at ?? null }));
 }
 /** The last box delivery the run recorded (its revbox_delivery step's per-destination results) as Results deliveries. */
 export function routineRunDeliveries(runId, stepLog) {
@@ -275,6 +315,7 @@ export async function revboxRoutineRuns(sb, ws, routines, { limit = 200, allowed
       created_at: r.started_at, finished_at: r.finished_at ?? null, document_id: doc ? r.document_id : null, step_log: r.step_log ?? [],
       result: doc ? { title: String(doc.title ?? 'Job run'), body: String(doc.body_md ?? ''), kind: 'report' } : null,
       deliveries: routineRunDeliveries(r.id, r.step_log),
+      failure: routineRunState(r.status) === 'failed' ? runFailure(r.error, r.step_log) : null,
       test: !!r.state?.test, trigger: r.state?.trigger ?? null, credits: credits.get(r.id)?.credits ?? 0,
     };
   });
@@ -327,6 +368,119 @@ revboxesRouter.post('/:id/results/:runId/approve',route(async(req,res,sb)=>{
   const run=await approveRevboxRun(sb,req.workspaceId,req.internalUserId,req.params.id,req.params.runId,await allowed(sb,req));
   if(!run)invalid('This result changed. Reload before approving.',409);
   await deliverRevboxRun(sb,run);res.json({run});
+}));
+
+// ── A job's own delivery target, edited from the Delivery rail (GET-872) ─────────────────────
+const STEP_KIND = (step) => step?.type === 'gmail' ? (step.config?.send_from?.kind === 'smtp' ? 'smtp' : 'gmail') : step?.type;
+const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
+function recipientsOf(v, label) {
+  if (v != null && typeof v !== 'string' && !(Array.isArray(v) && v.every(x => typeof x === 'string'))) invalid(`${label} must be email addresses.`);
+  const list = deliveryRecipients(v);
+  const bad = list.find(a => !EMAIL_RE.test(a));
+  if (bad) invalid(`"${bad.slice(0, 80)}" is not an email address.`);
+  return list;
+}
+/**
+ * The step with its new target: a Slack channel the connected bot can see (id and name, never a bare
+ * name), To/Cc (up to 20) for email and Gmail, a Gmail mailbox that is the caller's own (or the one
+ * it already uses), a public https webhook. The step's kind never changes here. Throws 400.
+ * deps: { slackTargets() -> { connected, channels }, mailboxes() -> sendable [{ id, email }], assertUrl(url) }.
+ */
+export async function stepWithTarget(step, body, deps) {
+  const kind = STEP_KIND(step);
+  if (!['slack', 'gmail', 'email', 'webhook'].includes(kind) || (kind === 'slack' && step.config?.action === 'dm')) invalid('Change this step in the job\'s chat.');
+  if (!body || typeof body !== 'object' || body.kind !== kind) invalid(`This step delivers by ${kind === 'gmail' ? 'Gmail' : kind}; change its kind in the job's chat.`);
+  const c = { ...(step.config ?? {}) };
+  if (kind === 'slack') {
+    const id = typeof body.channel_id === 'string' ? body.channel_id.trim() : '';
+    if (!id) invalid('Choose a Slack channel.');
+    const targets = await deps.slackTargets();
+    if (!targets?.connected) invalid("Slack isn't connected.");
+    const ch = (targets.channels ?? []).find(x => x.id === id);
+    if (!ch) invalid("Slack can't find that channel. Choose one from the list.");
+    Object.assign(c, { action: 'channel', channel_id: ch.id, channel: ch.name });
+  } else if (kind === 'webhook') {
+    const url = typeof body.url === 'string' ? body.url.trim() : '';
+    if (!/^https:\/\//i.test(url) || url.length > 2000) invalid('Use an https:// webhook URL.');
+    try { await deps.assertUrl(url); } catch { invalid('That webhook address is not a public host.'); }
+    c.url = url;
+  } else {
+    const to = recipientsOf(body.to, 'To'), cc = recipientsOf(body.cc, 'Cc');
+    if (!to.length) invalid('Add at least one recipient.');
+    if (to.length + cc.length > 20) invalid('A step emails up to 20 people.');
+    const before = { to: recipientsOf(c.to ?? '', 'To').join(', '), cc: recipientsOf(c.cc ?? '', 'Cc').join(', ') };
+    c.to = to.join(', '); c.cc = cc.join(', ');
+    if (kind === 'gmail') {
+      const current = c.send_from?.id ?? null;
+      const own = await deps.mailboxes();
+      if (body.mailbox_id !== undefined && body.mailbox_id !== current) {
+        const mine = own.find(m => m.id === body.mailbox_id);
+        if (!mine) invalid('Choose one of your own connected Gmail mailboxes.');
+        c.send_from = { ...(c.send_from ?? {}), id: mine.id, kind: 'gmail', email: mine.email ?? null };
+      }
+      // Only the owner of the mailbox a step writes from may change who it reaches: nobody sends from a
+      // colleague's Gmail to new people (GET-872 review).
+      const changed = c.to !== before.to || c.cc !== before.cc;
+      if (changed && c.send_from?.id && !own.some(m => m.id === c.send_from.id)) {
+        invalid("Only the owner of this mailbox can change who it sends to. Pick one of your own mailboxes first.", 403);
+      }
+    }
+  }
+  return { ...step, config: c };
+}
+/**
+ * PUT /:id/jobs/:jobId/steps/:stepId/target: box edit rights, one of the box's routines, its slack,
+ * gmail, email or webhook step. Saved as automations save (checkFlow, then the steps with edited_by;
+ * the database bumps agent_routines.version and keeps the automation_versions snapshot), enabled as is,
+ * guarded on the version read. -> { job_deliveries }.
+ */
+export async function saveJobStepTarget(sb, { workspaceId, revboxId, userId, jobId, stepId, body }, deps) {
+  const { routine } = await loadRevboxRoutine(sb, { workspaceId, revboxId, userId, routineId: jobId, edit: true });
+  const steps = Array.isArray(routine.steps) ? routine.steps : [];
+  const at = steps.findIndex(s => s?.id === stepId);
+  if (at < 0) invalid('Step not found.', 404);
+  const next = steps.map((s, i) => i === at ? null : s);
+  next[at] = await stepWithTarget(steps[at], body, deps);
+  const checked = checkFlow({ steps: next, trigger_config: routine.trigger_config });
+  if (!checked.ok) invalid(checked.message ?? 'This step is not valid.');
+  let q = sb.from('agent_routines').update({ steps: next, edited_by: userId, updated_at: new Date().toISOString() })
+    .eq('workspace_id', workspaceId).eq('revbox_id', revboxId).eq('id', routine.id);
+  if (routine.version != null) q = q.eq('version', routine.version);
+  const { data, error } = await q.select('*').maybeSingle();
+  if (error) throw error;
+  if (!data) invalid('This job changed. Reload before saving.', 409);
+  return data;
+}
+revboxesRouter.put('/:id/jobs/:jobId/steps/:stepId/target', async (req, res, next) => {
+  // Step ids are short names ("post", "slack_1"), not uuids: checked here, the rest by route().
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(req.params.stepId)) return res.status(400).json({ error: 'Invalid identifier.' });
+  const { stepId, ...ids } = req.params;
+  req.stepId = stepId; req.params = ids;
+  return stepTarget(req, res, next);
+});
+const stepTarget = route(async (req, res, sb) => {
+  const deps = {
+    slackTargets: async () => { const cloud = await loadCloud(); return cloud?.slack ? cloud.slack.targets({ supabase: sb, workspaceId: req.workspaceId }) : { connected: false, channels: [] }; },
+    mailboxes: () => sendableMailboxes(sb, req.workspaceId, req.internalUserId),
+    assertUrl: assertPublicUrl,
+  };
+  await saveJobStepTarget(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, jobId: req.params.jobId, stepId: req.stepId, body: req.body }, deps);
+  const { job_deliveries } = await listRevboxJobDeliveries(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, mailboxes: () => listMailboxes(sb, req.workspaceId) });
+  res.json({ job_deliveries });
+});
+
+// Approve or deny a box job's run that waits at its approval step (GET-872), with the box's edit
+// rights: the run must belong to one of this box's routines.
+revboxesRouter.post('/:id/results/:runId/decide',route(async(req,res,sb)=>{
+  if(typeof req.body?.approve!=='boolean')invalid('Choose approve or deny.');
+  await loadRevbox(sb,req.workspaceId,req.internalUserId,req.params.id,true);
+  const {data:run,error}=await sb.from('agent_routine_runs').select('id, routine_id').eq('workspace_id',req.workspaceId).eq('id',req.params.runId).maybeSingle();
+  if(error)throw error;
+  const routines=run?await listRevboxRoutines(sb,{workspaceId:req.workspaceId,revboxId:req.params.id,userId:req.internalUserId}):[];
+  if(!run||!routines.some(r=>r.id===run.routine_id))invalid('Result not found.',404);
+  const out=await decideAutomationRun(sb,req.workspaceId,run.id,{approve:req.body.approve,userId:req.internalUserId});
+  if(!out.ok)invalid(out.error==='not_found'?'Result not found.':'This run was already decided. Reload to see it.',out.error==='not_found'?404:409);
+  res.json(out);
 }));
 
 revboxesRouter.post('/:id/jobs/:jobId/webhook-key',route(async(req,res,sb)=>{

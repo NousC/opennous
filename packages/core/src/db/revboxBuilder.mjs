@@ -262,6 +262,7 @@ export function validateBuilderProposal(proposal, { slackChannelIds = null, slac
     for (const s of clean) if (!shown.has(s.id)) errors.push(`Step "${s.id}" has no display line.`);
   }
   if (proposal.uses_box_delivery != null && typeof proposal.uses_box_delivery !== 'boolean') errors.push('uses_box_delivery must be true or false.');
+  if (proposal.box_delivery_format != null && (!['report', 'alert', 'handoff', 'digest', 'notification', 'plain'].includes(proposal.box_delivery_format) || proposal.uses_box_delivery !== true)) errors.push('box_delivery_format must be one of report, alert, handoff, digest, notification or plain, and only with uses_box_delivery.');
   // The box already posts there at the end of the job: an explicit step to the same channel posts twice.
   if (proposal.uses_box_delivery === true && boxDestinations) {
     const targets = slackTargets(boxDestinations);
@@ -331,7 +332,8 @@ export function builderRoutineColumns(proposal, checked) {
   if (proposal.uses_box_delivery) {
     let id = BOX_DELIVERY_STEP;
     for (let n = 2; steps.some(s => s.id === id); n++) id = `${BOX_DELIVERY_STEP}_${n}`;
-    steps.push({ id, type: 'revbox_delivery', config: {} });
+    // The Slack layout the agent chose for the box's Slack destinations (GET-872), on the step itself.
+    steps.push({ id, type: 'revbox_delivery', config: proposal.box_delivery_format ? { format: proposal.box_delivery_format } : {} });
   }
   const { kind, config, timezone } = checked.trigger;
   return {
@@ -756,20 +758,21 @@ export function revboxJobDeliveries(routines, { mailboxes = null } = {}) {
       const c = isObj(s.config) ? s.config : {};
       let d = null;
       if (s.type === 'slack') {
-        if (c.action === 'dm') d = { kind: 'slack', label: `DM to ${str(c.user_name) || 'a Slack user'}`, target: str(c.user_id) };
+        if (c.action === 'dm') d = { kind: 'slack', label: `DM to ${str(c.user_name) || 'a Slack user'}`, target: str(c.user_id), editable: false };
         else {
           const name = str(c.channel).replace(/^#/, '');
-          d = { kind: 'slack', label: name ? `#${name}` : `Slack channel ${str(c.channel_id) || '(none)'}`, target: str(c.channel_id) || name };
+          d = { kind: 'slack', label: name ? `#${name}` : `Slack channel ${str(c.channel_id) || '(none)'}`, target: str(c.channel_id) || name, channel_id: str(c.channel_id) || null, channel: name || null };
         }
       } else if (s.type === 'gmail') {
         const mid = str(c.send_from?.id);
         const from = boxes.get(mid) ?? null;
         const to = addresses(c.to, c.cc);
         const smtp = c.send_from?.kind === 'smtp';
-        d = { kind: smtp ? 'email' : 'gmail', label: [smtp ? 'Email' : c.mode === 'send' ? 'Gmail' : 'Gmail draft', from && `from ${from}`, to.length && `to ${to.join(', ')}`].filter(Boolean).join(' · '), target: mid };
+        d = { kind: smtp ? 'email' : 'gmail', label: [smtp ? 'Email' : c.mode === 'send' ? 'Gmail' : 'Gmail draft', from && `from ${from}`, to.length && `to ${to.join(', ')}`].filter(Boolean).join(' · '), target: mid,
+          to: addresses(c.to).join(', '), cc: addresses(c.cc).join(', '), mailbox_id: mid || null, ...(smtp ? { editable: false } : {}) };
       } else if (s.type === 'email') {
         const to = addresses(c.to, c.cc);
-        d = { kind: 'email', label: to.length ? `Email · to ${to.join(', ')}` : 'Email', target: to.join(', ') };
+        d = { kind: 'email', label: to.length ? `Email · to ${to.join(', ')}` : 'Email', target: to.join(', '), to: addresses(c.to).join(', '), cc: addresses(c.cc).join(', ') };
       } else if (s.type === 'webhook') {
         const { host } = urlParts(c.url);
         d = { kind: 'webhook', label: host ?? 'Custom webhook', target: host ?? '' };
@@ -778,7 +781,9 @@ export function revboxJobDeliveries(routines, { mailboxes = null } = {}) {
       const key = `${r.id}|${d.kind}|${d.label}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ job_id: r.id ?? null, job_name: r.name ?? null, ...d });
+      // step_id and step_type: which step the rail's job-step dialog edits (GET-872); `editable`
+      // false = only through the chat (a DM, an SMTP mailbox).
+      out.push({ job_id: r.id ?? null, job_name: r.name ?? null, step_id: s.id ?? null, step_type: s.type, editable: true, ...d });
     }
   }
   return out;

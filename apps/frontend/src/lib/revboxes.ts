@@ -13,7 +13,12 @@ export type ContextBlock = { id: string; title: string; body: string };
  */
 export type Delivery = { id: string; kind: 'slack' | 'email' | 'gmail' | 'webhook'; target: string; to?: string; cc?: string; channel?: string; mailbox_email?: string | null; format?: string };
 /** Where one of the box's jobs delivers on its own, from its real steps (server-derived, read-only). */
-export type JobDelivery = { job_id: string; job_name: string | null; kind: 'slack' | 'email' | 'gmail' | 'webhook'; label: string; target: string };
+export type JobDelivery = {
+  job_id: string; job_name: string | null; kind: 'slack' | 'email' | 'gmail' | 'webhook'; label: string; target: string;
+  /** The step this target belongs to (GET-872): the rail's job-step dialog edits it in place. */
+  step_id?: string | null; step_type?: string; editable?: boolean;
+  channel_id?: string | null; channel?: string | null; to?: string; cc?: string; mailbox_id?: string | null;
+};
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 /** "a@x, b@y" as a list. */
 export const recipients = (v: string | undefined | null) => String(v ?? '').split(/[,;]/).map(x => x.trim()).filter(Boolean);
@@ -32,7 +37,28 @@ export type RevBox = {
   scope: Scope; blocks: ContextBlock[]; delivery: Delivery[]; revision: number;
   created_at: string; updated_at: string; access: 'owner' | 'editor' | 'viewer';
   members?: { user_id: string; role: 'editor' | 'viewer' }[];
+  /** OpenNous built-in jobs this box lists (GET-872). Empty before the migration. */
+  builtin_jobs?: BuiltinJobKey[];
 };
+/** The box's owner and members with their profile photo (GET-872). */
+export type BoxPerson = { id: string; role: 'owner' | 'editor' | 'viewer'; name: string | null; email: string | null; avatar_url: string | null };
+/** An account the box's jobs touched in their last 30 days of runs (GET-872). */
+export type RunAccount = { id: string; name: string; domain: string | null; runs: number };
+
+// ─── Built-in jobs (GET-872) ─────────────────────────────────────────────────────────────────
+// The Workspace plan's default automations, run by OpenNous (detectors and the after-call
+// follow-up), not by the workflow engine. A box can list each; each is in at most one box. Mirrors
+// core REVBOX_BUILTIN_JOBS (packages/core/src/db/revboxes.mjs): keep the two in step.
+export type BuiltinJobKey = 'sales_follow_up' | 'stale_deal' | 'deal_signals' | 'deal_risk' | 'expansion';
+export const BUILTIN_JOBS: { key: BuiltinJobKey; name: string; does: string; cadence: string; tools: string[] }[] = [
+  { key: 'sales_follow_up', name: 'Sales follow-up', does: 'After a meeting, the follow-up email is drafted and waiting to send.', cadence: 'After each call', tools: ['granola', 'gmail'] },
+  { key: 'stale_deal', name: 'Stale deal detection', does: 'A deal goes quiet, and a follow-up is drafted for you.', cadence: 'Nightly', tools: ['hubspot', 'gmail'] },
+  { key: 'deal_signals', name: 'Deal signals', does: 'A call raises an objection, a competitor, a buying signal or a departure, and the right follow-up is drafted for you.', cadence: 'Hourly', tools: ['agent', 'gmail'] },
+  { key: 'deal_risk', name: 'Deal risk detection', does: 'An account turns at-risk, and a follow-up is drafted for you.', cadence: 'Nightly', tools: ['agent', 'gmail'] },
+  { key: 'expansion', name: 'Expansion signals', does: 'An expansion signal shows, and a follow-up is drafted for you.', cadence: 'Nightly', tools: ['agent', 'gmail'] },
+];
+/** A built-in job as the box detail returns it: its definition and what it drafted lately. */
+export type BoxBuiltinJob = { key: BuiltinJobKey; name: string; does: string; cadence: string; drafts_30d: number; last_draft_at: string | null };
 export type JobPlan = {
   email?: {to:string;recipient_rule?:'meeting_attendees'|'address'};
   trigger: { kind: string; frequency: string; at: string; timezone: string; provider: string; signal_id?: string; weekdays_only?:boolean; day_of_week?:number;day_of_month?:number };
@@ -43,7 +69,14 @@ export type RevBoxJob = { enabled?: boolean; id: string; name: string; prompt: s
 export type ContextFile = { id: string; title: string; body: string; document_id: string | null };
 // jobs: legacy revbox_jobs rows (with `plan`) and, since GET-868, the box's engine routines; a
 // server may also return the routines under their own key. The Jobs list reads both.
-export type BoxDetail = { box: RevBox; context: ContextFile[]; jobs: (RevBoxJob | RevBoxRoutine)[]; routines?: RevBoxRoutine[]; job_deliveries?: JobDelivery[] };
+export type BoxDetail = {
+  box: RevBox; context: ContextFile[]; jobs: (RevBoxJob | RevBoxRoutine)[]; routines?: RevBoxRoutine[]; job_deliveries?: JobDelivery[];
+  people?: BoxPerson[];
+  /** Accounts in the box's jobs' recent runs, most runs first (viewer-visible only); `_linked`
+   *  false = the runs name no account at all (the jobs read data that is not account-linked). */
+  run_accounts?: RunAccount[]; run_accounts_total?: number; run_accounts_runs?: number; run_accounts_linked?: boolean;
+  builtin_jobs?: BoxBuiltinJob[]; builtin_taken?: { key: BuiltinJobKey; box_id: string; box_name: string | null }[];
+};
 export type Account = { id: string; name: string; domain: string | null; icp_score: number | null; people_count: number; deal_count: number; won_deals: number; lost_deals: number; last_activity_at: string | null; latest_signal: { title: string; kind: string; at: string } | null };
 export type Catalog = { accounts: Account[]; members: { id: string; name: string; email: string }[]; documents: { id: string; title: string }[]; connections: { id: string; slug: string; name: string; email: string | null }[] };
 
@@ -102,6 +135,8 @@ export type JobProposal = {
   /** Server-derived, one per step. Missing on older proposals: the card then falls back to the raw step. */
   facts?: ProposalFact[];
   uses_box_delivery: boolean;
+  /** The Slack layout the box's Slack destinations get for this job (the agent picks it, GET-872). */
+  box_delivery_format?: string | null;
   warnings: ProposalWarning[]; assumptions: string[];
   estimated_credits_per_run: number | null;
 };

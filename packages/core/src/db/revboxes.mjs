@@ -56,7 +56,7 @@ const storedDelivery = (list) => list.map(d => d.kind === 'email' ? { ...d, targ
   : d.kind === 'gmail' ? { ...d, to: joined(d.to), cc: joined(d.cc) } : d);
 
 export function validateRevboxPatch(body) {
-  const keys = ['name', 'objective', 'shared', 'scope', 'blocks', 'delivery', 'revision'];
+  const keys = ['name', 'objective', 'shared', 'scope', 'blocks', 'delivery', 'builtin_jobs', 'revision'];
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k => !keys.includes(k))) return 'Unsupported RevBox field.';
   if (!Number.isInteger(body.revision) || body.revision < 1) return 'A saved revision is required.';
   if ('name' in body && (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 120)) return 'Choose a name of up to 120 characters.';
@@ -82,6 +82,7 @@ export function validateRevboxPatch(body) {
     const bad = all.find(a => !EMAIL.test(a));
     if (bad) return `"${bad.slice(0, 80)}" is not an email address.`;
   }
+  if ('builtin_jobs' in body && (!Array.isArray(body.builtin_jobs) || body.builtin_jobs.some(k => !REVBOX_BUILTIN_KEYS.includes(k)) || new Set(body.builtin_jobs).size !== body.builtin_jobs.length)) return 'Choose known built-in jobs.';
   if (JSON.stringify(body).length > 300000) return 'RevBox configuration is too large.';
   return null;
 }
@@ -92,6 +93,12 @@ export async function patchRevbox(sb, ws, uid, id, body) {
   if ('shared' in body && box.access !== 'owner') fail(403, 'Only the owner can change sharing.');
   const { revision, ...patch } = body;
   if (patch.delivery) patch.delivery = storedDelivery(patch.delivery);
+  // A built-in job is listed in one box per workspace (GET-872): adding one another box has is a 409.
+  const added = (patch.builtin_jobs ?? []).filter(k => !builtinJobsOf(box).includes(k));
+  if (added.length) {
+    const clash = (await revboxBuiltinTaken(sb, ws, uid, id)).find(t => added.includes(t.key));
+    if (clash) fail(409, `${REVBOX_BUILTIN_JOBS.find(j => j.key === clash.key).name} is already in ${clash.box_name ? `the RevBox "${clash.box_name}"` : 'another RevBox'}. Remove it there first.`);
+  }
   const updated = await one(sb.from('revboxes').update({ ...patch, ...(patch.name ? { name: patch.name.trim() } : {}), revision: revision + 1, updated_at: now() }).eq('workspace_id', ws).eq('id', id).eq('revision', revision).select('*').maybeSingle());
   if (!updated) fail(409, 'This RevBox changed. Reload before saving.');
   return { ...updated, members: box.members, access: box.access };
@@ -110,12 +117,149 @@ export async function setRevboxMember(sb, ws, uid, id, memberId, role) {
 async function touch(sb, ws, id) { await rows(sb.from('revboxes').update({ updated_at: now() }).eq('workspace_id', ws).eq('id', id)); }
 export async function revboxDetails(sb, ws, uid, id) {
   const box = await loadRevbox(sb, ws, uid, id);
-  const [context, jobs] = await Promise.all([
+  const [context, jobs, people] = await Promise.all([
     rows(sb.from('revbox_context').select('*').eq('workspace_id', ws).eq('revbox_id', id).order('created_at')),
     rows(sb.from('revbox_jobs').select('*').eq('workspace_id', ws).eq('revbox_id', id).order('created_at')),
+    revboxPeople(sb, box),
   ]);
-  return { box, context, jobs };
+  return { box: { ...box, builtin_jobs: builtinJobsOf(box) }, context, jobs, people };
 }
+
+/**
+ * The box's owner and members as the Owners rail draws them (GET-872): name, email and the profile
+ * photo (users.profile_picture_url), owner first. A user row that cannot be read keeps its id and
+ * role, so the rail falls back to initials rather than dropping the person.
+ */
+export async function revboxPeople(sb, box) {
+  const list = [{ user_id: box.owner_id, role: 'owner' }, ...(box.members ?? []).filter(m => m.user_id !== box.owner_id)];
+  const ids = [...new Set(list.map(m => m.user_id).filter(Boolean))];
+  const users = ids.length ? await rows(sb.from('users').select('id, name, email, profile_picture_url').in('id', ids)) : [];
+  const byId = new Map(users.map(u => [u.id, u]));
+  return list.filter(m => m.user_id).map(m => {
+    const u = byId.get(m.user_id);
+    return { id: m.user_id, role: m.role, name: u?.name || u?.email?.split('@')[0] || null, email: u?.email ?? null, avatar_url: u?.profile_picture_url || null };
+  });
+}
+
+/**
+ * The accounts a box's jobs actually touched in their recent runs (GET-872), most runs first. Read
+ * from what the run tables record: a routine run's `entity_id`, its document's `subject_entity_id`
+ * and the document's `about`/`mentions` links, and a legacy revbox run's `account_ids`. A person or
+ * deal counts for its company. Only accounts in `allowed` (null = unrestricted) are returned.
+ * -> { accounts: [{ id, name, domain, runs }], runs: runs in the window, linked: any run named an account }
+ */
+export async function revboxRunAccounts(sb, ws, { revboxId, routineIds = [], allowed = null, days = 30, now: at = Date.now() } = {}) {
+  const since = new Date(at - days * 86_400_000).toISOString();
+  const runs = [];   // [{ id, entities: Set, docId }]
+  for (let i = 0; i < routineIds.length; i += 100) {
+    const page = await rows(sb.from('agent_routine_runs').select('id, entity_id, document_id').eq('workspace_id', ws)
+      .in('routine_id', routineIds.slice(i, i + 100)).gte('started_at', since).limit(2000));
+    for (const r of page) runs.push({ id: r.id, entities: new Set([r.entity_id].filter(Boolean)), docId: r.document_id ?? null });
+  }
+  if (revboxId) {
+    try {
+      const legacy = await rows(sb.from('revbox_runs').select('id, account_ids').eq('workspace_id', ws).eq('revbox_id', revboxId).gte('created_at', since).limit(2000));
+      for (const r of legacy) runs.push({ id: r.id, entities: new Set((r.account_ids ?? []).filter(Boolean)), docId: null });
+    } catch (e) { if (!['42P01', 'PGRST205'].includes(e.code)) throw e; }
+  }
+  const docIds = [...new Set(runs.map(r => r.docId).filter(Boolean))];
+  const docEntities = new Map();   // doc id -> entity ids
+  const add = (doc, entity) => { if (!doc || !entity) return; if (!docEntities.has(doc)) docEntities.set(doc, new Set()); docEntities.get(doc).add(entity); };
+  for (let i = 0; i < docIds.length; i += 200) {
+    const chunk = docIds.slice(i, i + 200);
+    const [docs, links] = await Promise.all([
+      rows(sb.from('documents').select('id, subject_entity_id').eq('workspace_id', ws).in('id', chunk)),
+      rows(sb.from('document_links').select('document_id, target_entity_id, kind').eq('workspace_id', ws).in('document_id', chunk).in('kind', ['about', 'mentions'])),
+    ]);
+    for (const d of docs) add(d.id, d.subject_entity_id);
+    for (const l of links) add(l.document_id, l.target_entity_id);
+  }
+  for (const r of runs) for (const e of docEntities.get(r.docId) ?? []) r.entities.add(e);
+  const entityIds = [...new Set(runs.flatMap(r => [...r.entities]))];
+  // Each entity as its account: an account is itself, a person or deal is its company.
+  const entities = await entityRows(sb, ws, entityIds);
+  const companyOf = new Map();
+  for (const e of entities) { const c = e.kind === 'account' ? e.entity_id : e.company_id; if (c) companyOf.set(e.entity_id, c); }
+  const accountIds = [...new Set(companyOf.values())];
+  const known = new Map(entities.filter(e => e.kind === 'account').map(e => [e.entity_id, e]));
+  const missing = accountIds.filter(id => !known.has(id));
+  for (const e of await entityRows(sb, ws, missing)) if (e.kind === 'account') known.set(e.entity_id, e);
+  const counts = new Map();
+  let linked = false;
+  for (const r of runs) {
+    const touched = new Set([...r.entities].map(e => companyOf.get(e)).filter(id => id && known.has(id)));
+    if (touched.size) linked = true;
+    for (const id of touched) if (!allowed || allowed.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  const accounts = [...counts].map(([id, n]) => ({ id, name: known.get(id)?.name ?? 'Account', domain: known.get(id)?.domain ?? null, runs: n }))
+    .sort((a, b) => b.runs - a.runs || String(a.name).localeCompare(String(b.name)));
+  return { accounts, runs: runs.length, linked };
+}
+async function entityRows(sb, ws, ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 200) out.push(...await rows(sb.from('entity_list_rows').select('entity_id, kind, name, domain, company_id').eq('workspace_id', ws).in('entity_id', ids.slice(i, i + 200))));
+  return out;
+}
+
+/**
+ * OpenNous's built-in jobs (GET-872): the Workspace plan's default automations, which run as
+ * OpenNous detectors (and the per-seat after-call follow-up), not as agent_routines rows. A box can
+ * list each one, and each one is in at most one box per workspace. Listing it changes nothing about
+ * how it runs. `drafts`: where its drafts are recorded, for the "N drafts in 30 days" line: the
+ * follow-up engine's `follow_ups` rows, or the detectors' ri_recommendations ledger rows
+ * (category 'automation', rec_key 'automation.<detector>', apps/api/src/lib/detectorDrafts.mjs).
+ * The frontend mirrors key, name, does and cadence in lib/revboxes.ts.
+ */
+export const REVBOX_BUILTIN_JOBS = [
+  { key: 'sales_follow_up', name: 'Sales follow-up', does: 'After a meeting, the follow-up email is drafted and waiting to send.', cadence: 'After each call', drafts: { table: 'follow_ups' } },
+  { key: 'stale_deal', name: 'Stale deal detection', does: 'A deal goes quiet, and a follow-up is drafted for you.', cadence: 'Nightly', drafts: { rec_key: 'automation.stale_deal' } },
+  { key: 'deal_signals', name: 'Deal signals', does: 'A call raises an objection, a competitor, a buying signal or a departure, and the right follow-up is drafted for you.', cadence: 'Hourly', drafts: { rec_key: 'automation.deal_signal' } },
+  { key: 'deal_risk', name: 'Deal risk detection', does: 'An account turns at-risk, and a follow-up is drafted for you.', cadence: 'Nightly', drafts: { rec_key: 'automation.deal_risk' } },
+  { key: 'expansion', name: 'Expansion signals', does: 'An expansion signal shows, and a follow-up is drafted for you.', cadence: 'Nightly', drafts: { rec_key: 'automation.expansion_signal' } },
+];
+export const REVBOX_BUILTIN_KEYS = REVBOX_BUILTIN_JOBS.map(j => j.key);
+/** The box's built-in job keys; a box from before the column (migration not applied) has none. Pure. */
+export const builtinJobsOf = (box) => Array.isArray(box?.builtin_jobs) ? box.builtin_jobs.filter(k => REVBOX_BUILTIN_KEYS.includes(k)) : [];
+const missingColumn = (e) => ['42703', 'PGRST204'].includes(e?.code) || /builtin_jobs/.test(e?.message ?? '');
+
+/**
+ * Which built-in jobs other boxes in the workspace list: [{ key, box_id, box_name }]. The name is
+ * null for a box this viewer cannot open. Empty before the migration.
+ */
+export async function revboxBuiltinTaken(sb, ws, uid, exceptId = null) {
+  let boxes;
+  try { boxes = await rows(sb.from('revboxes').select('id, name, owner_id, shared, builtin_jobs').eq('workspace_id', ws)); }
+  catch (e) { if (missingColumn(e)) return []; throw e; }
+  const mine = await rows(sb.from('revbox_members').select('revbox_id, user_id, role').eq('workspace_id', ws).eq('user_id', uid));
+  const out = [];
+  for (const b of boxes) {
+    if (b.id === exceptId) continue;
+    const visible = !!revboxAccess(b, uid, mine.filter(m => m.revbox_id === b.id));
+    for (const key of builtinJobsOf(b)) out.push({ key, box_id: b.id, box_name: visible ? b.name : null });
+  }
+  return out;
+}
+
+/**
+ * What each built-in job produced in the last `days` days: [{ key, drafts, last_at }]. For a viewer
+ * with restricted visibility (`allowed`), account-targeted rows outside it are not counted.
+ */
+export async function revboxBuiltinActivity(sb, ws, keys, { allowed = null, days = 30, now: at = Date.now() } = {}) {
+  const since = new Date(at - days * 86_400_000).toISOString();
+  const defs = REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key));
+  return Promise.all(defs.map(async (def) => {
+    let list = [];
+    if (def.drafts.table === 'follow_ups') {
+      list = (await rows(sb.from('follow_ups').select('account_entity_id, created_at').eq('workspace_id', ws).gte('created_at', since).order('created_at', { ascending: false }).limit(5000)))
+        .filter(r => !allowed || allowed.has(r.account_entity_id)).map(r => r.created_at);
+    } else {
+      list = (await rows(sb.from('ri_recommendations').select('target_type, target_id, updated_at').eq('workspace_id', ws).eq('category', 'automation').eq('rec_key', def.drafts.rec_key).gte('updated_at', since).order('updated_at', { ascending: false }).limit(5000)))
+        .filter(r => !allowed || r.target_type !== 'account' || allowed.has(r.target_id)).map(r => r.updated_at);
+    }
+    return { key: def.key, drafts: list.length, last_at: list.length ? list.reduce((a, b) => (String(a) > String(b) ? a : b)) : null };
+  }));
+}
+
 
 export async function addRevboxContext(sb, ws, uid, id, body) {
   await loadRevbox(sb, ws, uid, id, true);

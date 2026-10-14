@@ -45,7 +45,7 @@ import { readHubspotRecords } from './hubspotRead.mjs';
 import { hubspotFieldChanges, entityForHubspotId, changeText, FIELD_CHANGE_WINDOW_MS } from './hubspotFieldTrigger.mjs';
 import { crmFieldsFromConversation } from './crmFieldsFromConversation.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft } from './emailDraftBrief.mjs';
-import { slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, approvalCardContent } from './slackFormats.mjs';
+import { slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, approvalCardContent, boxSlackFormat } from './slackFormats.mjs';
 
 /** Text into HTML. A report quoting a customer must not be able to close our own markup. */
 function escapeHtml(v) {
@@ -1552,17 +1552,24 @@ async function writeDigest(supabase, workspaceId, { prompt, data, runId, agentSt
 // short call shapes them; when that fails too, the message posts as plain text, as it always did.
 
 /** The structured layout the Slack step after AI step `i` (id `id`) posts its words in, or null. Pure. */
-function slackFormatAfter(steps, i, id, box) {
+function slackFormatAfter(steps, i, id, box, triggerKind = null) {
   let between = false;   // a later AI step: an empty-text Slack step after it posts that one's words
   for (const x of steps.slice(i + 1)) {
     if (x?.type === 'agent') { between = true; continue; }
     const txt = String(x?.config?.text ?? '');
     const f = x?.type === 'slack' && (txt.includes(`steps.${id}.output`) || (!txt.trim() && !between)) ? slackFormatOf(x.config?.format)
-      : x?.type === 'revbox_delivery' && !between ? slackFormatOf(x.config?.format ?? (box?.delivery ?? []).find(d => d?.kind === 'slack' && slackFormatOf(d.format))?.format) : null;
+      : x?.type === 'revbox_delivery' && !between ? boxDeliveryFormat(box, x, steps, triggerKind) : null;
     // Box delivery never posts an approval layout (nothing runs after it for the buttons to release).
     if (structuredSlackFormat(f) && !(x?.type === 'revbox_delivery' && f === 'approval')) return f;
   }
   return null;
+}
+
+/** The layout the box's Slack destinations get from this job (boxSlackFormat), null when it has none. Pure. */
+function boxDeliveryFormat(box, step, steps, triggerKind) {
+  const dests = (box?.delivery ?? []).filter(d => d?.kind === 'slack');
+  if (!dests.length) return null;
+  return boxSlackFormat({ destination: dests.find(d => slackFormatOf(d.format)) ?? dests[0], deliveryStep: step, steps, triggerKind });
 }
 
 const SLACK_SHAPE_SYSTEM = 'You turn an update written for a team into structured content for a Slack message layout. Use only what the text says: never invent a number, a name or a link.';
@@ -1957,7 +1964,7 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
         // A layout (GET-858): the destination's own, else the delivery step's. Not approval: box
         // delivery is the job's last step, so there is nothing after it for the buttons to release.
         const step = plan[at_];
-        const fmt = slackFormatOf(d.format ?? step?.config?.format);
+        const fmt = boxSlackFormat({ destination: d, deliveryStep: step, steps, triggerKind: automation.trigger_kind ?? null });
         const shaped = fmt === 'approval' ? null : await shapeForSlack(supabase, workspaceId, { format: fmt, source: doc, text, runId: ctx?.runId ?? null, step: step?.id ?? null });
         const r = await post({ supabase, workspaceId, channel: String(d.channel ?? (isId ? '' : t)).trim() || t, channelId: d.channel_id ?? (isId ? t : null), userId: null,
           text: shaped?.text || text, ...(shaped ? { format: fmt, content: shaped.content } : {}), runId: ctx?.runId ?? null, stepId: step?.id ?? null, revboxId: automation.revbox_id ?? null });
@@ -2026,7 +2033,7 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
             slack: steps.slice(at_ + 1).some(x => (x?.type === 'slack' && (!x.config?.text || String(x.config.text).includes(`steps.${s.id}.output`)))
               || (x?.type === 'revbox_delivery' && (boxCtx?.box?.delivery ?? []).some(d => d?.kind === 'slack'))),
             // ...and in a Slack layout's JSON when that step names one (GET-858).
-            format: slackFormatAfter(steps, steps.indexOf(s), s.id, boxCtx?.box),
+            format: slackFormatAfter(steps, steps.indexOf(s), s.id, boxCtx?.box, automation.trigger_kind ?? null),
           });
           docs.set(at_, doc);
           vars = null;

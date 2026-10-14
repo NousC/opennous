@@ -20,6 +20,21 @@ export function slackFormatOf(v) {
 /** True when the format renders as blocks (anything but plain or none). */
 export const structuredSlackFormat = (v) => { const f = slackFormatOf(v); return !!f && f !== 'plain'; };
 
+/**
+ * The layout a box delivery posts to a Slack destination in (GET-872). The user never picks it; the
+ * job does. In order: the destination's own `format` (older boxes, kept for back-compat; no longer
+ * written by the UI); (a) the box-delivery step's `config.format` (the Job Builder sets it); (b) the
+ * job's own Slack step's format; (c) by trigger: a clock job posts a `report`, an event job a
+ * `notification`. Never `approval`: box delivery is the job's last step, so nothing runs after it
+ * for the buttons to release. Pure.
+ */
+export function boxSlackFormat({ destination = null, deliveryStep = null, steps = [], triggerKind = null } = {}) {
+  const usable = (v) => { const f = slackFormatOf(v); return f && f !== 'approval' ? f : null; };
+  const own = (Array.isArray(steps) ? steps : []).find(s => s?.type === 'slack' && usable(s.config?.format));
+  return usable(destination?.format) ?? usable(deliveryStep?.config?.format) ?? usable(own?.config?.format)
+    ?? (triggerKind === 'clock' ? 'report' : 'notification');
+}
+
 // What the AI writes for each layout: a JSON object, nothing around it. Kept short; the model reads
 // it on every run. Every field is plain text with Slack's *bold*; no markdown headings.
 const SHAPES = {
