@@ -74,8 +74,10 @@ function Opt({ on, onClick, children }: { on: boolean; onClick: () => void; chil
 }
 
 export default function Activity(_props: { mine?: boolean } = {}) {
-  const { plan } = usePlan();
+  const { plan, selfHosted } = usePlan();
   const apiTier = isApiTier(plan);
+  // Self-hosted: no billing, so no credits. The table shows what was read, not what it cost (GET-855).
+  const showCredits = !selfHosted;
   const { session, userData } = useAuth();
   const token = session?.access_token;
   const workspaceId = userData?.workspace?.id ?? "";
@@ -241,7 +243,7 @@ export default function Activity(_props: { mine?: boolean } = {}) {
       {/* ONE table on every plan (polish pass, GET-657): what we read, and what each read cost —
           the API plan's ledger, which is the refreshed one. */}
       <ApiLedger
-        rows={shownConvos} loading={convos === null} empty={convos !== null && convos.length === 0} days={days} creditTotal={creditTotal}
+        rows={shownConvos} loading={convos === null} empty={convos !== null && convos.length === 0} days={days} creditTotal={creditTotal} showCredits={showCredits}
         more={!!cursor} loadingMore={loadingMore} onMore={loadMore}
       />
     </div>
@@ -257,8 +259,8 @@ const STATUS_TONE_API: Record<string, string> = {
 };
 
 /** The API plan's ledger (GET-628): the same rows and columns, in the board's table. */
-function ApiLedger({ rows, loading, empty, days, creditTotal, more, loadingMore, onMore }: {
-  rows: Conversation[]; loading: boolean; empty: boolean; days: number | null; creditTotal: number;
+function ApiLedger({ rows, loading, empty, days, creditTotal, showCredits, more, loadingMore, onMore }: {
+  rows: Conversation[]; loading: boolean; empty: boolean; days: number | null; creditTotal: number; showCredits: boolean;
   more: boolean; loadingMore: boolean; onMore: () => void;
 }) {
   // The ⌘K palette's card (GET-658, round 2): small light column labels, rows inset with a
@@ -275,7 +277,7 @@ function ApiLedger({ rows, loading, empty, days, creditTotal, more, loadingMore,
               <TableHead className={cn(th, "w-[130px]")}>Source</TableHead>
               <TableHead className={th}>Read</TableHead>
               <TableHead className={th}>Detail</TableHead>
-              <TableHead className={cn(th, "w-[70px] text-right")}>Credits</TableHead>
+              {showCredits && <TableHead className={cn(th, "w-[70px] text-right")}>Credits</TableHead>}
               <TableHead className={cn(th, "w-[110px] text-right")}>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -306,9 +308,11 @@ function ApiLedger({ rows, loading, empty, days, creditTotal, more, loadingMore,
                   {(c.messages ?? 0) > 1 && <span className="text-[11.5px] text-muted-foreground/70"> · {c.messages} emails</span>}
                 </TableCell>
                 <TableCell className={cn(td, "max-w-[360px] truncate text-[12px] text-muted-foreground/70")}>{c.summary ?? ""}</TableCell>
-                <TableCell className={cn(td, "text-right tabular-nums")} title={c.estimated ? "No recorded length — billed at the median 30 minutes" : undefined}>
-                  {c.credits}{c.estimated && <span className="text-muted-foreground">*</span>}
-                </TableCell>
+                {showCredits && (
+                  <TableCell className={cn(td, "text-right tabular-nums")} title={c.estimated ? "No recorded length — billed at the median 30 minutes" : undefined}>
+                    {c.credits}{c.estimated && <span className="text-muted-foreground">*</span>}
+                  </TableCell>
+                )}
                 <TableCell
                   className={cn(td, "text-right text-[12px]", c.status ? STATUS_TONE_API[c.status] : "text-muted-foreground")}
                   title={c.read_at ? `Read ${format(new Date(c.read_at), "MMM d, HH:mm")}` : c.status === "waiting" ? "Read at the next run (02:45 or 14:45 UTC)" : undefined}
@@ -329,9 +333,9 @@ function ApiLedger({ rows, loading, empty, days, creditTotal, more, loadingMore,
           <div className="flex items-baseline justify-between gap-3 px-2 pb-1 pt-2.5 text-[12px]">
             <span className="text-muted-foreground/60">
               {num(rows.filter((c) => c.status === "read" || c.status === "nothing_new").length)} read of {num(rows.length)} conversations
-              {rows.some((c) => c.estimated) && <span> · * billed at the median 30 minutes</span>}
+              {showCredits && rows.some((c) => c.estimated) && <span> · * billed at the median 30 minutes</span>}
             </span>
-            <span className="tabular-nums text-foreground">{num(creditTotal)} credits</span>
+            {showCredits && <span className="tabular-nums text-foreground">{num(creditTotal)} credits</span>}
           </div>
         )}
         {/* Older rows, a page at a time (GET-903). The totals above count the rows loaded so far. */}

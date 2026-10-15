@@ -64,7 +64,9 @@ export function ApiHomeStats({ readDays }: { readDays?: number | null } = {}) {
   const reads = useAuthedJson<ReadCounts>(`activity-read-counts-${window}`, `/api/activity-stats/read?days=${window}`, withReads);
   const credits = useCredits();
   const { userData } = useAuth();
-  const { plan } = usePlan();
+  const { plan, selfHosted } = usePlan();
+  // Self-hosted: no billing, so no credits card (GET-855). Reads carry the row instead.
+  const showCredits = !selfHosted;
   const calls = callsToday(usage.data);
   const sources = connectedSources(read.data);
   const r = reads.data?.read;
@@ -77,11 +79,11 @@ export function ApiHomeStats({ readDays }: { readDays?: number | null } = {}) {
   const readTotal = readCounts.reduce((n, c) => n + c.n, 0);
 
   return (
-    <div className={cn("grid flex-shrink-0 grid-cols-1 gap-3 px-4 pb-1 pt-4 sm:px-5", withReads ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3")}>
+    <div className={cn("grid flex-shrink-0 grid-cols-1 gap-3 px-4 pb-1 pt-4 sm:px-5", (withReads ? 1 : 0) + (showCredits ? 1 : 0) === 2 ? "sm:grid-cols-2 lg:grid-cols-4" : (withReads || showCredits) ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
       <Card label={callsTodayLabel(isWorkspaceAdmin(userData))}>
         <span className={value}>{calls == null ? "—" : num(calls)}</span>
       </Card>
-      <Card label="Credits this month">
+      {showCredits && <Card label="Credits this month">
         <span className={value}>
           {credits ? credits.used : "—"}
           {credits?.included && <span className="ml-1 text-[12px] font-normal tracking-normal text-muted-foreground">of {credits.included}</span>}
@@ -91,7 +93,7 @@ export function ApiHomeStats({ readDays }: { readDays?: number | null } = {}) {
             <span className="block h-full rounded-sm bg-foreground" style={{ width: `${credits.pct}%` }} />
           </span>
         )}
-      </Card>
+      </Card>}
       <Card label="Sources">
         <span className={value}>{sources == null ? "—" : num(sources.length)}</span>
         {!!sources?.length && (
