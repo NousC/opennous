@@ -225,6 +225,18 @@ export function resolveAgentModel(pref) {
 }
 const warnedMissingKey = new Set();
 
+/**
+ * The RevBox Job Builder's model (GET-905): JOB_BUILDER_MODEL when it names a Claude model in the
+ * registry, else Claude Sonnet 5. Claude only: the builder's tool loop speaks Anthropic's Messages
+ * format, served by OpenRouter or Anthropic (whichever key is set).
+ */
+export const JOB_BUILDER_DEFAULT_MODEL = 'claude-sonnet-5';
+export function jobBuilderModel(env = process.env) {
+  const want = String(env.JOB_BUILDER_MODEL ?? '').trim();
+  const m = want ? REGISTRY[want] ?? Object.values(REGISTRY).find(r => r.modelId === want) : null;
+  return m && m.provider === 'anthropic' ? m : REGISTRY[JOB_BUILDER_DEFAULT_MODEL];
+}
+
 /** Resolve a tier directly (sugar for callers that think in job classes). */
 export function resolveTier(tier) { return resolveAgentModel(tier); }
 

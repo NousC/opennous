@@ -135,6 +135,7 @@ import { leadListsRouter } from './routes/api/leadLists.mjs';
 import { campaignMessagesRouter } from './routes/api/campaignMessages.mjs';
 import { triggersRouter } from './routes/api/triggers.mjs';
 import { revboxesRouter, accountOverviewRouter } from './routes/api/revboxes.mjs';
+import { revboxBuilderRouter } from './routes/api/revboxBuilder.mjs';
 import { automationsRouter, automationsInternalRouter } from './routes/api/automations.mjs';
 import { workflowProvidersRouter } from './routes/api/workflowProviders.mjs';
 import { systemLogRouter } from './routes/api/systemLog.mjs';
@@ -412,8 +413,7 @@ app.use('/v2/members',         verifyApiKey,     requireOpsBalance, logV2Op, mem
 app.use('/v2/icp',             verifyApiKey,     logV2Op, icpV2Router);
 app.use('/v2/usage',           verifyApiKey,     logV2Op, usageV2Router);
 app.use('/v2/workflows',       verifyApiKey,     requireOpsBalance, logV2Op, workflowsV2Router);
-// RevBoxes and their Job Builder (GET-868). The builder is Cloud's, registered by cloud/index.mjs;
-// self-host answers its routes 501 job_builder_unavailable.
+// RevBoxes and their Job Builder (GET-868), on every edition since GET-905.
 app.use('/v2/revboxes',        verifyApiKey,     requireOpsBalance, logV2Op, requireFeature('revboxes'), revboxesV2Router);
 app.use('/v2/approvals',       verifyApiKey,     requireOpsBalance, logV2Op, approvalsV2Router);
 // Events pushed to your own stack (GET-559). Same outbox as /v2/workspace/triggers, so the
@@ -490,6 +490,9 @@ app.use('/api/campaign-messages',     verifyAuthEither, requireFeature('leadList
 app.use('/api/triggers',              verifyAuthEither, triggersRouter);
 app.use('/hooks/revboxes', revboxWebhooksRouter);
 app.use('/api/revboxes', verifySupabaseAuth, requireFeature('revboxes'), revboxesRouter);
+// The Job Builder chat (GET-868), on every edition since GET-905: self-host runs it on its own model
+// keys. The revboxes router above has no /:id/builder routes, so these fall through to here.
+app.use('/api/revboxes', verifySupabaseAuth, requireFeature('revboxes'), revboxBuilderRouter);
 app.use('/api/account-overview', verifySupabaseAuth, accountOverviewRouter);
 app.use('/api/automations',           verifyAuthEither, automationsRouter);
 // Worker→API, secret-guarded: rebuild the derived ledger the deal triggers read.
