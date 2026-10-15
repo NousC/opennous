@@ -22,6 +22,8 @@ import { usePendingDrafts } from "@/components/priorities/drafts";
 import { automationsFetch } from "@/lib/automations";
 import { approvalWhat, type Approval } from "@/components/AutomationApprovals";
 import { cloud } from "@/lib/cloud";
+import { revboxesRequest } from "@/lib/revboxes";
+import type { BuiltinHome } from "@/lib/builtinJobs";
 
 const NO_MEETINGS: InboxRead = {};
 
@@ -57,6 +59,14 @@ export function PrioritiesButton() {
       const r = await automationsFetch(`/approvals?workspaceId=${ws}`, token);
       return r.ok ? ((await r.json())?.approvals ?? []) : [];
     },
+  });
+  // Which RevBox holds each built-in job (GET-897), for the box chip on what a built-in made. Read
+  // when the panel opens; a workspace without RevBoxes (or a failed read) just shows no chip.
+  const homes = useQuery({
+    queryKey: ["revbox-builtin-homes", ws],
+    enabled: open && !!ws && !!session?.access_token,
+    staleTime: 5 * 60_000, retry: false,
+    queryFn: async (): Promise<BuiltinHome[]> => (await revboxesRequest<{ homes: BuiltinHome[] }>(ws, session?.access_token ?? "", "/builtins").catch(() => ({ homes: [] }))).homes ?? [],
   });
   const data = useMemo<InboxRead | undefined>(() => (homeData ? {
     ...homeData, actions: drafts.data ?? [],
@@ -106,7 +116,7 @@ export function PrioritiesButton() {
           if (t?.closest("input, textarea, select, [contenteditable='true']")) { e.preventDefault(); t.blur(); }
         }}
         className="h-[min(80vh,680px)] w-[940px] max-w-[calc(100vw-16px)] overflow-hidden rounded-2xl p-0 shadow-modal max-md:h-[calc(100dvh-64px)]">
-        <PrioritiesInbox data={data} loading={!!meetings && home.isLoading} failed={!!meetings && home.isError} ws={ws} token={session?.access_token} focus={focus}
+        <PrioritiesInbox data={data} loading={!!meetings && home.isLoading} failed={!!meetings && home.isError} ws={ws} token={session?.access_token} focus={focus} homes={homes.data}
           onClose={() => setOpen(false)} />
       </PopoverContent>
     </Popover>

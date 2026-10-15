@@ -556,6 +556,49 @@ Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first      
   Listing one changes nothing about how it runs. The detail returns each with `drafts_30d` and
   `last_draft_at` (follow_ups for the after-call follow-up; ri_recommendations category
   'automation', rec_key automation.<detector> for the rest). Without the column it is empty.
+- Built-in jobs as RevBox jobs (GET-897):
+  - Card. Each built-in in a box's Jobs list is an agent card like a builder job's: name, a small
+    "Built in" tag, the workspace's real On/Off (read-only: the after-call follow-up runs where
+    `follow_up_settings.enabled`, the detectors where `DETECTOR_DRAFTS_WORKSPACES` lists the
+    workspace; neither is a per-box switch), one sentence in the agent's voice, one meta line
+    (Starts · tool logos → Priorities) and "N in the last 30 days · last …" opening Priorities. The
+    sentence, Starts, tools and details are core `builtinJobBrief(key, facts)` (pure, in
+    `revboxJobBrief.mjs`), from what each built-in really does and the workspace facts the API reads
+    (`builtinFacts`: connected recorders among Granola, Fireflies, Fathom and Fellow; HubSpot when
+    approved follow-ups sync, `follow_up_settings.crm_writeback`). The after-call follow-up names the
+    connected recorders ("When a Fireflies meeting with a customer ends, I draft the follow-up email
+    and propose the tasks and the CRM updates from what was said; you approve each one in
+    Priorities."). Clicking a card opens a read-only panel (no builder chat) with its details and a
+    link to its items. There is no remove control on the card.
+  - Default boxes. A Workspace-plan workspace has every built-in in a box: "Meetings Follow-up"
+    (`sales_follow_up`), "Pipeline Health" (`stale_deal`, `deal_risk`, `deal_signals`), "Customer
+    Growth" (`expansion`); core `DEFAULT_BUILTIN_BOXES`, `planDefaultBuiltinBoxes` (pure) and
+    `ensureDefaultBuiltinBoxes`. Ensured on read: `GET /api/revboxes` (the sidebar's list) runs it for a
+    Workspace-plan workspace at most once per 10 minutes per workspace and process
+    (`ensureBuiltinBoxesForPlan`), so a new workspace, a plan change, or a box that lost its built-in
+    is put right on the next load, with no provisioning hook to keep in step. A built-in already in any
+    box stays there; one in none goes to the oldest box with its default name (any case), else a new
+    shared box owned by the workspace owner (else its first admin; support seats last). Idempotent;
+    two concurrent passes keep the box made first and delete the later one. One-off backfill for the
+    operator: `node apps/api/scripts/backfillBuiltinBoxes.mjs [--workspace=<id>] [--apply]` (dry run by
+    default).
+  - Changing a box's built-ins. `PATCH /:id` takes `builtin_add` / `builtin_remove` (operations the
+    server applies to the box as stored, `applyBuiltinOps`); `builtin_jobs` (the whole list) is still
+    accepted for older clients, not with the operations. The page sends `builtin_add` only. Root cause
+    of a built-in falling out of its box: the page sent its own copy of the whole list
+    (`detail.builtin_jobs`, which the autosave never refreshes and the query cache keeps without
+    refetching on mount or focus) with the box's latest revision from the autosave, so the revision
+    check passed while the list was stale; and the card's remove control was an X that stayed
+    clickable while invisible (opacity 0 until hover), with no confirmation.
+  - Priorities. `GET /api/revboxes/builtins` -> `{ homes: [{ key, box_id, box_name }] }` (name null
+    for a box the viewer cannot open). An item a built-in made shows its box as a small chip linking to
+    the box: a meeting's wrap-up is `sales_follow_up`'s; a detector draft's origin carries `builtin`
+    (lib/actionOrigin `REC_BUILTIN`, from rec_key).
+  - Any recorder. The follow-up engine (worker `followUpBuilder`) reads a Granola, Fireflies or Fathom
+    meeting as one meeting (core `meetingIdentity`: the recorder's meeting id, not one per attendee row)
+    and its notes from the recorder's `meeting_notes` document by `source_ref`
+    (`source://<recorder>/<id>`, `recorderNotes`). Before, those rows carried no text, so only Fellow
+    and HubSpot meetings ever got a card.
 
 ## Datasets (GET-874)
 

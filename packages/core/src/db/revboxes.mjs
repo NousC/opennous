@@ -1,6 +1,7 @@
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount } from '../services/revboxPlan.mjs';
 import { revboxContextRows, addBoxContext, unlinkContext } from './contextLibrary.mjs';
 import { accountNamesInText, resolveAccountNames, normalizeAccountName } from './accountNames.mjs';
+export { builtinJobBrief, FOLLOW_UP_RECORDERS } from './revboxJobBrief.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 async function rows(q) { const { data, error } = await q; if (error) throw error; return data ?? []; }
@@ -66,7 +67,7 @@ const storedDelivery = (list) => list.map(d => d.kind === 'email' ? { ...d, targ
   : d.kind === 'gmail' ? { ...d, to: joined(d.to), cc: joined(d.cc) } : d);
 
 export function validateRevboxPatch(body) {
-  const keys = ['name', 'objective', 'shared', 'scope', 'blocks', 'delivery', 'builtin_jobs', 'revision'];
+  const keys = ['name', 'objective', 'shared', 'scope', 'blocks', 'delivery', 'builtin_jobs', 'builtin_add', 'builtin_remove', 'revision'];
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k => !keys.includes(k))) return 'Unsupported RevBox field.';
   if (!Number.isInteger(body.revision) || body.revision < 1) return 'A saved revision is required.';
   if ('name' in body && (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 120)) return 'Choose a name of up to 120 characters.';
@@ -92,7 +93,10 @@ export function validateRevboxPatch(body) {
     const bad = all.find(a => !EMAIL.test(a));
     if (bad) return `"${bad.slice(0, 80)}" is not an email address.`;
   }
-  if ('builtin_jobs' in body && (!Array.isArray(body.builtin_jobs) || body.builtin_jobs.some(k => !REVBOX_BUILTIN_KEYS.includes(k)) || new Set(body.builtin_jobs).size !== body.builtin_jobs.length)) return 'Choose known built-in jobs.';
+  for (const field of ['builtin_jobs', 'builtin_add', 'builtin_remove']) {
+    if (field in body && (!Array.isArray(body[field]) || body[field].some(k => !REVBOX_BUILTIN_KEYS.includes(k)) || new Set(body[field]).size !== body[field].length)) return 'Choose known built-in jobs.';
+  }
+  if ('builtin_jobs' in body && ('builtin_add' in body || 'builtin_remove' in body)) return 'Send the built-in list or the changes to it, not both.';
   if (JSON.stringify(body).length > 300000) return 'RevBox configuration is too large.';
   return null;
 }
@@ -101,13 +105,16 @@ export async function patchRevbox(sb, ws, uid, id, body) {
   const error = validateRevboxPatch(body); if (error) fail(400, error);
   const box = await loadRevbox(sb, ws, uid, id, true);
   if ('shared' in body && box.access !== 'owner') fail(403, 'Only the owner can change sharing.');
-  const { revision, ...patch } = body;
+  const { revision, builtin_add: add, builtin_remove: remove, ...patch } = body;
   if (patch.delivery) patch.delivery = storedDelivery(patch.delivery);
+  // Built-in changes as operations (GET-897): applied to the row as the server has it, so a page
+  // holding an older copy of the box's built-ins can add or remove one without dropping the rest.
+  if (add || remove) patch.builtin_jobs = applyBuiltinOps(builtinJobsOf(box), { add, remove });
   // A built-in job is listed in one box per workspace (GET-872): adding one another box has is a 409.
   const added = (patch.builtin_jobs ?? []).filter(k => !builtinJobsOf(box).includes(k));
   if (added.length) {
     const clash = (await revboxBuiltinTaken(sb, ws, uid, id)).find(t => added.includes(t.key));
-    if (clash) fail(409, `${REVBOX_BUILTIN_JOBS.find(j => j.key === clash.key).name} is already in ${clash.box_name ? `the RevBox "${clash.box_name}"` : 'another RevBox'}. Remove it there first.`);
+    if (clash) fail(409, `${REVBOX_BUILTIN_JOBS.find(j => j.key === clash.key).name} is already in ${clash.box_name ? `the RevBox "${clash.box_name}"` : 'another RevBox'}.`);
   }
   const updated = await one(sb.from('revboxes').update({ ...patch, ...(patch.name ? { name: patch.name.trim() } : {}), revision: revision + 1, updated_at: now() }).eq('workspace_id', ws).eq('id', id).eq('revision', revision).select('*').maybeSingle());
   if (!updated) fail(409, 'This RevBox changed. Reload before saving.');
@@ -343,6 +350,92 @@ export const REVBOX_BUILTIN_JOBS = [
 export const REVBOX_BUILTIN_KEYS = REVBOX_BUILTIN_JOBS.map(j => j.key);
 /** The box's built-in job keys; a box from before the column (migration not applied) has none. Pure. */
 export const builtinJobsOf = (box) => Array.isArray(box?.builtin_jobs) ? box.builtin_jobs.filter(k => REVBOX_BUILTIN_KEYS.includes(k)) : [];
+/**
+ * A box's built-in list after `add` and `remove` (GET-897), in catalog order. Keys already there
+ * stay; removing one that is not there is a no-op. Pure.
+ */
+export function applyBuiltinOps(current, { add = [], remove = [] } = {}) {
+  const keep = new Set([...(current ?? []), ...(add ?? [])].filter(k => REVBOX_BUILTIN_KEYS.includes(k)));
+  for (const k of remove ?? []) keep.delete(k);
+  return REVBOX_BUILTIN_KEYS.filter(k => keep.has(k));
+}
+
+/**
+ * The default boxes a Workspace-plan workspace gets for its built-in jobs (GET-897): every built-in
+ * reads as a RevBox job, in a box of its own kind. The frontend preview mirrors the names.
+ */
+export const DEFAULT_BUILTIN_BOXES = [
+  { name: 'Meetings Follow-up', keys: ['sales_follow_up'], objective: 'Follow up every customer meeting the same day: the email drafted, the tasks and CRM updates proposed, each approved in Priorities.' },
+  { name: 'Pipeline Health', keys: ['stale_deal', 'deal_risk', 'deal_signals'], objective: 'Keep every open deal moving: catch stale deals, accounts turning at-risk and deal signals early.' },
+  { name: 'Customer Growth', keys: ['expansion'], objective: 'Pick up every customer asking for more of what you sell.' },
+];
+const sameName = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+const oldestFirst = (a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')) || String(a.id).localeCompare(String(b.id));
+
+/**
+ * What it takes to put every built-in in a box (GET-897), from the workspace's boxes:
+ * [{ create: name, objective, keys } | { add: box_id, name, revision, keys }]. A built-in already in
+ * any box stays where it is (never moved). One that is in none goes to its default box: the oldest
+ * box with that name (any case) gains it, else a new box is made. Nothing to do: []. Pure.
+ */
+export function planDefaultBuiltinBoxes(boxes) {
+  const list = (Array.isArray(boxes) ? boxes : []).filter(Boolean);
+  const placed = new Set(list.flatMap(builtinJobsOf));
+  const out = [];
+  for (const def of DEFAULT_BUILTIN_BOXES) {
+    const keys = def.keys.filter(k => !placed.has(k));
+    if (!keys.length) continue;
+    const home = list.filter(b => sameName(b.name, def.name)).sort(oldestFirst)[0];
+    out.push(home ? { add: home.id, name: home.name, revision: home.revision, keys } : { create: def.name, objective: def.objective, keys });
+  }
+  return out;
+}
+
+/**
+ * Who a workspace's default boxes belong to: its owner, else its first admin, else its first member
+ * (OpenNous support seats last). Null for a workspace with no members.
+ */
+export async function workspaceDefaultOwner(sb, ws) {
+  const members = await rows(sb.from('workspace_members').select('user_id, role, created_at, support_until').eq('workspace_id', ws));
+  const rank = (m) => (m.support_until ? 10 : 0) + ({ owner: 0, admin: 1, member: 2 }[m.role] ?? 3);
+  return [...members].sort((a, b) => rank(a) - rank(b) || String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))[0]?.user_id ?? null;
+}
+
+/**
+ * Put every built-in job of a Workspace-plan workspace in a box (GET-897): the caller decides the
+ * plan; this only reads the boxes and applies planDefaultBuiltinBoxes. Idempotent: a second call
+ * finds nothing to do. New boxes are shared with the workspace and owned by `ownerId`. Two calls at
+ * once can each make a box; the one made first is kept and the later one deleted, so a built-in
+ * never ends in two boxes. An add is revision-checked; one that loses a race is left for the next
+ * call. `dryRun`: the plan only, nothing written. -> { planned, created: [ids], added: [ids] }
+ */
+export async function ensureDefaultBuiltinBoxes(sb, ws, { ownerId = null, dryRun = false } = {}) {
+  let boxes;
+  try { boxes = await rows(sb.from('revboxes').select('id, name, revision, builtin_jobs, created_at').eq('workspace_id', ws)); }
+  catch (e) { if (missingColumn(e)) return { planned: [], created: [], added: [] }; throw e; }
+  const planned = planDefaultBuiltinBoxes(boxes);
+  const done = { planned, created: [], added: [] };
+  if (dryRun || !planned.length) return done;
+  const owner = ownerId ?? await workspaceDefaultOwner(sb, ws);
+  if (!owner) return done;
+  for (const step of planned) {
+    if (step.add) {
+      const box = boxes.find(b => b.id === step.add);
+      const updated = await one(sb.from('revboxes').update({ builtin_jobs: applyBuiltinOps(builtinJobsOf(box), { add: step.keys }), revision: box.revision + 1, updated_at: now() })
+        .eq('workspace_id', ws).eq('id', box.id).eq('revision', box.revision).select('id').maybeSingle());
+      if (updated) done.added.push(box.id);
+      continue;
+    }
+    const made = await one(sb.from('revboxes').insert({ workspace_id: ws, owner_id: owner, name: step.create, objective: step.objective, shared: true, builtin_jobs: step.keys }).select('id, name, created_at').single());
+    // A concurrent call may have made the same box: the oldest one with these built-ins stays.
+    const twins = (await rows(sb.from('revboxes').select('id, name, builtin_jobs, created_at').eq('workspace_id', ws)))
+      .filter(b => sameName(b.name, step.create) && builtinJobsOf(b).some(k => step.keys.includes(k))).sort(oldestFirst);
+    if (twins.length > 1 && twins[0].id !== made.id) { await rows(sb.from('revboxes').delete().eq('workspace_id', ws).eq('id', made.id)); continue; }
+    done.created.push(made.id);
+  }
+  return done;
+}
+
 const missingColumn = (e) => ['42703', 'PGRST204'].includes(e?.code) || /builtin_jobs/.test(e?.message ?? '');
 
 /**

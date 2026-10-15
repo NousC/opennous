@@ -1,5 +1,6 @@
 import { PREVIEW } from '@/lib/preview';
 import { freshAccessToken } from '@/lib/freshToken';
+import type { BuiltinBrief } from '@/lib/builtinJobs';
 
 export type Scope = { mode: 'selected' | 'all' | 'won' | 'lost' | 'icp'; account_ids: string[]; min_icp: number };
 export type ContextBlock = { id: string; title: string; body: string };
@@ -50,14 +51,18 @@ export type BoxPerson = { id: string; role: 'owner' | 'editor' | 'viewer'; name:
 // core REVBOX_BUILTIN_JOBS (packages/core/src/db/revboxes.mjs): keep the two in step.
 export type BuiltinJobKey = 'sales_follow_up' | 'stale_deal' | 'deal_signals' | 'deal_risk' | 'expansion';
 export const BUILTIN_JOBS: { key: BuiltinJobKey; name: string; does: string; cadence: string; tools: string[] }[] = [
-  { key: 'sales_follow_up', name: 'Sales follow-up', does: 'After a meeting, the follow-up email is drafted and waiting to send.', cadence: 'After each call', tools: ['granola', 'gmail'] },
+  { key: 'sales_follow_up', name: 'Sales follow-up', does: 'After a meeting, the follow-up email is drafted and waiting to send.', cadence: 'After each call', tools: ['agent', 'gmail'] },
   { key: 'stale_deal', name: 'Stale deal detection', does: 'A deal goes quiet, and a follow-up is drafted for you.', cadence: 'Nightly', tools: ['hubspot', 'gmail'] },
   { key: 'deal_signals', name: 'Deal signals', does: 'A call raises an objection, a competitor, a buying signal or a departure, and the right follow-up is drafted for you.', cadence: 'Hourly', tools: ['agent', 'gmail'] },
   { key: 'deal_risk', name: 'Deal risk detection', does: 'An account turns at-risk, and a follow-up is drafted for you.', cadence: 'Nightly', tools: ['agent', 'gmail'] },
   { key: 'expansion', name: 'Expansion signals', does: 'An expansion signal shows, and a follow-up is drafted for you.', cadence: 'Nightly', tools: ['agent', 'gmail'] },
 ];
-/** A built-in job as the box detail returns it: its definition and what it drafted lately. */
-export type BoxBuiltinJob = { key: BuiltinJobKey; name: string; does: string; cadence: string; drafts_30d: number; last_draft_at: string | null };
+/**
+ * A built-in job as the box detail returns it: its definition, what it drafted lately, and (GET-897)
+ * its agent card from the server (`brief`) and whether it runs for the workspace (`enabled`, read-only;
+ * null when unknown). Older servers send neither.
+ */
+export type BoxBuiltinJob = { key: BuiltinJobKey; name: string; does: string; cadence: string; drafts_30d: number; last_draft_at: string | null; brief?: BuiltinBrief | null; enabled?: boolean | null };
 export type JobPlan = {
   email?: {to:string;recipient_rule?:'meeting_attendees'|'address'};
   trigger: { kind: string; frequency: string; at: string; timezone: string; provider: string; signal_id?: string; weekdays_only?:boolean; day_of_week?:number;day_of_month?:number };
@@ -282,7 +287,7 @@ export function routineTriggerLabel(job: RevBoxRoutine): string {
 }
 
 /** Display name for a tool slug in builder rows and cards. */
-export const TOOL_NAMES: Record<string, string> = { hubspot: 'HubSpot', slack: 'Slack', gmail: 'Gmail', granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom', attio: 'Attio', instantly: 'Instantly', agent: 'OpenNous', revbox_delivery: 'RevBox delivery', webhook: 'Webhook', dataset_append: 'Add to table', dataset_read: 'Read table' };
+export const TOOL_NAMES: Record<string, string> = { hubspot: 'HubSpot', slack: 'Slack', gmail: 'Gmail', granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom', fellow: 'Fellow', attio: 'Attio', instantly: 'Instantly', agent: 'OpenNous', revbox_delivery: 'RevBox delivery', webhook: 'Webhook', dataset_append: 'Add to table', dataset_read: 'Read table' };
 
 // ─── Signals (GET-862) ───────────────────────────────────────────────────────────────────────
 // What can start a job: the catalog (core signalCatalog) and the workspace's own signals, at

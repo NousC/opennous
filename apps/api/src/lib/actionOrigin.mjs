@@ -32,6 +32,13 @@ export const REC_ORIGIN = {
   meeting_brief: 'Meeting brief',
 };
 
+// The RevBox built-in job behind a detector's ledger row (GET-897): rec_key 'automation.<detector>'
+// (lib/detectorDrafts.mjs) -> core REVBOX_BUILTIN_JOBS key, so Priorities can name the box it is in.
+export const REC_BUILTIN = {
+  'automation.stale_deal': 'stale_deal', 'automation.deal_risk': 'deal_risk',
+  'automation.deal_signal': 'deal_signals', 'automation.expansion_signal': 'expansion',
+};
+
 // Autopilot plays by key — the labels in lib/motion.mjs PLAYS (not imported: that module pulls
 // in the whole agent).
 export const PLAY_ORIGIN = { nurture: 'Nurture', 'deal-rescue': 'Deal rescue', 'multi-thread': 'Multi-thread' };
@@ -74,7 +81,7 @@ export function originOf(action, { plays = new Map(), routines = new Map(), recs
   }
   const rec = action.rec_id ? recs.get(action.rec_id) : null;
   if (rec) {
-    return { source: 'rec', name: REC_ORIGIN[rec.rec_key] ?? rec.text ?? 'Recommendation', why: rec.evidence?.why ?? null, at, rec_id: rec.id };
+    return { source: 'rec', name: REC_ORIGIN[rec.rec_key] ?? rec.text ?? 'Recommendation', why: rec.evidence?.why ?? null, at, rec_id: rec.id, builtin: REC_BUILTIN[rec.rec_key] ?? null };
   }
   if (action.thread_id && !routineThreads.has(action.thread_id)) {
     return { source: 'chat', name: 'Ask Nous', why: null, at, thread_id: action.thread_id };

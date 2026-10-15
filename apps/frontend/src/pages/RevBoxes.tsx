@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { JobBuilder } from '@/components/revboxes/JobBuilder';
 import { ContextDocSheet } from '@/components/revboxes/ContextDocSheet';
-import { RevBoxJobs, jobRows, type JobRow } from '@/components/revboxes/RevBoxJobs';
+import { RevBoxJobs, BuiltinJobPanel, jobRows, type JobRow } from '@/components/revboxes/RevBoxJobs';
+import { addBuiltinBody } from '@/lib/builtinJobs';
 import { DeliveryDialogBody, DeliveryList, JobStepDialog, unfinished } from '@/components/revboxes/BoxDelivery';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { PersonAvatar } from '@/components/ui/owner-filter';
@@ -17,7 +18,7 @@ import { Switch } from '@/components/ui/switch';
 import { useAutosavedRevbox } from '@/components/revboxes/useAutosavedRevbox';
 import { when } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { revboxesRequest, SCOPE_LABELS, BUILTIN_JOBS, type RevBox, type BoxDetail, type BoxPerson, type Catalog, type ContextFile, type ContextLibraryData, type JobDelivery } from '@/lib/revboxes';
+import { revboxesRequest, SCOPE_LABELS, BUILTIN_JOBS, type RevBox, type BoxDetail, type BoxBuiltinJob, type BuiltinJobKey, type BoxPerson, type Catalog, type ContextFile, type ContextLibraryData, type JobDelivery } from '@/lib/revboxes';
 
 const field = 'w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-foreground/35 focus:ring-2 focus:ring-foreground/5 disabled:opacity-60';
 const small = 'text-[12px] text-muted-foreground';
@@ -45,6 +46,8 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
   const [acting,setActing]=useState(false);
   const [notice,setNotice]=useState('');
   const [webhookKey,setWebhookKey]=useState<string|null>(null);
+  // A built-in job's read-only panel (GET-897).
+  const [builtinOpen, setBuiltinOpen] = useState<BoxBuiltinJob | null>(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState<'jobs' | 'results'>('jobs');
   // A job's own delivery target, edited from the Delivery rail (GET-872).
@@ -83,12 +86,14 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
     catch (e) { setError(message(e)); }finally{setActing(false);}
   }
   // Built-in jobs are listed on the box (GET-872): a separate save, so a clash (409, it is in
-  // another box) shows as an error instead of blocking the autosave.
-  async function setBuiltins(keys: string[]) {
+  // another box) shows as an error instead of blocking the autosave. Sent as the one change, which
+  // the server applies to the box as it has it (GET-897): never this page's copy of the whole list,
+  // which could be older than the box and drop a built-in the page did not know about.
+  async function addBuiltin(key: BuiltinJobKey) {
     setError('');
     try {
       const saved = dirty ? await save() : null;
-      await revboxesRequest(ws, token, `/${id}`, { method: 'PATCH', body: JSON.stringify({ builtin_jobs: keys, revision: saved?.revision ?? box!.revision }) });
+      await revboxesRequest(ws, token, `/${id}`, { method: 'PATCH', body: JSON.stringify(addBuiltinBody(key, saved?.revision ?? box!.revision)) });
       await reload();
     } catch (e) { setError(message(e)); }
   }
@@ -120,7 +125,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
               <DropdownMenuContent align="end" className="w-72">
                 <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">Add built-in job · run by OpenNous</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                {addable.length ? addable.map(b => { const other = taken.get(b.key); return <DropdownMenuItem key={b.key} disabled={!!other} onSelect={() => { setTab('jobs'); void setBuiltins([...builtins.map(x => x.key), b.key]); }} className="flex-col items-start gap-0.5">
+                {addable.length ? addable.map(b => { const other = taken.get(b.key); return <DropdownMenuItem key={b.key} disabled={!!other} onSelect={() => { setTab('jobs'); void addBuiltin(b.key); }} className="flex-col items-start gap-0.5">
                   <span className="text-[12.5px]">{b.name} <span className="text-muted-foreground">· {b.cadence}</span></span>
                   <span className="text-[11px] leading-snug text-muted-foreground">{other ? `Already in ${other.box_name ? `“${other.box_name}”` : 'another RevBox'}` : b.does}</span>
                 </DropdownMenuItem>; }) : <p className="px-2 py-1.5 text-[11.5px] text-muted-foreground">Every built-in job is in this box.</p>}
@@ -137,7 +142,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
                 onChange={row => setBuilder({ job: { id: row.id, name: row.name, enabled: row.enabled } })}
                 onTest={row => { setBusy(row.id); setError(''); setNotice(''); void revboxesRequest(ws, token, `/${id}/jobs/${row.id}/test`, { method: 'POST' }).then(async () => { setNotice(`Testing ${row.name} on real data. Nothing is sent; the result shows in Results, labelled Test.`); await cache.invalidateQueries({ queryKey: ['revbox-results', ws, id] }); }).catch(e => setError(message(e))).finally(() => setBusy(null)); }}
                 onWebhookKey={row => void revboxesRequest<{ key: string }>(ws, token, `/${id}/jobs/${row.id}/webhook-key`, { method: 'POST' }).then(r => setWebhookKey(r.key)).catch(e => setError(message(e)))}
-                builtins={builtins} onRemoveBuiltin={key => void setBuiltins(builtins.map(b => b.key).filter(k => k !== key))} /></div>}
+                builtins={builtins} onOpenBuiltin={setBuiltinOpen} /></div>}
         </>}</div>
       </main>
       <aside className="relative shrink-0 space-y-4 border-t border-border px-5 py-7 xl:w-[350px] xl:overflow-y-auto xl:border-l xl:border-t-0 xl:py-10">
@@ -176,6 +181,10 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
     <JobStepDialog ws={ws} token={token} boxId={id} row={jobStep} onClose={() => setJobStep(null)}
       onSaved={job_deliveries => { cache.setQueryData<BoxDetail>(['revbox', ws, id], old => old ? { ...old, job_deliveries } : old); setJobStep(null); setNotice('Saved. The job delivers there from its next run.'); void reload(); }}
       onChat={job => { setJobStep(null); setTab('jobs'); setFresh(null); setBuilder({ job }); }} />
+    <Dialog open={!!builtinOpen} onOpenChange={open => { if (!open) setBuiltinOpen(null); }}><DialogContent className="sm:max-w-[520px]">
+      <DialogHeader><DialogTitle className="flex items-center gap-2 text-[16px] font-medium">{builtinOpen?.name}<span className="rounded-md bg-muted px-1.5 py-px text-[10.5px] font-normal text-muted-foreground">Built in</span></DialogTitle><DialogDescription className="text-[12px]">A job OpenNous runs for you. Nothing to set up here.</DialogDescription></DialogHeader>
+      {builtinOpen && <BuiltinJobPanel job={builtinOpen} boxName={box.name} onClose={() => setBuiltinOpen(null)} />}
+    </DialogContent></Dialog>
     <Dialog open={!!webhookKey} onOpenChange={open=>{if(!open)setWebhookKey(null);}}><DialogContent><DialogHeader><DialogTitle>Webhook trigger</DialogTitle><DialogDescription>Save this key now. Send POST requests to /hooks/revboxes with x-revbox-key and a unique Idempotency-Key header for each event.</DialogDescription></DialogHeader><input aria-label="Webhook secret" readOnly value={webhookKey??''} className={field} /></DialogContent></Dialog>
     {/* A context file reads as a document (GET-895); it is edited in the library, where its permissions live. */}
     <ContextDocSheet doc={file && { id: file.id, title: file.title, body: file.body, kind: file.kind, linkedDocument: !!file.document_id }} onClose={() => setFile(null)}

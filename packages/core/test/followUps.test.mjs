@@ -30,9 +30,29 @@ test('a HubSpot meeting stored once per attendee is one meeting', () => {
 
 test('a Fellow meeting is its note; anything else falls back to its own id', () => {
   const f = { id: 'o1', entity_id: 'x', property: 'interaction.meeting_held', source: 'fellow', observed_at: '2026-10-01T15:00:00Z', raw: { note_id: 'n-9' } };
-  assert.deepEqual(meetingIdentity(f), { key: 'fellow:n-9', fellowNoteId: 'n-9' });
+  assert.deepEqual(meetingIdentity(f), { key: 'fellow:n-9', fellowNoteId: 'n-9', notesRef: null });
   const other = { id: 'o2', entity_id: 'x', property: 'interaction.meeting_held', source: 'fireflies', observed_at: '2026-10-01T15:00:00Z', external_id: 'ff-1' };
   assert.equal(meetingIdentity(other).key, 'fireflies:ff-1');
+});
+
+// GET-897: the after-call follow-up works for whichever recorder the workspace has. Granola,
+// Fireflies and Fathom log one row per attendee and keep the text in a meeting_notes document, so
+// a meeting is the recorder's meeting id and its notes are found by that document's source_ref.
+const C1 = '0b3c2f9e-1a2b-4c3d-8e4f-5a6b7c8d9e01', C2 = '7d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6';
+const rec = (source, ext, raw, entity) => ({ id: `o-${source}-${entity}`, entity_id: entity, property: 'interaction.meeting_held', source, observed_at: '2026-10-01T15:00:00Z', external_id: ext, raw });
+test('a Granola, Fireflies or Fathom meeting is one meeting, its notes found by source_ref', () => {
+  const cases = [
+    ['granola', [rec('granola', `granola_not_8XyZ_${C1}`, { title: 'Pricing call', note_id: 'not_8XyZ' }, C1), rec('granola', `granola_not_8XyZ_${C2}`, { title: 'Pricing call', note_id: 'not_8XyZ' }, C2)], 'not_8XyZ'],
+    ['fireflies', [rec('fireflies', `ff_01M0SV9_${C1}`, { meeting_id: '01M0SV9' }, C1), rec('fireflies', `ff_01M0SV9_${C2}`, { meeting_id: '01M0SV9' }, C2)], '01M0SV9'],
+    ['fathom', [rec('fathom', `fathom_1712_9_${C1}`, { title: 'Demo' }, C1), rec('fathom', `fathom_1712_9_${C2}`, { title: 'Demo' }, C2)], '1712_9'],
+  ];
+  for (const [source, rows, id] of cases) {
+    assert.deepEqual(meetingIdentity(rows[0]), { key: `${source}:${id}`, fellowNoteId: null, notesRef: `source://${source}/${id}` }, source);
+    const g = groupMeetings(rows);
+    assert.equal(g.length, 1, `${source}: one meeting for its two attendees`);
+    assert.deepEqual(g[0].entityIds, [C1, C2]);
+    assert.equal(g[0].notesRef, `source://${source}/${id}`);
+  }
 });
 
 test('a calendar invite is not notes: the Teams invite cleans to nothing', () => {

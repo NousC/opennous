@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { day, time, when } from "@/lib/format";
 import { freshAccessToken } from "@/lib/freshToken";
@@ -28,7 +28,8 @@ import { ApprovalCard, type PendingAction } from "@/components/ApprovalCard";
 import { Row, type RecDetailFull } from "@/components/home/RecParts";
 import type { DealChange, FollowUp, RecDetail, Recommendation } from "@/components/home/types";
 import { ACTION_DECIDED, FOLLOW_UP_DECIDED, REC_DISMISSED } from "./events";
-import { buildItems, groupItems, meetingWhen, openCount, visibleItems, type InboxItem, type InboxKind, type InboxRead } from "./inboxModel";
+import { builtinChip, type BuiltinHome } from "@/lib/builtinJobs";
+import { buildItems, builtinOf, groupItems, meetingWhen, openCount, visibleItems, type InboxItem, type InboxKind, type InboxRead } from "./inboxModel";
 import { draftsKey, markDraftDecided } from "./drafts";
 import { ApprovalPane as RunReviewPane, type Approval } from "@/components/AutomationApprovals";
 
@@ -55,9 +56,11 @@ const dateOf = (i: InboxItem) => {
 /** A follow-up card's decision, as its row shows it. */
 const FOLLOW_UP_DONE: Record<string, string> = { approved: "Approved", synced: "Synced", skipped: "Skipped" };
 
-export function PrioritiesInbox({ data, loading, failed, ws, token, onClose, focus = null }: {
+export function PrioritiesInbox({ data, loading, failed, ws, token, onClose, focus = null, homes = null }: {
   data: InboxRead | undefined; loading: boolean; failed: boolean; ws: string; token: string | undefined;
   onClose: () => void;
+  /** Which RevBox holds each built-in job (GET-897): an item a built-in made shows its box's chip. */
+  homes?: BuiltinHome[] | null;
   /** An item to open on, e.g. "run:<id>" from a test run's View (GET-739). */
   focus?: string | null;
 }) {
@@ -171,7 +174,7 @@ export function PrioritiesInbox({ data, loading, failed, ws, token, onClose, foc
   );
 
   const detail = current ? (
-    <ItemPane key={current.key} item={current} ws={ws} token={token} data={data} decided={decided[current.key]}
+    <ItemPane key={current.key} item={current} ws={ws} token={token} data={data} decided={decided[current.key]} chip={builtinChip(homes, builtinOf(current))}
       back={mobile ? () => setShowDetail(false) : undefined} go={go}
       onDecided={(r, fu) => {
         setDecided((d) => ({ ...d, [r.id]: fu }));
@@ -227,6 +230,8 @@ function AccountTile({ name, domain, size = "h-6 w-6" }: { name: string | null; 
 
 type PaneProps = {
   item: InboxItem; ws: string; token: string | undefined; data: InboxRead | undefined; decided?: FollowUp;
+  /** The RevBox the built-in that made this item sits in (GET-897), as a small link. */
+  chip?: { name: string; href: string } | null;
   back?: () => void; go: (href: string | null) => void;
   onDecided: (r: Recommendation, fu: FollowUp) => void;
   onDismissed: (key: string) => void;
@@ -259,7 +264,12 @@ function ItemPane(p: PaneProps) {
         <AccountTile name={item.title} domain={item.domain} size="h-7 w-7" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13.5px] font-medium leading-tight text-foreground">{title}</p>
-          <p className="truncate text-[11.5px] text-muted-foreground/70">{meta}</p>
+          <p className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground/70">
+            <span className="truncate">{meta}</span>
+            {p.chip && <button type="button" onClick={() => p.go(p.chip!.href)} title={`A job in the RevBox "${p.chip.name}"`}
+              className="inline-flex flex-shrink-0 items-center gap-1 rounded-md bg-muted/70 px-1.5 py-px text-[10.5px] text-muted-foreground transition-colors duration-fast hover:bg-hover hover:text-foreground">
+              <Boxes className="h-2.5 w-2.5" strokeWidth={2} aria-hidden />{p.chip.name}</button>}
+          </p>
         </div>
         {item.href && (
           <button type="button" onClick={() => p.go(item.href)}

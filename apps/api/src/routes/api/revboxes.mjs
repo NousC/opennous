@@ -13,7 +13,7 @@ import {
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
   compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxConnections, revboxMembership,
   listRevboxDatasets, createRevboxDataset, updateRevboxDataset, listDatasetRows, exportDatasetCsv,
-  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxWorkedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxWorkedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, builtinJobBrief, ensureDefaultBuiltinBoxes, FOLLOW_UP_RECORDERS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
 } from '@nous/core';
 import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
 import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
@@ -21,7 +21,9 @@ import { viewerVisibleAccountSet } from '../../lib/visibility.mjs';
 import { safeFetch, assertPublicUrl } from '../../lib/ssrf.mjs';
 import { loadCloud } from '../../lib/cloud.mjs';
 import { resolveTeamAndPlan } from '../../lib/access.mjs';
-import { planName } from '../../lib/plans.mjs';
+import { planName, planTier, getPlanFromSubscription } from '../../lib/plans.mjs';
+import { workspaceConnectedSlugs } from './signals.mjs';
+import { allowedWorkspaces } from '../../lib/detectorDrafts.mjs';
 import { automationLimitHit } from './automations.mjs';
 import { FLOW_TRIGGERS, checkFlow } from '../../lib/flows.mjs';
 import { creditsForRuns } from '../../lib/automationCredits.mjs';
@@ -149,7 +151,16 @@ export function accountOverviewRows(accounts) {
   return accounts.map(a => ({ ...a, latest_signal: latestSignalView(a.latest_signal) }));
 }
 
-revboxesRouter.get('/', route(async (req, res, sb) => res.json({ boxes: await listRevboxes(sb, req.workspaceId, req.internalUserId) })));
+revboxesRouter.get('/', route(async (req, res, sb) => {
+  // Every built-in job of a Workspace-plan workspace sits in a box (GET-897): ensured here, on the
+  // read the sidebar makes, so a workspace that moves to the plan, a new one, or a box that lost
+  // its built-in is put right on the next load. Idempotent; a failure never fails the list.
+  await ensureBuiltinBoxesForPlan(sb, req.workspaceId, { planId: () => workspacePlanId(sb, req.workspaceId) });
+  res.json({ boxes: await listRevboxes(sb, req.workspaceId, req.internalUserId) });
+}));
+// Which box holds each built-in job (GET-897), for the Priorities chip: [{ key, box_id, box_name }],
+// the name null for a box this viewer cannot open.
+revboxesRouter.get('/builtins', route(async (req, res, sb) => res.json({ homes: await revboxBuiltinTaken(sb, req.workspaceId, req.internalUserId) })));
 revboxesRouter.post('/', route(async (req, res, sb) => res.status(201).json({ box: await createRevbox(sb, req.workspaceId, req.internalUserId) })));
 /**
  * A library file that is a linked document is changed only by someone who can still read that
@@ -251,12 +262,13 @@ revboxesRouter.get('/:id', route(async (req, res, sb) => {
   // The built-in jobs it lists with what they drafted (GET-872). The rail's account count is
   // GET /:id/accounts: the scope plus the accounts the box's jobs worked on (GET-891).
   const visible = await allowed(sb, req);
-  const [taken, activity] = await Promise.all([
+  const [taken, activity, facts] = await Promise.all([
     revboxBuiltinTaken(sb, req.workspaceId, req.internalUserId, req.params.id),
     revboxBuiltinActivity(sb, req.workspaceId, detail.box.builtin_jobs, { allowed: visible }),
+    detail.box.builtin_jobs.length ? builtinFacts(sb, req.workspaceId) : null,
   ]);
   res.json({ ...detail, context, routines: routines.map(routineOut), job_deliveries,
-    builtin_jobs: builtinJobsOut(detail.box.builtin_jobs, activity), builtin_taken: taken });
+    builtin_jobs: builtinJobsOut(detail.box.builtin_jobs, activity, facts), builtin_taken: taken });
 }));
 revboxesRouter.patch('/:id', route(async (req, res, sb) => {
   if (req.body?.scope?.mode === 'selected') {
@@ -365,10 +377,74 @@ export function runFailure(error, stepLog) {
   const tool = CONNECTION_TOOLS[step?.type] ?? null;
   return { text, fix: connection ? { label: /isn't connected|not connected/i.test(text) ? `Connect${tool && tool !== 'the mailbox' ? ` ${tool}` : ''}` : 'Reconnect', href: '/integrations' } : null };
 }
-/** The box's built-in jobs as the Jobs list reads them: definition plus what each drafted lately. Pure. */
-export function builtinJobsOut(keys, activity = []) {
+/**
+ * The box's built-in jobs as the Jobs list reads them (GET-872, GET-897): definition, what each
+ * drafted lately, its agent card (core builtinJobBrief: the sentence, Starts, tools, where it
+ * lands) and whether it runs (`enabled`, from builtinStateOf; null when the facts are unknown). Pure.
+ */
+export function builtinJobsOut(keys, activity = [], facts = null) {
   const byKey = new Map(activity.map(a => [a.key, a]));
-  return REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({ ...j, drafts_30d: byKey.get(j.key)?.drafts ?? 0, last_draft_at: byKey.get(j.key)?.last_at ?? null }));
+  return REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({
+    ...j, drafts_30d: byKey.get(j.key)?.drafts ?? 0, last_draft_at: byKey.get(j.key)?.last_at ?? null,
+    brief: builtinJobBrief(j.key, facts ?? {}), enabled: builtinStateOf(j.key, facts ?? {}),
+  }));
+}
+/**
+ * Is this built-in running for the workspace (GET-897)? The after-call follow-up runs where
+ * follow_up_settings.enabled is on; the detectors where DETECTOR_DRAFTS_WORKSPACES lists the
+ * workspace. Neither is a per-box switch, so the card shows it read-only. Null when unknown. Pure.
+ */
+export function builtinStateOf(key, { followUpsOn, detectorsOn } = {}) {
+  const v = key === 'sales_follow_up' ? followUpsOn : detectorsOn;
+  return typeof v === 'boolean' ? v : null;
+}
+/**
+ * The workspace facts the built-in cards read (GET-897): its connected meeting recorders, whether
+ * approved follow-ups sync to HubSpot, and the two switches. A fact that cannot be read is left
+ * unknown (the card then names no recorder, or shows no On/Off), never guessed.
+ */
+export async function builtinFacts(sb, ws) {
+  const [slugs, settings] = await Promise.all([
+    workspaceConnectedSlugs(sb, ws).catch(() => []),
+    sb.from('follow_up_settings').select('enabled, crm_writeback').eq('workspace_id', ws).maybeSingle().then(r => (r.error ? undefined : r.data), () => undefined),
+  ]);
+  const allow = allowedWorkspaces();
+  return {
+    recorders: FOLLOW_UP_RECORDERS.filter(r => slugs.includes(r)),
+    crm: settings?.crm_writeback === true ? 'hubspot' : null,
+    followUpsOn: settings === undefined ? undefined : settings?.enabled === true,
+    // DETECTOR_DRAFTS_DISABLED is the global kill switch (routes/detectorDrafts.mjs).
+    detectorsOn: !/^(1|true|yes)$/i.test(String(process.env.DETECTOR_DRAFTS_DISABLED ?? '')) && (allow === '*' || allow.has(ws)),
+  };
+}
+/** The workspace's plan id, as resolveTeamAndPlan reads it (its team's subscription). */
+export async function workspacePlanId(sb, ws) {
+  const { data: w, error } = await sb.from('workspaces').select('team_id').eq('id', ws).maybeSingle();
+  if (error) throw error;
+  if (!w?.team_id) return null;
+  const { data: subs, error: e2 } = await sb.from('subscriptions').select('*').eq('team_id', w.team_id).limit(1);
+  if (e2) throw e2;
+  return getPlanFromSubscription(subs?.[0] ?? null).id;
+}
+const ENSURE_REST_MS = 10 * 60_000;
+const ensuredAt = new Map();
+/**
+ * Ensure a Workspace-plan workspace's default built-in boxes (core ensureDefaultBuiltinBoxes) at most
+ * once per ENSURE_REST_MS per workspace and process (the plan is read at most that often too, so a
+ * plan change is picked up within it). Any other plan: nothing. Never throws: the
+ * list it runs before must still load. -> the ensure's result, or null when skipped or failed.
+ */
+export async function ensureBuiltinBoxesForPlan(sb, ws, { planId, ensure = ensureDefaultBuiltinBoxes, now = Date.now() } = {}) {
+  if (!ws) return null;
+  const last = ensuredAt.get(ws);
+  if (last != null && now - last < ENSURE_REST_MS) return null;
+  try {
+    // `planId` may be a lookup, made only when a pass is due.
+    const id = typeof planId === 'function' ? await planId() : planId;
+    if (!id || planTier(id) !== 'custom') { ensuredAt.set(ws, now); return null; }
+    const out = await ensure(sb, ws); ensuredAt.set(ws, now); return out;
+  }
+  catch (e) { ensuredAt.set(ws, now); console.error('[revboxes] default built-in boxes', ws, e?.message ?? e); return null; }
 }
 /** The last box delivery the run recorded (its revbox_delivery step's per-destination results) as Results deliveries. */
 export function routineRunDeliveries(runId, stepLog) {

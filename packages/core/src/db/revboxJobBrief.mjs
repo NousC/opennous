@@ -264,3 +264,65 @@ export function jobBrief(proposal, facts = null) {
   const text = clip(`${when} I ${does}${condition ? `, but only if ${condition}` : ''}.`, 420);
   return { text, starts, asks_first: steps.some(s => s.type === 'approval') };
 }
+
+// ── Built-in jobs (GET-897) ────────────────────────────────────────────────────
+
+/** The meeting recorders the after-call follow-up reads, in the order they are named. */
+export const FOLLOW_UP_RECORDERS = ['granola', 'fireflies', 'fathom', 'fellow'];
+const RECORDER_NAME = { granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom', fellow: 'Fellow' };
+const APPROVE = 'you approve each one in Priorities';
+
+/**
+ * A built-in job's card (GET-897), as a box's other jobs read: one sentence in the agent's voice,
+ * the Starts label, the tools whose logos the meta line shows and where its work lands. Built from
+ * what the built-in really does (the follow-up engine, apps/worker followUpBuilder; the detectors,
+ * apps/api lib/detectorDrafts) and the workspace's facts, never from free text:
+ *   facts.recorders  connected meeting recorders (FOLLOW_UP_RECORDERS slugs), named in the sentence
+ *   facts.crm        'hubspot' when approved follow-ups sync to HubSpot (follow_up_settings.crm_writeback)
+ * -> { text, starts, tools, lands, details: [string] } | null for an unknown key. Pure.
+ */
+export function builtinJobBrief(key, facts = {}) {
+  const recorders = FOLLOW_UP_RECORDERS.filter(r => list(facts?.recorders).map(x => String(x).toLowerCase().replace(/_oauth$/, '')).includes(r));
+  const hubspot = facts?.crm === 'hubspot';
+  const lands = 'Priorities';
+  switch (key) {
+    case 'sales_follow_up': {
+      const names = recorders.map(r => RECORDER_NAME[r]);
+      const when = names.length ? `When a ${joinAnd(names, 'or')} meeting with a customer ends,` : 'When a meeting with a customer ends,';
+      const updates = hubspot ? 'the HubSpot updates' : 'the CRM updates';
+      const after = hubspot ? `; ${APPROVE}, and approved ones sync to HubSpot` : `; ${APPROVE}`;
+      return {
+        text: `${when} I draft the follow-up email and propose the tasks and ${updates} from what was said${after}.`,
+        starts: 'After each meeting',
+        tools: [...recorders, ...(hubspot ? ['hubspot'] : [])],
+        lands,
+        details: [
+          names.length ? `Reads the notes and transcript ${names.length === 1 ? names[0] : 'your recorder'} keeps for each meeting, and meetings logged in your CRM with notes.` : 'Reads the notes of each meeting your recorder or CRM keeps. Connect Granola, Fireflies or Fathom to cover every call.',
+          'Writes one card per meeting: a summary, the follow-up email, the tasks and the updates worth logging.',
+          'Nothing is sent, and no task or CRM update is filed, until you approve the card in Priorities.',
+        ],
+      };
+    }
+    case 'stale_deal': return {
+      text: `Every night I find open deals that have sat in one stage for two weeks with no touch, and draft a follow-up to the main contact; ${APPROVE}.`,
+      starts: 'Nightly', tools: hubspot ? ['hubspot'] : [], lands,
+      details: ['Reads each open deal\'s stage history and last activity.', 'Drafts one email per deal, to the person most likely to answer.', 'Nothing is sent until you approve it in Priorities.'],
+    };
+    case 'deal_risk': return {
+      text: `Every night I find accounts that turned at-risk on a call or an email, and draft a check-in to the main contact; ${APPROVE}.`,
+      starts: 'Nightly', tools: recorders, lands,
+      details: ['Reads the risk signals your calls and emails raise on customer accounts.', 'Drafts one check-in per account that says why in one line.', 'Nothing is sent until you approve it in Priorities.'],
+    };
+    case 'deal_signals': return {
+      text: `Every hour I catch an objection, a competitor evaluation, a buying signal or a stakeholder leaving on an open deal, and draft the right follow-up; ${APPROVE}.`,
+      starts: 'Hourly', tools: recorders, lands,
+      details: ['Reads the deal signals your calls and emails raise on accounts with an open deal.', 'Drafts one follow-up that answers the signal and asks for one next step.', 'Nothing is sent until you approve it in Priorities.'],
+    };
+    case 'expansion': return {
+      text: `Every night I find customers asking for more of what you sell, and draft a note that picks it up; ${APPROVE}.`,
+      starts: 'Nightly', tools: recorders, lands,
+      details: ['Reads the expansion asks your calls and emails raise on customer accounts.', 'Drafts one note per account that suggests a conversation.', 'Nothing is sent until you approve it in Priorities.'],
+    };
+    default: return null;
+  }
+}

@@ -61,6 +61,9 @@ export interface GroupedMeeting {
   rawText: string;
   /** Fellow's note id, to find its notes + transcript. */
   fellowNoteId: string | null;
+  /** A recorder's meeting (Granola, Fireflies, Fathom): its meeting_notes document's source_ref,
+   *  `source://<recorder>/<meeting id>`, where its notes + transcript are (GET-897). */
+  notesRef?: string | null;
   hostEmail: string | null;
   /** When the meeting ends, when the source says (HubSpot end_time). A row is written when the
    *  meeting is BOOKED, so observed_at alone cannot tell a past meeting from a future one. */
@@ -107,20 +110,37 @@ export interface FollowUpCardRow {
  * The stable identity of the meeting a row belongs to. HubSpot writes one row per attendee, so the
  * meeting is the id inside external_id, not the row; Fellow's meeting is its note.
  */
-export function meetingIdentity(o: MeetingObservation): { key: string; fellowNoteId: string | null } {
+export function meetingIdentity(o: MeetingObservation): { key: string; fellowNoteId: string | null; notesRef: string | null } {
   const raw = (o.raw ?? {}) as Record<string, unknown>;
   const ext = String(o.external_id ?? '');
   if (o.source === 'hubspot') {
     const m = ext.match(/^hubspot_(?:meetings|calls)_(\d+)_/);
     const id = m?.[1] ?? (raw.hubspot_id != null ? String(raw.hubspot_id) : null);
-    if (id) return { key: `hubspot:${id}`, fellowNoteId: null };
+    if (id) return { key: `hubspot:${id}`, fellowNoteId: null, notesRef: null };
   }
   if (o.source === 'fellow' && raw.note_id != null) {
-    return { key: `fellow:${raw.note_id}`, fellowNoteId: String(raw.note_id) };
+    return { key: `fellow:${raw.note_id}`, fellowNoteId: String(raw.note_id), notesRef: null };
+  }
+  // A recorder logs one row per attendee (`<prefix>_<meeting>_<contact uuid>`); the meeting is the
+  // id in the middle, and its notes + transcript are the meeting_notes document keyed to it (GET-897).
+  const recorder = RECORDER_ROWS[o.source];
+  if (recorder) {
+    const fromRaw = recorder.rawId ? raw[recorder.rawId] : null;
+    const fromExt = ext.startsWith(recorder.prefix) ? ext.slice(recorder.prefix.length).replace(/_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '') : '';
+    const id = fromRaw != null && String(fromRaw) ? String(fromRaw) : fromExt;
+    if (id) return { key: `${o.source}:${id}`, fellowNoteId: null, notesRef: `source://${o.source}/${id}` };
   }
   const id = ext || (raw.meeting_id != null ? String(raw.meeting_id) : '') || o.id;
-  return { key: `${o.source}:${id}`, fellowNoteId: null };
+  return { key: `${o.source}:${id}`, fellowNoteId: null, notesRef: null };
 }
+
+/** How each meeting recorder writes its per-attendee rows (worker webhooks/handlers): the
+ *  external_id prefix, and the raw field holding the meeting id when there is one. */
+const RECORDER_ROWS: Record<string, { prefix: string; rawId: string | null }> = {
+  granola: { prefix: 'granola_', rawId: 'note_id' },
+  fireflies: { prefix: 'ff_', rawId: 'meeting_id' },
+  fathom: { prefix: 'fathom_', rawId: null },
+};
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
@@ -129,14 +149,14 @@ export function groupMeetings(rows: MeetingObservation[]): GroupedMeeting[] {
   const out = new Map<string, GroupedMeeting>();
   for (const o of rows) {
     if (!o?.entity_id || !Number.isFinite(Date.parse(o.observed_at))) continue;
-    const { key, fellowNoteId } = meetingIdentity(o);
+    const { key, fellowNoteId, notesRef } = meetingIdentity(o);
     const raw = (o.raw ?? {}) as Record<string, unknown>;
     const text = str(raw.body) || str(raw.text) || str(raw.notes) || str(raw.summary) || str(raw.description);
     const g = out.get(key);
     if (!g) {
       out.set(key, {
         key, source: o.source, at: o.observed_at, title: str(raw.title) || null,
-        entityIds: [o.entity_id], observationIds: [o.id], rawText: text, fellowNoteId,
+        entityIds: [o.entity_id], observationIds: [o.id], rawText: text, fellowNoteId, notesRef,
         hostEmail: str(raw.host_email) || str(raw.owner_email) || null,
         endsAt: Number.isFinite(Date.parse(str(raw.end_time))) ? str(raw.end_time) : null,
         outcome: str(raw.outcome) || null,

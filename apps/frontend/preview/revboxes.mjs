@@ -3,10 +3,10 @@ import { readFile, writeFile, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { COMPANIES, CONTACTS, DEALS, USERS, WS } from './world.mjs';
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount, revboxExecutionRequirements } from '../../../packages/core/src/services/revboxPlan.mjs';
-import { validateRevboxPatch, revboxAccess, REVBOX_BUILTIN_JOBS, builtinJobsOf } from '../../../packages/core/src/db/revboxes.mjs';
+import { validateRevboxPatch, revboxAccess, REVBOX_BUILTIN_JOBS, builtinJobsOf, applyBuiltinOps, planDefaultBuiltinBoxes } from '../../../packages/core/src/db/revboxes.mjs';
 import { normalizeDatasetColumns, datasetSlug, datasetRowsCsv, datasetValueText } from '../../../packages/core/src/services/datasetFormats.mjs';
 // The job card's brief (GET-884): the server's sentence, built from the proposal's steps and facts.
-import { jobBrief } from '../../../packages/core/src/db/revboxJobBrief.mjs';
+import { jobBrief, builtinJobBrief } from '../../../packages/core/src/db/revboxJobBrief.mjs';
 import { latestSignalView } from '../../../packages/core/src/services/signalTone.mjs';
 
 const storePath = process.env.REVBOX_PREVIEW_STATE ?? '/private/tmp/opennous-revboxes-preview.json';
@@ -387,9 +387,26 @@ const AGO = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
 const BUILTIN_ACTIVITY = { sales_follow_up: [12, 3], stale_deal: [7, 30], deal_signals: [4, 5], deal_risk: [2, 52], expansion: [0, null] };
 function previewBuiltins(box) {
   const keys = builtinJobsOf(box);
-  return { builtin_jobs: REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({ ...j, drafts_30d: BUILTIN_ACTIVITY[j.key][0], last_draft_at: BUILTIN_ACTIVITY[j.key][1] == null ? null : AGO(BUILTIN_ACTIVITY[j.key][1]) })),
+  return { builtin_jobs: REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({ ...j, drafts_30d: BUILTIN_ACTIVITY[j.key][0], last_draft_at: BUILTIN_ACTIVITY[j.key][1] == null ? null : AGO(BUILTIN_ACTIVITY[j.key][1]),
+      brief: builtinJobBrief(j.key, PREVIEW_BUILTIN_FACTS), enabled: j.key !== 'expansion' })),
     builtin_taken: state.boxes.filter(b => b.id !== box.id).flatMap(b => builtinJobsOf(b).map(key => ({ key, box_id: b.id, box_name: b.name }))) };
 }
+/**
+ * As the API's ensure-on-read (core planDefaultBuiltinBoxes, GET-897): the preview workspace is on
+ * the Workspace plan, so every built-in sits in a box, "Meetings Follow-up" holding the after-call
+ * follow-up. Applied on each list read, like the API; a box with the default name gains its built-in.
+ */
+function ensurePreviewBuiltinBoxes() {
+  let changed = false;
+  for (const step of planDefaultBuiltinBoxes(state.boxes)) {
+    if (step.add) { const b = state.boxes.find(x => x.id === step.add); b.builtin_jobs = applyBuiltinOps(builtinJobsOf(b), { add: step.keys }); b.revision += 1; }
+    else { const b = base(step.create, step.objective, true, { mode: 'all', account_ids: [], min_icp: 0 }); b.builtin_jobs = step.keys; state.boxes.push(b); }
+    changed = true;
+  }
+  return changed;
+}
+// The preview's connected recorders and CRM write-back, as the API's builtinFacts reads them.
+const PREVIEW_BUILTIN_FACTS = { recorders: ['granola', 'fireflies'], crm: 'hubspot' };
 /** The connected Slack as /api/slack/targets answers in the preview (server.mjs). */
 export const PREVIEW_SLACK = { connected: true,
   team: { id: 'T07OPENNOUS', name: 'OpenNous', icon: face('#111827', '#4b5563') },
@@ -463,9 +480,11 @@ export async function handleRevboxPreview(req, res, url, json) {
     if (parts[0] === 'catalog') { json(res, { accounts: previewRevboxAccounts, members: USERS, documents: refs.map(({ body, ...r }) => r), connections }); return true; }
     if (!parts.length) {
       if (req.method === 'POST') { const box = base('Untitled RevBox', '', false, { mode: 'selected', account_ids: [], min_icp: 70 }); box.owner_id = uid; state.boxes.unshift(box); await persist(); json(res, { box: { ...box, access: 'owner' } }, 201); }
-      else json(res, { boxes: state.boxes.filter(b => revboxAccess(b, uid, b.members)).map(b => ({ ...b, access: revboxAccess(b, uid, b.members) })) });
+      else { if (ensurePreviewBuiltinBoxes()) await persist(); json(res, { boxes: state.boxes.filter(b => revboxAccess(b, uid, b.members)).map(b => ({ ...b, access: revboxAccess(b, uid, b.members) })) }); }
       return true;
     }
+    // Which box holds each built-in (GET-897), for the Priorities chip.
+    if (parts[0] === 'builtins') { json(res, { homes: state.boxes.flatMap(b => builtinJobsOf(b).map(key => ({ key, box_id: b.id, box_name: revboxAccess(b, uid, b.members) ? b.name : null }))) }); return true; }
     const box = state.boxes.find(b => b.id === parts[0]);
     const access = revboxAccess(box, uid, box?.members ?? []);
     if (!access) fail(404, 'RevBox not found.');
@@ -528,10 +547,13 @@ export async function handleRevboxPreview(req, res, url, json) {
         if (!mine) fail(400, 'Choose one of your own connected Gmail mailboxes for this destination.');
         return { ...d, mailbox_email: mine.email };
       });
+      // Built-in changes as operations on the box as stored (core patchRevbox, GET-897).
+      const { builtin_add: add, builtin_remove: remove } = payload; delete payload.builtin_add; delete payload.builtin_remove;
+      if (add || remove) payload.builtin_jobs = applyBuiltinOps(builtinJobsOf(box), { add, remove });
       // A built-in job is in one box per workspace (core patchRevbox, GET-872).
       const added = (payload.builtin_jobs ?? []).filter(k => !builtinJobsOf(box).includes(k));
       const clash = state.boxes.find(b => b.id !== box.id && builtinJobsOf(b).some(k => added.includes(k)));
-      if (clash) fail(409, `${REVBOX_BUILTIN_JOBS.find(j => added.includes(j.key) && builtinJobsOf(clash).includes(j.key)).name} is already in the RevBox "${clash.name}". Remove it there first.`);
+      if (clash) fail(409, `${REVBOX_BUILTIN_JOBS.find(j => added.includes(j.key) && builtinJobsOf(clash).includes(j.key)).name} is already in the RevBox "${clash.name}".`);
       Object.assign(box, payload, { revision: box.revision + 1, updated_at: stamp() }); output = { box: { ...box, access } };
     } else if (parts[1] === 'members') {
       if (access !== 'owner') fail(403, 'Only the owner can manage members.');

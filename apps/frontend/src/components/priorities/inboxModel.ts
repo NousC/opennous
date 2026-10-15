@@ -50,7 +50,7 @@ export type InboxAction = {
   error?: string | null; entity_id?: string | null; rec_id?: string | null; thread_id?: string | null;
   created_at?: string | null;
   /** Who wrote it: the automation, play or conversation, and why (lib/actionOrigin.mjs). */
-  origin?: { source: string; name: string; why?: string | null; at?: string | null; run_id?: string | null; routine_id?: string | null } | null;
+  origin?: { source: string; name: string; why?: string | null; at?: string | null; run_id?: string | null; routine_id?: string | null; builtin?: string | null } | null;
   /** The company it is for (the person's, for a draft to a person). */
   account?: { id: string | null; name: string | null; domain: string | null; person?: string | null } | null;
 };
@@ -156,6 +156,15 @@ export function buildItems(data: InboxRead | null | undefined, now: Date = new D
   // failed send is not waiting on anyone's approval any more.
   const drafts = [...(data?.actions ?? []).filter((a) => a.status !== "failed").map(actionItem), ...(data?.runs ?? []).map(runItem)].sort(newestFirst);
   return [...meetings, ...drafts];
+}
+
+/**
+ * The RevBox built-in job behind an item (GET-897), for its box chip: a meeting's wrap-up is the
+ * after-call follow-up's; a draft says so in its origin (a detector's). Null for anything else.
+ */
+export function builtinOf(item: InboxItem): string | null {
+  if (item.kind === "meeting") return "sales_follow_up";
+  return item.action?.origin?.builtin ?? null;
 }
 
 /** What still needs you: the rows not yet decided. The count on the ⚑ and in each group. */

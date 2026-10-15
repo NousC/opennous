@@ -822,7 +822,7 @@ export const PENDING_DRAFTS = [
     body: "Hi Robert,\n\nWhen we last spoke you asked for pricing that fits a pilot rather than the full desk. I've put that together: 20 seats for one quarter, with the wealth desk as an option once budget opens.\n\nShall I send it over, or is it easier to walk through it on a short call?\n\nAvery",
     rationale: "Robert asked for pilot pricing on the last call and never got it; the deal has sat in Proposal sent since.",
     status: "pending", created_at: iso(0.2),
-    origin: { source: "rec", name: "Stale deal detection", why: "Deal sat in Proposal sent for 38 days with no conversation.", at: iso(0.2) },
+    origin: { source: "rec", name: "Stale deal detection", why: "Deal sat in Proposal sent for 38 days with no conversation.", at: iso(0.2), builtin: "stale_deal" },
     account: draftAcct("c6", "Robert Hayes") },
   { id: "pd3", kind: "email", entity_id: "p10", rec_id: null, thread_id: null, recipient: "Grace Okafor", recipient_email: "grace.okafor@atlashealth.example", linkedin_url: null,
     subject: "Seats for your CS team",
