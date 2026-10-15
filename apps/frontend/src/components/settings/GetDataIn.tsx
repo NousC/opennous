@@ -13,7 +13,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOnboardingChecklist } from "@/hooks/useOnboardingChecklist";
 import { useBackfillPreview, Bar } from "@/pages/GetStarted";
 import { SettingsGroup } from "@/components/settings/SettingsKit";
-import { backfillCount, providerPauseLine, toolName } from "@/lib/getStarted";
+import { backfillCount, notInCrmLine, providerPauseLine, toolName } from "@/lib/getStarted";
+import { toolLogo } from "@/lib/toolLogo";
 import { cn } from "@/lib/utils";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
@@ -46,7 +47,22 @@ function modelsLine(jobs: Job[], providerLabel: string): string {
   return `${names.join(" and ")}${where}`;
 }
 
-function Step({ n, done, title, children, action }: { n: number; done: boolean; title: string; children?: React.ReactNode; action?: React.ReactNode }) {
+/** The connected tools' logos beside a step's title (GET-867). Tools with no logo are left out. */
+function ToolLogos({ ids }: { ids: string[] }) {
+  const logos = [...new Set(ids)].map((id) => ({ id, src: toolLogo(id) })).filter((l) => l.src);
+  if (!logos.length) return null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {logos.map((l) => (
+        <span key={l.id} title={toolName(l.id)} className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-[5px] border border-hairline bg-card">
+          <img src={l.src!} alt={toolName(l.id)} className="h-3 w-3 object-contain" />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function Step({ n, done, title, logos = [], children, action }: { n: number; done: boolean; title: string; logos?: string[]; children?: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3 rounded-lg px-2 py-2.5">
       <span className={cn(
@@ -56,7 +72,7 @@ function Step({ n, done, title, children, action }: { n: number; done: boolean; 
         {done ? <Check className="h-3 w-3" strokeWidth={2.6} /> : n}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] text-foreground">{title}</p>
+        <p className="flex flex-wrap items-center gap-2 text-[13px] text-foreground">{title}<ToolLogos ids={logos} /></p>
         {children && <div className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">{children}</div>}
       </div>
       {action && <div className="flex-none">{action}</div>}
@@ -146,7 +162,7 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
 
   return (
     <SettingsGroup title="Backfill">
-      <Step n={1} done={c.crm.done && importState !== "failed"} title={c.crm.done ? `${crmName} connected` : "Connect your CRM (recommended first)"}
+      <Step n={1} logos={c.crm.done && c.crm.provider ? [c.crm.provider] : []} done={c.crm.done && importState !== "failed"} title={c.crm.done ? `${crmName} connected` : "Connect your CRM (recommended first)"}
         action={!c.crm.done ? <Link to="/company-sources" className={btn}>Connect</Link>
           : importState === "failed" && (
             <button type="button" className={btn} disabled={retrying} onClick={retryImport}>
@@ -170,7 +186,7 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
           : "HubSpot, Salesforce or Attio. Its records import when it connects (HubSpot: the last 12 months), so every conversation lands on the right account."}
       </Step>
 
-      <Step n={2} done={c.mail.done && c.notes.done} title="Connect email and meeting notes"
+      <Step n={2} logos={providerIds} done={c.mail.done && c.notes.done} title="Connect email and meeting notes"
         action={!(c.mail.done && c.notes.done) && <Link to="/integrations" className={btn}>Connect</Link>}>
         {sources.length ? `${sources.join(", ")} connected.` : "Gmail, and your notetaker: Fireflies, Granola or Fathom. Each person connects their own."}
         {providerIds.some((id) => ["granola", "fireflies", "fathom"].includes(id)) && <> New meetings come in by themselves every 15 minutes; their history comes in with the backfill.</>}
@@ -197,16 +213,27 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
           : running ? (
             <div className="mt-1.5 max-w-[360px] space-y-1.5">
               <Bar pct={pct} />
-              <span>Reading your history… {of ? `${num(read)} of ${num(of)}` : `${num(read)} read`}</span>
+              <span className="flex items-baseline justify-between gap-3">
+                <span>
+                  {p?.progress?.phase === "filing" ? "Finding your conversations…" : "Reading your history…"}{" "}
+                  {of ? `${num(read)} of ${num(of)}` : read ? `${num(read)} read` : ""}
+                </span>
+                <span className="tabular-nums text-foreground">{Math.round(pct)}%</span>
+              </span>
             </div>
           )
           : readable.length === 0 ? "Connect Gmail or a notetaker (Fireflies, Granola or Fathom) first: the backfill reads their history."
           : confirming ? (
             <div className="mt-1.5 space-y-2 rounded-lg border border-border/70 bg-background p-3 text-[12.5px] text-foreground">
-              <p>{found ? `Found ${found}.` : "Reads the history of your connected tools."}</p>
+              <p>{found ? `Found ${found}.` : "Reads the history of your connected tools."}{c.crm.done && c.crm.accounts ? ` Each one is filed onto the right one of your ${num(c.crm.accounts)} ${crmName} accounts.` : ""}</p>
+              <p className="text-muted-foreground">
+                {notInCrmLine(p?.estimate?.discovered)
+                  ?? (c.crm.done
+                    ? `People and companies in them that aren't in ${crmName} yet are added too, as new accounts tagged Not in CRM.`
+                    : "People and companies are created from the conversations themselves.")}
+              </p>
               <p className="text-muted-foreground">
                 Email, calendar and Granola go back {windowDays} days; Fireflies and Fathom meetings as far back as they hold.
-                {!c.crm.done && " Without a CRM, people and companies are created from the conversations themselves."}
               </p>
               <p className="text-muted-foreground">
                 This reads each one with your AI models ({modelsLine(jobs, providerLabel)}). Make sure your provider account has enough credit.

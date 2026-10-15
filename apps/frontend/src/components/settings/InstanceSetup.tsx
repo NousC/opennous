@@ -88,6 +88,20 @@ const GuideLink = ({ href, children = "Guide" }: { href: string; children?: Reac
   </a>
 );
 
+// The model's maker, from its id ("z-ai/glm-5.2" → Z.ai), for the Models rows (GET-867).
+const MODEL_VENDOR: [RegExp, string][] = [
+  [/^(anthropic\/|claude-)/, "anthropic"], [/^deepseek\//, "deepseek"], [/^z-ai\//, "zai"],
+  [/^moonshotai\//, "moonshot"], [/^openai\//, "openai"], [/^meta-llama\//, "meta"],
+  [/^qwen\//, "alibaba"], [/^minimax\//, "minimax"],
+];
+
+function ModelLogo({ model }: { model: string }) {
+  const vendor = MODEL_VENDOR.find(([re]) => re.test(model))?.[1];
+  return vendor
+    ? <img src={`/model-logos/${vendor}.png`} alt="" className="h-5 w-5 rounded" />
+    : <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">AI</span>;
+}
+
 function providerOf(job: Job, setup: Setup) {
   if (job.route === "anthropic") return "Anthropic";
   return setup.ai.providers.openRouter ? "OpenRouter" : setup.ai.providers.endpoint;
@@ -140,14 +154,16 @@ export function InstanceSetup() {
         <SettingsRow
           label={ai.providers.openRouter ? "OpenRouter" : "OpenAI-compatible endpoint"}
           hint={ai.providers.openRouter ? "Every other vendor (GLM, DeepSeek, Kimi, GPT…) by its OpenRouter id." : `Every model that is not claude-…, served by ${ai.providers.endpoint}${ai.providers.local ? " on your network" : ""}.`}
-          leading={<span className="inline-flex h-5 w-5 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">AI</span>}>
+          leading={ai.providers.openRouter
+            ? <img src="/model-logos/openrouter.png" alt="" className="h-5 w-5 rounded" />
+            : <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-muted text-[10px] font-semibold text-muted-foreground">AI</span>}>
           {ai.providers.openaiCompatible ? <Status ok>Ready</Status> : <><Status ok={false}>No key</Status><Env names={ai.providers.openRouter ? ["OPENROUTER_API_KEY"] : ["LLM_API_KEY"]} /></>}
         </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title="Models">
         {ai.jobs.map((j) => (
-          <SettingsRow key={j.tier} label={j.label}
+          <SettingsRow key={j.tier} label={j.label} leading={<ModelLogo model={j.model} />}
             hint={<><span className="font-mono">{j.model}</span> · {providerOf(j, setup)}</>}>
             {j.ready
               ? <Status ok>Ready</Status>
