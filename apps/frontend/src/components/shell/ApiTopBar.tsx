@@ -154,6 +154,7 @@ function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect 
   filterSlotRef: (el: HTMLElement | null) => void;
   onConnect: (kind: ConnectKind) => void;
 }) {
+  const { pathname } = useLocation();
   const queryClient = useQueryClient();
   const Icon = route.icon;
   const parent = slots?.parent === null ? null : slots?.parent ?? route.parent ?? null;
@@ -207,9 +208,12 @@ function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect 
           </button>
           <span aria-hidden className="mx-0.5 hidden h-[18px] w-px shrink-0 bg-border sm:block" />
           {/* On a phone the sidebar's API keys row is the way there; the title needs the room. */}
+          {/* On the keys page itself it would link to where you already are: shown as the current page (GET-869). */}
           <Link
             to="/keys"
-            className="hidden h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-card px-2.5 text-[12.5px] font-medium text-foreground shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover sm:inline-flex"
+            aria-current={pathname.startsWith("/keys") ? "page" : undefined}
+            onClick={(e) => { if (pathname === "/keys") e.preventDefault(); }}
+            className="hidden h-7 shrink-0 aria-[current=page]:pointer-events-none aria-[current=page]:bg-hover items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-card px-2.5 text-[12.5px] font-medium text-foreground shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover sm:inline-flex"
           >
             <KeyRound className="h-3.5 w-3.5 text-ink-2" strokeWidth={1.8} />
             API keys

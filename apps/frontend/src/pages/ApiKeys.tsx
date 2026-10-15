@@ -48,6 +48,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
   const [keys, setKeys] = React.useState<ApiKeyRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [name, setName] = React.useState("");
+  const [needName, setNeedName] = React.useState(false);
   const [capability, setCapability] = React.useState<Capability>("read_write");
   const [expiry, setExpiry] = React.useState(0);
   const [creating, setCreating] = React.useState(false);
@@ -87,7 +88,10 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
   const create = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const n = name.trim();
-    if (!n || creating || !api.ready) return;
+    // Create key is always clickable (GET-869): a greyed button with no reason read as broken.
+    // With no name yet it says so and puts the cursor in the field.
+    if (!n) { setNeedName(true); nameRef.current?.focus(); return; }
+    if (creating || !api.ready) return;
     setCreating(true);
     try {
       const created = await api.create({ name: n, capability, ...(expiry > 0 ? { expires_in_days: expiry } : {}) });
@@ -168,9 +172,10 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
       <form onSubmit={create} className="flex flex-wrap items-center gap-2 border-b border-hairline px-4 py-4 sm:px-5">
         <label htmlFor="key-name" className="sr-only">Key name</label>
         <input
-          id="key-name" ref={nameRef} value={name} onChange={(e) => setName(e.target.value)}
+          id="key-name" ref={nameRef} value={name} onChange={(e) => { setName(e.target.value); setNeedName(false); }}
+          aria-invalid={needName || undefined}
           placeholder="e.g. claude-code" autoComplete="off" spellCheck={false}
-          className={cn(field, "min-w-0 flex-1 basis-[200px] sm:max-w-[320px]")}
+          className={cn(field, "min-w-0 flex-1 basis-[200px] sm:max-w-[320px]", needName && "border-destructive/60")}
         />
         <Select value={capability} onValueChange={(v) => setCapability(v as Capability)}>
           <SelectTrigger aria-label="Access" className={cn(field, "w-auto gap-2")}>
@@ -188,8 +193,10 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
             {EXPIRY_OPTIONS.map((o) => <SelectItem key={o.days} value={String(o.days)} className="text-[12.5px]">{o.label}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button type="submit" disabled={!name.trim() || creating || !api.ready}>Create key</Button>
-        <span className="ml-1 hidden text-[12px] text-muted-foreground md:inline">Copied to your clipboard when created.</span>
+        <Button type="submit" disabled={creating || !api.ready}>Create key</Button>
+        {needName
+          ? <span className="ml-1 text-[12px] text-destructive">Name the key first, e.g. claude-code.</span>
+          : <span className="ml-1 hidden text-[12px] text-muted-foreground md:inline">Copied to your clipboard when created.</span>}
         {unshown && <SecretOnce secret={unshown} onDone={() => setUnshown(null)} className="mt-2 w-full" />}
       </form>
 
