@@ -121,3 +121,22 @@ export function jobDelivers(p: JobProposal, destinations: Delivery[] = []): Card
 
 /** "Asks you before sending": the job has an approval step. */
 export const asksFirst = (p: JobProposal) => p.brief?.asks_first ?? (p.steps ?? []).some(s => s.type === 'approval');
+
+/**
+ * The card's one meta line (GET-889): when it starts · the tools it touches → where it delivers, and
+ * "asks first" when an approval step holds it. `targets` keep their full text (what leaves the
+ * workspace is never cut short) without the Slack layout; none = it stays in the app.
+ */
+export type CardMeta = { starts: string; tools: string[]; targets: CardTarget[]; asksFirst: boolean };
+export function jobMeta(p: JobProposal, destinations: Delivery[] = []): CardMeta {
+  const targets = jobDelivers(p, destinations).map(t => ({ ...t, text: t.text.replace(/ · [A-Z][a-z]+ layout$/, '') }));
+  return { starts: jobStarts(p), tools: jobUses(p, destinations), targets, asksFirst: asksFirst(p) };
+}
+
+const TOOL_LABEL: Record<string, string> = { hubspot: 'HubSpot', slack: 'Slack', gmail: 'Gmail', email: 'Email', webhook: 'Webhook', granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom' };
+/** The meta line as words (its accessible name): "Every day 08:00 · HubSpot, Slack → #ops-daily · asks first". */
+export function jobMetaText(m: CardMeta): string {
+  const tools = m.tools.map(t => TOOL_LABEL[t] ?? t.charAt(0).toUpperCase() + t.slice(1)).join(', ');
+  const to = m.targets.length ? m.targets.map(t => t.text + (t.writes ? ' (writes)' : '')).join(', ') : 'In the app';
+  return join(m.starts, tools ? `${tools} → ${to}` : to, m.asksFirst && 'asks first');
+}

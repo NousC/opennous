@@ -198,13 +198,14 @@ function previewHeader(): Record<string, string> {
 /**
  * Runs one builder turn: POST and read the event stream until it closes. A new session is
  * POST /api/revboxes/:id/builder (body `{ message, job_id? }`, first event `session`); a later turn
- * POSTs to /builder/:sessionId with `{ message }` or `{ answers }`. Abort with `signal` (Stop).
+ * POSTs to /builder/:sessionId with `{ message }` or `{ answers }`, or `{ retry: true }` to run a turn
+ * that got no answer again (GET-889: its message is already saved). Abort with `signal` (Stop).
  * A non-2xx answer (402 out of credits, 403, 404) arrives as one `error` event, so the caller has
  * one path for every failure.
  */
 export async function streamBuilderTurn(opts: {
   workspaceId: string; token: string; boxId: string; sessionId: string | null;
-  body: ({ message: string; job_id?: string | null } | { answers: BuilderAnswer[] }) & { hints?: BuilderHints };
+  body: ({ message: string; job_id?: string | null } | { answers: BuilderAnswer[] } | { retry: true }) & { hints?: BuilderHints };
   signal?: AbortSignal; onEvent: (event: BuilderEvent) => void;
 }): Promise<void> {
   const { workspaceId, token, boxId, sessionId, body, signal, onEvent } = opts;
@@ -254,14 +255,17 @@ export function approveBuilderProposal(workspaceId: string, token: string, boxId
   return revboxesRequest<ApproveResult>(workspaceId, token, `/${boxId}/builder/${sessionId}/approve`, { method: 'POST', body: JSON.stringify(name ? { name } : {}) });
 }
 
-/** One item of a job's earlier chat, as the server derives it from the transcript (Edit). */
+/** One item of a job's chat so far, as the server derives it from the transcript (GET-889: every turn). */
 export type BuilderHistoryText = { role: 'user' | 'assistant'; text: string };
 export type BuilderHistoryAsk = { kind: 'ask'; questions: BuilderQuestion[]; answers: { question: string; answer: string }[] };
 export type BuilderHistoryProposal = { kind: 'proposal'; proposal: JobProposal; approved: boolean };
-export type BuilderHistoryItem = BuilderHistoryText | BuilderHistoryAsk | BuilderHistoryProposal;
+/** The last turn got no answer (a provider error, a closed tab): its message is saved; Try again runs it. */
+export type BuilderHistoryFailed = { kind: 'failed'; text: string };
+export type BuilderHistoryItem = BuilderHistoryText | BuilderHistoryAsk | BuilderHistoryProposal | BuilderHistoryFailed;
 /**
- * Edit on a job: POST /api/revboxes/:id/builder with `{ job_id }` and no message opens a new session
- * on the job, seeded with the chat that made it (JSON, no stream). Continue it with streamBuilderTurn.
+ * Open a job's chat: POST /api/revboxes/:id/builder with `{ job_id }` and no message returns the
+ * person's own conversation on the job (the same session every time, GET-889) with every turn so far
+ * as `history` (JSON, no stream). Continue it with streamBuilderTurn.
  */
 export function openBuilderForJob(workspaceId: string, token: string, boxId: string, jobId: string) {
   return revboxesRequest<{ session_id: string; job_id: string; history: BuilderHistoryItem[]; proposal: JobProposal | null }>(workspaceId, token, `/${boxId}/builder`, { method: 'POST', body: JSON.stringify({ job_id: jobId }) });

@@ -496,14 +496,20 @@ export async function getBuilderSession(sb, { workspaceId, userId, sessionId, re
  * finishes after Approve must not reopen the session, so the write only lands while it is still
  * open (otherwise it is a no-op). `state` is accepted for older callers and ignored; state changes
  * go through setBuilderSessionState. Pass `userId` to bind the write to the session's creator.
+ *
+ * `expectUpdatedAt` (GET-889, two tabs on one chat): the session's updated_at when the turn read it.
+ * The write lands only if nobody saved it since, so a second tab's turn never silently replaces the
+ * first one's transcript. -> true when a row was written, false when nothing matched (closed,
+ * someone else's, or changed meanwhile).
  */
-export async function saveBuilderSession(sb, { workspaceId, sessionId, userId = null, messages, proposal }) {
+export async function saveBuilderSession(sb, { workspaceId, sessionId, userId = null, messages, proposal, expectUpdatedAt = null }) {
   const patch = { updated_at: now() };
   if (messages !== undefined) { if (!Array.isArray(messages)) fail(400, 'messages must be a list.'); patch.messages = messages; }
   if (proposal !== undefined) { if (proposal !== null && !isObj(proposal)) fail(400, 'proposal must be an object.'); patch.proposal = proposal; }
   let q = sb.from('revbox_builder_sessions').update(patch).eq('workspace_id', workspaceId).eq('id', sessionId).eq('state', 'open');
   if (userId) q = q.eq('user_id', userId);
-  await rows(q);
+  if (expectUpdatedAt) q = q.eq('updated_at', expectUpdatedAt);
+  return (await rows(q.select('id'))).length > 0;
 }
 
 /** The one explicit way to change a session's state (open, approved, abandoned). The session's creator only. */
@@ -747,12 +753,18 @@ export function seedTranscriptFromApproved(messages, approved, note = APPROVED_N
   return out;
 }
 
+/** The tool results that are the user's own reply (an ask answered, words after a proposal), as the loop's closePending writes them. */
+const OWN_REPLY = ['The user answered:', 'The user did not pick an option and wrote instead:', 'The proposal was shown to the user.'];
+const ownReply = (t) => OWN_REPLY.some(x => t.startsWith(x));
+
 /**
  * A builder transcript safe to hand to another session (review 1). Tool results were read with the
  * visibility of the person who ran them (reference documents, HubSpot rows, account searches), so
  * EVERY tool_result body becomes RESULT_NOT_CARRIED (our own APPROVED_NOTE / NOT_RUN markers stay,
  * and is_error is kept so a refused proposal stays refused); thinking blocks are dropped.
- * `keepText` (the same person continues): their text and the assistant's text and tool calls stay.
+ * `keepText` (the same person continues): their text and the assistant's text and tool calls stay,
+ * and so do their answers to an ask (GET-889: the user's own words, so the chat shows them again
+ * after every approval; never a result a tool read).
  * Otherwise only the approved proposal is kept, as one answered-later propose_job call.
  * The result is valid Anthropic format: roles alternate, it starts with the user, and every tool_use
  * is answered in the next message (except a trailing one, which seedTranscriptFromApproved answers). Pure.
@@ -775,7 +787,7 @@ export function sanitizeBuilderTranscript(messages, { keepText = false, approved
       else if (m.role === 'assistant' && b.type === 'tool_use' && b.id) content.push({ type: 'tool_use', id: b.id, name: b.name, input: isObj(b.input) ? structuredClone(b.input) : {} });
       else if (m.role === 'user' && b.type === 'tool_result' && b.tool_use_id) {
         const t = resultText(b);
-        content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: t === APPROVED_NOTE || t === NOT_RUN || t.startsWith(CHAINED_PREFIX) ? t : RESULT_NOT_CARRIED, ...(b.is_error ? { is_error: true } : {}) });
+        content.push({ type: 'tool_result', tool_use_id: b.tool_use_id, content: t === APPROVED_NOTE || t === NOT_RUN || t.startsWith(CHAINED_PREFIX) || (!b.is_error && ownReply(t)) ? t : RESULT_NOT_CARRIED, ...(b.is_error ? { is_error: true } : {}) });
       }
     }
     if (!content.length) continue;
@@ -815,9 +827,22 @@ function parseAnswers(t) {
 }
 
 /**
+ * Whether the transcript ends on the user's turn with no reply (a turn that failed or was cut off):
+ * their words, or tool results a turn was still working on. Our own seed notes (APPROVED_NOTE,
+ * NOT_RUN, the chaining note) are not a turn. Pure.
+ */
+export function unanswered(messages) {
+  const last = Array.isArray(messages) ? messages.at(-1) : null;
+  if (last?.role !== 'user') return false;
+  return contentBlocks(last.content).some(b => (b.type === 'text' && str(b.text))
+    || (b.type === 'tool_result' && !(resultText(b).startsWith(APPROVED_PREFIX) || resultText(b) === NOT_RUN)));
+}
+
+/**
  * A builder transcript as the chat the UI shows again (Edit), pure: { role: 'user', text },
- * { role: 'assistant', text }, { kind: 'ask', questions, answers: [{ question, answer }] } and
- * { kind: 'proposal', proposal, approved }. Tool calls, tool results, thinking and the composer's hint
+ * { role: 'assistant', text }, { kind: 'ask', questions, answers: [{ question, answer }] },
+ * { kind: 'proposal', proposal, approved } and, last, { kind: 'failed', text } when the last turn got
+ * no answer (GET-889). Tool calls, tool results, thinking and the composer's hint
  * preamble are left out; a proposal that did not validate, or a call that never ran, is not shown.
  * `proposal` is the session's own (validated, with facts) and stands in for its last propose_job;
  * `approved` says whether the session approved it (an earlier one was when APPROVED_NOTE answered it).
@@ -861,6 +886,9 @@ export function builderSessionHistory(messages, { proposal = null, approved = fa
     }
   }
   const out = items.filter(i => !i.drop);
+  // GET-889: a turn that failed (provider error, the tab closed mid-turn) saved the user's message
+  // with no reply after it. Say so, so the person can try again; a seeded chat ends on our own notes.
+  if (unanswered(messages)) out.push({ kind: 'failed', text: 'This message did not get an answer. Try again.' });
   const lastShown = [...out].reverse().find(i => i.kind === 'proposal');
   // The session's own proposal is its latest that validated: the last one still shown.
   if (lastShown) {
@@ -879,41 +907,117 @@ export function withBrief(p) {
   return { ...p, brief: jobBrief(p, Array.isArray(p.facts) ? p.facts : proposalFacts(p)) };
 }
 
+/** Newest first: updated_at, then created_at. */
+const byNewest = (a, b) => String(b.updated_at ?? b.created_at ?? '').localeCompare(String(a.updated_at ?? a.created_at ?? ''))
+  || String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+/** Whether a session holds anything the person said (a seed alone does not). */
+function saidSomething(messages) {
+  return (Array.isArray(messages) ? messages : []).some(m => m?.role === 'user' && contentBlocks(m.content).some(b =>
+    (b.type === 'text' && ownWords(b.text)) || (b.type === 'tool_result' && ownReply(resultText(b)))));
+}
+/** Close every tool call the transcript left open with NOT_RUN (a closed chat carried into a new one). */
+function closeOpenCalls(messages) {
+  const out = structuredClone(Array.isArray(messages) ? messages : []);
+  const last = out.at(-1);
+  const uses = last?.role === 'assistant' && Array.isArray(last.content) ? last.content.filter(b => b?.type === 'tool_use') : [];
+  if (uses.length) out.push({ role: 'user', content: uses.map(u => ({ type: 'tool_result', tool_use_id: u.id, content: NOT_RUN })) });
+  return out;
+}
 /**
- * Edit on a job: a NEW open session on it for `userId` (the editor; the session-creator rule holds),
- * seeded with the job's last approved chat (its messages, the approved proposal), plus that chat as
- * `history` for the UI. A job with no chat behind it (made before this, or elsewhere) opens on its
- * current setup as an approved card (GET-873).
- * Box edit rights. -> { session, history, source_session_id }
+ * A person's chat brought up to a job someone else approved since (GET-889): the job as it is now
+ * becomes an approved propose_job at the end, introduced in one line, so the model and the card both
+ * start from the live job. Valid Anthropic format. Pure.
+ */
+export function withNewerSetup(messages, approved, who = 'someone else') {
+  const out = closeOpenCalls(messages);
+  const intro = { type: 'text', text: `${HINT_HEADER}\nThe job was changed since by ${who}; its current setup follows.` };
+  const last = out.at(-1);
+  if (last?.role === 'user') last.content = [...contentBlocks(last.content), intro];
+  else out.push({ role: 'user', content: [intro] });
+  const { facts: _f, brief: _b, ...input } = isObj(approved) ? approved : {};
+  out.push({ role: 'assistant', content: [{ type: 'text', text: `${who === 'someone else' ? 'Someone else' : who} changed this job since. This is how it runs now.` }, { type: 'tool_use', id: `toolu_newer_${out.length}`, name: 'propose_job', input: structuredClone(input) }] });
+  return seedTranscriptFromApproved(out, approved);
+}
+
+/**
+ * Open a job's chat (GET-889: the job's chat is ONE conversation per person, reopened, not a new one
+ * per click). -> { session, history, source_session_id }; no model call. Box edit rights.
+ *
+ * Per person, not shared: a transcript holds what its creator's tools read with THEIR visibility and
+ * their own words (review 1), and a session belongs to the person who started it (getBuilderSession,
+ * approve), so co-owners each get their own chat on the job; the job itself is the shared state.
+ *
+ *   - Your newest chat on the job that you said something in (or approved), else your newest seeded
+ *     one, is the chat. Still open: it IS the session, reused as it is, with its whole history (every
+ *     message, reply, ask and proposal, approved or not, and a failed last turn).
+ *   - Closed (you approved it): approving closes a session, so the chat goes on in a new one seeded
+ *     with it (your words kept, tool results not carried), and the history shows all of it.
+ *   - Someone else approved the job after your chat: the job as it is now is added at the end of
+ *     yours (withNewerSetup), so you continue from the live job.
+ *   - No chat of yours: the job's newest approved chat seeds a new one (another person's: the approved
+ *     setup only, review 1); a job no chat made (set up elsewhere) opens on its current setup as an
+ *     approved card (GET-873). That seeded session is then reused on the next open.
+ * An empty open session of yours on the job is filled rather than another one created.
  */
 export async function openBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId }) {
-  const { job, session: source } = await latestJobSession(sb, { workspaceId, revboxId, userId, jobId, approvedOnly: true });
-  const session = await createBuilderSession(sb, { workspaceId, revboxId, userId, jobId });
-  if (!source) {
-    // No chat made this job (GET-873): the chat opens on its current setup, as an approved card, so
-    // the person can ask for a change and approve to update the same routine.
-    // The chat shows the job's brief only (GET-884): no line about where it was set up. The model
-    // gets the whole current setup (every step's config: the AI step's prompt, the Slack layout)
-    // as its own approved propose_job call, so it can change any of it.
-    const current = proposalFromRoutine(job, await routineProposalCatalog(sb, workspaceId));
-    const shown = withBrief({ ...current, facts: proposalFacts(current, routineFactLookups(current.steps)) });
-    const seeded = seedTranscriptFromApproved([
-      { role: 'user', content: [{ type: 'text', text: `${HINT_HEADER}\nThe user opened this job to change it. It was set up outside the builder; its current setup follows.` }] },
-      { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_current_job', name: 'propose_job', input: current }] },
-    ], shown);
-    await saveBuilderSession(sb, { workspaceId, sessionId: session.id, userId, messages: seeded, proposal: shown });
-    return { session: { ...session, messages: seeded, proposal: shown }, history: [{ kind: 'proposal', proposal: shown, approved: true }], source_session_id: null };
+  await loadRevbox(sb, workspaceId, userId, revboxId, true);
+  const job = jobId ? await boxRoutine(sb, workspaceId, revboxId, jobId) : null;
+  if (!job) fail(404, 'Job not found.');
+  const all = (await rows(sb.from('revbox_builder_sessions').select('*').eq('workspace_id', workspaceId).eq('revbox_id', revboxId).eq('job_id', jobId)
+    .order('updated_at', { ascending: false }).limit(50))).sort(byNewest);
+  const mine = all.filter(r => r.user_id === userId);
+  const hasMessages = (r) => Array.isArray(r.messages) && r.messages.length > 0;
+  const base = mine.find(r => hasMessages(r) && (r.state === 'approved' || saidSomething(r.messages))) ?? mine.find(hasMessages) ?? null;
+  const latestApproved = all.find(r => r.state === 'approved' && isObj(r.proposal)) ?? null;
+  const newer = base && latestApproved && latestApproved.user_id !== userId && byNewest(latestApproved, base) < 0 ? withBrief(latestApproved.proposal) : null;
+  const historyOf = (messages, proposal, approved = false) => builderSessionHistory(messages, { proposal, approved });
+
+  // Your open chat: reused as it is.
+  if (base?.state === 'open') {
+    if (!newer) return { session: base, history: historyOf(base.messages, base.proposal), source_session_id: base.id };
+    const messages = withNewerSetup(base.messages, newer);
+    await saveBuilderSession(sb, { workspaceId, sessionId: base.id, userId, messages, proposal: newer });
+    return { session: { ...base, messages, proposal: newer }, history: historyOf(messages, newer), source_session_id: base.id };
   }
-  const approved = isObj(source.proposal) ? withBrief(source.proposal) : null;
-  // Review 1: the seed is always sanitized; another person's words are not carried over at all.
-  const same = source.user_id === userId;
-  const messages = seedTranscriptFromApproved(sanitizeBuilderTranscript(source.messages, { keepText: same, approved }), approved);
-  await saveBuilderSession(sb, { workspaceId, sessionId: session.id, userId, messages, proposal: approved });
-  const jobName = str(job?.name) || str(approved?.name) || 'this job';
-  const history = same
-    ? builderSessionHistory(seedTranscriptFromApproved(source.messages, approved), { proposal: approved, approved: true })
-    : [{ role: 'assistant', text: `Edited from ${jobName}'s approved setup.` }, ...(approved ? [{ kind: 'proposal', proposal: approved, approved: true }] : [])];
-  return { session: { ...session, messages, proposal: approved }, history, source_session_id: source.id };
+
+  // Anything else continues in an open session of yours: an empty one already there, or a new one.
+  const empty = mine.find(r => r.state === 'open' && !hasMessages(r));
+  const target = empty ?? await createBuilderSession(sb, { workspaceId, revboxId, userId, jobId });
+  const save = async (messages, proposal, history, source = null) => {
+    await saveBuilderSession(sb, { workspaceId, sessionId: target.id, userId, messages, proposal });
+    return { session: { ...target, messages, proposal }, history, source_session_id: source };
+  };
+
+  // Your closed chat (approved): carried into the new session, your words kept.
+  if (base) {
+    const approved = base.state === 'approved' && isObj(base.proposal) ? withBrief(base.proposal) : null;
+    let messages = approved ? seedTranscriptFromApproved(sanitizeBuilderTranscript(base.messages, { keepText: true, approved }), approved) : closeOpenCalls(sanitizeBuilderTranscript(base.messages, { keepText: true }));
+    let shown = approved ? seedTranscriptFromApproved(base.messages, approved) : base.messages;
+    let proposal = approved ?? (isObj(base.proposal) ? base.proposal : null);
+    if (newer) { messages = withNewerSetup(messages, newer); shown = withNewerSetup(shown, newer); proposal = newer; }
+    return save(messages, proposal, historyOf(shown, proposal, !!approved && !newer), base.id);
+  }
+
+  // No chat of yours, but the job has an approved one: another person's (review 1: their setup only).
+  if (latestApproved) {
+    const approved = withBrief(latestApproved.proposal);
+    const messages = seedTranscriptFromApproved(sanitizeBuilderTranscript(latestApproved.messages, { keepText: false, approved }), approved);
+    const jobName = str(job?.name) || str(approved?.name) || 'this job';
+    return save(messages, approved, [{ role: 'assistant', text: `Edited from ${jobName}'s approved setup.` }, { kind: 'proposal', proposal: approved, approved: true }], latestApproved.id);
+  }
+
+  // No chat made this job (GET-873): the chat opens on its current setup, as an approved card, so
+  // the person can ask for a change and approve to update the same routine.
+  // The chat shows the job's brief only (GET-884): no line about where it was set up. The model
+  // gets the whole current setup (every step's config: the AI step's prompt, the Slack layout)
+  // as its own approved propose_job call, so it can change any of it.
+  const current = proposalFromRoutine(job, await routineProposalCatalog(sb, workspaceId));
+  const shown = withBrief({ ...current, facts: proposalFacts(current, routineFactLookups(current.steps)) });
+  const seeded = seedTranscriptFromApproved([
+    { role: 'user', content: [{ type: 'text', text: `${HINT_HEADER}\nThe user opened this job to change it. It was set up outside the builder; its current setup follows.` }] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_current_job', name: 'propose_job', input: current }] },
+  ], shown);
+  return save(seeded, shown, [{ kind: 'proposal', proposal: shown, approved: true }]);
 }
 
 /** The box's workflow-engine jobs, oldest first (view access). */

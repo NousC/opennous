@@ -29,7 +29,8 @@ read, ask the time, and warn if the HubSpot connection cannot read custom object
 
 ## Flow
 
-1. User opens **New job** (or **Edit** on a job, which reopens the chat that made it; see "Edit"). A builder session starts.
+1. User opens **New job**, or clicks a job's row, which opens that job's chat: their own conversation on
+   the job, the same session every time (see "A job's chat"). A builder session starts or continues.
 2. Each user message runs one builder turn: a tool loop that streams events (below).
 3. A turn ends with exactly one of: plain text, an `ask` (questions), or a `proposal`.
 4. `ask`: the UI shows question cards; the answers go back as the next user message.
@@ -42,11 +43,59 @@ read, ask the time, and warn if the HubSpot connection cannot read custom object
    owns the job from now on: its drafts would fail. The save is never refused for it. There is no separate "switch on" step and no
    "Run now"; the job row keeps a small On/Off switch for pausing (`PUT /api/revboxes/:id/jobs/:jobId/enabled`).
 
-## Edit: the job's own chat (GET-868 polish)
+## A job's chat (GET-868 polish, GET-889: one conversation, remembered)
+
+Clicking a job's row in the Jobs list (the row's main area is a button, so Enter/Space open it too;
+there is no Edit button; Test and the On/Off switch never open it) opens the job's chat.
+
+**One conversation per person per job (GET-889).** Before GET-889 every open created a NEW session
+seeded from the job's last *approved* chat, so anything said after it (a question, a change asked for
+but not approved) vanished on the next open, and a job set up outside the builder (no approved chat)
+got a fresh 3-message seed on every click. Now `openBuilderSessionForJob` picks the person's own chat:
+
+- their newest session on the job (same workspace, box, `job_id`, `user_id`) in which they said
+  something or approved, else their newest seeded one. **Open: reused as it is** (no write, no new
+  row), `history` = every turn of it.
+- **Approved** (approving closes a session): the chat goes on in a new session seeded with it (their
+  words, the assistant's text, tool calls and their ask answers kept; tool-result bodies not carried),
+  `history` shows all of it, earlier approvals as approved cards. That session is then reused.
+- **Someone else approved the job after their chat**: the job as it is now is appended to their chat
+  (`withNewerSetup`: one composer-context line, an assistant line "Someone else changed this job since.
+  This is how it runs now." and an approved `propose_job`), once, so the card and the model start
+  from the live job. (Changes made outside the builder reach the model through the system prompt,
+  which always carries the job's current trigger and steps.)
+- **No chat of theirs**: as before, seeded from the job's newest approved chat (another person's: the
+  approved setup only, review 1) or, with none, from the job's current setup (GET-873). An empty open
+  session of theirs on the job is filled instead of another being created.
+
+*Per person, not shared:* a transcript holds what its creator's tools read with THEIR visibility and
+their own words (review 1), and a session belongs to the person who started it (`getBuilderSession`,
+`saveBuilderSession` and approve check `user_id`). Co-owners and editors each get their own chat on the
+job; the job (the routine) is the shared state, and the newer-approval rule above keeps each chat on it.
+
+**Failed turns are kept.** A turn writes the user's part of the transcript first (loop
+`withUserTurn`), before the credit gate and the model call, and saves at the end whatever happened
+(provider error, Stop/closed tab, gate refusal; a setup failure saves the message too). A transcript
+that ends on the user's side with no reply is a failed turn: `history` ends with `{ kind: "failed",
+text: "This message did not get an answer. Try again." }` and the UI shows **Try again**, which POSTs
+`{ retry: true }` to `/builder/:sessionId`: the saved turn runs again, nothing is added (409/
+`nothing_to_retry` when the last turn was answered). Sending the very same words again after a failed
+turn does not add them twice.
+
+**Two tabs.** A turn saves only over the transcript it read (`saveBuilderSession({ expectUpdatedAt })`,
+the session's `updated_at` at read time). If the other tab saved first, the save is refused and the turn
+ends with `error { code: "session_conflict", message: "This chat changed in another tab. Open the job
+again to see the latest." }` instead of silently replacing the other turn. A save after approval stays a
+silent no-op. Two first opens racing on a job with no session can create two sessions; the newer wins
+from then on.
+
+Sessions made before GET-889 (one per click) are not merged: the newest one the person said something
+in is the chat from now on.
 
 `POST /api/revboxes/:id/builder` with `{ job_id }` and **no message** (JSON, not SSE; no model call)
--> `201 { session_id, job_id, history, proposal }`. It starts a NEW open session on the job for the
-person editing (only a session's creator continues it), seeded from the job's last approved session
+-> `201 { session_id, job_id, history, proposal }`. When the person has no chat to reuse (above), it
+starts a new open session on the job for them (only a session's creator continues it), seeded from the
+job's last approved session
 (`latestBuilderSessionForJob`, box edit rights). The transcript is always sanitized
 (`sanitizeBuilderTranscript`, pre-ship review): tool results were read with their runner's visibility,
 so every tool_result body becomes "Result not carried over; call the tool again if needed." and
@@ -70,7 +119,10 @@ something…". `/v2` mirrors it:
 `POST /v2/revboxes/:id/jobs/builder` with `{ job_id }` and no message.
 
 `history` is derived server-side (`builderSessionHistory`), tool noise stripped (tool calls and
-results, thinking, the composer's hint preamble, proposals that failed validation):
+results, thinking, the composer's hint preamble, proposals that failed validation), with a trailing
+`{ kind: "failed", text }` for a turn that got no answer. In the UI, a proposal at the end that was not
+approved is live (Approve / Make changes), an ask at the end with no answer is answerable, and the job's
+On/Off goes on the last approved card:
 
 ```
 { "role": "user", "text": "…" }                    the user's words (free text instead of answers too)
@@ -176,9 +228,12 @@ feature=… status=… type=… <provider message, key-like strings removed>` pl
 { "type": "trigger", "signal": "meeting.done:granola", "signals": ["meeting.done:granola"], "label": "Meeting done · Granola" }   the agent picked or changed what starts the job
 { "type": "integrations", "slugs": ["granola", "gmail", "slack"] }   the tools the job will use, settled
 { "type": "credits", "credits": 3 }                           credits this turn used
-{ "type": "error", "message": "…", "code": "insufficient_credits"|"…" }
+{ "type": "error", "message": "…", "code": "insufficient_credits"|"session_conflict"|"nothing_to_retry"|"…" }
 { "type": "done" }
 ```
+
+A turn's body is `{ message }`, `{ answers }` or (GET-889) `{ retry: true }`, which runs the saved
+turn that got no answer again; a new session cannot start with a retry (400 `message_required`).
 
 `trigger`: emitted whenever the agent settles or changes the job's trigger (the user typed "after every
 meeting", or answered a question about timing), and again if a later turn changes it. `signal` is a
@@ -298,16 +353,15 @@ references point at earlier steps; `display` covers every step.
 ## The job card (GET-884)
 
 A job reads as an agent at work, not a workflow: no step tiles. Every place a job card shows (the
-builder's proposal, an approved card, the Edit view) is `WorkflowCard`:
+builder's proposal, an approved card, a job's chat) is `WorkflowCard`. Since GET-889 it is three lines,
+a thin border and little padding (light and dark):
 
 ```
-Credit Check daily report                                   ● On   ~2 credits / run
+Credit Check daily report                                                       ● On
 Every morning I read yesterday's Company Daily Stats in HubSpot, write the credit check report and post it to #ops-daily.
-Starts    Every day 08:00 (Toronto)
-Uses      [HubSpot] HubSpot  [Slack] Slack
-Delivers  #ops-daily · Report layout
-          Asks you before sending                (only with an approval step)
-[ Ask the agent to change something…  ↑ ]        (the composer, in Edit)
+Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first        (asks first: only with an approval step)
+                                       ~2 credits / run   [Make changes] [Approve]   (a live proposal only)
+[ Ask the agent to change something…  ↑ ]        (the composer, in a job's chat)
 ```
 
 - **The sentence is the server's**, never the model's: `proposal.brief = { text, starts, asks_first }`,
@@ -331,12 +385,16 @@ Delivers  #ops-daily · Report layout
   <person> in Slack"; Gmail draft "draft it in Gmail to <recipients>"; email "email it to …"; webhook
   "send it to <host>"; "add a row to <table>"; "read last month's rows of <table>"; HubSpot note/task/update;
   box delivery "send it to this box's destinations". Approval steps set `asks_first` (the card's note).
-- Rows (frontend `lib/jobCard.ts`, from steps, facts and the box's destinations): **Starts**
-  `brief.starts` ("Every day 08:00 (Toronto)", "Deal won or lost", "Meeting done · Granola"); **Uses** the
-  logos of the recorder, the steps' tools and the box's destination kinds; **Delivers** each target:
-  "#channel · Report layout" (a channel the server did not find shows its id, flagged), "Gmail draft · to …
-  · from …", "Email · to …", "Webhook to <host>", "A row in <table>", HubSpot writes (tagged "writes"),
-  the box's destinations; "In the app" when it sends nowhere.
+- The meta line (frontend `lib/jobCard.ts` `jobMeta` / `jobMetaText`, from steps, facts and the box's
+  destinations): when it starts, `brief.starts` ("Every day 08:00 (Toronto)", "Deal won or lost",
+  "Meeting done · Granola"); the logos of the recorder, the steps' tools and the box's destination kinds;
+  "→" each target without its Slack layout: "#channel" (a channel the server did not find shows its id,
+  flagged), "Gmail draft · to … · from …", "Email · to …", "Webhook to <host>", "A row in <table>",
+  HubSpot writes ("(writes)"), the box's destinations; "In the app" when it sends nowhere; "· asks
+  first" with an approval step. What leaves the workspace is never cut short. `jobMetaText` is its
+  screen-reader text ("Every day 08:00 (Toronto) · HubSpot, Slack → #ops-daily"). The approved state is
+  a small "● On"/"● Off" dot (a job's chat) or a quiet "Approved"; the cost per run sits beside a live
+  proposal's actions.
 - Run logs (Results) keep step detail; the agent step's name is "Agent · Write-up" (core `stepName`).
 
 ## Engine integration (GET-868 part 2)
@@ -354,8 +412,8 @@ Delivers  #ops-daily · Report layout
   the switch computes it the same way. The approved session is linked to the job (`job_id`).
   Versioning stays the automation versioning.
 - RevBox **Jobs** list = the box's `agent_routines` (plus legacy `revbox_jobs` until removed). Each
-  row: an On/Off switch (pause) and **Edit**. The run endpoint still exists for the API; the UI no
-  longer offers Run now.
+  row: an On/Off switch (pause) and a hover Test; clicking the row opens the job's chat (GET-889; no
+  Edit button). The run endpoint still exists for the API; the UI no longer offers Run now.
 - Run time, for a routine with `revbox_id`:
   - every `agent` step gets the box context (objective, blocks, context docs' text) prepended to its
     instructions, so context added later changes behaviour;
@@ -652,11 +710,11 @@ the card reads "#channel · Report layout". A box destination can carry its own 
 ```js
 createBuilderSession(sb, { workspaceId, revboxId, userId, jobId = null })      // -> session row; checks edit rights via loadRevbox
 getBuilderSession(sb, { workspaceId, userId, sessionId })                      // -> session row or null; same access check
-saveBuilderSession(sb, { workspaceId, sessionId, messages, proposal, state }) // -> void
+saveBuilderSession(sb, { workspaceId, sessionId, userId?, messages, proposal, expectUpdatedAt? }) // -> true when written; false when closed, not theirs, or changed since it was read (GET-889)
 approveBuilderProposal(sb, { workspaceId, revboxId, userId, sessionId, proposal, mailboxOwners?, enableCheck? }) // -> { routine, facts, enabled, reason?, warnings?, datasets?, next_session_id?, next_jobs? } ; validates, creates the proposed tables, creates or updates agent_routines, a new job on (an Edit keeps on/paused) unless a check fails, marks the session approved and links it to the job; with next_jobs, opens the follow-on session
 latestBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId, approvedOnly? }) // -> the job's newest session (messages sanitized) or null; box edit rights (any editor)
 sanitizeBuilderTranscript(messages, { keepText, approved })                    // pure; no tool_result bodies, no thinking; keepText false = the approved proposal only
-openBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId })          // -> { session, history, source_session_id } ; Edit
+openBuilderSessionForJob(sb, { workspaceId, revboxId, userId, jobId })          // -> { session, history, source_session_id } ; a job's chat: the person's open session reused, else seeded (GET-889)
 builderSessionHistory(messages, { proposal, approved })                        // pure; transcript -> history items
 listRevboxRoutines(sb, { workspaceId, revboxId, userId })                      // -> routines of the box (access-checked)
 validateBuilderProposal(proposal, { slackChannelIds, mailboxIds, datasets? })   // pure; -> { ok, errors[], facts, steps?, trigger?, datasets? } ; used by both

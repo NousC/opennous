@@ -74,3 +74,17 @@ test("Delivers: the box's destinations with the layout the engine picks; none = 
   assert.deepEqual(jobDelivers(p, []).map(t => t.text), ["This box’s destinations (none yet)"]);
   assert.deepEqual(jobDelivers(job({ steps: [{ id: "a", type: "agent" }] })), []);
 });
+
+test("Meta line (GET-889): starts · tools → targets without the layout, 'In the app' when none, '· asks first' last", async () => {
+  const { jobMeta, jobMetaText } = await import("../src/lib/jobCard.ts");
+  const m = jobMeta(job());
+  assert.deepEqual([m.starts, m.tools, m.targets.map(t => t.text), m.asksFirst], ["Every day 08:00 (Toronto)", ["hubspot", "slack"], ["#ops-daily"], false]);
+  assert.equal(jobMetaText(m), "Every day 08:00 (Toronto) · HubSpot, Slack → #ops-daily");
+  const quiet = job({ steps: [{ id: "summary", type: "agent", config: { mode: "write", prompt: "x" } }], facts: [] });
+  assert.equal(jobMetaText(jobMeta(quiet)), "Every day 08:00 (Toronto) · In the app");
+  const held = job({ steps: [...job().steps, { id: "ok", type: "approval", config: {} }] });
+  assert.equal(jobMetaText(jobMeta(held)), "Every day 08:00 (Toronto) · HubSpot, Slack → #ops-daily · asks first");
+  // Email recipients stay whole; a HubSpot write says it writes.
+  const sends = job({ steps: [{ id: "mail", type: "email", config: { to: "ops@harborline.example, cfo@harborline.example" } }, { id: "note", type: "hubspot", config: { action: "note" } }], facts: [] });
+  assert.equal(jobMetaText(jobMeta(sends)), "Every day 08:00 (Toronto) · Email, HubSpot → Email · to ops@harborline.example, cfo@harborline.example, A note in HubSpot (writes)");
+});

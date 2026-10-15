@@ -81,13 +81,13 @@ export function makeRevboxesV2Router({ getSb = getSupabaseClient, builder = () =
       return res.status(201).json({ session_id: out.session.id, job_id: out.session.job_id ?? jobId, history: out.history ?? [], proposal: out.session.proposal ?? null });
     }
     const input = b.turnInput(req.body);
-    if (!sessionId && input.answers) return res.status(400).json({ error: 'message_required', message: 'A new session starts with a message.' });
+    if (!sessionId && (input.answers || input.retry)) return res.status(400).json({ error: 'message_required', message: 'A new session starts with a message.' });
     const opened = await b.openSession({ ...base, sessionId, jobId });
     const events = [];
     for await (const e of b.runTurn({ ...base, ...opened, ...input })) events.push(e);
     const out = b.collectTurn(events);
     out.session_id ??= opened.session.id;
-    const status = !out.error ? 200 : out.error.code === 'insufficient_credits' ? 402 : 502;
+    const status = !out.error ? 200 : out.error.code === 'insufficient_credits' ? 402 : ['session_conflict', 'nothing_to_retry'].includes(out.error.code) ? 409 : 502;
     res.status(status).json(out);
   }));
 

@@ -250,7 +250,8 @@ test('history: the chat as the UI shows it, without tool noise', () => {
   const free = transcript().slice(0, 5);
   free[4] = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'a1', content: 'The user did not pick an option and wrote instead:\n\nJust do 9am' }] };
   const fh = builderSessionHistory(free);
-  assert.deepEqual(fh.slice(-2).map(i => [i.kind ?? i.role, i.text ?? i.answers.length]), [['ask', 0], ['user', 'Just do 9am']]);
+  // Nothing answered it yet (GET-889): the chat says the turn got no answer.
+  assert.deepEqual(fh.slice(-3).map(i => [i.kind ?? i.role, i.text ?? i.answers.length]), [['ask', 0], ['user', 'Just do 9am'], ['failed', 'This message did not get an answer. Try again.']]);
 });
 
 test('Edit: the approved chat is linked to its job and reopened as a new session for the editor', async () => {
@@ -743,9 +744,11 @@ test('review 1: Edit by the same person keeps their words, never a tool result b
   const msgs = sb.tables.revbox_builder_sessions.find(r => r.id === opened.session.id).messages;
   assertValidTranscript(msgs);
   const raw = JSON.stringify(msgs);
-  for (const leak of LEAKS) assert.ok(!raw.includes(leak), `transcript leaks ${leak}`);
+  // Their own answers to an ask are their words and stay (GET-889); no tool result body does.
+  for (const leak of LEAKS.filter(l => l !== '-> 08:00')) assert.ok(!raw.includes(leak), `transcript leaks ${leak}`);
+  assert.ok(raw.includes('-> 08:00'));
   assert.ok(!msgs.some(m => Array.isArray(m.content) && m.content.some(b => b.type === 'thinking' || b.type === 'redacted_thinking')));
-  assert.ok(resultBodies(msgs).every(b => b === RESULT_NOT_CARRIED || b === APPROVED_NOTE), resultBodies(msgs).join(' | '));
+  assert.ok(resultBodies(msgs).every(b => b === RESULT_NOT_CARRIED || b === APPROVED_NOTE || b.startsWith('The user answered:')), resultBodies(msgs).join(' | '));
   assert.ok(raw.includes('Creator-only remark.') && raw.includes('and keep it short') && raw.includes('Credit Check report every morning'));
   // The history shows their own chat.
   assert.ok(opened.history.some(i => i.role === 'assistant' && i.text.includes('Creator-only remark.')));
@@ -753,7 +756,7 @@ test('review 1: Edit by the same person keeps their words, never a tool result b
   assert.ok(!JSON.stringify(opened.history).includes('SECRET'));
   // latestBuilderSessionForJob hands out the same sanitized transcript.
   const latest = await latestBuilderSessionForJob(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner', jobId: routine.id });
-  for (const leak of LEAKS) assert.ok(!JSON.stringify(latest.messages).includes(leak), `latest leaks ${leak}`);
+  for (const leak of LEAKS.filter(l => l !== '-> 08:00')) assert.ok(!JSON.stringify(latest.messages).includes(leak), `latest leaks ${leak}`);
 });
 
 const withEditor = () => database({ revbox_members: [{ workspace_id: 'ws', revbox_id: 'box', user_id: 'editor', role: 'editor' }],

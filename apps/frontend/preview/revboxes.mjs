@@ -553,9 +553,13 @@ export async function handleRevboxPreview(req, res, url, json) {
 //   answers next_session_id, and that session proposes the monthly report, then the quarterly one.
 // Every script emits `integrations` (the tools it settled on) so the composer attaches them. Any
 // later message revises the proposal. Each session keeps `log`, the chat as the server's history
-// items, so Edit (POST /:id/builder { job_id }, no message) can reopen it: a new session seeded from
-// the job's last approved one, answered as JSON { session_id, job_id, history, proposal }. Sessions
-// persist with the state file, so Edit still works after the fake API restarts.
+// items. Clicking a job (POST /:id/builder { job_id }, no message) opens the person's own chat on it
+// (GET-889), as core openBuilderSessionForJob does: their open session on the job is reused as it
+// is, every turn in `history`; with none open, a new one is seeded from the job's last approved chat
+// (or its current setup), and THAT one is reused next time. Answered as JSON { session_id, job_id,
+// history, proposal }. A message with "fail" in it (e.g. "simulate a failure") plays a provider
+// error: the message is kept, reopening shows it as failed, and Try again ({ retry: true }) answers
+// it. Sessions persist with the state file, so a job's chat survives the fake API restarting.
 state.builder_sessions ??= {};
 const sessions = { get: id => state.builder_sessions[id], set: (id, v) => { state.builder_sessions[id] = v; } };
 const pause = ms => new Promise(r => setTimeout(r, ms));
@@ -824,6 +828,11 @@ function integrationsFor(s) {
   if (s.script === 'other') { const o = String(s.answers?.output ?? ''); return /slack/i.test(o) ? ['slack'] : /gmail|email/i.test(o) ? ['gmail'] : []; }
   return ['hubspot', 'slack', ...(s.emailVp ? ['gmail'] : [])];
 }
+/** A session's chat as the server's history items: proposals with their brief, a failed last turn marked. */
+function historyOf(s) {
+  const items = (s.log ?? []).map(i => (i.kind === 'proposal' ? { ...i, proposal: withBrief(i.proposal) } : i));
+  return s.failed ? [...items, { kind: 'failed', text: 'This message did not get an answer. Try again.' }] : items;
+}
 async function builderPreview(req, res, json, box, parts, payload, uid) {
   const sid = parts[2];
   if (sid && parts[3] === 'approve') {
@@ -859,10 +868,13 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     }
     await persist(); json(res, { routine, enabled: !reason, ...(reason ? { reason } : {}), ...(tables.length ? { datasets: tables } : {}), ...chain }); return;
   }
-  // Edit: a new session on the job, seeded from its last approved chat.
+  // Open a job's chat: the person's open session on it, reused; else a new one seeded from its last approved chat.
   if (!sid && payload.job_id && payload.message === undefined && payload.answers === undefined) {
     const job = state.routines.find(r => r.revbox_id === box.id && r.id === payload.job_id);
     if (!job) { json(res, { error: 'Job not found.' }, 404); return; }
+    const mine = Object.values(state.builder_sessions).filter(x => x.box === box.id && x.job_id === job.id && x.user === uid && x.state === 'open' && x.log?.length)
+      .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))[0];
+    if (mine) { json(res, { session_id: mine.id, job_id: job.id, history: historyOf(mine), proposal: mine.proposal ? withBrief(mine.proposal) : null }, 201); return; }
     const source = Object.values(state.builder_sessions).filter(x => x.box === box.id && x.job_id === job.id && x.state === 'approved')
       .sort((a, b) => String(b.approved_at ?? '').localeCompare(String(a.approved_at ?? '')))[0];
     const fresh = { id: randomUUID(), box: box.id, job_id: job.id, user: uid, state: 'open', stage: source ? 2 : 0, script: source?.script, request: source?.request, channel: source?.channel, format: source?.format, questions: source?.questions, answers: source?.answers, emailVp: source?.emailVp, signal: source?.signal, changes: source?.changes, name: source?.proposal?.name, proposal: source?.proposal ?? null, log: structuredClone(source?.log ?? []) };
@@ -874,13 +886,18 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       fresh.log = [{ kind: 'proposal', proposal: fresh.proposal, approved: true }];
       fresh.stage = 2; fresh.script = job.steps?.some(x => x.type === 'dataset_append') ? 'winloss' : 'report';
     }
+    fresh.updated_at = stamp();
     sessions.set(fresh.id, fresh); await persist();
-    const history = fresh.log.map(i => (i.kind === 'proposal' ? { ...i, proposal: withBrief(i.proposal) } : i));
-    json(res, { session_id: fresh.id, job_id: job.id, history, proposal: withBrief(fresh.proposal) }, 201); return;
+    json(res, { session_id: fresh.id, job_id: job.id, history: historyOf(fresh), proposal: withBrief(fresh.proposal) }, 201); return;
   }
   const s = sid ? sessions.get(sid) : { id: randomUUID(), box: box.id, job_id: payload.job_id ?? null, user: uid, state: 'open', stage: 0, log: [] };
   if (!s || s.box !== box.id) { json(res, { error: 'Builder session not found.' }, 404); return; }
   if (s.state === 'approved') { json(res, { error: 'This builder session is closed. Start a new one.', code: 'session_closed' }, 409); return; }
+  if (payload.retry === true && !s.failed) { json(res, { error: 'There is nothing to try again: the last message was answered.', code: 'nothing_to_retry' }, 409); return; }
+  // Try again (GET-889): the message that got no answer runs again; it is already in the log.
+  const message = payload.retry === true ? s.failedText : payload.message;
+  const retrying = payload.retry === true;
+  s.failed = false;
   s.log ??= [];
   // Sessions from before the scripts were all the report script.
   s.script ??= s.stage > 0 ? 'report' : undefined;
@@ -889,7 +906,8 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     const ask = [...s.log].reverse().find(i => i.kind === 'ask');
     const asked = s.questions ?? REPORT_QUESTIONS;
     if (ask) ask.answers = payload.answers.map(a => ({ question: asked.find(q => q.id === a.id)?.question ?? a.id, answer: [...(a.selected ?? []), ...(a.other ? [`Other: ${a.other}`] : [])].join('; ') }));
-  } else if (payload.message) s.log.push({ role: 'user', text: payload.message });
+  } else if (message && !retrying) s.log.push({ role: 'user', text: message });
+  s.updated_at = stamp();
   if (!sid) sessions.set(s.id, s);
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
   let closed = false; req.on('close', () => { closed = true; });
@@ -900,11 +918,18 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
   const propose = async () => { s.proposal = proposalFor(s); s.log.push({ kind: 'proposal', proposal: s.proposal, approved: false }); await send({ type: 'proposal', proposal: s.proposal }, 300); s.stage = 2; };
   const settleIntegrations = async () => { const slugs = integrationsFor(s); if (slugs.length) await send({ type: 'integrations', slugs }, 120); };
   if (!sid) await send({ type: 'session', session_id: s.id });
+  // A provider failure, played: the message stays in the chat with no answer.
+  if (!retrying && /\bfail(ure)?\b/i.test(message ?? '')) {
+    await send({ type: 'status', text: 'Thinking…' }, 400);
+    s.failed = true; s.failedText = message; await persist();
+    await send({ type: 'error', code: 'model_busy', message: "The job builder's AI model is busy right now. Try again in a moment." }, 600);
+    await send({ type: 'done' }); res.end(); return;
+  }
   // What starts the job: the composer's pick wins; otherwise "meeting" in the words means a meeting
   // signal (Granola when named), anything else a schedule. Emitted as the real builder does.
   // hints.signals (GET-873; the preview plays the first), or an older composer's hints.signal.
   const hinted = payload.hints?.signals?.length ? payload.hints.signals[0] : payload.hints && 'signal' in payload.hints ? payload.hints.signal : null;
-  const words = payload.message ?? '';
+  const words = message ?? '';
   const meant = /\bmeetings?\b|\bcalls?\b/i.test(words) ? (/fireflies/i.test(words) ? 'meeting.done:fireflies' : /fathom/i.test(words) ? 'meeting.done:fathom' : 'meeting.done:granola') : null;
   const announceTrigger = async (key) => {
     s.signal = key;
@@ -1004,7 +1029,7 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       await propose();
     }
   } else {
-    const text = payload.message ?? '';
+    const text = message ?? '';
     await send({ type: 'status', text: 'Updating the job…' }, 300);
     const at = timeIn(text);
     if (at && s.script !== 'meeting' && s.script !== 'won') s.answers = { ...(s.answers ?? {}), time: `${at} Toronto` };

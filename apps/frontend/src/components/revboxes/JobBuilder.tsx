@@ -3,10 +3,13 @@
 // proposes a job (WorkflowCard). Approve creates the engine routine and switches it on (or says why
 // it could not), and hands it to the page, which closes the builder on the Jobs list.
 //
-// Edit on a job reopens the chat that made it: the server starts a new session on the job seeded
-// with that chat (openBuilderForJob) and returns it as `history`, shown above the input (the
-// approved proposal dimmed, with its Approved badge), so "make the report better" continues there. The contract is
-// docs/revboxes/JOB_BUILDER.md; the stream is lib/revboxes.ts streamBuilderTurn.
+// Clicking a job opens its chat (GET-889): the person's own conversation on the job, the same session
+// every time (openBuilderForJob), with every turn so far as `history` above the input: their messages,
+// the agent's replies, asks and answers, proposals (approved ones as cards with the job's On/Off). A
+// proposal still waiting is live (Approve / Make changes), an ask still open is answerable, and a turn
+// that got no answer (provider error, closed tab) shows as failed with Try again, which runs it again
+// (`{ retry: true }`; its message is already saved). The contract is docs/revboxes/JOB_BUILDER.md;
+// the stream is lib/revboxes.ts streamBuilderTurn.
 //
 // The composer (GET-868 redesign): one wide, low input. Bottom-left, two pickers: Integrations
 // (the workspace's connected tools; a pick is attached above the input as its logo, so the agent
@@ -30,14 +33,14 @@ import { Logo, WorkflowCard } from '@/components/revboxes/WorkflowCard';
 import {
   approveBuilderProposal, openBuilderForJob, streamBuilderTurn, revboxesRequest, signalsRequest, signalKeyLabel,
   MEETING_PROVIDER_LABEL, SIGNAL_GROUP_LABEL, TOOL_NAMES,
-  type BuilderAnswer, type BuilderEvent, type BuilderHints, type BuilderHistoryAsk, type BuilderHistoryItem, type BuilderHistoryProposal, type BuilderHistoryText, type BuilderQuestion, type Catalog, type Delivery, type ApproveResult, type JobProposal,
+  type BuilderAnswer, type BuilderEvent, type BuilderHints, type BuilderHistoryAsk, type BuilderHistoryFailed, type BuilderHistoryItem, type BuilderHistoryProposal, type BuilderHistoryText, type BuilderQuestion, type Catalog, type Delivery, type ApproveResult, type JobProposal,
   type SignalCatalog, type SignalEntry, type SignalGroup,
 } from '@/lib/revboxes';
 
 type Activity = { kind: 'text'; text: string } | { kind: 'tool'; name: string | null; label: string; state: 'running' | 'done' | 'error' };
 type Turn = {
   id: string;
-  /** What the user sent, as shown in the bubble (answers are rendered readable). */
+  /** What the user sent, as shown in the bubble (answers are rendered readable); empty for a retry. */
   user: string;
   items: Activity[];
   ask?: BuilderQuestion[]; proposal?: JobProposal; credits?: number;
@@ -55,7 +58,7 @@ const HUMAN_TOOL: Record<string, string> = {
 
 export function JobBuilder({ workspaceId, token, boxId, job, destinations, editable, onApproved, onSaved }: {
   workspaceId: string; token: string; boxId: string;
-  /** Set for Edit on an existing job: its earlier chat is reopened and continued. */
+  /** Set when a job is opened: its chat so far is shown and continued. */
   job?: { id: string; name: string; enabled?: boolean } | null;
   destinations: Delivery[]; editable: boolean;
   /** Kept for callers; the way out is the page's "Back to jobs" (no Close link under the input). */
@@ -167,7 +170,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     }
   }
 
-  async function run(user: string, body: { message: string; job_id?: string | null } | { answers: BuilderAnswer[] }, session: string | null = sessionId) {
+  async function run(user: string, body: { message: string; job_id?: string | null } | { answers: BuilderAnswer[] } | { retry: true }, session: string | null = sessionId) {
     if (streaming) return;
     const id = crypto.randomUUID();
     setTurns(prev => [...prev, { id, user, items: [], streaming: true }]);
@@ -176,7 +179,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     abort.current = controller;
     try {
       const hints: BuilderHints = { integrations, signals: signalKeys };
-      await streamBuilderTurn({ workspaceId, token, boxId, sessionId: session, body: { ...body, hints }, signal: controller.signal, onEvent: ev => apply(id, ev) });
+      await streamBuilderTurn({ workspaceId, token, boxId, sessionId: session, body: 'retry' in body ? body : { ...body, hints }, signal: controller.signal, onEvent: ev => apply(id, ev) });
     } catch (e) {
       if (controller.signal.aborted) patch(id, t => ({ ...t, stopped: true }));
       else patch(id, t => ({ ...t, error: { message: e instanceof Error ? e.message : 'The builder stopped unexpectedly.' } }));
@@ -193,6 +196,11 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     setDraft('');
     if (input.current) input.current.style.height = 'auto';
     void run(text, { message: text, ...(!sessionId && job ? { job_id: job.id } : {}) });
+  }
+  /** Run the turn that got no answer again (its message is saved already). */
+  function retry() {
+    if (!sessionId || streaming || approving || opening || !editable) return;
+    void run('', { retry: true });
   }
   function answer(questions: BuilderQuestion[], answers: BuilderAnswer[]) {
     const lines = answers.map(a => {
@@ -215,7 +223,8 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     // The chat goes on: this card is approved, the next job starts from its own trigger (a report is
     // on a schedule, not on the deal signals the first job used), and the agent is asked for it.
     const upcoming = result.next_jobs?.[0];
-    setTurns(prev => prev.map(t => t.id === latestProposalTurn ? { ...t, approved: true } : t));
+    if (latestProposalTurn) setTurns(prev => prev.map(t => t.id === latestProposalTurn ? { ...t, approved: true } : t));
+    else if (pendingProposal >= 0) setHistory(prev => prev.map((item, i) => i === pendingProposal ? { ...(item as BuilderHistoryProposal), approved: true } : item));
     setSessionId(next); setSignalKeys([]); setSignalFallback(null);
     onSaved?.(result);
     const say = upcoming ? `Approved. Now set up the next job: ${upcoming}.` : 'Approved. Now set up the next job.';
@@ -228,8 +237,15 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   }
 
   const empty = !turns.length && !history.length;
-  // The job's live state (On/Off) goes on its current card: the last proposal of its chat.
-  const lastHistoryProposal = history.reduce((at, item, i) => ('kind' in item && item.kind === 'proposal' ? i : at), -1);
+  const kindOf = (item: BuilderHistoryItem) => ('kind' in item ? item.kind : null);
+  // The job's live state (On/Off) goes on its current card: the last approved proposal of its chat.
+  const lastHistoryProposal = history.reduce((at, item, i) => (kindOf(item) === 'proposal' && (item as BuilderHistoryProposal).approved ? i : at), -1);
+  // What the chat was waiting on when it was closed: a proposal not yet approved, an open ask, a
+  // turn that got no answer. Live again while nothing newer was said here.
+  const lastItem = history.length - 1;
+  const waiting = !turns.length && lastItem >= 0 ? kindOf(history[lastItem]) : null;
+  const pendingProposal = !turns.length ? history.reduce((at, item, i) => (kindOf(item) === 'proposal' ? i : at), -1) : -1;
+  const proposalLive = pendingProposal >= 0 && !(history[pendingProposal] as BuilderHistoryProposal).approved && !history.slice(pendingProposal + 1).some(i => kindOf(i) === 'proposal');
   // The agent composer's shape (product owner's design): pinned to the bottom of the column, a grey
   // rounded box with no border, outlined pickers bottom-left and the dark square send button
   // bottom-right; what is attached sits above the box as soft grey tags.
@@ -274,10 +290,24 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
       : <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 md:px-10">
       <div className="mx-auto w-full max-w-[880px] space-y-6 py-6" aria-live="polite">
         {history.length > 0 && <div className="space-y-3">
-          {history.map((item, i) => <HistoryItem key={i} item={item} destinations={destinations} enabled={i === lastHistoryProposal ? job?.enabled : undefined} />)}
+          {history.map((item, i) => {
+            const kind = kindOf(item);
+            // A proposal still waiting: the live card, as at the end of a turn.
+            if (kind === 'proposal' && i === pendingProposal && proposalLive) return <div key={i} className="space-y-3">
+              <WorkflowCard proposal={(item as BuilderHistoryProposal).proposal} destinations={destinations} editable={editable} current={!streaming}
+                approving={approving} busy={streaming} onApprove={name => void approve(name)} onMakeChanges={makeChanges} />
+              {approveError && <ErrorRow message={approveError} />}
+            </div>;
+            // An ask still open: answerable.
+            if (kind === 'ask' && i === lastItem && waiting === 'ask' && !(item as BuilderHistoryAsk).answers.length)
+              return <AskCard key={i} questions={(item as BuilderHistoryAsk).questions} disabled={streaming || !editable} onSubmit={answers => answer((item as BuilderHistoryAsk).questions, answers)} />;
+            // A turn that got no answer: say so, with Try again while it is still the last thing here.
+            if (kind === 'failed') return <ErrorRow key={i} message={(item as BuilderHistoryFailed).text} onRetry={i === lastItem && waiting === 'failed' && editable ? retry : undefined} busy={streaming} />;
+            return <HistoryItem key={i} item={item} destinations={destinations} enabled={i === lastHistoryProposal ? job?.enabled : undefined} />;
+          })}
         </div>}
         {turns.map(turn => <div key={turn.id} className="space-y-3">
-          <div className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-muted/70 px-4 py-2.5 text-[13px] leading-relaxed text-foreground">{turn.user}</div>
+          {turn.user && <div className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-muted/70 px-4 py-2.5 text-[13px] leading-relaxed text-foreground">{turn.user}</div>}
           {turn.items.map((item, i) => item.kind === 'text'
             ? <p key={i} className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-foreground">{item.text}</p>
             : <ToolRow key={i} label={item.label} state={item.state} />)}
@@ -289,7 +319,8 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
             current={turn.id === latestProposalTurn && !turn.streaming && !turn.approved} approved={turn.approved} approving={approving} busy={streaming}
             onApprove={name => void approve(name)} onMakeChanges={makeChanges} />}
           {turn.id === latestProposalTurn && approveError && <ErrorRow message={approveError} />}
-          {turn.error && <ErrorRow message={turn.error.message} code={turn.error.code} />}
+          {turn.error && <ErrorRow message={turn.error.message} code={turn.error.code} busy={streaming}
+            onRetry={turn === lastTurn && !turn.streaming && sessionId && editable && retryable(turn.error.code) ? retry : undefined} />}
           {turn.stopped && <p className="text-[11.5px] text-muted-foreground">Stopped.</p>}
           {/* No per-turn credits line (GET-872): a job's cost per run is on its card; a turn's is noise. */}
         </div>)}
@@ -423,11 +454,16 @@ function ToolRow({ label, state }: { label: string; state: 'running' | 'done' | 
   </div>;
 }
 
-function ErrorRow({ message, code }: { message: string; code?: string }) {
+/** Errors a Try again cannot fix (the chat changed elsewhere, nothing left to answer, bad input). */
+const NOT_RETRYABLE = new Set(['session_conflict', 'nothing_to_retry', 'message_too_long', 'message_required', 'invalid_hints', 'invalid_answers', 'session_not_found', 'session_closed', 'invalid_id']);
+const retryable = (code?: string) => !code || !NOT_RETRYABLE.has(code);
+
+function ErrorRow({ message, code, onRetry, busy }: { message: string; code?: string; onRetry?: () => void; busy?: boolean }) {
   return <div role="alert" className="flex items-start gap-2 rounded-xl border border-risk/20 bg-risk/5 px-3 py-2.5 text-[12px] text-risk">
     <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
     <span className="flex-1">{message}</span>
     {code === 'insufficient_credits' && <Link to="/usage" className="shrink-0 font-medium underline underline-offset-2">Usage</Link>}
+    {onRetry && <button type="button" onClick={onRetry} disabled={busy} className="shrink-0 font-medium underline underline-offset-2 disabled:opacity-50">Try again</button>}
   </div>;
 }
 

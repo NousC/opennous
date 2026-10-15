@@ -49,7 +49,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
   // A job's own delivery target, edited from the Delivery rail (GET-872).
   const [jobStep, setJobStep] = useState<JobDelivery | null>(null);
   // The Job Builder (GET-868) replaces the jobs list while it is open: null = closed, job = null
-  // for a new job, else Edit on that job.
+  // for a new job, else that job's own chat (opened by clicking its row, GET-889).
   const [builder, setBuilder] = useState<{ job: { id: string; name: string; enabled?: boolean } | null } | null>(null);
   const [fresh, setFresh] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -151,7 +151,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
           <div className="space-y-1"><Link to={`/accounts?revbox=${id}`} onClick={e => { if (dirty) { e.preventDefault(); void save().then(() => window.location.assign(`/accounts?revbox=${id}`)).catch(() => {}); } }} className="flex items-center gap-2 rounded-lg px-1 py-2.5 text-[12px] hover:bg-muted/50"><span className="flex-1">Selected accounts · <span className="tabular-nums">{accounts.data ? (accounts.data.count ?? accounts.data.accounts.length).toLocaleString() : '…'}</span></span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /></Link><Link to={`/graph?revbox=${id}`} onClick={e => { if (dirty) { e.preventDefault(); void save().then(() => window.location.assign(`/graph?revbox=${id}`)).catch(() => {}); } }} className="flex items-center gap-2 rounded-lg px-1 py-2.5 text-[12px] hover:bg-muted/50"><span className="flex-1">Account graph</span><ArrowUpRight className="h-3 w-3 text-muted-foreground" /></Link></div>
         </RailSection>
         <RailSection title="Delivery" sub="Where finished work goes." icon={ArrowUpRight} action={editable && <button aria-label="Add delivery destination" className="rounded p-1 hover:bg-muted" onClick={() => { setDeliveryId(null); setDialog('delivery'); }}><Plus className="h-4 w-4" /></button>}>
-          {/* The box's own destinations, then where its jobs deliver on their own (GET-868, read-only: Edit on the job). */}
+          {/* The box's own destinations, then where its jobs deliver on their own (GET-868, read-only: open the job to change it). */}
           <DeliveryList delivery={box.delivery} jobDeliveries={detail.data?.job_deliveries ?? []} editable={editable}
             onOpen={deliveryId => { setDeliveryId(deliveryId); setDialog('delivery'); }}
             onRemove={deliveryId => change({ delivery: box.delivery.filter(x => x.id !== deliveryId) })}

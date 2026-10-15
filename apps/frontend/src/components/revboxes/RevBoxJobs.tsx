@@ -1,13 +1,15 @@
 // The RevBox Jobs list (GET-868). A box's jobs are workflow-engine routines (agent_routines with
 // revbox_id) made by the Job Builder, plus any legacy revbox_jobs rows until those are removed.
-// Each row: name, trigger, on/off, last run, an On/Off switch (approving a job switches it on; the
-// switch pauses it) and Edit (reopens the chat that made the job). Legacy rows carry `plan` and
-// cannot be reopened in the builder. Built-in jobs (GET-872) follow as read-only rows: OpenNous
-// runs them (detectors, the after-call follow-up), so there is no Edit and no switch; the row says
-// how often it runs and what it drafted lately, with "See drafts" opening Priorities. Removing one
-// from the box only takes it off this list; it keeps running. Test (GET-873), on hover or focus of a
-// builder job's row: one run now on real data with every external send held; the output and what
-// it would have sent show in Results, labelled Test.
+// Each row: name, trigger, on/off, last run and an On/Off switch (approving a job switches it on; the
+// switch pauses it). Clicking a builder job's row (or Enter/Space on it: the row's main area is a
+// button) opens the job's chat, the person's own conversation on it (GET-889; there is no Edit
+// button). Legacy rows carry `plan` and cannot be opened in the builder. Built-in jobs (GET-872)
+// follow as read-only rows: OpenNous runs them (detectors, the after-call follow-up), so there is no
+// chat and no switch; the row says how often it runs and what it drafted lately, with "See drafts"
+// opening Priorities. Removing one from the box only takes it off this list; it keeps running. Test
+// (GET-873), on hover or focus of a builder job's row: one run now on real data with every external
+// send held; the output and what it would have sent show in Results, labelled Test. Test and the
+// switch never open the chat.
 import { Link2, Loader2, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -48,6 +50,7 @@ export function RevBoxJobs({ rows, runs, editable, busy, fresh, onNew, onToggle,
   /** The job the builder just created or changed: highlighted for a moment. */
   fresh: string | null;
   onNew: () => void; onToggle: (row: JobRow) => void;
+  /** Open the job's chat (a click on its row). */
   onChange: (row: JobRow) => void; onWebhookKey: (row: JobRow) => void;
   /** Test the job once now with its sends held (builder jobs only). */
   onTest?: (row: JobRow) => void;
@@ -65,7 +68,8 @@ export function RevBoxJobs({ rows, runs, editable, busy, fresh, onNew, onToggle,
       const last = latest?.created_at ?? row.lastRunAt;
       const isFresh = fresh === row.id;
       const acting = busy === row.id;
-      return <li key={row.id} className={cn('group flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-2 py-3.5 transition-colors', isFresh ? 'bg-hover' : 'hover:bg-hover/60')}>
+      const opens = editable && row.routine;
+      const info = <>
         <span className={cn('h-2 w-2 shrink-0 rounded-full', working ? 'animate-pulse bg-emerald-600' : failed ? 'bg-risk' : row.enabled ? 'bg-emerald-600' : 'bg-muted-foreground/35')} aria-hidden />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-foreground">{row.name}</span>
@@ -73,10 +77,17 @@ export function RevBoxJobs({ rows, runs, editable, busy, fresh, onNew, onToggle,
             {row.trigger} · {row.enabled ? 'On' : 'Off'} · {working ? 'Running now' : failed ? `Last run failed ${when(latest!.created_at)}` : last ? `Last run ${when(last)}` : 'Not run yet'}
           </span>
         </span>
-        {editable && <span className="flex shrink-0 items-center gap-1.5">
+      </>;
+      // The row opens the chat: a click anywhere on it (the actions stop theirs), or the main area as a button.
+      return <li key={row.id} onClick={opens && !acting ? () => onChange(row) : undefined}
+        className={cn('group flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-2 py-1.5 transition-colors', isFresh ? 'bg-hover' : 'hover:bg-hover/60', opens && 'cursor-pointer')}>
+        {opens
+          ? <button type="button" aria-label={`Open ${row.name}'s chat`} disabled={acting}
+              className="-mx-1 flex min-w-0 flex-1 items-center gap-4 rounded-lg px-1 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">{info}</button>
+          : <span className="flex min-w-0 flex-1 items-center gap-4 py-2">{info}</span>}
+        {editable && <span className="flex shrink-0 items-center gap-1.5" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
           {acting && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
           {row.routine && onTest && <Button size="sm" variant="ghost" title="Run it once now on real data. Nothing is sent: Slack, email, webhooks and HubSpot writes are held." aria-label={`Test ${row.name}`} className="h-7 text-[12px] text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100" disabled={acting || working} onClick={() => onTest(row)}>Test</Button>}
-          {row.routine && <Button size="sm" variant="ghost" className="h-7 text-[12px]" disabled={acting} onClick={() => onChange(row)}>Edit</Button>}
           {!row.routine && row.webhook && <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => onWebhookKey(row)}><Link2 className="h-3 w-3" />Webhook key</Button>}
           <Switch aria-label={`${row.enabled ? 'Pause' : 'Switch on'} ${row.name}`} className="ml-1" checked={row.enabled} disabled={acting} onCheckedChange={() => onToggle(row)} />
         </span>}
