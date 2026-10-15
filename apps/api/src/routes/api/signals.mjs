@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import {
   getSupabaseClient, logActivity, hasActivityWithExternalId,
-  revboxMembership, listCustomSignals, saveCustomSignal, archiveCustomSignal, reprocessCustomSignal, customSignalHits, signalCatalog, SIGNAL_GROUPS,
+  revboxMembership, listCustomSignals, saveCustomSignal, archiveCustomSignal, reprocessCustomSignal, customSignalHits, signalCatalog, withConnectedRecorders, SIGNAL_GROUPS,
 } from '@nous/core';
 import { requireFeature } from '../../lib/access.mjs';
 import { revboxCreditGate } from '../../lib/revboxRuntime.mjs';
@@ -153,7 +153,8 @@ publicSignalsRouter.post('/ingest', async (req, res) => {
 // guards each of its own routes (auth, then the revboxes feature): a path it does not own, like
 // /webhook-url, falls through to signalsRouter untouched.
 //
-//   GET  /api/signals/catalog          { builtin: [entry], custom: [entry], groups }   (signalCatalog in core)
+//   GET  /api/signals/catalog          { builtin: [entry], custom: [entry], groups, recorders, connected }   (signalCatalog in core;
+//                                      meeting.done offers only the connected recorders, `connected` = every connected tool slug, GET-892)
 //   GET  /api/signals                  { signals: [definition + archived] }
 //   POST /api/signals                  { signal }   create; revbox_id optional ("proposed in")
 //   PUT  /api/signals/:id              { signal }   edit, review, activate (owner, version-checked)
@@ -163,7 +164,17 @@ publicSignalsRouter.post('/ingest', async (req, res) => {
 const SIGNAL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The router with its collaborators injectable, so the tests run it without a database or plan. */
-export function makeWorkspaceSignalsRouter({ getSb = getSupabaseClient, guards = [verifySupabaseAuth, requireFeature('revboxes')], creditGate = revboxCreditGate } = {}) {
+/**
+ * The tool slugs a workspace has connected (workflow_provider_connections), shared and personal
+ * alike: a meeting signal fires on any member's recorder, so a teammate's Granola counts.
+ */
+export async function workspaceConnectedSlugs(sb, workspaceId) {
+  const { data, error } = await sb.from('workflow_provider_connections').select('workflow_providers(name)').eq('workspace_id', workspaceId);
+  if (error) throw error;
+  return [...new Set((data ?? []).map(c => String(c.workflow_providers?.name ?? '').toLowerCase().replace(/_oauth$/, '')).filter(Boolean))].sort();
+}
+
+export function makeWorkspaceSignalsRouter({ getSb = getSupabaseClient, guards = [verifySupabaseAuth, requireFeature('revboxes')], creditGate = revboxCreditGate, connectedSlugs = workspaceConnectedSlugs } = {}) {
   const router = Router();
   const route = (fn) => [...guards, async (req, res) => {
     try {
@@ -179,8 +190,13 @@ export function makeWorkspaceSignalsRouter({ getSb = getSupabaseClient, guards =
     }
   }];
   router.get('/catalog', ...route(async (req, res, sb) => {
-    const custom = await listCustomSignals(sb, req.workspaceId, req.internalUserId);
-    res.json({ ...signalCatalog({ custom }), groups: SIGNAL_GROUPS });
+    const [custom, connected] = await Promise.all([
+      listCustomSignals(sb, req.workspaceId, req.internalUserId),
+      // A failed lookup offers every recorder rather than none: the picker still works.
+      connectedSlugs(sb, req.workspaceId).catch(err => { console.error('[signals] connections', err?.message ?? err); return null; }),
+    ]);
+    const catalog = signalCatalog({ custom });
+    res.json({ ...(connected ? { ...withConnectedRecorders(catalog, connected), connected } : catalog), groups: SIGNAL_GROUPS });
   }));
   router.get('/', ...route(async (req, res, sb) => {
     const signals = await listCustomSignals(sb, req.workspaceId, req.internalUserId);

@@ -37,11 +37,11 @@ function fakeDb() {
   } };
 }
 
-async function serve({ db = fakeDb(), user = 'u1', guards, creditGate = async () => {} } = {}) {
+async function serve({ db = fakeDb(), user = 'u1', guards, creditGate = async () => {}, connected = ['granola', 'hubspot', 'slack'] } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => { req.workspaceId = 'ws'; req.internalUserId = req.headers['x-user'] ?? user; next(); });
-  app.use('/api/signals', makeWorkspaceSignalsRouter({ getSb: () => db, guards: guards ?? [], creditGate }));
+  app.use('/api/signals', makeWorkspaceSignalsRouter({ getSb: () => db, guards: guards ?? [], creditGate, connectedSlugs: async () => connected }));
   app.use('/api/signals', (req, res) => res.status(418).json({ fellThrough: req.path }));
   const server = http.createServer(app);
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -68,6 +68,23 @@ test('catalog: built-ins grouped with their triggers, plus the workspace\'s live
     assert.deepEqual(r.body.custom[0].trigger, { kind: 'account_signal', config: { signals: [`custom_${srv.db.tables.custom_signal_definitions[0].id}`] } });
     assert.ok(r.body.groups.some(g => g.id === 'meetings'));
   } finally { await srv.close(); }
+});
+
+test('catalog: meeting signals list only the connected recorders, and the connected sources come along (GET-892)', async () => {
+  const none = await serve({ connected: ['hubspot', 'slack'] });
+  try {
+    const r = await none.call('GET', '/catalog');
+    assert.deepEqual(r.body.builtin.find(e => e.key === 'meeting.done').providers, []);
+    assert.deepEqual(r.body.recorders, []);
+    assert.deepEqual(r.body.connected, ['hubspot', 'slack']);
+  } finally { await none.close(); }
+  const two = await serve({ connected: ['fireflies', 'gmail', 'granola'] });
+  try {
+    const r = await two.call('GET', '/catalog');
+    assert.deepEqual(r.body.builtin.find(e => e.key === 'meeting.done').providers, ['granola', 'fireflies', 'any']);
+    assert.deepEqual(r.body.recorders, ['granola', 'fireflies']);
+    assert.deepEqual(r.body.connected, ['fireflies', 'gmail', 'granola']);
+  } finally { await two.close(); }
 });
 
 test('create needs no RevBox; edit is owner-only; archive hides it from the catalog and keeps the key', async () => {

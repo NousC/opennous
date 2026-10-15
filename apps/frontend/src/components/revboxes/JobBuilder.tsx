@@ -13,8 +13,9 @@
 //
 // The composer (GET-868 redesign): one wide, low input. Bottom-left, two pickers: Integrations
 // (the workspace's connected tools; a pick is attached above the input as its logo, so the agent
-// knows that tool is involved) and Signals (what starts the job, from the signal catalog; nothing
-// picked = most likely a schedule). Both ride along with every message as `hints`, and when the
+// knows that tool is involved) and Signals (what starts the job, from the signal catalog, text only,
+// with only the meeting recorders the workspace has connected; nothing picked = the builder settles
+// the start with the user, GET-892). Both ride along with every message as `hints`, and when the
 // agent settles the trigger itself ("after every meeting") its `trigger` event updates the chip; its
 // `integrations` event attaches the tools it settled on, so the user never has to.
 //
@@ -25,16 +26,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, ArrowUp, Check, ChevronDown, Clock, Loader2, Plug, Plus, Search, Square, X, Zap } from 'lucide-react';
+import { AlertCircle, ArrowUp, Check, ChevronDown, Loader2, Plug, Plus, Search, Square, X, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AskCard } from '@/components/revboxes/AskCard';
 import { Logo, WorkflowCard } from '@/components/revboxes/WorkflowCard';
+import { meetingSignalOptions, MEETING_CONNECT_HINT, MEETING_CONNECT_HREF } from '@/lib/signalOptions';
 import {
   approveBuilderProposal, openBuilderForJob, streamBuilderTurn, revboxesRequest, signalsRequest, signalKeyLabel,
-  MEETING_PROVIDER_LABEL, SIGNAL_GROUP_LABEL, TOOL_NAMES,
+  SIGNAL_GROUP_LABEL, TOOL_NAMES,
   type BuilderAnswer, type BuilderEvent, type BuilderHints, type BuilderHistoryAsk, type BuilderHistoryFailed, type BuilderHistoryItem, type BuilderHistoryProposal, type BuilderHistoryText, type BuilderQuestion, type Catalog, type Delivery, type ApproveResult, type JobProposal,
-  type SignalCatalog, type SignalEntry, type SignalGroup,
+  type SignalCatalog, type SignalGroup,
 } from '@/lib/revboxes';
 
 type Activity = { kind: 'text'; text: string } | { kind: 'tool'; name: string | null; label: string; state: 'running' | 'done' | 'error' };
@@ -390,7 +392,7 @@ export function toggleSignal(list: string[], key: string): string[] {
   return [...list.filter(k => k !== 'schedule'), key];
 }
 
-type SignalOption = { key: string; label: string; detail?: string; logo?: string; draft?: boolean };
+type SignalOption = { key: string; label: string; detail?: string; draft?: boolean };
 function SignalsMenu({ catalog, loading, error, selected, onToggle }: { catalog?: SignalCatalog; loading: boolean; error?: string; selected: string[]; onToggle: (key: string) => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -400,15 +402,16 @@ function SignalsMenu({ catalog, loading, error, selected, onToggle }: { catalog?
     const out: { group: SignalGroup; options: SignalOption[] }[] = [];
     const push = (group: SignalGroup, options: SignalOption[]) => { const m = options.filter(match); if (m.length) out.push({ group, options: m }); };
     const builtin = catalog?.builtin ?? [];
-    // A meeting signal is offered once per recorder: "Meeting done · Granola".
-    push('meetings', builtin.filter(e => e.group === 'meetings').flatMap((e: SignalEntry) => (e.providers?.length ? e.providers : ['any']).map(p => ({
-      key: p === 'any' ? e.key : `${e.key}:${p}`, label: p === 'any' ? `${e.label} · ${MEETING_PROVIDER_LABEL.any}` : `${e.label} · ${MEETING_PROVIDER_LABEL[p] ?? p}`, logo: p === 'any' ? undefined : p,
-    }))).sort((a, b) => Number(!a.logo) - Number(!b.logo)));
+    // A meeting signal is offered once per connected recorder ("Meeting done · Granola"), then any
+    // recorder (GET-892); none connected shows the connect hint instead (below).
+    push('meetings', meetingSignalOptions(builtin.find(e => e.key === 'meeting.done')));
     push('deals', builtin.filter(e => e.group === 'deals').map(e => ({ key: e.key, label: e.label, detail: e.description })));
     push('account', builtin.filter(e => e.group === 'account').map(e => ({ key: e.key, label: e.label, detail: e.description })));
     push('custom', (catalog?.custom ?? []).map(e => ({ key: e.key, label: e.label, detail: e.description, draft: e.active === false })));
     return out;
   }, [catalog, query]);
+  // No recorder connected: the Meetings group is one muted line pointing to Integrations.
+  const noRecorder = !!catalog && !meetingSignalOptions(catalog.builtin.find(e => e.key === 'meeting.done')).length && (!query.trim() || 'meeting'.includes(query.trim().toLowerCase()) || query.trim().toLowerCase().includes('meeting'));
   // A signal stays open for more picks; the schedule (exclusive) closes the menu.
   const pick = (key: string) => { onToggle(key); if (key === 'schedule') { setOpen(false); setQuery(''); } };
   return <Popover open={open} onOpenChange={setOpen}>
@@ -418,15 +421,18 @@ function SignalsMenu({ catalog, loading, error, selected, onToggle }: { catalog?
         <input autoFocus aria-label="Search signals" value={query} onChange={e => setQuery(e.target.value)} placeholder="When should this job start?" className="w-full bg-transparent text-[12.5px] outline-none placeholder:text-muted-foreground/60" />
       </label>
       <div className="max-h-[320px] overflow-y-auto p-1.5">
-        <SignalRow active={selected.includes('schedule')} onClick={() => pick('schedule')} icon={<Clock className="h-3.5 w-3.5 text-muted-foreground" />} label="No signal (scheduled)" detail="Runs on a clock; the builder asks when." />
+        <SignalRow active={selected.includes('schedule')} onClick={() => pick('schedule')} label="No signal (scheduled)" detail="Runs on a clock; the builder asks when." />
         {loading && <p className="px-2 py-2 text-[12px] text-muted-foreground">Loading signals…</p>}
         {error && <p role="alert" className="px-2 py-2 text-[12px] text-risk">{error}</p>}
+        {noRecorder && <div className="mt-1.5">
+          <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">{SIGNAL_GROUP_LABEL.meetings}</p>
+          <a href={MEETING_CONNECT_HREF} className="block px-2 py-1.5 text-[12px] text-muted-foreground/80 hover:text-foreground">{MEETING_CONNECT_HINT}</a>
+        </div>}
         {groups.map(g => <div key={g.group} className="mt-1.5">
           <p className="px-2 pb-1 pt-1.5 text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">{SIGNAL_GROUP_LABEL[g.group]}</p>
-          {g.options.map(o => <SignalRow key={o.key} multi active={selected.includes(o.key)} onClick={() => pick(o.key)} label={o.label} detail={o.detail} draft={o.draft}
-            icon={o.logo ? <Logo tool={o.logo} /> : <Zap className="h-3.5 w-3.5 text-muted-foreground" />} />)}
+          {g.options.map(o => <SignalRow key={o.key} multi active={selected.includes(o.key)} onClick={() => pick(o.key)} label={o.label} detail={o.detail} draft={o.draft} />)}
         </div>)}
-        {!loading && query && !groups.length && <p className="px-2 py-2 text-[12px] text-muted-foreground">No signal matches “{query}”.</p>}
+        {!loading && query && !groups.length && !noRecorder && <p className="px-2 py-2 text-[12px] text-muted-foreground">No signal matches “{query}”.</p>}
       </div>
       <div className="border-t border-border/70 p-1.5">
         <a href="/settings?section=signals&create=1" target="_blank" rel="noreferrer" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[12.5px] text-foreground hover:bg-hover"><Plus className="h-3.5 w-3.5" />Create a signal</a>
@@ -435,10 +441,9 @@ function SignalsMenu({ catalog, loading, error, selected, onToggle }: { catalog?
   </Popover>;
 }
 
-function SignalRow({ active, onClick, icon, label, detail, draft, multi = false }: { active: boolean; onClick: () => void; icon: ReactNode; label: string; detail?: string; draft?: boolean; multi?: boolean }) {
+function SignalRow({ active, onClick, label, detail, draft, multi = false }: { active: boolean; onClick: () => void; label: string; detail?: string; draft?: boolean; multi?: boolean }) {
   return <button type="button" role={multi ? 'menuitemcheckbox' : 'menuitemradio'} aria-checked={active} onClick={onClick} className={cn('flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-hover', active && 'bg-hover')}>
     {multi && <span aria-hidden className={cn('mt-[3px] flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[4px] border', active ? 'border-foreground bg-foreground text-background' : 'border-border')}>{active && <Check className="h-2.5 w-2.5" strokeWidth={3} />}</span>}
-    <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center">{icon}</span>
     <span className="min-w-0 flex-1">
       <span className="flex items-center gap-1.5 text-[12.5px] text-foreground">{label}{draft && <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">Draft</span>}</span>
       {detail && <span className="block truncate text-[11px] text-muted-foreground">{detail}</span>}

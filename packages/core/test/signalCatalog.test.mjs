@@ -92,3 +92,23 @@ test('an active custom signal loaded from the table shows up as custom.<key> (lo
   const rules = await customSignalRulesForWorkspace(sb, 'ws');
   assert.deepEqual(signalCatalog({ custom: rules }).custom.map(e => e.key), ['custom.security_review']);
 });
+
+// GET-892: the pickers and the builder offer only the meeting recorders a workspace has connected.
+test('withConnectedRecorders keeps only connected recorders, plus any recorder when one is', async () => {
+  const { withConnectedRecorders, connectedRecorders } = await import('../dist/services/signalCatalog.mjs');
+  assert.deepEqual(connectedRecorders(['slack', 'fireflies', 'granola', 'hubspot', 'granola']), ['granola', 'fireflies']);
+  const base = signalCatalog({ custom: CUSTOM });
+  const one = withConnectedRecorders(base, ['granola', 'slack']);
+  const meeting = one.builtin.find(e => e.key === 'meeting.done');
+  assert.deepEqual(meeting.providers, ['granola', 'any']);
+  assert.deepEqual(one.recorders, ['granola']);
+  // The input is not changed, and the other entries pass through.
+  assert.deepEqual(base.builtin.find(e => e.key === 'meeting.done').providers, ['granola', 'fireflies', 'fathom', 'any']);
+  assert.equal(one.builtin.length, base.builtin.length);
+  assert.equal(one.custom.length, base.custom.length);
+  const none = withConnectedRecorders(base, ['slack']);
+  assert.deepEqual(none.builtin.find(e => e.key === 'meeting.done').providers, []);
+  assert.deepEqual(none.recorders, []);
+  // Resolving a key still uses the full catalog: an existing job on a disconnected recorder keeps its trigger.
+  assert.deepEqual(triggerForSignal('meeting.done:fathom', base), { kind: 'call_ended', config: { provider: 'fathom', tools: ['fathom'] } });
+});

@@ -1,6 +1,8 @@
 // Settings > Signals (GET-862): what can start a job. The workspace's own signals (they belong to
 // the workspace, not a RevBox) and the built-in ones from the core signal catalog. A job picks one
-// in the Job Builder's Signals menu; with none it runs on a schedule.
+// in the Job Builder's Signals menu; with none the builder settles the start with the user. Meeting
+// signals list only the recorders the workspace has connected, as text (GET-892); with none, a muted
+// line points to Integrations. The New signal dialog's Sources offer only connected tools.
 //
 // Built from the settings kit (SettingsGroup cards of rows) like General and Members; Settings.tsx
 // wraps it in SectionShell, and the top bar names the section.
@@ -20,8 +22,9 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { SettingsGroup, SettingsRow, smallSwitchCls } from '@/components/settings/SettingsKit';
 import { Logo } from '@/components/revboxes/WorkflowCard';
+import { meetingSignalOptions, signalSourceChoices, MEETING_CONNECT_HINT, MEETING_CONNECT_HREF } from '@/lib/signalOptions';
 import {
-  revboxesRequest, signalsRequest, SIGNAL_GROUP_LABEL, MEETING_PROVIDER_LABEL, TOOL_NAMES,
+  revboxesRequest, signalsRequest, SIGNAL_GROUP_LABEL, TOOL_NAMES,
   type Catalog, type SignalCatalog, type SignalEntry, type SignalGroup, type WorkspaceSignal,
 } from '@/lib/revboxes';
 
@@ -44,9 +47,15 @@ export function SignalsSettings() {
       {catalog.isLoading && <p className="px-2 py-2 text-[13px] text-muted-foreground/70">Loading…</p>}
       {groups.map(({ group, items }) => <div key={group}>
         <p className="px-2 pb-0.5 pt-3 text-[11.5px] text-muted-foreground/70">{SIGNAL_GROUP_LABEL[group]}</p>
-        {items.map((e: SignalEntry) => <SettingsRow key={e.key} label={e.label} hint={e.needs_config ? `${e.description} Needs a field.` : e.description}>
-          {e.providers?.filter(p => p !== 'any').map(p => <span key={p} title={MEETING_PROVIDER_LABEL[p] ?? p} className="flex h-6 w-6 items-center justify-center rounded-md border border-border/70 bg-card"><Logo tool={p} /></span>)}
-        </SettingsRow>)}
+        {group === 'meetings'
+          // Only the recorders the workspace has connected, text only (GET-892); none: one muted line.
+          ? items.flatMap((e: SignalEntry) => {
+              const options = meetingSignalOptions(e);
+              return options.length
+                ? options.map(o => <SettingsRow key={o.key} label={o.label} hint={e.description} />)
+                : [<a key={e.key} href={MEETING_CONNECT_HREF} className="block px-2 py-2 text-[12.5px] text-muted-foreground/70 hover:text-foreground">{MEETING_CONNECT_HINT}</a>];
+            })
+          : items.map((e: SignalEntry) => <SettingsRow key={e.key} label={e.label} hint={e.needs_config ? `${e.description} Needs a field.` : e.description} />)}
       </div>)}
     </SettingsGroup>
   </>;
@@ -54,7 +63,6 @@ export function SignalsSettings() {
 
 type Draft = Partial<WorkspaceSignal>;
 const STATUS = (s: WorkspaceSignal) => s.archived ? 'Archived' : s.active ? 'Active' : 'Draft';
-const SOURCE_CHOICES = ['granola', 'fireflies', 'fathom', 'gmail', 'hubspot', 'slack'];
 const fieldCls = 'w-full min-w-0 rounded-lg border border-border/70 bg-card px-2.5 py-1.5 text-[13px] text-foreground outline-none transition-colors duration-fast placeholder:text-muted-foreground/45 focus:border-foreground/25 disabled:opacity-60';
 
 /** The workspace's own signals as a settings card: list, create, edit, archive, reprocess. `boxId`
@@ -65,6 +73,8 @@ export function YourSignals({ ws, token, userId, boxId, autoCreate = false, onAu
   const cache = useQueryClient();
   const list = useQuery({ queryKey: ['workspace-signals', ws], enabled: !!ws && !!token, queryFn: () => signalsRequest<{ signals: WorkspaceSignal[] }>(ws, token) });
   const members = useQuery({ queryKey: ['revbox-catalog', ws], enabled: !!ws && !!token, queryFn: () => revboxesRequest<Catalog>(ws, token, '/catalog') });
+  // The connected tools, for the Sources chips (GET-892): the same query as the Built-in signals list.
+  const catalog = useQuery({ queryKey: ['signal-catalog', ws], enabled: !!ws && !!token, queryFn: () => signalsRequest<SignalCatalog>(ws, token, '/catalog') });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [more, setMore] = useState(false);
   const [since, setSince] = useState(new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
@@ -123,11 +133,12 @@ export function YourSignals({ ws, token, userId, boxId, autoCreate = false, onAu
           <label className="block text-[12.5px] text-foreground">Name
             <input aria-label="Signal name" autoFocus disabled={readOnly} maxLength={100} className={cn(fieldCls, 'mt-1.5 h-8 py-0')} value={draft.name ?? ''} placeholder="Security review needed" onChange={e => setDraft({ ...draft, name: e.target.value })} />
           </label>
-          <label className="block text-[12.5px] text-foreground">What counts
-            <textarea aria-label="Signal rules" rows={3} disabled={readOnly} maxLength={4000} className={cn(fieldCls, 'mt-1.5 resize-none leading-relaxed')} value={draft.rule ?? ''} placeholder="The buyer asks for a security review or questionnaire before signing." onChange={e => setDraft({ ...draft, rule: e.target.value })} />
+          <label className="block text-[12.5px] text-foreground">Description
+            <textarea aria-label="Signal description" rows={3} disabled={readOnly} maxLength={4000} className={cn(fieldCls, 'mt-1.5 resize-none leading-relaxed')} value={draft.rule ?? ''} placeholder="The buyer asks for a security review or questionnaire before signing." onChange={e => setDraft({ ...draft, rule: e.target.value })} />
           </label>
           <div className="text-[12.5px] text-foreground">Sources <span className="text-muted-foreground/70">· optional, every source when none</span>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">{SOURCE_CHOICES.map(src => {
+            {catalog.data?.connected && !signalSourceChoices(catalog.data.connected, draft.sources ?? []).length && <p className="mt-1.5 text-[12px] text-muted-foreground/70">No sources connected yet. It reads every source you connect.</p>}
+            <div className="mt-1.5 flex flex-wrap gap-1.5">{signalSourceChoices(catalog.data?.connected, draft.sources ?? []).map(src => {
               const on = (draft.sources ?? []).includes(src);
               return <button key={src} type="button" disabled={readOnly} aria-pressed={on} title={TOOL_NAMES[src] ?? src}
                 onClick={() => setDraft({ ...draft, sources: on ? (draft.sources ?? []).filter(x => x !== src) : [...(draft.sources ?? []), src] })}

@@ -9,7 +9,8 @@
 // (custom_signal_definitions.key, immutable and never reused). A meeting signal can name its
 // recorder as `meeting.done:granola`; plain `meeting.done` is any recorder.
 //
-// No signal is a schedule: when the user picks nothing, the job most likely runs on a clock.
+// `schedule` is the clock. When the user picks nothing, the builder settles the start with them
+// (GET-892); it is never a silent default.
 import { SIGNAL_LABEL } from './signalLabels.mjs';
 
 export const MEETING_PROVIDERS = ['granola', 'fireflies', 'fathom'];
@@ -40,7 +41,7 @@ export function builtinSignals() {
       key: `signal.${kind}`, label, description: ACCOUNT_DESCRIPTION[kind] ?? `${label} on an account.`, group: 'account',
       trigger: { kind: 'account_signal', config: { signals: [kind] } },
     })),
-    { key: 'schedule', label: 'On a schedule', description: 'No signal: the job runs on a clock (the default).', group: 'schedule', trigger: { kind: 'clock', config: {} } },
+    { key: 'schedule', label: 'On a schedule', description: 'No signal: the job runs on a clock.', group: 'schedule', trigger: { kind: 'clock', config: {} } },
   ];
 }
 
@@ -60,6 +61,25 @@ export function customSignalEntry(def) {
 /** { builtin, custom }: the whole catalog for one workspace. `custom` = its definition rows. */
 export function signalCatalog({ custom = [] } = {}) {
   return { builtin: builtinSignals(), custom: (custom ?? []).filter(d => d && !d.archived_at && d.key).map(customSignalEntry) };
+}
+
+/** The meeting recorders among a workspace's connected tool slugs, in catalog order. Pure. */
+export function connectedRecorders(slugs = []) {
+  const have = new Set((Array.isArray(slugs) ? slugs : []).map(s => String(s ?? '').toLowerCase().replace(/_oauth$/, '')));
+  return MEETING_PROVIDERS.filter(p => have.has(p));
+}
+
+/**
+ * The catalog as a workspace sees it in a picker (GET-892): meeting.done offers only the recorders
+ * it has connected, plus "any recorder" when at least one is; none connected leaves its providers
+ * empty (the pickers then say to connect one). `recorders` lists the connected ones. A copy; the
+ * input is not changed. Resolving a key (triggerForSignal) keeps using the full catalog, so a job on
+ * a recorder that was disconnected keeps its trigger.
+ */
+export function withConnectedRecorders(catalog, slugs = []) {
+  const recorders = connectedRecorders(slugs);
+  const builtin = (catalog?.builtin ?? []).map(e => (e.key === 'meeting.done' ? { ...e, providers: recorders.length ? [...recorders, 'any'] : [] } : e));
+  return { ...catalog, builtin, custom: [...(catalog?.custom ?? [])], recorders };
 }
 
 /**

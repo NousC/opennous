@@ -156,7 +156,8 @@ All read-only except `ask` and `propose_job`, which end the turn.
 | `mailboxes` | Gmail/SMTP mailboxes the user can draft or send from. |
 | `search_accounts` | Accounts in the graph by name (`searchAutomationAccounts`). |
 | `revbox_datasets` | The box's tables (GET-874): key, name, description, columns and the rows this person sees counted (`listRevboxDatasets`). |
-| `signal_catalog` | The signal catalog (`loadSignalCatalog(sb, ws, { activeOnly: true })`): keys, labels and the trigger each becomes. |
+| `signal_catalog` | The signal catalog (`loadSignalCatalog(sb, ws, { activeOnly: true })`): keys, labels and the trigger each becomes. `meeting.done` lists only the recorders the workspace has connected (`withConnectedRecorders`, GET-892), with a note saying which, or that none is and a meeting job needs one connected first. |
+| `set_trigger` | Commits the trigger (one key or several) and emits the `trigger` event; does not end the turn. A named recorder that is not connected is refused (GET-892). |
 | `ask` | Ends the turn with questions (schema below). |
 | `propose_job` | Ends the turn with a proposal (schema below). The server validates it; on failure the error goes back to the model as a tool result and the loop continues. |
 
@@ -256,6 +257,25 @@ event happens: the agent never asks for a time, frequency or schedule for one, a
 `ask` question about timing once the trigger is an event (set_trigger committed one, or the composer's
 signal hint is one). Only a schedule job asks about timing, and only when the user did not say.
 
+### The trigger is always settled with the user (GET-892)
+
+The agent never defaults the trigger (it used to assume a daily schedule when nothing was picked).
+When no signal was picked in the composer and the request neither names an event ("after every
+meeting", "when we win a deal") nor says it runs on a schedule ("every morning", "weekly"), the agent
+reads `signal_catalog` and either asks one multiple-choice question, "What should start this job?",
+with the 2-4 most fitting starts in plain words ("When a Granola meeting ends", "When a deal is won",
+"Every weekday morning"; its pick first, marked "(Recommended)") plus "Something else", or, when
+one start clearly fits, sets it and says in one sentence which start it picked so the user can change it.
+
+The server enforces it (`loop.mjs` `triggerGrounding`): a `propose_job` whose trigger the user never
+grounded is refused back to the model with `TRIGGER_UNSETTLED`, a short instruction to ask. A
+trigger is grounded by: the composer's picked signals (the hint in the transcript); the user's own
+words naming every key (`signalMentioned`: their messages and answers, never the hint preamble or the
+agent's question text); an answered question about what starts the job (`isTriggerQuestion`: it says
+so, or 2+ of its options name a start), whatever they picked ("Something else" included); the job
+being edited keeping its trigger kind; or the trigger of the proposal they were last shown. A hinted
+signal skips the question; an event trigger still never asks for a time.
+
 `Question`: `{ id, header (≤12 chars), question, multi: boolean, options: [{ label, description? }] }`.
 The UI always also offers "Other" with free text. Answers are sent back as the next user message:
 `{ "answers": [{ "id", "selected": [labels], "other"?: "text" }] }` (the server renders them into the
@@ -277,8 +297,8 @@ the latest one wins; it may be absent from older clients.
   `GET /api/revboxes/catalog` `connections`). They mean "this job involves these tools"; the agent
   should use them and say so if one cannot do what the job needs. They are not a whitelist.
 - `signals` (older clients: `signal`): what the user picked in the Signals menu, catalog keys. A catalog key, `"schedule"` when the user picked
-  "No signal (scheduled)" explicitly, or `null` when nothing was picked (the agent decides; most
-  likely a schedule). A picked signal is authoritative: the proposal's trigger is
+  "No signal (scheduled)" explicitly, or `null` / `[]` when nothing was picked (the agent settles the
+  start with the user, above; never a default). A picked signal is authoritative: the proposal's trigger is
   `triggerForSignal(signal, catalog)` unless the user's words clearly contradict it, in which case the
   agent asks or emits a `trigger` event with its choice.
 
@@ -326,6 +346,28 @@ run, and the signal path's per-account cooldown sees the call run too. A job on 
 
 Workspace signals live in Settings > Signals and `/api/signals` (catalog, list, create, edit/review,
 archive, reprocess); they belong to the workspace, a RevBox only records where one was proposed.
+
+### Only connected recorders (GET-892)
+
+`GET /api/signals/catalog` narrows `meeting.done.providers` to the recorders the workspace has
+connected (core `withConnectedRecorders(catalog, slugs)`: any member's connection counts, since a
+meeting job fires on the workspace's calls), adds `recorders` (those) and `connected` (every
+connected tool slug). Resolving a key (`triggerForSignal`) still uses the full catalog, so a job on
+a recorder that was later disconnected keeps its trigger. The pickers (frontend `lib/signalOptions.ts`)
+show one text row per connected recorder ("Meeting done · Granola") plus "Meeting done (any
+recorder)", no provider logos; with none connected, the Meetings group is one muted line, "Connect
+Granola, Fireflies or Fathom to use meeting signals", linking to Integrations. The New signal dialog
+(Settings > Signals: Name, Description, Sources) offers only connected sources, plus any the signal
+already reads.
+
+### Custom signal extraction budget (GET-892)
+
+`extractCustomSignals` (apps/api `revboxRuntime.mjs`, every minute) classifies at most
+`CUSTOM_SIGNAL_TICK_BUDGET` (50) claims per tick and `CUSTOM_SIGNAL_WORKSPACE_BUDGET` (10) per
+workspace, round-robin: one claim per workspace per pass, one per definition within a workspace, the
+workspace order rotating every tick. The credit gate is per workspace, checked once per tick; a
+workspace out of credits is skipped and the others go on. A definition's cursor moves only when every
+readable claim it had was read.
 
 ## Proposal
 

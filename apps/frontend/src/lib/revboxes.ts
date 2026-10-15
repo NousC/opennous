@@ -294,7 +294,9 @@ export type SignalEntry = {
   providers?: string[]; needs_config?: boolean; trigger: { kind: string; config: Record<string, unknown> };
   id?: string; active?: boolean; version?: number; sources?: string[];
 };
-export type SignalCatalog = { builtin: SignalEntry[]; custom: SignalEntry[]; groups?: { id: SignalGroup; label: string }[] };
+/** `recorders`: the meeting recorders the workspace has connected (meeting.done's providers are
+ *  narrowed to them); `connected`: every connected tool slug (GET-892). Absent on an older server. */
+export type SignalCatalog = { builtin: SignalEntry[]; custom: SignalEntry[]; groups?: { id: SignalGroup; label: string }[]; recorders?: string[]; connected?: string[] };
 export type WorkspaceSignal = {
   id: string; key: string; name: string; rule: string; examples: string; sources: string[];
   owner_id: string; revbox_id: string | null; active: boolean; version: number;

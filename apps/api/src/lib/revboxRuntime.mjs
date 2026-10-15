@@ -101,25 +101,81 @@ export async function dispatchRevboxEvents(sb){
   }
 }
 
-export async function extractCustomSignals(sb){
-  let remaining=10;
-  for(const definition of await activeCustomSignals(sb)){
+// Custom signal extraction (GET-892): a per-tick budget shared fairly. Each tick classifies at
+// most CUSTOM_SIGNAL_TICK_BUDGET claims overall and CUSTOM_SIGNAL_WORKSPACE_BUDGET per workspace,
+// taken round-robin: one claim per workspace per pass, and within a workspace one per definition
+// per pass. The workspace order rotates every tick, so with more busy workspaces than the tick
+// budget the tail is not always last. The credit gate is per workspace, checked once per tick
+// before its first claim: a workspace out of credits is skipped, the others go on. A definition's
+// cursor moves on only when every readable claim it had this tick was read; the rest wait.
+export const CUSTOM_SIGNAL_TICK_BUDGET=50;
+export const CUSTOM_SIGNAL_WORKSPACE_BUDGET=10;
+let extractionRotation=0;
+
+export async function extractCustomSignals(sb,io={}){
+  const r={activeCustomSignals,revboxMembership,customSignalCandidates,customSignalAccount,claimCustomExtraction,customSignalIsCurrent,publishCustomSignal,finishCustomExtraction,advanceCustomSignal,
+    gate:revboxCreditGate,
+    classify:(definition,claim,extraction)=>classifyCustomSignal(definition,claim,{gate:()=>revboxCreditGate(sb,definition.workspace_id),generate:createMessage,meter:response=>recordRevboxUsage(sb,{workspaceId:definition.workspace_id,userId:definition.owner_id,boxId:definition.revbox_id,feature:'revbox-custom-signal',model:response.model,usage:response.usage,costUsd:computeCost(response.model,response.usage),requestId:`custom-signal:${extraction.id}`})}),
+    log:(id,message)=>console.error('[custom-signals]',id,message),
+    ...io};
+  const rotation=Number.isInteger(io.rotation)?io.rotation:extractionRotation++;
+  // Workspaces in a stable order, rotated; each with its definitions and a round-robin pointer.
+  const byWs=new Map();
+  for(const definition of await r.activeCustomSignals(sb)){
+    if(!byWs.has(definition.workspace_id))byWs.set(definition.workspace_id,{id:definition.workspace_id,defs:[],next:0,used:0,gate:null});
+    byWs.get(definition.workspace_id).defs.push({definition,queue:null,candidates:[],done:false,failed:false});
+  }
+  const ids=[...byWs.keys()].sort();
+  const shift=ids.length?rotation%ids.length:0;
+  const order=[...ids.slice(shift),...ids.slice(0,shift)].map(id=>byWs.get(id));
+  // The definition's readable claims, read on its first turn. false when it cannot run this tick.
+  const load=async(d)=>{
+    if(d.queue)return true;if(d.failed)return false;
     try{
-      await revboxMembership(sb,definition.workspace_id,definition.owner_id);
-      const {candidates,readable}=await customSignalCandidates(sb,definition);
-      for(const claim of readable){
-        if(remaining<=0)return;remaining--;
-        const accountId=await customSignalAccount(sb,definition.workspace_id,claim.entity_id);if(!accountId)continue;
-        await revboxCreditGate(sb,definition.workspace_id);
-        const extraction=await claimCustomExtraction(sb,definition,claim);if(!extraction)continue;
-        try{
-          const result=await classifyCustomSignal(definition,claim,{gate:()=>revboxCreditGate(sb,definition.workspace_id),generate:createMessage,meter:response=>recordRevboxUsage(sb,{workspaceId:definition.workspace_id,userId:definition.owner_id,boxId:definition.revbox_id,feature:'revbox-custom-signal',model:response.model,usage:response.usage,costUsd:computeCost(response.model,response.usage),requestId:`custom-signal:${extraction.id}`})});
-          await revboxMembership(sb,definition.workspace_id,definition.owner_id);
-          if(result&&await customSignalIsCurrent(sb,definition))await publishCustomSignal(sb,definition,claim,accountId,extraction,result);
-          await finishCustomExtraction(sb,extraction.id,{state:result?'matched':'unmatched',quote:result?.quote??null});
-        }catch(error){await finishCustomExtraction(sb,extraction.id,{state:'failed',error:error.message});}
+      await r.revboxMembership(sb,d.definition.workspace_id,d.definition.owner_id);
+      const {candidates,readable}=await r.customSignalCandidates(sb,d.definition);
+      d.candidates=candidates??[];d.queue=[...(readable??[])];return true;
+    }catch(error){d.failed=true;r.log(d.definition.id,error.message);return false;}
+  };
+  // The next definition in this workspace with a claim left, round-robin. null when none.
+  const nextDefinition=async(w)=>{
+    for(let i=0;i<w.defs.length;i++){
+      const d=w.defs[(w.next+i)%w.defs.length];
+      if(!await load(d)||!d.queue.length)continue;
+      w.next=(w.next+i+1)%w.defs.length;return d;
+    }
+    return null;
+  };
+  const one=async(w,d)=>{
+    const {definition}=d;const claim=d.queue.shift();
+    try{
+      const accountId=await r.customSignalAccount(sb,definition.workspace_id,claim.entity_id);if(!accountId)return;
+      const extraction=await r.claimCustomExtraction(sb,definition,claim);if(!extraction)return;
+      try{
+        const result=await r.classify(definition,claim,extraction);
+        await r.revboxMembership(sb,definition.workspace_id,definition.owner_id);
+        if(result&&await r.customSignalIsCurrent(sb,definition))await r.publishCustomSignal(sb,definition,claim,accountId,extraction,result);
+        await r.finishCustomExtraction(sb,extraction.id,{state:result?'matched':'unmatched',quote:result?.quote??null});
+      }catch(error){await r.finishCustomExtraction(sb,extraction.id,{state:'failed',error:error.message});}
+    }catch(error){d.failed=true;d.queue=[];r.log(definition.id,error.message);}
+  };
+  let spent=0;
+  for(let progress=true;progress&&spent<CUSTOM_SIGNAL_TICK_BUDGET;){
+    progress=false;
+    for(const w of order){
+      if(spent>=CUSTOM_SIGNAL_TICK_BUDGET)break;
+      if(w.used>=CUSTOM_SIGNAL_WORKSPACE_BUDGET||w.gate===false)continue;
+      const d=await nextDefinition(w);if(!d)continue;
+      if(w.gate===null){
+        try{await r.gate(sb,w.id);w.gate=true;}catch(error){w.gate=false;r.log(w.id,error.message);continue;}
       }
-      if(candidates.length)await advanceCustomSignal(sb,definition,candidates.at(-1));
-    }catch(error){console.error('[custom-signals]',definition.id,error.message);}
+      w.used++;spent++;progress=true;
+      await one(w,d);
+    }
+  }
+  // A definition whose readable claims were all read this tick moves past its candidates.
+  for(const w of order)for(const d of w.defs){
+    if(!d.queue||d.failed||d.queue.length||!d.candidates.length)continue;
+    try{await r.advanceCustomSignal(sb,d.definition,d.candidates.at(-1));}catch(error){r.log(d.definition.id,error.message);}
   }
 }

@@ -259,15 +259,20 @@ function previewSignalKey(name, taken) {
   let out = k; for (let n = 2; taken.includes(out); n++) out = `${k}_${n}`;
   return out;
 }
+// The tools the preview workspace has connected (the same list as the revbox catalog's connections).
+const PREVIEW_CONNECTED = ['granola', 'hubspot', 'gmail', 'slack'];
 function previewCatalog() {
   const custom = state.signals;
+  // Meeting signals offer only the connected recorders, and the connected tools come along (GET-892).
+  if (catalogModule?.withConnectedRecorders) return { ...catalogModule.withConnectedRecorders(catalogModule.signalCatalog({ custom }), PREVIEW_CONNECTED), connected: PREVIEW_CONNECTED, groups: catalogModule.SIGNAL_GROUPS };
   if (catalogModule) return { ...catalogModule.signalCatalog({ custom }), groups: catalogModule.SIGNAL_GROUPS };
   return {
+    recorders: ['granola'], connected: PREVIEW_CONNECTED,
     builtin: [
-      { key: 'meeting.done', label: 'Meeting done', description: 'A recorded meeting ended and its notes are in.', group: 'meetings', providers: ['granola', 'fireflies', 'fathom', 'any'], trigger: { kind: 'call_ended', config: {} } },
+      { key: 'meeting.done', label: 'Meeting done', description: 'A recorded meeting ended and its notes are in.', group: 'meetings', providers: ['granola', 'any'], trigger: { kind: 'call_ended', config: {} } },
       { key: 'deal.won', label: 'Deal won', description: 'A deal moved to closed won.', group: 'deals', trigger: { kind: 'deal_closed_won', config: {} } },
       { key: 'signal.churn_risk', label: 'Churn risk', description: 'The customer showed a risk of churning.', group: 'account', trigger: { kind: 'account_signal', config: { signals: ['churn_risk'] } } },
-      { key: 'schedule', label: 'On a schedule', description: 'No signal: the job runs on a clock (the default).', group: 'schedule', trigger: { kind: 'clock', config: {} } },
+      { key: 'schedule', label: 'On a schedule', description: 'No signal: the job runs on a clock.', group: 'schedule', trigger: { kind: 'clock', config: {} } },
     ],
     custom: custom.filter(d => !d.archived_at).map(d => ({ key: `custom.${d.key}`, label: d.name, description: d.rule, group: 'custom', id: d.id, active: !!d.active, version: d.version, sources: d.sources, trigger: { kind: 'account_signal', config: { signals: [`custom_${d.id}`] } } })),
   };
@@ -353,7 +358,7 @@ export const PREVIEW_SLACK = { connected: true,
     { id: 'C07GENERAL', name: 'general', private: false, member: false },
   ], people: [{ id: 'U07AVERY', name: 'Avery Example', email: 'avery@opennous.example' }] };
 const refs = [{ id: 'doc-email-voice', title: 'Email voice', body: 'Write like a helpful colleague. Short paragraphs, concrete next steps, no filler. Do not promise anything that was not agreed.' }, { id: 'doc-cs-playbook', title: 'Customer onboarding playbook', body: 'Before kickoff, confirm the champion, implementation owner, key promises and success measure. Highlight open risks and who owns the first next step.' }];
-const connections = ['granola', 'hubspot', 'gmail', 'slack'].map(slug => ({ id: `preview-${slug}`, slug, name: slug, email: slug === 'gmail' ? USERS[0].email : null }));
+const connections = PREVIEW_CONNECTED.map(slug => ({ id: `preview-${slug}`, slug, name: slug, email: slug === 'gmail' ? USERS[0].email : null }));
 function body(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', c => { raw += c; if (raw.length > 400000) reject(Object.assign(new Error('Reference is too large.'), { status: 413 })); }); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(Object.assign(new Error('Invalid JSON.'), { status: 400 })); } }); }); }
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 
@@ -614,6 +619,24 @@ const OTHER_QUESTIONS = [
     { label: 'Draft an email in Gmail', description: 'From your mailbox, sent only after you approve' },
     { label: 'Just keep it in this box', description: 'Shows under Results' } ] },
 ];
+// What starts the job, asked when the words name no start and no signal was picked (GET-892): the
+// real builder never defaults it. The fitting starts from the catalog, the pick first, plus "Something else".
+const TRIGGER_QUESTION = { id: 'start', header: 'Starts', question: 'What should start this job?', multi: false, options: [
+  { label: 'Every weekday morning (Recommended)', description: 'On a schedule, before the day starts' },
+  { label: 'When a deal is won', description: 'As soon as a deal moves to closed won' },
+  { label: 'When a Granola meeting ends', description: 'After every meeting Granola records' },
+  { label: 'Something else', description: 'Tell me in your own words' } ] };
+/** The signal an answer to TRIGGER_QUESTION picked (the schedule unless it names an event). */
+const triggerFromAnswer = (a) => /deal is won/i.test(a ?? '') ? 'deal.won' : /meeting/i.test(a ?? '') ? 'meeting.done:granola' : 'schedule';
+/** Words that already say it runs on a schedule. */
+const SCHEDULE_WORDS = /\b(daily|weekly|monthly|quarterly|mornings?|weekdays?|every (morning|day|week|monday|tuesday|wednesday|thursday|friday|weekday|month))\b|\b\d{1,2}(:\d{2})?\s*(am|pm)\b/i;
+const EVENT_LABEL = { 'deal.won': 'When a deal is won' };
+/** An event signal's trigger for the scripted proposals (a meeting recorder, a deal, an account signal). */
+function eventTrigger(key) {
+  if (key.startsWith('meeting.done')) return meetingTrigger(key);
+  const entry = previewCatalog().builtin.concat(previewCatalog().custom).find(e => e.key === key);
+  return { signal_key: key, ...(entry?.trigger ?? { kind: 'account_signal', config: {} }), label: EVENT_LABEL[key] ?? `When ${entry?.label ?? key}` };
+}
 /** "8am", "7:30", "18:00", "at 9" -> "HH:MM", or null when the words give no time. */
 function timeIn(words) {
   const m = String(words ?? '').match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i) ?? String(words ?? '').match(/\b(\d{1,2}):(\d{2})\b/);
@@ -724,8 +747,8 @@ function otherProposal(s) {
     ...(toSlack ? [{ id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C07CSHANDOFFS', channel: 'cs-handoffs', format: 'report', text: '{{steps.work.output}}' } }] : []),
     ...(toGmail ? [{ id: 'draft', type: 'gmail', config: { mode: 'draft', to: USERS[0].email, body: '{{steps.work.output}}', send_from: { id: MAILBOX.id, kind: 'gmail', email: MAILBOX.email } } }] : []),
   ];
-  const trigger = s.signal && s.signal !== 'schedule' && s.signal !== 'deal.won' && !s.signal.startsWith('meeting.done')
-    ? { signal_key: s.signal, ...(previewCatalog().builtin.concat(previewCatalog().custom).find(e => e.key === s.signal)?.trigger ?? { kind: 'account_signal', config: {} }), label: `When ${s.signal}` }
+  const trigger = s.signal && s.signal !== 'schedule'
+    ? eventTrigger(s.signal)
     : { signal_key: 'schedule', kind: 'clock', config: { frequency: 'weekly', at: '08:00', day_of_week: 1 }, timezone: 'America/Toronto', label: 'Every Monday at 08:00 (Toronto)' };
   return {
     name: s.name ?? 'Weekly account job',
@@ -738,7 +761,7 @@ function otherProposal(s) {
     ],
     uses_box_delivery: !toSlack && !toGmail,
     warnings: [],
-    assumptions: [...(trigger.kind === 'clock' ? ['Runs weekly on Monday morning; say another time to change it.'] : []), ...(s.changes ?? [])],
+    assumptions: [...(trigger.kind === 'clock' ? ['Runs on Monday morning; say another time to change it.'] : []), ...(s.changes ?? [])],
     estimated_credits_per_run: 1,
   };
 }
@@ -757,8 +780,9 @@ function reportProposal(s) {
   ];
   return {
     name: s.name ?? 'Credit Check daily summary',
-    summary: `${weekdays ? 'Every weekday' : 'Every morning'} at ${at} Toronto time: read yesterday's Credit Check numbers per dealer from HubSpot, write the VP summary, post it to ${channel}.`,
-    trigger: { signal_key: 'schedule', kind: 'clock', config: { frequency: 'daily', at, ...(weekdays ? { weekdays_only: true } : {}) }, timezone: 'America/Toronto', label },
+    summary: `${s.signal && s.signal !== 'schedule' ? eventTrigger(s.signal).label : `${weekdays ? 'Every weekday' : 'Every morning'} at ${at} Toronto time`}: read yesterday's Credit Check numbers per dealer from HubSpot, write the VP summary, post it to ${channel}.`,
+    // An event the user picked when asked what starts it (GET-892), else the schedule.
+    trigger: s.signal && s.signal !== 'schedule' ? eventTrigger(s.signal) : { signal_key: 'schedule', kind: 'clock', config: { frequency: 'daily', at, ...(weekdays ? { weekdays_only: true } : {}) }, timezone: 'America/Toronto', label },
     steps,
     facts: factsFor(steps),
     display: [
@@ -1011,25 +1035,33 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       await propose();
     } else if (s.script === 'report') {
       await tool('Checking connected tools…', 'workspace_connections', `HubSpot, Slack, Gmail and Granola are connected${attached}`);
-      await announceTrigger(hinted && !hinted.startsWith('meeting.done') && hinted !== 'deal.won' ? hinted : 'schedule');
+      // No pick and no schedule in the words: the start is asked with the rest, never defaulted (GET-892).
+      s.askStart = !hinted && !SCHEDULE_WORDS.test(words);
+      if (!s.askStart) await announceTrigger(hinted && !hinted.startsWith('meeting.done') && hinted !== 'deal.won' ? hinted : 'schedule');
       await tool('Looking for Credit Check in HubSpot…', 'hubspot_find', 'Found Company Daily Stats · 5 Credit Check fields');
       await tool('Previewing yesterday’s numbers…', 'hubspot_preview', 'Yesterday: 42 dealers with Credit Check activity');
       await settleIntegrations();
       // The time is asked only when the words did not give one.
       const at = timeIn(words);
       if (at) s.answers = { ...(s.answers ?? {}), time: `${at} Toronto${/weekday/i.test(words) ? ', weekdays only' : ''}` };
-      const questions = REPORT_QUESTIONS.filter(q => q.id !== 'time' || !at);
+      const questions = [...(s.askStart ? [TRIGGER_QUESTION] : []), ...REPORT_QUESTIONS.filter(q => q.id !== 'time' || (!at && !s.askStart))];
       await prose(`The numbers live in the HubSpot custom object Company Daily Stats, and yesterday has real data for 42 dealers. ${questions.length === 3 ? 'Three' : 'Two'} things I can’t work out on my own:`);
       await ask(questions);
     } else {
       await tool('Checking connected tools…', 'workspace_connections', `HubSpot, Slack, Gmail and Granola are connected${attached}`);
       if (hinted) await announceTrigger(hinted);
-      await prose('I can set that up. One thing first:');
-      await ask(OTHER_QUESTIONS);
+      await prose(hinted ? 'I can set that up. One thing first:' : 'I can set that up. Two things first:');
+      await ask([...(hinted ? [] : [TRIGGER_QUESTION]), ...OTHER_QUESTIONS]);
     }
   } else if (s.stage === 1 && payload.answers) {
     const picked = Object.fromEntries(payload.answers.map(a => [a.id, [...(a.selected ?? []), ...(a.other ? [a.other] : [])].join(', ')]));
     s.answers = { ...(s.answers ?? {}), ...picked };
+    // The answer to "What should start this job?" settles the trigger (GET-892).
+    if (picked.start) {
+      const key = triggerFromAnswer(picked.start);
+      if (key === 'schedule' && /weekday/i.test(picked.start)) s.answers.time = '08:00 Toronto, weekdays only';
+      await announceTrigger(key);
+    }
     if (s.script === 'meeting') {
       // A channel the fake does not know falls back to the box's own, as the real one would ask again.
       s.channel = namedChannel(picked.channel) ?? 'cs-handoffs';
@@ -1037,9 +1069,8 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       await prose('Here’s the job:');
       await propose();
     } else if (s.script === 'other') {
-      if (!s.signal) await announceTrigger('schedule');
       await settleIntegrations();
-      await prose('Here’s the job. It runs weekly unless you tell me otherwise:');
+      await prose('Here’s the job:');
       await propose();
     } else {
       await tool('Resolving the Slack channel…', 'slack_channels', `${unrec(s.answers.channel || '#credit-check-cs-handoff')} · C07TU1HANDOFF`);
