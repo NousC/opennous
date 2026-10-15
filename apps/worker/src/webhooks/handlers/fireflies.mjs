@@ -182,7 +182,7 @@ function normalizeParticipants(participants = [], attendees = [], ...extraEmails
   return [...out.values()];
 }
 
-export async function reprocessFireflies(supabase, workspaceId, body) {
+export async function reprocessFireflies(supabase, workspaceId, body, { onceOnly = false } = {}) {
   const { meetingId, meeting_id, eventType } = body || {};
   const id = meetingId || meeting_id;
   if (!id) throw new Error('meetingId_required');
@@ -430,6 +430,7 @@ export async function reprocessFireflies(supabase, workspaceId, body) {
   // call — who defers to whom, who actually holds the budget.
   if (externals.length) {
     extractMeetingSignals({
+      onceOnly,
       sourceRef:    `source://fireflies/${id}`,
       supabase,
       workspaceId,

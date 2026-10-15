@@ -47,7 +47,7 @@ function verifyFathomSignature(secret, rawBody, webhookId, webhookTimestamp, sig
   });
 }
 
-export async function reprocessFathom(supabase, workspaceId, payload) {
+export async function reprocessFathom(supabase, workspaceId, payload, { onceOnly = false } = {}) {
   payload = payload || {};
 
   const title       = payload.title || payload.meeting_title || 'Untitled Meeting';
@@ -233,6 +233,7 @@ export async function reprocessFathom(supabase, workspaceId, payload) {
   // when that's all we have). This is what populates note.* facts → intent.
   if (externals.length && extractionText) {
     extractMeetingSignals({
+      onceOnly,
       sourceRef:    `source://fathom/${meetingKey}`,
       supabase,
       workspaceId,

@@ -8,9 +8,14 @@ import { num } from "./format.ts";
 
 /** What the backfill step needs from /api/backfill/preview. */
 export type BackfillPreview = {
-  state: "none" | "awaiting_confirmation" | "over_allowance" | "needs_support" | "running" | "done" | "dismissed";
+  state: "none" | "awaiting_confirmation" | "over_allowance" | "needs_support" | "running" | "done" | "dismissed" | "paused_provider";
   /** A backfill already finished here: a new waiting one is for a tool connected since (GET-851). */
   ran_before?: boolean;
+  /** Paused because the AI provider kept failing (GET-852): what it said. The worker asks again
+   *  every few minutes and continues from where it stopped. */
+  provider_error?: { reason: "credit" | "auth" | "rate_limit" | "outage"; message: string; provider?: string; phase?: string | null; at?: string } | null;
+  last_probe_at?: string | null;
+  resume_requested?: boolean;
   plan_live?: boolean;
   /** Credits a month the paid plan includes; null on Free, unpaid or unlimited (GET-682). */
   plan_credits?: number | null;
@@ -110,6 +115,7 @@ export function stepStatus(key: StepKey, c: OnboardingChecklist, p: BackfillPrev
     }
     case "backfill": {
       if (c.backfill.state === "done" || p?.state === "done") return "Done";
+      if (p?.state === "paused_provider") return "Paused: AI provider";
       if (c.backfill.state === "running" || p?.state === "running") {
         const pr = p?.progress;
         if (pr?.to_read) return `${num(pr.read ?? 0)} of ${num(pr.to_read)}`;
@@ -129,4 +135,16 @@ export function backfillCount(p: BackfillPreview | null): { read: number; of: nu
   const pr = p?.progress;
   const pct = p?.state === "done" ? 100 : Math.max(0, Math.min(100, pr?.pct ?? 0));
   return { read: pr?.read ?? 0, of: pr?.to_read || null, pct };
+}
+
+/** The Backfill card's sentence for a pause on the AI provider (GET-852): what it said, then what to do. */
+export function providerPauseLine(e: BackfillPreview["provider_error"]): string {
+  const named = e?.provider && e.provider !== "your AI provider" ? e.provider : null;
+  const who = named ?? "Your AI provider";
+  switch (e?.reason) {
+    case "credit": return `${who} says your account is out of credit. Top it up and the backfill continues by itself within about 5 minutes, from where it stopped.`;
+    case "auth": return `${who} rejected the API key. Fix the key in nous.env (OPENROUTER_API_KEY or LLM_API_KEY) and restart, and the backfill continues from where it stopped.`;
+    case "rate_limit": return `${who} is rate-limiting this install. The backfill tries again every 5 minutes and continues from where it stopped.`;
+    default: return `${who} is not answering. The backfill tries again every 5 minutes and continues from where it stopped.`;
+  }
 }

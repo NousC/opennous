@@ -11,6 +11,8 @@
 
 import { getSupabaseClient, sendEmail, CREDIT_SCALE, withBackfillLock, lockHolder, LockHeldError } from '@nous/core';
 import { backfillCreditState, BACKFILL_CREDIT_FLOOR, CreditsExhausted } from '../utils/credits.mjs';
+import { providerFailures, probeProvider, ProviderUnavailable, PROVIDER_FAIL_THRESHOLD, PROBE_EVERY_MS, providerPauseLine } from '../lib/providerHealth.mjs';
+import { createMessage, modelEndpoint } from '../lib/llm.mjs';
 
 const LOCK_STALE_MS = 20 * 60_000; // a 'running' job locked longer than this is reclaimable
 const MAX_ATTEMPTS = 3;
@@ -99,6 +101,76 @@ async function pauseForCredits(supabase, job, phase) {
   } catch (e) { console.warn('[CONTACT_ENRICH_JOB] pause email failed:', e?.message || e); }
 }
 
+// The provider's name for the operator: what the reading model runs on.
+function providerName() {
+  try { const ep = modelEndpoint(); return ep.openRouter ? 'OpenRouter' : ep.host; } catch { return 'your AI provider'; }
+}
+
+// Pause (not fail) a backfill whose AI provider keeps failing: out of credit, a bad key, a rate
+// limit or an outage (GET-852). Everything read so far is saved; the resume sweep probes the
+// provider every few minutes and continues the job once it answers. Reads are deduped (email by
+// noema.read, meetings by the claims that cite them), so continuing does not re-read.
+async function pauseForProvider(supabase, job, err) {
+  const failure = err.failure ?? { message: err.message, reason: 'outage' };
+  const now = new Date().toISOString();
+  await supabase.from('contact_enrichment_jobs').update({
+    status: 'paused_provider',
+    paused_reason: failure.reason,
+    paused_at: now,
+    ...(err.phase ? { processed_phase: err.phase } : {}),
+    updated_at: now,
+  }).eq('job_id', job.job_id);
+  await patchJobState(supabase, job.job_id, {
+    provider_error: { reason: failure.reason, message: failure.message, provider: providerName(), phase: err.phase, at: now },
+    last_probe_at: now,
+  });
+  console.log(`[CONTACT_ENRICH_JOB] paused job=${job.job_id} — AI provider ${failure.reason}: ${failure.message}`);
+  try {
+    const { data: m } = await supabase
+      .from('workspace_members').select('users:user_id(email)')
+      .eq('workspace_id', job.workspace_id).order('created_at', { ascending: true }).limit(1).maybeSingle();
+    const to = m?.users?.email;
+    if (to) {
+      await sendEmail({
+        to, tag: 'BACKFILL_PAUSED_PROVIDER',
+        subject: 'Your history backfill paused',
+        text: `${providerPauseLine(failure.reason, providerName())} Your history backfill paused so nothing is skipped. Everything it read is saved. Fix it (for example, top up your credit) and the backfill continues by itself within a few minutes, from where it stopped.\n\nThe provider said: ${failure.message}`,
+      });
+    }
+  } catch (e) { console.warn('[CONTACT_ENRICH_JOB] pause email failed:', e?.message || e); }
+}
+
+// Continue backfills paused on the provider once it answers again (GET-852). At most one probe a
+// tick, and per job only every PROBE_EVERY_MS unless the operator pressed Resume (resume_requested).
+async function resumeProviderPausedBackfills(supabase) {
+  const { data: paused, error } = await supabase
+    .from('contact_enrichment_jobs')
+    .select('job_id, paused_at, state')
+    .eq('status', 'paused_provider')
+    .limit(25);
+  if (error || !paused?.length) return;
+  const now = Date.now();
+  const due = paused.filter((j) => j.state?.resume_requested
+    || now - Date.parse(j.state?.last_probe_at ?? j.paused_at ?? 0) >= PROBE_EVERY_MS);
+  if (!due.length) return;
+  const probe = await probeProvider(createMessage);
+  const at = new Date().toISOString();
+  for (const job of due) {
+    if (probe.ok) {
+      await supabase.from('contact_enrichment_jobs')
+        .update({ status: 'pending', paused_reason: null, paused_at: null, locked_at: null, attempts: 0, updated_at: at })
+        .eq('job_id', job.job_id).eq('status', 'paused_provider');
+      await patchJobState(supabase, job.job_id, { provider_error: null, resume_requested: false, last_probe_at: at, provider_resumed_at: at });
+      console.log(`[CONTACT_ENRICH_JOB] resumed job=${job.job_id} — AI provider answers again`);
+    } else {
+      await patchJobState(supabase, job.job_id, {
+        resume_requested: false, last_probe_at: at,
+        provider_error: { ...(job.state?.provider_error ?? {}), reason: probe.reason, message: probe.message, at },
+      });
+    }
+  }
+}
+
 // Resume backfills that paused on credits, once the wallet has recovered (a top-up:
 // purchase, auto-top-up, onboarding grant, monthly grant). Runs at the head of every tick,
 // so a top-up resumes the backfill within one worker cycle — no separate cron. Idempotent.
@@ -126,6 +198,7 @@ export async function processContactEnrichmentJobs() {
   const supabase = getSupabaseClient();
   try {
     await resumePausedBackfills(supabase).catch((e) => console.warn('[CONTACT_ENRICH_JOB] resume sweep:', e?.message || e));
+    await resumeProviderPausedBackfills(supabase).catch((e) => console.warn('[CONTACT_ENRICH_JOB] provider resume sweep:', e?.message || e));
 
     const staleLock = new Date(Date.now() - LOCK_STALE_MS).toISOString();
     const { data: jobs, error } = await supabase
@@ -163,9 +236,18 @@ export async function processContactEnrichmentJobs() {
       await pauseForCredits(supabase, job, null);
       return;
     }
+    // The provider guard (GET-852): reads that could not reach the model since this job started
+    // (or last resumed). Past the threshold the job pauses with the provider's words instead of
+    // skipping the rest of the history in silence.
+    const providerSince = job.state?.provider_resumed_at ?? job.state?.started_at ?? new Date().toISOString();
+    const providerGuard = async (phase) => {
+      const f = await providerFailures(supabase, job.workspace_id, providerSince);
+      if (f.count >= PROVIDER_FAIL_THRESHOLD) throw new ProviderUnavailable(phase, f.last);
+    };
     const creditGuard = async (phase) => {
       const w = await backfillCreditState(supabase, job);
       if (w.gated && w.remaining <= BACKFILL_CREDIT_FLOOR) throw new CreditsExhausted(phase);
+      await providerGuard(phase);
     };
 
     // Prefer the rich payload the import handed over ({id,email,name,...}); it's the
@@ -193,7 +275,11 @@ export async function processContactEnrichmentJobs() {
       // Filed; now read it (GET-557). Before the job says done, so the bar and the backfill
       // credits cover the reading, not just the filing.
       await patchJobState(supabase, job.job_id, { filed_at: new Date().toISOString() });
+      await providerGuard('filing');
       await readBackfilledEmail(supabase, job);
+      // Email that could not be read is left unmarked (the hourly reader retries it), but a job
+      // that ran into a dead provider pauses here rather than saying done.
+      await providerGuard('reading');
       await supabase.from('contact_enrichment_jobs')
         .update({ status: 'done', done: true, updated_at: new Date().toISOString() })
         .eq('job_id', job.job_id);
@@ -259,6 +345,10 @@ export async function processContactEnrichmentJobs() {
       // top-up (the resume sweep re-queues it). Dedup makes the re-run continue, not restart.
       if (e instanceof CreditsExhausted) {
         await pauseForCredits(supabase, job, e.phase);
+        return;
+      }
+      if (e instanceof ProviderUnavailable) {
+        await pauseForProvider(supabase, job, e);
         return;
       }
       const giveUp = attempts >= MAX_ATTEMPTS;

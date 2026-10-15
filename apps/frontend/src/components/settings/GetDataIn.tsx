@@ -13,7 +13,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useOnboardingChecklist } from "@/hooks/useOnboardingChecklist";
 import { useBackfillPreview, Bar } from "@/pages/GetStarted";
 import { SettingsGroup } from "@/components/settings/SettingsKit";
-import { backfillCount, toolName } from "@/lib/getStarted";
+import { backfillCount, providerPauseLine, toolName } from "@/lib/getStarted";
 import { cn } from "@/lib/utils";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
@@ -88,6 +88,7 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
   const newSource = !!p?.ran_before && (p?.state === "awaiting_confirmation" || p?.state === "over_allowance");
   const windowDays = p?.window_days ?? 90;
   const running = state === "running", done = state === "done" && !newSource;
+  const paused = state === "paused_provider";
   const found = foundLine(p?.estimate?.conversations);
   const { read, of, pct } = backfillCount(p);
 
@@ -103,6 +104,23 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
       setConfirming(false); load(); reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't start the backfill.");
+    }
+    setBusy(false);
+  };
+
+  // Ask the worker to try the provider now rather than at its next 5-minute probe (GET-852).
+  const resume = async () => {
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(`${apiUrl}/api/backfill/resume`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.message || body?.error || "Couldn't resume the backfill.");
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't resume the backfill.");
     }
     setBusy(false);
   };
@@ -123,12 +141,23 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
       </Step>
 
       <Step n={3} done={done} title={newSource ? "Run the backfill for your new tool" : "Run the revenue backfill"}
-        action={!running && !done && !confirming && (
+        action={paused ? (
+          <button type="button" className={btn} disabled={busy || p?.resume_requested} onClick={resume}>
+            {(busy || p?.resume_requested) && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}Resume now
+          </button>
+        ) : !running && !done && !confirming && (
           <button type="button" className={primary} disabled={readable.length === 0} onClick={() => setConfirming(true)}>
             {newSource ? "Run again" : "Run backfill"}
           </button>
         )}>
         {done ? "Done. Your history is read and filed onto its accounts. Connect a new tool and this offers to read its history too."
+          : paused ? (
+            <div className="mt-1 space-y-1">
+              <p className="text-foreground">Paused. {providerPauseLine(p?.provider_error)}</p>
+              {p?.provider_error?.message && <p className="break-words font-mono text-[11px]">{p.provider_error.message}</p>}
+              {error && <p className="text-destructive">{error}</p>}
+            </div>
+          )
           : running ? (
             <div className="mt-1.5 max-w-[360px] space-y-1.5">
               <Bar pct={pct} />

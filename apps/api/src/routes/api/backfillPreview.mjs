@@ -64,6 +64,20 @@ backfillRouter.get('/preview', verifySupabaseAuth, async (req, res) => {
     const estimate = shape(job.state?.estimate);
     const estimate30 = shape(job.state?.estimate_30);
 
+    // Paused because the AI provider kept failing (GET-852): what it said, and when it was last
+    // asked. The worker probes every few minutes and continues by itself; Resume asks it now.
+    if (job.status === 'paused_provider') {
+      return res.json({
+        state: 'paused_provider',
+        job_id: job.job_id,
+        provider_error: job.state?.provider_error ?? null,
+        last_probe_at: job.state?.last_probe_at ?? null,
+        resume_requested: !!job.state?.resume_requested,
+        window_days: job.window_days ?? null,
+        estimate,
+      });
+    }
+
     if (job.status !== AWAITING) {
       // Running or done: the card and the sidebar pill say how far it has got (GET-517). Progress
       // is the share of (account × connected source) lanes the worker has finished; `read` is how
@@ -216,6 +230,33 @@ backfillRouter.post('/confirm', verifySupabaseAuth, async (req, res) => {
     return res.json({ ok: true, job_id: job.job_id, status: 'pending', window_days: windowDays });
   } catch (err) {
     console.error('[POST /api/backfill/confirm]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+/**
+ * POST /api/backfill/resume { workspaceId } — a backfill paused on its AI provider (GET-852): ask
+ * the worker to probe the provider now instead of waiting for its next scheduled try. When the
+ * provider answers, the job continues from where it stopped; when it does not, it stays paused
+ * with the provider's newest words.
+ */
+backfillRouter.post('/resume', verifySupabaseAuth, async (req, res) => {
+  try {
+    const workspaceId = req.body?.workspaceId ?? req.query.workspaceId;
+    if (!workspaceId) return res.status(400).json({ error: 'workspaceId_required' });
+    const supabase = getSupabaseClient();
+    const owner = await backfillOwnerFor(supabase, workspaceId, req.internalUserId).catch(() => null);
+    const { data: job } = await ownerJobFilter(supabase
+      .from('contact_enrichment_jobs').select('job_id, state')
+      .eq('workspace_id', workspaceId).eq('status', 'paused_provider'), owner)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (!job) return res.status(404).json({ error: 'no_paused_backfill' });
+    await supabase.from('contact_enrichment_jobs')
+      .update({ state: { ...(job.state ?? {}), resume_requested: true }, updated_at: new Date().toISOString() })
+      .eq('job_id', job.job_id).eq('status', 'paused_provider');
+    return res.json({ ok: true, job_id: job.job_id });
+  } catch (err) {
+    console.error('[POST /api/backfill/resume]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });

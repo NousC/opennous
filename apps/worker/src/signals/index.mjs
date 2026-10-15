@@ -1455,6 +1455,23 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
 //
 // So: one call, every external attendee named, each fact tagged with who it is
 // about. Cheaper AND it can finally see the room.
+/**
+ * Whether a meeting was already read: a claim cites it (value.metadata.source_ref), or the read
+ * ledger stamped it (observation external_id read_<source_ref>, workers/readLedger.mjs).
+ */
+export async function meetingAlreadyRead(supabase, workspaceId, sourceRef) {
+  try {
+    const { data: cited } = await supabase.from('claims').select('id')
+      .eq('workspace_id', workspaceId).eq('value->metadata->>source_ref', sourceRef).limit(1);
+    if (cited?.length) return true;
+    const { data: stamped } = await supabase.from('observations').select('id')
+      .eq('workspace_id', workspaceId).eq('external_id', `read_${sourceRef}`).limit(1);
+    return !!stamped?.length;
+  } catch {
+    return false;   // unknown: read it rather than drop it
+  }
+}
+
 export async function extractMeetingSignals({
   supabase, workspaceId, participants, summary, source,
   maxFactsOverride, dryRun = false, occurredAt = null,
@@ -1469,8 +1486,13 @@ export async function extractMeetingSignals({
   // anything. This is the pointer, and its absence is the whole reason insights could never
   // be cited: the extractor was handed the words and never told which call they came from.
   sourceRef = null,
+  // A backfill replay (GET-852): skip a meeting that was already read, so continuing or re-running
+  // a backfill never sends the same call to the model twice. Live webhooks leave it off, since a
+  // meeting can legitimately arrive twice (the summary first, the full transcript later).
+  onceOnly = false,
 }) {
   try {
+    if (onceOnly && sourceRef && !dryRun && await meetingAlreadyRead(supabase, workspaceId, sourceRef)) return [];
     // THE CREDIT GATE (GET-531). Reading is what spends credits, so this is where the band
     // has to bite — one question per workspace per five minutes, in front of every caller:
     // the webhook handlers, the rollups, the re-extraction passes. The activity is already

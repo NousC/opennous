@@ -1358,7 +1358,7 @@ async function scanFirefliesReplay(supabase, workspaceId, apiKey) {
           keywords:        Array.isArray(t.summary?.keywords) ? t.summary.keywords : [],
           transcript_text: (t.sentences || []).map(sn => `${sn.speaker_name || 'Speaker'}: ${sn.text || ''}`).join('\n').slice(0, 100000) || null,
         };
-        const r = await reprocessFireflies(supabase, workspaceId, body);
+        const r = await reprocessFireflies(supabase, workspaceId, body, { onceOnly: true });
         if (r?.logged) touched += r.logged;
       } catch (e) { console.warn('[ENRICH_FIREFLIES_REPLAY]', t.id, e?.message || e); }
     });
@@ -1412,7 +1412,7 @@ async function scanFathomReplay(supabase, workspaceId, apiKey) {
         // Per-plan backfill window. Fathom replays through reprocessFathom (the live
         // webhook path, which does NOT gate), so drop old meetings here.
         if (_beforeBackfillCutoff(m?.recording_start_time || m?.scheduled_start_time)) continue;
-        const r = await reprocessFathom(supabase, workspaceId, m);
+        const r = await reprocessFathom(supabase, workspaceId, m, { onceOnly: true });
         if (r?.logged) touched += r.logged;
       } catch (e) { console.warn('[ENRICH_FATHOM_REPLAY]', m?.recording_id, e?.message || e); }
     }
