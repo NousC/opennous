@@ -18,7 +18,11 @@ import { decrypt } from '../utils/encryption.mjs';
 const GRANOLA_BASE = 'https://public-api.granola.ai/v1';
 const MAX_NOTES_PER_RUN = 60;         // hard cap per connection per tick
 const NOTE_SPACING_MS   = 500;        // ~2 notes/s → ~4 req/s, under the 5 req/s ceiling
-const FIRST_RUN_LOOKBACK_MS = 90 * 86400000;  // first scan reaches back 3 months, the backfill window (GET-514)
+// A connection's first live scan starts from when it was connected. Its history is the Backfill's
+// to read, inside the window the owner confirmed and behind the AI provider pause (GET-854); it
+// used to be read here, 90 days back, the moment Granola connected, with nobody asked.
+const FIRST_RUN_FALLBACK_MS = 86400000;
+const HISTORY_PAGES = 40;              // 1,200 notes per connection per backfill
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -28,10 +32,28 @@ async function getGranolaConnections(supabase) {
   if (!provider?.id) return [];
   const { data } = await supabase
     .from('workflow_provider_connections')
-    .select('id, workspace_id, owner_user_id, encrypted_credentials')
+    .select('id, workspace_id, owner_user_id, encrypted_credentials, created_at')
     .eq('is_verified', true)
     .eq('provider_id', provider.id);
   return data || [];
+}
+
+/** Every page of a connection's notes created after `since`, newest page first. */
+async function* listNotes(apiKey, since, maxPages) {
+  let cursor = null;
+  for (let page = 0; page < maxPages; page++) {
+    const url = new URL(`${GRANOLA_BASE}/notes`);
+    url.searchParams.set('created_after', since);
+    url.searchParams.set('page_size', '30');
+    if (cursor) url.searchParams.set('cursor', cursor);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (res.status === 429) throw Object.assign(new Error('Granola rate limit'), { rateLimited: true });
+    if (!res.ok) throw new Error(`Granola list returned ${res.status}`);
+    const d = await res.json().catch(() => ({}));
+    yield Array.isArray(d?.notes) ? d.notes : [];
+    if (!d?.hasMore || !d?.cursor) return;
+    cursor = d.cursor;
+  }
 }
 
 async function pollConnection(supabase, conn) {
@@ -42,7 +64,8 @@ async function pollConnection(supabase, conn) {
   // Cursor = the created_at of the newest note we've processed for this connection,
   // stored (plain) on the connection creds. First run reaches back a bounded window.
   const since = conn.encrypted_credentials?.granola_last_created_at
-    || new Date(Date.now() - FIRST_RUN_LOOKBACK_MS).toISOString();
+    || conn.created_at
+    || new Date(Date.now() - FIRST_RUN_FALLBACK_MS).toISOString();
 
   let cursor = null;
   let processed = 0;
@@ -103,6 +126,42 @@ async function pollConnection(supabase, conn) {
     console.log(`[GRANOLA_POLL] workspace=${conn.workspace_id}: ${processed} note(s) processed`);
   }
   return processed;
+}
+
+/**
+ * Granola's history for the Backfill (GET-854): every note of every Granola connection in the
+ * workspace created inside the window, through reprocessGranola like the live poll. Already-read
+ * notes are no-ops (external_id dedup), so a resumed or re-run backfill pays only for new ones.
+ * `guard` runs between notes so the job can stop (credits, AI provider) mid-history.
+ */
+export async function replayGranolaHistory(supabase, workspaceId, { sinceIso, guard = async () => {} } = {}) {
+  const connections = (await getGranolaConnections(supabase)).filter(c => c.workspace_id === workspaceId);
+  let read = 0, seen = 0;
+  for (const conn of connections) {
+    let apiKey = null;
+    try { apiKey = decrypt(conn.encrypted_credentials?.api_key); } catch { /* skip */ }
+    if (!apiKey) continue;
+    try {
+      for await (const notes of listNotes(apiKey, sinceIso, HISTORY_PAGES)) {
+        for (const n of notes) {
+          if (!n?.id) continue;
+          try {
+            const r = await reprocessGranola(supabase, workspaceId, { type: 'poll', data: { id: n.id } });
+            if (!r?.deduped) read++;
+          } catch (err) {
+            console.warn(`[GRANOLA_HISTORY] note ${n.id} failed:`, err.message);
+          }
+          if (++seen % 10 === 0) await guard('granola');
+          await sleep(NOTE_SPACING_MS);
+        }
+      }
+    } catch (err) {
+      if (err?.name === 'ProviderUnavailable' || err?.name === 'CreditsExhausted') throw err;   // the job pauses
+      console.warn(`[GRANOLA_HISTORY] workspace=${workspaceId}:`, err.message);
+    }
+  }
+  console.log(`[GRANOLA_HISTORY] workspace=${workspaceId}: ${read} note(s) read since ${sinceIso}`);
+  return read;
 }
 
 export async function pollAllGranolaWorkspaces() {

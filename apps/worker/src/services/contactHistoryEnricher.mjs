@@ -23,8 +23,9 @@ import { extractAfterActivity } from '../signals/index.mjs';
 // webhook uses, so it gets the full pipeline the raw scan lacked: identity resolution
 // (co-attendance + alternate-email learning — this is what links one person's two addresses),
 // the stored transcript document, and claim/fact extraction.
-import { reprocessFireflies } from '../webhooks/handlers/fireflies.mjs';
+import { reprocessFireflies, firefliesBodyFromTranscript, FIREFLIES_TRANSCRIPT_FIELDS } from '../webhooks/handlers/fireflies.mjs';
 import { reprocessFathom } from '../webhooks/handlers/fathom.mjs';
+import { replayGranolaHistory } from '../pollers/granola.mjs';
 import { isSelfHosted } from '../lib/cloud.mjs';
 
 // The worker's decrypt THROWS on a bad/foreign-key credential; the API's crypto.mjs
@@ -1313,11 +1314,7 @@ async function scanFirefliesReplay(supabase, workspaceId, apiKey) {
   try {
     for (let page = 0; page < FIREFLIES_REPLAY_PAGES; page++) {
       const query = `query { transcripts(limit: ${FIREFLIES_PAGE_SIZE}, skip: ${page * FIREFLIES_PAGE_SIZE}) {
-        id title date host_email organizer_email
-        participants
-        meeting_attendees { displayName email name }
-        summary { overview action_items keywords }
-        sentences { speaker_name text }
+        ${FIREFLIES_TRANSCRIPT_FIELDS}
       } }`;
       const res = await fetchRetry('https://api.fireflies.ai/graphql', {
         method: 'POST',
@@ -1345,19 +1342,7 @@ async function scanFirefliesReplay(supabase, workspaceId, apiKey) {
         // Per-plan backfill window. Fireflies replays through reprocessFireflies (the live
         // webhook path, which does NOT gate), so drop old meetings here at the scan.
         if (_beforeBackfillCutoff(t.date)) return;
-        const body = {
-          meetingId:       t.id,
-          title:           t.title,
-          date:            t.date,
-          host_email:      t.host_email,
-          organizer_email: t.organizer_email,
-          participants:    t.participants,
-          meeting_attendees: t.meeting_attendees,
-          summary:         t.summary?.overview || null,
-          action_items:    t.summary?.action_items || null,
-          keywords:        Array.isArray(t.summary?.keywords) ? t.summary.keywords : [],
-          transcript_text: (t.sentences || []).map(sn => `${sn.speaker_name || 'Speaker'}: ${sn.text || ''}`).join('\n').slice(0, 100000) || null,
-        };
+        const body = firefliesBodyFromTranscript(t);
         const r = await reprocessFireflies(supabase, workspaceId, body, { onceOnly: true });
         if (r?.logged) touched += r.logged;
       } catch (e) { console.warn('[ENRICH_FIREFLIES_REPLAY]', t.id, e?.message || e); }
@@ -1717,6 +1702,7 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
           slack:     makeSource(!!slackConn),
           fireflies: makeSource(!!firefliesKey),
           fathom:    makeSource(!!fathomKey),
+          granola:   makeSource(!!connections.granola),
           calendly:  makeSource(!!calendlyPat && !!calendlyUserUri),
           cal_com:   makeSource(!!calComPat),
         },
@@ -1849,7 +1835,21 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
     // feed the discovered URL into the LinkedIn scan below. Gated on LinkedIn actually
     // being connected (no point paying for a lookup otherwise) and capped so a huge
     // import can't run away on credits. Best-effort — never fails the job.
+    // Granola's history (GET-854): every note inside the window, through the same handler as the
+    // live poll, which resolves the room and creates the people it does not know. Granola keys are
+    // personal, so every connection in the workspace is read.
     await guard('fireflies');
+    if (connections.granola) {
+      for (const c of contacts) setSource(c.id, 'granola', 'scanning');
+      await persist();
+      const sinceIso = new Date(Date.now() - (windowDays ?? 90) * 86400000).toISOString();
+      const touched = await replayGranolaHistory(supabase, workspaceId, { sinceIso, guard });
+      for (const c of contacts) setSource(c.id, 'granola', 'done', 0);
+      totalActivities += touched;
+      await persist();
+    }
+
+    await guard('granola');
     if (connections.linkedin?.account_id) {
       const needUrl = contacts.filter(c => c.email && !c.linkedin_url && !c.linkedin_member_id);
       const RESOLVE_CAP = 250;

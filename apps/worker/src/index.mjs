@@ -28,9 +28,10 @@ import { pollAllSmtpWorkspaces } from './pollers/smtp.mjs';
 import { pollAllGranolaWorkspaces } from './pollers/granola.mjs';
 import { pollAllFellowWorkspaces } from './pollers/fellow.mjs';
 import { pollAllRingCentralWorkspaces } from './pollers/ringcentral.mjs';
+import { pollNotetakers } from './pollers/notetakers.mjs';
 import { backfillComposioConnection } from './services/composioBackfill.mjs';
 import { webhookRouter, cloudWebhookRouter } from './webhooks/index.mjs';
-import { loadCloud } from './lib/cloud.mjs';
+import { loadCloud, isSelfHosted } from './lib/cloud.mjs';
 import { reprocessFireflies } from './webhooks/handlers/fireflies.mjs';
 import { reprocessGranola } from './webhooks/handlers/granola.mjs';
 import { reprocessFellow } from './webhooks/handlers/fellow.mjs';
@@ -337,6 +338,20 @@ async function runGranolaPoller() {
 runGranolaPoller();
 cron.schedule('11-59/15 * * * *', runGranolaPoller);
 console.log('[WORKER] Granola poller — every 15 min, offset');
+
+// ── Fireflies + Fathom pollers — every 15 min, self-host (GET-854) ───────────
+// Cloud gets these meetings by webhook. A self-hosted install usually has no public address
+// for the webhook to reach, so it polls instead. NOTETAKER_POLLING=true turns it on anywhere
+// (a safety net beside the webhook: reads are read-once), =false turns it off.
+const notetakerPolling = process.env.NOTETAKER_POLLING
+  ? process.env.NOTETAKER_POLLING === 'true'
+  : isSelfHosted();
+if (notetakerPolling) {
+  const runNotetakerPoller = () => pollNotetakers()
+    .catch(err => console.error('[WORKER] Notetaker poll error:', err.message));
+  cron.schedule('14-59/15 * * * *', runNotetakerPoller);
+  console.log('[WORKER] Fireflies + Fathom poller — every 15 min');
+}
 
 // ── Fellow poller — every 15 min, offset from Granola ────────────────────────
 // Only reads Fellow connections with NO webhook (webhooks switched off on their Fellow

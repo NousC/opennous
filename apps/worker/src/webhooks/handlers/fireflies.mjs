@@ -182,6 +182,30 @@ function normalizeParticipants(participants = [], attendees = [], ...extraEmails
   return [...out.values()];
 }
 
+/** The GraphQL fields a hydrated transcript needs: with them, reprocessFireflies skips its own fetch. */
+export const FIREFLIES_TRANSCRIPT_FIELDS = `id title date host_email organizer_email
+        participants
+        meeting_attendees { displayName email name }
+        summary { overview action_items keywords }
+        sentences { speaker_name text }`;
+
+/** A listed transcript → the hydrated body reprocessFireflies takes (backfill replay and poller). */
+export function firefliesBodyFromTranscript(t) {
+  return {
+    meetingId:       t.id,
+    title:           t.title,
+    date:            t.date,
+    host_email:      t.host_email,
+    organizer_email: t.organizer_email,
+    participants:    t.participants,
+    meeting_attendees: t.meeting_attendees,
+    summary:         t.summary?.overview || null,
+    action_items:    t.summary?.action_items || null,
+    keywords:        Array.isArray(t.summary?.keywords) ? t.summary.keywords : [],
+    transcript_text: (t.sentences || []).map(sn => `${sn.speaker_name || 'Speaker'}: ${sn.text || ''}`).join('\n').slice(0, 100000) || null,
+  };
+}
+
 export async function reprocessFireflies(supabase, workspaceId, body, { onceOnly = false } = {}) {
   const { meetingId, meeting_id, eventType } = body || {};
   const id = meetingId || meeting_id;

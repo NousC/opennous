@@ -3,8 +3,8 @@
 // works best: the CRM first (its records import when it connects, and conversations are filed onto
 // its accounts), then email and meeting notes, then the revenue backfill, which reads their
 // history with the install's own AI models. The CRM is recommended, not required: the backfill
-// runs on email and meeting notes alone. What it reads is exactly BACKFILL_SOURCES; Granola is not
-// among them, it syncs on its own. Everything is read live from
+// runs on email and meeting notes alone. What it reads is exactly BACKFILL_SOURCES. Everything is
+// read live from
 // /api/onboarding/checklist and /api/backfill/preview, the same reads the Cloud pop-up used.
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -19,9 +19,9 @@ import { cn } from "@/lib/utils";
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 const num = (n: number) => n.toLocaleString("en-US");
 
-// The tools the backfill reads history from (contactHistoryEnricher on the worker). Granola, Fellow
-// and RingCentral are not among them: Granola syncs every 15 minutes, 90 days back, by itself.
-const BACKFILL_SOURCES = new Set(["gmail", "gmail_oauth", "google_calendar", "fireflies", "fathom", "calendly", "cal_com", "slack", "linkedin", "instantly"]);
+// The tools the backfill reads history from (contactHistoryEnricher on the worker). Granola joined
+// in GET-854; Fellow and RingCentral are live only.
+const BACKFILL_SOURCES = new Set(["gmail", "gmail_oauth", "google_calendar", "fireflies", "fathom", "granola", "calendly", "cal_com", "slack", "linkedin", "instantly"]);
 
 type Job = { tier: string; model: string; route: "anthropic" | "openai_compatible" };
 
@@ -85,7 +85,6 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
   const state = p?.state ?? (c.backfill.state === "running" ? "running" : c.backfill.state === "done" ? "done" : "none");
   const providerIds = [...(c.mail.providers ?? []), ...(c.notes.providers ?? [])];
   const readable = providerIds.filter((id) => BACKFILL_SOURCES.has(id));
-  const granolaOnly = providerIds.includes("granola") && readable.length === 0;
   // A finished backfill and a new one waiting: a tool was connected since, and its history is unread.
   const newSource = !!p?.ran_before && (p?.state === "awaiting_confirmation" || p?.state === "over_allowance");
   const windowDays = p?.window_days ?? 90;
@@ -174,7 +173,7 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
       <Step n={2} done={c.mail.done && c.notes.done} title="Connect email and meeting notes"
         action={!(c.mail.done && c.notes.done) && <Link to="/integrations" className={btn}>Connect</Link>}>
         {sources.length ? `${sources.join(", ")} connected.` : "Gmail, and your notetaker: Fireflies, Granola or Fathom. Each person connects their own."}
-        {providerIds.includes("granola") && <> Granola syncs by itself every 15 minutes, going back 90 days.</>}
+        {providerIds.some((id) => ["granola", "fireflies", "fathom"].includes(id)) && <> New meetings come in by themselves every 15 minutes; their history comes in with the backfill.</>}
       </Step>
 
       <Step n={3} done={done} title={newSource ? "Run the backfill for your new tool" : "Run the revenue backfill"}
@@ -201,14 +200,12 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
               <span>Reading your history… {of ? `${num(read)} of ${num(of)}` : `${num(read)} read`}</span>
             </div>
           )
-          : readable.length === 0 ? (granolaOnly
-            ? "Nothing for the backfill to read yet: Granola brings in its own meetings. Connect Gmail, Fireflies or Fathom to backfill their history."
-            : "Connect Gmail, Fireflies or Fathom first: the backfill reads their history.")
+          : readable.length === 0 ? "Connect Gmail or a notetaker (Fireflies, Granola or Fathom) first: the backfill reads their history."
           : confirming ? (
             <div className="mt-1.5 space-y-2 rounded-lg border border-border/70 bg-background p-3 text-[12.5px] text-foreground">
               <p>{found ? `Found ${found}.` : "Reads the history of your connected tools."}</p>
               <p className="text-muted-foreground">
-                Email and calendar go back {windowDays} days; Fireflies and Fathom meetings as far back as they hold.
+                Email, calendar and Granola go back {windowDays} days; Fireflies and Fathom meetings as far back as they hold.
                 {!c.crm.done && " Without a CRM, people and companies are created from the conversations themselves."}
               </p>
               <p className="text-muted-foreground">
@@ -224,7 +221,7 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
             </div>
           )
           : newSource ? `You connected ${readable.map(toolName).join(", ")} since the last backfill. Run it again to read the new history; what was already read is skipped.`
-          : `Reads ${readable.map(toolName).join(", ")}: email and calendar from the last ${windowDays} days, meetings as far back as each tool holds.${c.crm.done ? "" : " Tip: connect your CRM first so every conversation lands on the right account."}`}
+          : `Reads ${readable.map(toolName).join(", ")}: email, calendar and Granola from the last ${windowDays} days, Fireflies and Fathom meetings as far back as they hold.${c.crm.done ? "" : " Tip: connect your CRM first so every conversation lands on the right account."}`}
       </Step>
     </SettingsGroup>
   );

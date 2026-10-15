@@ -291,11 +291,11 @@ async function notifyAssistedOnboarding(supabase, workspaceId, budget) {
   });
 }
 
-// Sources that can put an account in the graph that wasn't there before. Both notetakers
+// Sources that can put an account in the graph that wasn't there before. The notetakers
 // replay every meeting in the workspace and create the contact when the room doesn't match
-// anyone we know. Everything else only ever ENRICHES a contact we already have, which is why
-// only these two can justify a job over an empty graph.
-const DISCOVERY_PROVIDERS = ['fireflies', 'fathom'];
+// anyone we know (Granola too, since GET-854). Everything else only ever ENRICHES a contact we
+// already have, which is why only these can justify a job over an empty graph.
+const DISCOVERY_PROVIDERS = ['fireflies', 'fathom', 'granola'];
 
 async function hasDiscoverySource(supabase, workspaceId) {
   try {
