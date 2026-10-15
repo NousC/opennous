@@ -7,6 +7,8 @@
 //
 // Both run. leakTrack stays for the ops view; this is the billing view.
 
+import { claudeIdFromOpenRouter } from '@nous/core';
+
 // $ per 1M tokens, per Anthropic's published pricing.
 //
 // Cached input is a tenth of the uncached rate, and writing to the cache is 1.25x.
@@ -60,7 +62,9 @@ export function computeCost(model, usage) {
   const reported = Number(usage?.cost);
   if (Number.isFinite(reported) && reported > 0) return reported;
 
-  const p = PRICING[model];
+  // Claude through OpenRouter (GET-885) may come back as anthropic/claude-sonnet-5 or a dated id:
+  // the same model, the same price.
+  const p = PRICING[model] ?? PRICING[claudeIdFromOpenRouter(model)];
   if (!p) return 0;
 
   const input   = usage?.input_tokens ?? 0;

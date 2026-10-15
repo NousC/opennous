@@ -164,6 +164,9 @@ export {
   pipelineModel, pipelineFallbackModel, writingModel, writingFallbackModel, tierModels, insightBoardModel,
   modelEndpoint, modelRoute, modelSetupStatus,
 } from './llm/modelDoor.mjs';
+// Model provider failures sorted for people and ops, and where Claude calls go (GET-885).
+export { classifyProviderError, providerErrorSummary } from './llm/providerError.mjs';
+export { OPENROUTER_MESSAGES_BASE, openRouterClaudeId, claudeIdFromOpenRouter, claudeProvider, claudeClientOptions, routeClaudeClient } from './llm/claudeRoute.mjs';
 // Deal health — the contextual account score + its signals, shared by the API (account page,
 // /v2/deals) and the worker (nightly refresh). Plain JS, carried into dist by allowJs.
 export { computeDealHealth, loadHealthInputs, loadHealthHistory, loadAccountHealth, loadNextSteps } from './services/dealHealth.mjs';

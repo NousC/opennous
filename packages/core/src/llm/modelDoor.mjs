@@ -14,8 +14,10 @@
 //   createMessage({ feature, tier, model, max_tokens, system, messages, accept, fallback })
 //
 // Anthropic-shaped in and out — `content[0].text`, `usage.input_tokens` / `output_tokens`,
-// `model` — so a call site changes one line. Routing is by model id: `claude-*` goes to
-// Anthropic; anything else is an OpenRouter id sent through its OpenAI-compatible API.
+// `model` — so a call site changes one line. Routing is by model id: `claude-*` goes out in
+// Anthropic's Messages format (to OpenRouter's Messages endpoint when OPENROUTER_API_KEY is set,
+// else to Anthropic direct; GET-885); anything else is an OpenRouter id sent through its
+// OpenAI-compatible API.
 //
 // Which model is config, per TIER, never a string at the call site:
 //   tier 'extraction' (default)  EXTRACTION_MODEL        → EXTRACTION_FALLBACK_MODEL
@@ -30,6 +32,8 @@
 // holds on the host it ran on.
 
 import AnthropicSDK from '@anthropic-ai/sdk';
+import { claudeClientOptions, claudeProvider, routeClaudeClient } from './claudeRoute.mjs';
+import { classifyProviderError } from './providerError.mjs';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
@@ -44,21 +48,28 @@ const DEFAULT_REASONING_HEADROOM = 16_000;
 // route to an answer.
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-// ── Anthropic client ─────────────────────────────────────────────────────────────
+// ── Claude client ────────────────────────────────────────────────────────────────
 // Each app registers its own instrumented client at boot (both use `useleak`, which tracks
 // spend per `feature`). Without one the plain SDK is used and `feature` is stripped.
+//
+// `claude-*` ids speak Anthropic's Messages format, served by OpenRouter by default and by
+// Anthropic direct only when OpenRouter is not configured (GET-885, claudeRoute.mjs). The app
+// builds its client with claudeClientOptions() and says which `provider` it points at; the door
+// then sends the provider's model id.
 let anthropicClient = null;
 let anthropicAcceptsFeature = false;
 
-/** Register the Anthropic client the door uses for `claude-*` models. */
-export function registerAnthropicClient(client, { acceptsFeature = true } = {}) {
-  anthropicClient = client;
+/** Register the Claude client the door uses for `claude-*` models. `provider`: 'openrouter' | 'anthropic'. */
+export function registerAnthropicClient(client, { acceptsFeature = true, provider = null } = {}) {
+  anthropicClient = client && provider ? routeClaudeClient(client, provider) : client;
   anthropicAcceptsFeature = acceptsFeature;
 }
 
 function anthropic() {
   if (!anthropicClient) {
-    anthropicClient = new AnthropicSDK({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const route = claudeClientOptions();
+    // No key at all: the plain SDK, whose first call fails as unavailable (as before).
+    anthropicClient = route ? routeClaudeClient(new AnthropicSDK(route.options), route.provider) : new AnthropicSDK({ apiKey: process.env.ANTHROPIC_API_KEY });
     anthropicAcceptsFeature = false;
   }
   return anthropicClient;
@@ -138,15 +149,18 @@ export function modelRoute(model) {
  */
 export function modelSetupStatus() {
   const ep = modelEndpoint();
+  // Claude runs on OpenRouter's key when it is set, else on the Anthropic key (GET-885).
+  const claudeVia = claudeProvider();
   const anthropicKey = looksLikeKey(env('ANTHROPIC_API_KEY'));
+  const claudeReady = claudeVia === 'openrouter' ? looksLikeKey(env('OPENROUTER_API_KEY') || env('LLM_API_KEY')) : anthropicKey;
   const compatible = looksLikeKey(ep.key) || (!!env('LLM_BASE_URL') && !ep.openRouter);
-  const ready = (m) => (modelRoute(m) === 'anthropic' ? anthropicKey : compatible);
+  const ready = (m) => (modelRoute(m) === 'anthropic' ? claudeReady : compatible);
   const job = (tier, label, model, fallback) => ({
     tier, label, model, route: modelRoute(model), ready: ready(model),
     fallback: fallback || null, fallbackReady: fallback ? ready(fallback) : null,
   });
   return {
-    providers: { anthropic: anthropicKey, openaiCompatible: compatible, endpoint: ep.host, openRouter: ep.openRouter, local: ep.local },
+    providers: { anthropic: anthropicKey, claudeVia, openaiCompatible: compatible, endpoint: ep.host, openRouter: ep.openRouter, local: ep.local },
     jobs: [
       job('extraction', 'Reading calls and email', pipelineModel(), pipelineFallbackModel()),
       job('writing', 'Writing summaries and reports', writingModel(), writingFallbackModel()),
@@ -278,13 +292,17 @@ async function callModel({ feature, model: m, max_tokens, system, messages, temp
       const params = { model: m, max_tokens, messages, ...(system ? { system } : {}), ...(temperature != null ? { temperature } : {}) };
       if (anthropicAcceptsFeature && feature) params.feature = feature;
       const msg = await anthropic().messages.create(params);
-      msg.model = msg.model || m;
+      // The id we asked for, not the provider's spelling (OpenRouter answers anthropic/...): the
+      // price table, metering and fallback logs are keyed by it.
+      msg.model = m;
+      // OpenRouter returns what the call cost; meterLLM prefers it to the price table.
+      if (typeof msg.usage?.cost === 'number' && msg.cost_usd == null) msg.cost_usd = msg.usage.cost;
       return msg;
     } catch (err) {
       const status = err?.status ?? null;
       // 400 is usually a bad request, but "credit balance is too low" is also a 400 — and it is
-      // the outage this door exists for.
-      const unavailable = status == null || status === 401 || status === 403 || status === 429 || status >= 500
+      // the outage this door exists for (classifyProviderError, GET-885).
+      const unavailable = status == null || status >= 500 || classifyProviderError(err).kind !== 'other'
         || /credit balance|api key|authentication/i.test(err?.message || '');
       if (unavailable) throw new ModelUnavailableError(err?.message || 'anthropic call failed', { status, model: m });
       throw err;

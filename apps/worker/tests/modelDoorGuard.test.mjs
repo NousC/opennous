@@ -23,10 +23,12 @@ const SCAN = ['apps/api/src', 'apps/api/scripts', 'apps/worker/src', 'apps/worke
 // file → why it may talk to a provider SDK directly.
 const ALLOWED = {
   'packages/core/src/llm/modelDoor.mjs': 'the door itself',
+  'apps/api/src/lib/ownModel.mjs': "the customer's own Claude/ChatGPT key (GET-528): their account by design, never routed through ours",
+  'packages/core/src/llm/claudeRoute.mjs': 'routes Claude clients to OpenRouter (or Anthropic direct): maps the model id and passes the call through (GET-885)',
   'apps/api/src/lib/llm.mjs': "registers the API's instrumented Anthropic client with the door",
   'apps/worker/src/lib/llm.mjs': "registers the worker's instrumented Anthropic client with the door",
   'apps/api/src/cloud/lib/playgroundAgent.mjs': 'tool-using agent loops; the Anthropic branch runs only when lib/model.mjs resolves an Anthropic model',
-  'apps/api/src/cloud/lib/sandboxExecutor.mjs': 'tool-using sandbox agent loop (Anthropic tool protocol) — not yet provider-routed',
+  'apps/api/src/cloud/lib/sandboxExecutor.mjs': 'tool-using sandbox agent loop (Anthropic tool protocol), routed through OpenRouter by claudeRoute (GET-885)',
   'apps/api/src/cloud/lib/harness.mjs': 'tool-using agent loop against OpenAI-compatible /chat/completions (routed by lib/model.mjs)',
   // The RevBox Job Builder (GET-868): a streaming tool-use loop, model from lib/model.mjs, every call metered through recordRevboxUsage.
   'apps/api/src/cloud/lib/jobBuilder/index.mjs': 'builds the Job Builder client (tool-using agent loop, model from lib/model.mjs)',

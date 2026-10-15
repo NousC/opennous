@@ -20,7 +20,7 @@ type Integration = { id: string; name: string; kind: string; ready: boolean; nee
 type Setup = {
   guide: string;
   address: { domain: string | null; public: boolean; guide: string };
-  ai: { providers: { anthropic: boolean; openaiCompatible: boolean; endpoint: string; openRouter: boolean; local: boolean }; jobs: Job[] };
+  ai: { providers: { anthropic: boolean; claudeVia?: "openrouter" | "anthropic" | null; openaiCompatible: boolean; endpoint: string; openRouter: boolean; local: boolean }; jobs: Job[] };
   email: { ready: boolean; needs: string[]; guide: string };
   integrations: Integration[];
   agent: { key_created: boolean; connected: boolean };
@@ -130,9 +130,10 @@ export function InstanceSetup() {
       <GetDataIn jobs={ai.jobs} providerLabel={ai.providers.openRouter ? "OpenRouter" : ai.providers.endpoint} />
 
       <SettingsGroup title="AI providers">
-        <SettingsRow label="Anthropic" hint="Claude models, by their Anthropic id (claude-…)."
+        <SettingsRow label="Anthropic" hint={ai.providers.claudeVia === "openrouter" ? "Claude models (claude-…) run through OpenRouter. An Anthropic key is used only without an OpenRouter key." : "Claude models, by their Anthropic id (claude-…)."}
           leading={<img src="/model-logos/anthropic.png" alt="" className="h-5 w-5 rounded" />}>
-          {ai.providers.anthropic ? <Status ok>Key set</Status>
+          {ai.providers.claudeVia === "openrouter" ? <Status ok>Via OpenRouter</Status>
+            : ai.providers.anthropic ? <Status ok>Key set</Status>
             : ai.jobs.some((j) => j.route === "anthropic") ? <><Status ok={false}>No key</Status><Env names={["ANTHROPIC_API_KEY"]} /></>
             : <span className="text-[12px] text-muted-foreground">Not used</span>}
         </SettingsRow>
@@ -157,8 +158,7 @@ export function InstanceSetup() {
         ))}
         <p className="px-2 pb-2 pt-1 text-[12px] leading-relaxed text-muted-foreground">
           Change a job's model with <span className="font-mono">EXTRACTION_MODEL</span>, <span className="font-mono">WRITING_MODEL</span> or{" "}
-          <span className="font-mono">INSIGHT_BOARD_MODEL</span>. An id that starts with <span className="font-mono">claude-</span> runs on your
-          Anthropic key; any other id runs on {ai.providers.openRouter ? "OpenRouter" : ai.providers.endpoint}.
+          <span className="font-mono">INSIGHT_BOARD_MODEL</span>. An id that starts with <span className="font-mono">claude-</span> runs on {ai.providers.claudeVia === "openrouter" ? "OpenRouter" : "your Anthropic key"}; any other id runs on {ai.providers.openRouter ? "OpenRouter" : ai.providers.endpoint}.
         </p>
       </SettingsGroup>
 

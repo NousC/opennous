@@ -635,7 +635,8 @@ export async function computeRevenueFindings(supabase, workspaceId, contactIds) 
 
 export async function generateAndEmailRevenueReport(supabase, workspaceId, contactIds, _payload, opts = {}) {
   if (isSelfHosted() && !opts.recipient) return { sent: false, reason: 'self_hosted' };
-  if (!process.env.ANTHROPIC_API_KEY) return { sent: false, reason: 'no_llm' };
+  // The writing model runs on OpenRouter (or Anthropic direct for a claude- id without it, GET-885).
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENROUTER_API_KEY && !process.env.LLM_API_KEY) return { sent: false, reason: 'no_llm' };
 
   const recipient = opts.recipient ? { email: opts.recipient, firstName: opts.firstName || null } : await resolveOwnerEmail(supabase, workspaceId);
   if (!recipient?.email) return { sent: false, reason: 'no_recipient' };

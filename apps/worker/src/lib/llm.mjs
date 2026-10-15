@@ -6,9 +6,11 @@
 // registration can never be skipped by boot order.
 
 import Anthropic from 'useleak';
-import { registerAnthropicClient } from '@nous/core';
+import { registerAnthropicClient, claudeClientOptions } from '@nous/core';
 
-registerAnthropicClient(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }));
+// Claude goes through OpenRouter when OPENROUTER_API_KEY is set, else Anthropic direct (GET-885).
+const claude = claudeClientOptions();
+registerAnthropicClient(new Anthropic(claude?.options ?? { apiKey: process.env.ANTHROPIC_API_KEY }), { provider: claude?.provider ?? null });
 
 export {
   createMessage, messageText, parseJsonArray, ModelUnavailableError,
