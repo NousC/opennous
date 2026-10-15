@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { VersionWidget } from "@/components/VersionWidget";
 import {
   Home as HomeIcon,
-  Inbox,
   Boxes,
   Plus,
   Search,
@@ -99,13 +98,11 @@ const workspaceGroupItems: NavItem[] = [
 // API plan — the operator brings their own agent, so the app is not where the work
 // happens: it is where you see what we connected to and what we read (GET-482). Home is
 // the activity ledger, Accounts is the record, and your sources are the two rows that
-// change what either of them contains. No insights, no tasks, no automations — those are
-// the app doing the work for you, which is the Workspace plan.
+// change what either of them contains. No inbox, no RevBoxes, no tasks — those are the app
+// doing the work for you, which is the Workspace plan (GET-908).
 const workNavItemsApi: NavItem[] = [
   { title: "Home",     url: "/",         icon: HomeIcon, end: true },
-  { title: "Inbox",    url: "/inbox",    icon: Inbox },
   { title: "Accounts", url: "/accounts", icon: Building2 },
-
 ];
 // The API plan redesign (GET-620): integrations are a group of their own, the four places that
 // change what the record contains or who reads it, with API keys beside the webhooks. Usage and
@@ -167,14 +164,17 @@ export function AppSidebar() {
   // Three plans now (GET-480): the API rail is its own shape, Workspace and Custom share
   // the full one.
   const api = isApiTier(plan);
-  // RevBoxes (GET-858): the API plan's projects, listed in the rail with a create action that
-  // opens the new, empty box straight away.
+  // RevBoxes (GET-858): the Workspace plan's projects, listed in the rail with a create action that
+  // opens the new, empty box straight away. A product-shape gate, so it reads the plan's own flag
+  // rather than can() (a pass-through while the paywall is off): the API plan and self-host have
+  // no RevBoxes (GET-908).
+  const hasRevboxes = !!plan.features.revboxes && can('revboxes');
   const revboxWorkspaceId = userData?.workspace?.id ?? '';
   const revboxToken = session?.access_token ?? '';
   const queryClient = useQueryClient();
   const [creatingRevbox, setCreatingRevbox] = useState(false);
   const [revboxError, setRevboxError] = useState('');
-  const revboxes = useQuery({ queryKey: ['revboxes', revboxWorkspaceId], enabled: can('revboxes') && !!revboxWorkspaceId && !!revboxToken, queryFn: () => revboxesRequest<{ boxes: RevBox[] }>(revboxWorkspaceId, revboxToken) });
+  const revboxes = useQuery({ queryKey: ['revboxes', revboxWorkspaceId], enabled: hasRevboxes && !!revboxWorkspaceId && !!revboxToken, queryFn: () => revboxesRequest<{ boxes: RevBox[] }>(revboxWorkspaceId, revboxToken) });
   async function createRevbox() {
     setCreatingRevbox(true); setRevboxError('');
     try {
@@ -347,8 +347,8 @@ export function AppSidebar() {
   const userName = userData?.user?.name || userData?.user?.email?.split("@")[0] || "Account";
   const userEmail = userData?.user?.email || "";
 
-  // RevBoxes (GET-858, GET-864 for Workspace): one block, placed per plan below.
-  const revboxSection = can("revboxes") && (
+  // RevBoxes (GET-858, GET-864): Workspace only; the API plan and self-host have none (GET-908).
+  const revboxSection = hasRevboxes && (
     <>
       {sectionLabel("RevBoxes", { open: revboxesOpen || collapsed, toggle: () => setRevboxesOpen((o) => !o) }, <button aria-label="Create RevBox" title="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Plus className="h-3.5 w-3.5" /></button>)}
       {collapsed && withTip(<button aria-label="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="mx-auto flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted"><Plus className="h-4 w-4" /></button>, "Create RevBox")}
@@ -421,8 +421,6 @@ export function AppSidebar() {
           <ul className="flex flex-col gap-px">{mainItems.map((i) => renderOpenItem(i))}</ul>
         </nav>
 
-        {api && revboxSection}
-
         {/* VIEWS — Pipeline, Handoff, Customers: the lists you live in. */}
         {showViews && sectionLabel("Views", { open: viewsOpen || collapsed, toggle: () => setViewsOpen((o) => !o) })}
         {showViews && (viewsOpen || collapsed) && (
@@ -445,9 +443,8 @@ export function AppSidebar() {
           <ul className="flex flex-col gap-px">{integrationNavItemsApi.map((i) => renderOpenItem(i))}</ul>
         )}
 
-        {/* RevBoxes on Workspace (GET-864): after the views; on the API plan the section sits under
-            the main nav, as before. */}
-        {!api && revboxSection}
+        {/* RevBoxes on Workspace (GET-864), after the views. The API plan has none (GET-908). */}
+        {revboxSection}
 
         {/* WORKSPACE (GET-872): Graph, Reporting, Forecast, Insights, collapsible, under RevBoxes. */}
         {!api && workspaceItems.length > 0 && sectionLabel("Workspace", { open: workspaceOpen || collapsed, toggle: () => setWorkspaceOpen((o) => !o) })}

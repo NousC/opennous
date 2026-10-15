@@ -155,14 +155,13 @@ keep working for sign-in and keep whatever they already joined.
 ## AI models
 
 OpenNous runs its background AI work on your own keys: reading calls and email, writing
-summaries and reports, the Insights board, building RevBox jobs. Each job has its own model:
+summaries and reports, and the Insights board. Each job has its own model:
 
 | Job | Setting | Default |
 |---|---|---|
 | Reading calls and email | `EXTRACTION_MODEL` | `claude-haiku-4-5-20251001` |
 | Writing summaries and reports | `WRITING_MODEL` | `z-ai/glm-5.2` (falls back to the reading model) |
 | Insights board | `INSIGHT_BOARD_MODEL` | `anthropic/claude-haiku-4.5` |
-| Building RevBox jobs (the Job Builder) | `JOB_BUILDER_MODEL` | `claude-sonnet-5`; a Claude model only, on `OPENROUTER_API_KEY` or else `ANTHROPIC_API_KEY` |
 
 How a model id is served:
 

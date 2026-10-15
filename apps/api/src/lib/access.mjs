@@ -127,6 +127,7 @@ const CLOUD_ONLY_FEATURES = new Set([
   'skills',
   'slack',        // the Slack connector and agent
   'forecasting',  // the revenue forecast and its weekly snapshots (GET-843)
+  'revboxes',     // RevBoxes and the Job Builder are a Cloud Workspace surface (GET-908)
 ]);
 
 /** Exported so the frontend gate and the docs can stay in step with this list. */

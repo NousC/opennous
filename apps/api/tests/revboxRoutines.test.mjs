@@ -7,9 +7,9 @@ import { routineTriggerLabel, routineOut, revboxRoutineRuns, routineRunState, ch
 import { getPlan } from '../src/lib/plans.mjs';
 import { checkFlow, STEP_TYPES } from '../src/lib/flows.mjs';
 
-test('RevBoxes are on for the API and Workspace plans, and still off for Free', () => {
+test('RevBoxes are on for Workspace only, off for the API plan and Free (GET-908)', () => {
   // The plan table itself: hasFeature is a pass-through while the paywall is off (PAYWALL in plans.mjs).
-  assert.equal(getPlan('api').features.revboxes, true);
+  assert.equal(getPlan('api').features.revboxes, false);
   assert.equal(getPlan('custom').features.revboxes, true);
   assert.equal(getPlan('workspace').features.revboxes, true);   // the legacy id resolves to Workspace
   assert.equal(getPlan('free').features.revboxes, false);

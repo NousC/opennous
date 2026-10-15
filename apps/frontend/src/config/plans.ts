@@ -161,8 +161,8 @@ const API_TIER_OFF = {
   // already runs on every plan, so the insight board is a READ of what we produced; and an
   // automation is a schedule over the same reads, which is the thing an operator running their
   // own agent most wants us to hold. Tasks stay off: a worklist is the app deciding what you
-  // should do next, which is what Custom sells.
-  tasks: true,
+  // should do next, which is what Custom sells. That worklist is the Inbox, so no Inbox either (GET-908).
+  tasks: false,
 } as const;
 
 const TEAM_OFF = {
@@ -192,6 +192,7 @@ export const SELF_HOST_BLOCKED: (keyof PlanFeatures)[] = [
   'skills',
   'workflows',
   'slack',
+  'revboxes',   // RevBoxes are a Cloud Workspace surface (GET-908)
 ];
 
 /**
@@ -233,7 +234,8 @@ export const PLANS: Record<PlanId, Plan> = {
     workspaceLimit: 5,
     memberLimit: null,
     stripePriceEnv: 'STRIPE_SELF_SERVE_49_PRICE_ID',
-    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, revboxes: true, supportTier: 'priority' },
+    // No RevBoxes on the API plan (GET-908); mirrors apps/api/src/lib/plans.mjs.
+    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, supportTier: 'priority' },
   },
 
   custom: {
@@ -249,7 +251,7 @@ export const PLANS: Record<PlanId, Plan> = {
     workspaceLimit: null,
     memberLimit: null,
     stripePriceEnv: null,
-    // RevBoxes on Workspace too (GET-864); mirrors the revboxes flag in apps/api/src/lib/plans.mjs.
+    // RevBoxes are Workspace only (GET-864, GET-908); mirrors apps/api/src/lib/plans.mjs.
     features: { ...GRAPH, ...TEAM_ON, insights: true, revboxes: true, supportTier: 'priority' },
   },
 };

@@ -251,8 +251,8 @@ const API_TIER_OFF = {
   // already runs on every plan, so the insight board is a READ of what we produced; and an
   // automation is a schedule over the same reads, which is the thing an operator running their
   // own agent most wants us to hold. Tasks stay off: a worklist is the app deciding what you
-  // should do next, which is what Custom sells.
-  tasks: true,
+  // should do next, which is what Custom sells. That worklist is the Inbox, so no Inbox either (GET-908).
+  tasks: false,
 };
 
 /**
@@ -284,7 +284,8 @@ export const PLANS = {
     enrichmentsPerMonth: 0,
     workspaceLimit: 5,
     stripePriceEnv: 'STRIPE_SELF_SERVE_49_PRICE_ID',
-    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, revboxes: true, supportTier: 'priority' },
+    // No RevBoxes on the API plan (GET-908): a box of jobs is the app doing the work, which Workspace sells.
+    features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, supportTier: 'priority' },
   },
 
   // ── Free — $0 (GET-682). The self-serve product with a small, hard allowance: new
@@ -325,7 +326,7 @@ export const PLANS = {
     enrichmentsPerMonth: 0,
     workspaceLimit: null,
     stripePriceEnv: null,
-    // RevBoxes on Workspace too (GET-864), the same flag the API plan has.
+    // RevBoxes are Workspace only (GET-864, GET-908).
     features: { ...GRAPH, ...TEAM, insights: true, revboxes: true, supportTier: 'priority' },
   },
 };
