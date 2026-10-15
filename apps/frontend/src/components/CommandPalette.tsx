@@ -84,7 +84,7 @@ export function CommandPalette() {
   const [companies, setCompanies] = useState<any[]>([]);
   const inputRef  = useRef<HTMLInputElement>(null);
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { plan } = usePlan();
+  const { plan, selfHosted } = usePlan();
   const api = isApiTier(plan);
   const queryClient = useQueryClient();
   const workspaceId = userData?.workspace?.id ?? "";
@@ -179,7 +179,7 @@ export function CommandPalette() {
     }));
 
     const navItems: Item[] = NAV_ITEMS
-      .filter(n => !api || !n.workspace)
+      .filter(n => (!api || !n.workspace) && !(selfHosted && n.id === "insights"))
       .filter(n => !q || n.label.toLowerCase().includes(lq) || (n.sublabel ?? "").toLowerCase().includes(lq))
       .map(n => ({ id: n.id, label: n.label, sublabel: n.sublabel, group: "Go to", icon: n.icon, action: () => go(n.path) }));
 

@@ -11,6 +11,7 @@ import { PageToolbar } from "@/components/ui/page-top-bar";
 import { ViewTabs } from "@/components/ui/view-tabs";
 import { ContextGraph, useContextGraph, type GraphSource, type Lens } from "./ContextGraph";
 import { InsightsGraph } from "./InsightsGraph";
+import { usePlan } from "@/hooks/usePlan";
 
 type View = Lens | "insights";
 const VIEWS: { id: View; label: string; param: string }[] = [
@@ -25,8 +26,11 @@ const ALIASES: Record<string, string> = { claims: "insights" };
 /** `source` narrows the graph to one RevBox's accounts (GET-858); Insights stays workspace-wide. */
 export function RelationshipsGraph({ source, banner }: { source?: GraphSource; banner?: React.ReactNode } = {}) {
   const [params, setParams] = useSearchParams();
+  // Self-host reads insights through the API and MCP (get_insights), with no page (GET-887).
+  const { selfHosted } = usePlan();
+  const views = selfHosted ? VIEWS.filter((v) => v.id !== "insights") : VIEWS;
   const asked = params.get("view") ?? "";
-  const view = VIEWS.find((v) => v.param === (ALIASES[asked] ?? asked))?.id ?? "account";
+  const view = views.find((v) => v.param === (ALIASES[asked] ?? asked))?.id ?? "account";
   const setView = (v: View) => {
     const next = new URLSearchParams(params);
     if (v === "account") next.delete("view"); else next.set("view", VIEWS.find((x) => x.id === v)!.param);
@@ -40,7 +44,7 @@ export function RelationshipsGraph({ source, banner }: { source?: GraphSource; b
     <div className="flex h-full flex-col overflow-hidden bg-background">
       <PageToolbar>
         <ViewTabs<View> aria-label="Graph views" value={view} onChange={setView}
-          options={VIEWS.map((v) => ({ value: v.id, label: v.label, count: v.id === "insights" ? undefined : count(v.id) }))} />
+          options={views.map((v) => ({ value: v.id, label: v.label, count: v.id === "insights" ? undefined : count(v.id) }))} />
         {banner}
         <div className="hidden flex-1 sm:block" />
         {(
