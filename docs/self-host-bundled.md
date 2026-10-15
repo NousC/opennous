@@ -29,7 +29,8 @@ Routing:
 ## Run it
 
 You need Docker with Compose v2.24 or newer, Node 18+ (for the key script), three
-DNS records (`app`, `api`, `mcp`) pointing at the server, and an Anthropic API key.
+DNS records (`app`, `api`, `mcp`) pointing at the server, and an AI provider key: one
+OpenRouter key runs every model (recommended), or Anthropic, or any OpenAI-compatible endpoint.
 
 ```bash
 git clone https://github.com/NousC/opennous.git && cd opennous
@@ -154,7 +155,7 @@ keep working for sign-in and keep whatever they already joined.
 ## AI models
 
 OpenNous runs its background AI work on your own keys: reading calls and email, writing
-summaries and reports, the Insights board. There are three jobs, each with its own model:
+summaries and reports, the Insights board, building RevBox jobs. Each job has its own model:
 
 | Job | Setting | Default |
 |---|---|---|
