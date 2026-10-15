@@ -162,7 +162,12 @@ function StandardLayout({ children }: { children: React.ReactNode }) {
     // beside the (same-grey) sidebar. The panel is where every page renders.
     // The panel carries the top bar (GET-598): breadcrumb left, Priorities + Ask Nous right.
     <TopBarProvider>
-    <div className="flex h-screen w-full overflow-hidden bg-frame">
+    {/* `relative` + `overflow-clip` pin the frame to the viewport (GET-890): an absolutely
+        positioned element with no positioned ancestor (an `sr-only` input, say) is laid out
+        against this box instead of the document, so it can never make <body> taller than the
+        screen and let a wheel scroll the whole frame up. `clip`, not `hidden`, so focus() and
+        scrollIntoView() cannot scroll the frame itself either. */}
+    <div className="relative flex h-screen w-full overflow-clip bg-frame">
       <AppSidebar />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-2 pl-0">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">

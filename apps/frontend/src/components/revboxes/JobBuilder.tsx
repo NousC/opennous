@@ -287,7 +287,9 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   return <div className="flex min-h-0 flex-1 flex-col">
     {empty
       ? <div className="min-h-0 flex-1" />
-      : <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 md:px-10">
+      // `relative`: the chat's own panel contains what it scrolls (GET-890). Without it the ask
+      // card's sr-only radios were laid out against <body> and grew the document past the frame.
+      : <div ref={scroller} className="relative min-h-0 flex-1 overflow-y-auto px-6 md:px-10">
       <div className="mx-auto w-full max-w-[880px] space-y-6 py-6" aria-live="polite">
         {history.length > 0 && <div className="space-y-3">
           {history.map((item, i) => {

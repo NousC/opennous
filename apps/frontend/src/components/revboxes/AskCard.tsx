@@ -72,7 +72,7 @@ export function AskCard({ questions, disabled, onSubmit }: { questions: BuilderQ
         {q.options.map(o => {
           const recommended = RECOMMENDED.test(o.label);
           const on = picked.includes(o.label);
-          return <label key={o.label} className={cn('flex cursor-pointer items-start gap-3 rounded-xl px-2.5 py-2.5 transition-colors duration-150', on ? 'bg-muted' : 'hover:bg-hover')}>
+          return <label key={o.label} className={cn('relative flex cursor-pointer items-start gap-3 rounded-xl px-2.5 py-2.5 transition-colors duration-150', on ? 'bg-muted' : 'hover:bg-hover')}>
             <input type={q.multi ? 'checkbox' : 'radio'} name={`ask-${q.id}`} checked={on} onChange={() => choose(o.label)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); if (!q.multi) choose(o.label); next(); } }}
               className="peer sr-only" />
@@ -86,7 +86,7 @@ export function AskCard({ questions, disabled, onSubmit }: { questions: BuilderQ
             </span>
           </label>;
         })}
-        <label className={cn('flex cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 transition-colors duration-150', picked.includes(OTHER) ? 'bg-muted' : 'hover:bg-hover')}>
+        <label className={cn('relative flex cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 transition-colors duration-150', picked.includes(OTHER) ? 'bg-muted' : 'hover:bg-hover')}>
           <input type={q.multi ? 'checkbox' : 'radio'} name={`ask-${q.id}`} checked={picked.includes(OTHER)} onChange={() => choose(OTHER)} className="peer sr-only" />
           <Mark multi={q.multi} on={picked.includes(OTHER)} />
           <input ref={picked.includes(OTHER) ? otherInput : undefined} aria-label={`Other answer for ${q.header || q.question}`} value={other[q.id] ?? ''}
