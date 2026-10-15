@@ -16,7 +16,8 @@
 #   3. Migrate: applies each file in supabase/migrations missing from the ledger, and
 #      records it. Order is the one scripts/check-schema-baseline.sh uses: by date (the
 #      YYYY_MM_DD_ prefix; undated files by the date in supabase/undated-migrations.txt),
-#      then by filename. Each file runs in its own transaction together with its ledger
+#      then by filename, and within a day a file that fails is retried after its siblings.
+#      Each file runs in its own transaction together with its ledger
 #      row, so a failure leaves nothing half-applied and nothing recorded. A file that
 #      cannot run in a transaction (CONCURRENTLY, or its own BEGIN / START TRANSACTION /
 #      COMMIT / END, looked for outside comments and $$ function bodies) runs on its own
@@ -134,18 +135,33 @@ if [ "$pending" = "0" ]; then
   echo "db-schema: migrations up to date ($(wc -l < /tmp/applied.txt | tr -d ' ') recorded)"
 else
   echo "db-schema: applying $pending new migration(s)"
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    record="insert into $LEDGER (filename, how) values ($(sqlstr "$f"), 'applied')"
-    if needs_own_transaction "$MIGRATIONS/$f"; then
-      echo "db-schema:   $f (outside a transaction)"
-      q -f "$MIGRATIONS/$f"
-      q -c "$record"
+  # One file, recorded in the ledger when it applies. Its errors go to /tmp/err/<file>.
+  apply_one() {
+    record="insert into $LEDGER (filename, how) values ($(sqlstr "$1"), 'applied')"
+    if needs_own_transaction "$MIGRATIONS/$1"; then
+      q -f "$MIGRATIONS/$1" 2> "/tmp/err/$1" && q -c "$record" 2>> "/tmp/err/$1" && echo "db-schema:   $1 (outside a transaction)"
     else
-      echo "db-schema:   $f"
-      q --single-transaction -f "$MIGRATIONS/$f" -c "$record"
+      q --single-transaction -f "$MIGRATIONS/$1" -c "$record" 2> "/tmp/err/$1" && echo "db-schema:   $1"
     fi
-  done < /tmp/pending.txt
+  }
+  # Filename order is not dependency order within a day (2026_10_14_revbox_builtin_jobs.sql
+  # sorts before 2026_10_14_revboxes.sql, which creates its table). So, day by day, a file that
+  # fails is retried after its siblings, until a pass applies nothing: the order
+  # scripts/check-schema-baseline.sh uses. A failed file left nothing behind (one transaction).
+  mkdir -p /tmp/err
+  for day in $(while IFS= read -r f; do file_date "$f"; done < /tmp/pending.txt | uniq); do
+    while IFS= read -r f; do [ "$(file_date "$f")" = "$day" ] && echo "$f"; done < /tmp/pending.txt > /tmp/day.txt
+    while [ -s /tmp/day.txt ]; do
+      : > /tmp/left.txt
+      while IFS= read -r f; do apply_one "$f" || echo "$f" >> /tmp/left.txt; done < /tmp/day.txt
+      if cmp -s /tmp/day.txt /tmp/left.txt; then
+        while IFS= read -r f; do echo "db-schema: $f failed:" >&2; cat "/tmp/err/$f" >&2; done < /tmp/left.txt
+        exit 3
+      fi
+      [ -s /tmp/left.txt ] && echo "db-schema:   retrying after their same-day siblings: $(tr '\n' ' ' < /tmp/left.txt)"
+      mv /tmp/left.txt /tmp/day.txt
+    done
+  done
   echo "db-schema: migrations applied"
 fi
 
