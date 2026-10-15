@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { ingestOnConnect } from '../../lib/connectIngest.mjs';
 import crypto from 'crypto';
 import { getSupabaseClient } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
@@ -6,6 +7,13 @@ import { connectForbidden } from '../../providers/sourceScope.mjs';
 import { encrypt } from '../../utils/crypto.mjs';
 
 export const oauthSalesforceRouter = Router();
+
+// Connecting Salesforce IS importing it, like every other CRM (GET-853): accounts, contacts and
+// opportunities, then the history backfill. Fire-and-forget; the Backfill card follows the import.
+function startImport(workspaceId, supabase) {
+  ingestOnConnect(workspaceId, 'salesforce', { supabase })
+    .catch((e) => console.error('[SALESFORCE_OAUTH] import on connect failed:', e?.message || e));
+}
 
 // Scopes: read/write CRM objects + offline access (refresh tokens)
 const SCOPES = ['api', 'refresh_token', 'offline_access'].join(' ');
@@ -128,6 +136,7 @@ oauthSalesforceRouter.get('/callback', async (req, res) => {
       await supabase.from('workflow_provider_connections')
         .update({ encrypted_credentials: encryptedCredentials, is_verified: true })
         .eq('id', existing.id);
+      startImport(stateData.workspaceId, supabase);
       return msg(true, { connection_id: existing.id });
     }
 
@@ -146,6 +155,7 @@ oauthSalesforceRouter.get('/callback', async (req, res) => {
       console.error('[SALESFORCE_OAUTH] insert failed', insertErr);
       return msg(false, { error: 'connection_create_failed' });
     }
+    startImport(stateData.workspaceId, supabase);
     return msg(true, { connection_id: newConn.id });
   } catch (err) {
     console.error('[SALESFORCE_OAUTH_CALLBACK_ERROR]', err.message);

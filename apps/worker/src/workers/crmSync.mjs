@@ -8,10 +8,10 @@
 // clean run; errors are logged to workspace_system_log so the UI can show
 // them, never thrown.
 
-import { getSupabaseClient, syncCrmProvider, logWorkerRun, writePrimaryPipelineRef, ensureHubspotPortal } from '@nous/core';
+import { getSupabaseClient, syncCrmProvider, logWorkerRun, writePrimaryPipelineRef, ensureHubspotPortal, salesforceAccess } from '@nous/core';
 import { decrypt } from '../utils/encryption.mjs';
 
-const PROVIDERS = ['hubspot', 'pipedrive', 'attio'];
+const PROVIDERS = ['hubspot', 'pipedrive', 'attio', 'salesforce'];
 
 function tokenForProvider(provider, creds) {
   // Each CRM stores its access key under different field names.
@@ -60,7 +60,15 @@ async function syncOneConfig(supabase, cfg) {
     return;
   }
   const creds = decryptAll(conn.encrypted_credentials);
-  const token = tokenForProvider(provider, creds);
+  // Salesforce: refresh the short-lived token and pack it with the org's host (GET-853).
+  let token;
+  try {
+    token = provider === 'salesforce' ? await salesforceAccess(creds) : tokenForProvider(provider, creds);
+  } catch (err) {
+    await logSysEvent(supabase, cfg.workspace_id, provider, 'sync_failed',
+      `${provider}: ${err?.message || err}`, { trigger: 'auto', error: String(err?.message || err) });
+    return;
+  }
   if (!token) {
     await logSysEvent(supabase, cfg.workspace_id, provider, 'sync_failed',
       `${provider}: credential field missing`, { trigger: 'auto' });

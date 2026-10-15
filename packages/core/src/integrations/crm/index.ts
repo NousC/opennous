@@ -32,7 +32,7 @@ import { messageBodyText } from '../../text/htmlToText.mjs';
 
 // ─── shared types ────────────────────────────────────────────────────────────
 
-export type CrmProvider = 'hubspot' | 'pipedrive' | 'attio';
+export type CrmProvider = 'hubspot' | 'pipedrive' | 'attio' | 'salesforce';
 
 export interface CrmContact {
   id: string;
@@ -614,6 +614,153 @@ export const attio = {
     updated_at: r.updated_at ?? null,
   })),
 };
+
+// ─── Salesforce ──────────────────────────────────────────────────────────────
+//
+// Salesforce is OAuth-only and every org has its own REST host (`instance_url`, returned at
+// connect), so the one `token` string the fetchers take carries both: salesforceToken() packs
+// them, sfAuth() unpacks. Access tokens expire within hours; salesforceAccess() trades the stored
+// refresh token for a fresh one at the start of every import and nightly sync (GET-853).
+//
+// Reads are SOQL, ordered by LastModifiedDate ascending so a run that hits the page cap reports
+// the newest record it filed, and the next incremental run resumes from exactly there.
+
+const SF_API = 'v59.0';
+
+/** Pack an org's REST host and access token into the single token string the fetchers take. */
+export function salesforceToken(instanceUrl: string, accessToken: string): string {
+  return JSON.stringify({ i: String(instanceUrl).replace(/\/$/, ''), t: accessToken });
+}
+
+function sfAuth(token: string): { instance: string; access: string } {
+  try {
+    const o = JSON.parse(token);
+    if (o?.i && o?.t) return { instance: o.i, access: o.t };
+  } catch { /* not packed */ }
+  throw new Error('Salesforce token must carry the org instance_url (use salesforceToken)');
+}
+
+/**
+ * A working token for a Salesforce connection: refresh when a refresh token and the app's client
+ * credentials exist, else the stored access token as is. `creds` are the decrypted connection
+ * credentials (access_token, refresh_token, instance_url).
+ */
+export async function salesforceAccess(
+  creds: Record<string, string | null | undefined>,
+  env: Record<string, string | undefined> = process.env,
+): Promise<string | null> {
+  const instance = creds.instance_url;
+  if (!instance) return null;
+  const clientId = env.SALESFORCE_CLIENT_ID?.trim();
+  const clientSecret = env.SALESFORCE_CLIENT_SECRET?.trim();
+  if (creds.refresh_token && clientId && clientSecret) {
+    const login = (env.SALESFORCE_LOGIN_URL || 'https://login.salesforce.com').replace(/\/$/, '');
+    const res = await fetch(`${login}/services/oauth2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: creds.refresh_token, client_id: clientId, client_secret: clientSecret }),
+    });
+    const d: any = await res.json().catch(() => ({}));
+    if (res.ok && d.access_token) return salesforceToken(d.instance_url || instance, d.access_token);
+    throw new Error(`Salesforce token refresh failed: ${d.error_description || d.error || res.status}`);
+  }
+  return creds.access_token ? salesforceToken(instance, creds.access_token) : null;
+}
+
+/** One page of a SOQL query; the cursor is Salesforce's nextRecordsUrl. */
+async function sfQuery(token: string, soql: string, cursor?: string | number): Promise<{ records: any[]; cursor: string | null }> {
+  const { instance, access } = sfAuth(token);
+  const url = typeof cursor === 'string' && cursor.startsWith('/services/')
+    ? `${instance}${cursor}`
+    : `${instance}/services/data/${SF_API}/query?q=${encodeURIComponent(soql)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${access}`, 'Sforce-Query-Options': 'batchSize=200' } });
+  if (!res.ok) throw new Error(`Salesforce ${res.status} — ${(await res.text().catch(() => '')).slice(0, 300)}`);
+  const d: any = await res.json();
+  return { records: d.records ?? [], cursor: d.done ? null : (d.nextRecordsUrl ?? null) };
+}
+
+function sfSince(opts: FetchOpts): string {
+  // SOQL datetime literals are unquoted ISO 8601 with a zone.
+  return opts.since ? ` WHERE LastModifiedDate > ${new Date(opts.since).toISOString()}` : '';
+}
+
+/** A website as Salesforce stores it ("https://www.acme.com/en") → the bare domain. */
+export function salesforceDomain(website: string | null | undefined): string | null {
+  const w = String(website ?? '').trim();
+  if (!w) return null;
+  try {
+    const host = new URL(/^[a-z]+:\/\//i.test(w) ? w : `https://${w}`).hostname.replace(/^www\./, '').toLowerCase();
+    return host.includes('.') ? host : null;
+  } catch { return null; }
+}
+
+async function sfList<T>(token: string, soql: string, opts: FetchOpts, mapper: (r: any) => T): Promise<FetchResult<T>> {
+  const { records, cursor } = await sfQuery(token, soql, opts.cursor);
+  return { records: records.map(mapper), cursor };
+}
+
+export const salesforce = {
+  fetchContacts: (token: string, opts: FetchOpts = {}) => sfList<CrmContact>(token,
+    `SELECT Id, FirstName, LastName, Email, Phone, Title, AccountId, Account.Name, Owner.Name, Owner.Email, LastModifiedDate FROM Contact${sfSince(opts)} ORDER BY LastModifiedDate ASC`,
+    opts, r => ({
+      id: String(r.Id),
+      name: [r.FirstName, r.LastName].filter(Boolean).join(' ') || null,
+      email: r.Email ?? null,
+      company: r.Account?.Name ?? null,
+      company_external_id: r.AccountId ?? null,
+      phone: r.Phone ?? null,
+      job_title: r.Title ?? null,
+      owner_name: r.Owner?.Name ?? null,
+      owner_email: r.Owner?.Email ?? null,
+      updated_at: r.LastModifiedDate ?? null,
+    })),
+  fetchCompanies: (token: string, opts: FetchOpts = {}) => sfList<CrmCompany>(token,
+    `SELECT Id, Name, Website, Industry, BillingCity, BillingCountry, Owner.Name, Owner.Email, LastModifiedDate FROM Account${sfSince(opts)} ORDER BY LastModifiedDate ASC`,
+    opts, r => ({
+      id: String(r.Id),
+      name: r.Name ?? null,
+      domain: salesforceDomain(r.Website),
+      industry: r.Industry ?? null,
+      city: r.BillingCity ?? null,
+      country: r.BillingCountry ?? null,
+      owner_name: r.Owner?.Name ?? null,
+      owner_email: r.Owner?.Email ?? null,
+      updated_at: r.LastModifiedDate ?? null,
+    })),
+  // Salesforce flags the outcome itself (IsClosed, IsWon), which beats reading a stage label the
+  // org can rename. CloseDate is the forecast on an open opportunity and the actual date on a
+  // closed one. No currency: CurrencyIsoCode exists only in multi-currency orgs.
+  fetchDeals: (token: string, opts: FetchOpts = {}) => sfList<CrmDeal>(token,
+    `SELECT Id, Name, Amount, StageName, IsClosed, IsWon, CloseDate, CreatedDate, AccountId, Account.Name, Owner.Name, Owner.Email, LastModifiedDate, (SELECT ContactId FROM OpportunityContactRoles) FROM Opportunity${sfSince(opts)} ORDER BY LastModifiedDate ASC`,
+    opts, r => ({
+      id: String(r.Id),
+      name: r.Name ?? null,
+      value: r.Amount != null ? Number(r.Amount) : null,
+      currency: null,
+      stage: r.StageName ?? null,
+      status: r.IsClosed ? (r.IsWon ? 'won' : 'lost') : 'open',
+      close_date: r.CloseDate ?? null,
+      opened_date: r.CreatedDate ?? null,
+      owner_name: r.Owner?.Name ?? null,
+      owner_email: r.Owner?.Email ?? null,
+      company_external_id: r.AccountId ?? null,
+      company_name: r.Account?.Name ?? null,
+      contact_ids: (r.OpportunityContactRoles?.records ?? []).map((c: any) => c?.ContactId).filter(Boolean).map(String),
+      updated_at: r.LastModifiedDate ?? null,
+    })),
+};
+
+/** The org's opportunity stages, in order, with Salesforce's own won/lost flags. */
+async function fetchSalesforcePipelineStages(token: string): Promise<CrmPipeline[]> {
+  const { records } = await sfQuery(token, 'SELECT ApiName, MasterLabel, SortOrder, IsClosed, IsWon FROM OpportunityStage WHERE IsActive = true ORDER BY SortOrder');
+  return [{
+    id: 'default', name: 'Opportunities',
+    stages: records.map((r: any, i: number) => ({
+      external_ref: String(r.ApiName ?? r.MasterLabel), label: String(r.MasterLabel ?? r.ApiName),
+      order: Number(r.SortOrder ?? i), isWon: !!r.IsWon, isLost: !!r.IsClosed && !r.IsWon,
+    })),
+  }];
+}
 
 // ─── Pipeline stage definitions (the workspace's stage vocabulary) ────────────
 // Reads the pipeline's stage LIST (not a deal's current stage) so onboarding can adopt the
@@ -1517,6 +1664,7 @@ export async function storeCrmPropertySchema(
 export async function fetchPipelineStages(provider: CrmProvider, token: string): Promise<CrmPipeline[]> {
   if (provider === 'attio') return fetchAttioPipelineStages(token);
   if (provider === 'hubspot') return fetchHubspotPipelineStages(token);
+  if (provider === 'salesforce') return fetchSalesforcePipelineStages(token);
   throw new Error(`fetchPipelineStages is not implemented for ${provider} yet`);
 }
 
@@ -1668,6 +1816,7 @@ const WRITE_FIELD_MAP: Record<CrmProvider, Record<string, string>> = {
   hubspot:   { job_title: 'jobtitle', company: 'company', phone: 'phone' },
   pipedrive: { phone: 'phone' },                 // company=org relationship, job_title=custom → not written
   attio:     { job_title: 'job_title', phone: 'phone' },
+  salesforce: {},                                // write-back not wired for Salesforce
 };
 
 export async function writeCrmRecordFields(
@@ -1936,6 +2085,7 @@ async function upsertContact(
   if (!c.email && !c.id) return SKIPPED;
   const idColumn = provider === 'hubspot' ? 'hubspot_id'
                  : provider === 'pipedrive' ? 'pipedrive_id'
+                 : provider === 'salesforce' ? 'salesforce_id'
                  : 'attio_id';
 
   // Match priority: by external CRM id first, then by email. Both go to entity_identifiers —
@@ -1999,6 +2149,7 @@ async function upsertCompany(
   if (!co.name && !co.domain) return SKIPPED;
   const idColumn = provider === 'hubspot' ? 'hubspot_company_id'
                  : provider === 'pipedrive' ? 'pipedrive_org_id'
+                 : provider === 'salesforce' ? null
                  : 'attio_company_id';
 
   let existing: { id: string } | null = null;
@@ -2014,7 +2165,16 @@ async function upsertCompany(
     domain: co.domain ? co.domain.replace(/^www\./, '').toLowerCase().trim() : null,
     industry: co.industry,
     location: [co.city, co.country].filter(Boolean).join(', ') || null,
-    [idColumn]: co.id,
+    ...(idColumn ? { [idColumn]: co.id } : {}),
+  };
+  // A provider with no companies-view column keeps its account id on the identifier table.
+  const keepId = async (entityId: string | null) => {
+    if (idColumn || !entityId || !co.id) return;
+    // The unique index is partial (status = 'active'), which an upsert cannot name: insert, and a
+    // duplicate (the id is already on file) is the outcome we wanted anyway.
+    await supabase.from('entity_identifiers')
+      .insert({ workspace_id: workspaceId, entity_id: entityId, kind: COMPANY_ID_KIND[provider], value: String(co.id) })
+      .then(() => {}, () => {});
   };
 
   if (existing) {
@@ -2022,6 +2182,7 @@ async function upsertCompany(
     // view does not expose this account yet, so we insert instead of writing into the void.
     const { data: updated } = await supabase.from('companies').update(payload).eq('id', existing.id).select('id');
     if (updated?.length) {
+      await keepId(existing.id);
       await writeStateFacts(supabase, workspaceId, existing.id, provider, companyFacts(co), co.updated_at);
       return { outcome: 'updated', entityId: existing.id };
     }
@@ -2031,6 +2192,7 @@ async function upsertCompany(
   if (!newId && co.id) {
     newId = (await findByIdentifier(supabase, workspaceId, COMPANY_ID_KIND[provider], String(co.id)))?.id ?? null;
   }
+  await keepId(newId);
   if (newId) await writeStateFacts(supabase, workspaceId, newId, provider, companyFacts(co), co.updated_at);
   return { outcome: 'inserted', entityId: newId };
 }
@@ -2051,6 +2213,7 @@ const CONTACT_ID_KIND: Partial<Record<CrmProvider, string>> = {
   hubspot: 'hubspot',
   pipedrive: 'pipedrive',
   attio: 'attio',
+  salesforce: 'salesforce',
 };
 
 // The same, for the account side: `companies.<provider>_company_id` is the identical correlated
@@ -2059,6 +2222,8 @@ const COMPANY_ID_KIND: Partial<Record<CrmProvider, string>> = {
   hubspot: 'hubspot_company',
   pipedrive: 'pipedrive_org',
   attio: 'attio_company',
+  // No companies-view column for it: written to entity_identifiers directly (upsertCompany).
+  salesforce: 'salesforce_account',
 };
 
 /** CRM contact ids → person entity ids, off the identifier index, 200 ids per read. */
@@ -2288,7 +2453,7 @@ export interface SyncRunResult {
   companyHierarchy: number;
 }
 
-const PROVIDER_FETCHERS: Record<CrmProvider, typeof hubspot> = { hubspot, pipedrive, attio };
+const PROVIDER_FETCHERS: Record<CrmProvider, typeof hubspot> = { hubspot, pipedrive, attio, salesforce };
 
 // ─── Renewal dates, from the subscriptions a customer is billed on ───────────
 //
@@ -2818,6 +2983,7 @@ export async function syncCrmProvider(
   // resolved entity UUIDs (dedupe by domain/name already applied by upsertCompany).
   const companyIdColumn = provider === 'hubspot' ? 'hubspot_company_id'
                         : provider === 'pipedrive' ? 'pipedrive_org_id'
+                        : provider === 'salesforce' ? null
                         : 'attio_company_id';
   const entityByExternalId = new Map<string, string>();
   const entityByName = new Map<string, string>();
@@ -2828,18 +2994,30 @@ export async function syncCrmProvider(
     // here meant every contact and deal of company #1001 onward landed with no account.
     for (let from = 0; ; from += 1000) {
       const { data: companyRows, error } = await supabase.from('companies')
-        .select(`id, name, domain, ${companyIdColumn}`)
+        .select(companyIdColumn ? `id, name, domain, ${companyIdColumn}` : 'id, name, domain')
         .eq('workspace_id', workspaceId)
         .order('id')
         .range(from, from + 999);
       if (error) throw error;
-      for (const row of companyRows ?? []) {
-        const ext = (row as any)[companyIdColumn];
+      for (const row of (companyRows ?? []) as unknown as Array<{ id: string; name: string | null; domain?: string | null } & Record<string, unknown>>) {
+        const ext = companyIdColumn ? (row as any)[companyIdColumn] : null;
         if (ext) entityByExternalId.set(String(ext), row.id);
         if (row.name) { entityByName.set(row.name.toLowerCase().trim(), row.id); nameByEntityId.set(row.id, row.name); }
         if ((row as any).domain) domainByEntityId.set(row.id, String((row as any).domain));
       }
       if (!companyRows || companyRows.length < 1000) break;
+    }
+    // No view column for this provider's account id: read it off the identifier index instead.
+    if (!companyIdColumn && COMPANY_ID_KIND[provider]) {
+      for (let from = 0; ; from += 1000) {
+        const { data: ids, error } = await supabase.from('entity_identifiers')
+          .select('entity_id, value').eq('workspace_id', workspaceId)
+          .eq('kind', COMPANY_ID_KIND[provider]!).eq('status', 'active')
+          .order('id').range(from, from + 999);
+        if (error) throw error;
+        for (const r of ids ?? []) entityByExternalId.set(String(r.value), r.entity_id);
+        if (!ids || ids.length < 1000) break;
+      }
     }
   } catch (e: any) {
     result.errors.push(`company-map: ${e?.message ?? e}`);

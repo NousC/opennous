@@ -23,7 +23,7 @@
 // valid API key has connected the tool, whatever the import then does.
 
 import { backfillOwnerFor } from './backfillStart.mjs';
-import { getSupabaseClient, syncCrmProvider, adoptCrmStages, writePrimaryPipelineRef, hubspotImportScope, settleClaimQueue, hasLearnedIcpScorer } from '@nous/core';
+import { getSupabaseClient, syncCrmProvider, adoptCrmStages, writePrimaryPipelineRef, hubspotImportScope, settleClaimQueue, hasLearnedIcpScorer, salesforceAccess } from '@nous/core';
 import { runClosedDeals } from './closedDealsRecord.mjs';
 import { decrypt } from '../providers/crypto.mjs';
 import { enqueueWorkspaceHistoryBackfill } from './historyBackfill.mjs';
@@ -91,8 +91,8 @@ const IMPORT_MONTHS = 12;
  */
 const BACKFILL_ON_CONNECT_MAX_ACCOUNTS = 500;
 
-/** The providers `syncCrmProvider` can actually pull. Salesforce is not on this path yet. */
-const CRM_PROVIDERS = new Set(['hubspot', 'pipedrive', 'attio']);
+/** The providers `syncCrmProvider` can actually pull. Salesforce since GET-853. */
+const CRM_PROVIDERS = new Set(['hubspot', 'pipedrive', 'attio', 'salesforce']);
 
 export function isCrmProvider(name) {
   return CRM_PROVIDERS.has(String(name || '').toLowerCase());
@@ -188,7 +188,8 @@ export async function importFromCrm(
       if (typeof v !== 'string') continue;
       try { creds[k] = decrypt(v); } catch { creds[k] = v; }
     }
-    const token = tokenFor(provider, creds);
+    // Salesforce is OAuth with short-lived tokens and a per-org host: refresh, then pack both.
+    const token = provider === 'salesforce' ? await salesforceAccess(creds) : tokenFor(provider, creds);
     if (!token) {
       await log(supabase, workspaceId, provider, 'sync_failed',
         `${provider}: credential field missing`, { trigger: 'connect' });
