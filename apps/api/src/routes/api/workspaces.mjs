@@ -8,6 +8,7 @@ import { billingEnabled, setSubscriptionQuantity } from '../../lib/billingHooks.
 import { getCountryFromRequest } from '../../lib/geo.mjs';
 import { sanitizeModelPolicy } from '../../lib/model.mjs';
 import { accountCountries } from '../../lib/listRows.mjs';
+import { recordConnectionRemovals, connectionsOfWorkspaces } from '../../lib/audit.mjs';
 
 export const workspacesRouter = Router();
 
@@ -204,9 +205,11 @@ workspacesRouter.delete('/:workspaceId', verifySupabaseAuth, async (req, res) =>
     if (!membership) return res.status(403).json({ error: 'workspace_not_found_or_unauthorized' });
     if (membership.role !== 'owner') return res.status(403).json({ error: 'only_owner_can_delete' });
 
-    // Delete workspace (cascade handles most data)
+    // Delete workspace (cascade handles most data). Its connections are recorded as removed (GET-901).
+    const cascaded = await connectionsOfWorkspaces(supabase, [workspaceId]);
     const { error } = await supabase.from('workspaces').delete().eq('id', workspaceId);
     if (error) throw error;
+    recordConnectionRemovals(supabase, cascaded, { actor: { user_id: user.id, email: req.user?.email ?? null, ip: req.ip ?? null }, via: 'workspace_deleted' });
 
     // Keep Partner billing in sync: the quantity tracks the client-workspace count,
     // so removing a client should drop the bill (floored at the base). Best-effort —

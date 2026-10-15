@@ -4,7 +4,7 @@ import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
 import { getAuthProvider } from '../../lib/authProvider/index.mjs';
 import { revokeConnectionTokens } from '../../providers/revoke.mjs';
-import { auditFromReq } from '../../lib/audit.mjs';
+import { auditFromReq, recordConnectionRemovals, connectionsOfWorkspaces } from '../../lib/audit.mjs';
 
 export const usersRouter = Router();
 
@@ -142,11 +142,13 @@ usersRouter.delete('/me', verifySupabaseAuth, async (req, res) => {
     // 1. Revoke + delete the user's own integration connections.
     const { data: conns } = await supabase
       .from('workflow_provider_connections')
-      .select('id, encrypted_credentials, workflow_providers!inner(name)')
+      .select('id, workspace_id, name, encrypted_credentials, workflow_providers!inner(name)')
       .eq('owner_user_id', uid);
+    const erasure = { actor: { user_id: uid, email: req.user?.email ?? null, ip: req.ip ?? null }, via: 'account_erasure' };
     for (const c of conns || []) {
       await revokeConnectionTokens(c);
       await supabase.from('workflow_provider_connections').delete().eq('id', c.id);
+      recordConnectionRemovals(supabase, [c], erasure);   // GET-901: who removed it, on the audit trail
     }
 
     // 2. Sole-member check.
@@ -167,7 +169,10 @@ usersRouter.delete('/me', verifySupabaseAuth, async (req, res) => {
     if (soleMember && user.team_id) {
       const { data: teamWorkspaces } = await supabase.from('workspaces').select('id').eq('team_id', user.team_id);
       const wsIds = (teamWorkspaces || []).map(w => w.id);
+      // The workspaces' connections go with them (ON DELETE CASCADE): recorded first (GET-901).
+      const cascaded = await connectionsOfWorkspaces(supabase, wsIds);
       if (wsIds.length) await supabase.from('workspaces').delete().in('id', wsIds);
+      recordConnectionRemovals(supabase, cascaded, { ...erasure, via: 'workspace_deleted' });
       await supabase.from('subscriptions').delete().eq('team_id', user.team_id);
       await supabase.from('teams').delete().eq('id', user.team_id);
     }

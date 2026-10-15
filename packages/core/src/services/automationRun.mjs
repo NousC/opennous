@@ -1502,6 +1502,7 @@ const REASON_TEXT = {
   slack_not_in_channel: "the Nous app isn't in that channel. In Slack, type /invite @Nous in it", slack_not_available_here: "Slack couldn't be reached",
   slack_user_not_found: "Slack can't find that person", slack_cannot_dm_bot: "that's a bot, not a person", slack_is_archived: 'that channel is archived', slack_dm_failed: "Slack couldn't open a direct message",
   slack_missing_scope: 'the Slack connection is missing a permission. Reconnect Slack in Sources', slack_invalid_auth: 'the Slack connection expired. Reconnect Slack in Sources', slack_account_inactive: 'the Slack connection expired. Reconnect Slack in Sources',
+  slack_token_revoked: 'the Slack connection stopped working. Reconnect Slack in Sources', slack_not_authed: 'the Slack connection stopped working. Reconnect Slack in Sources', slack_token_expired: 'the Slack connection expired. Reconnect Slack in Sources',
   wait_not_running_yet: "Wait doesn't run yet", email_not_sent: "the email wasn't sent",
   gmail_expired: 'the Gmail connection expired, reconnect Gmail in Integrations',
   smtp_not_connected: "that SMTP mailbox isn't connected", smtp_no_recipient: 'no one to send it to', smtp_not_available_here: "the mailbox couldn't be reached",
@@ -1921,9 +1922,15 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
     // A test run on the canvas watches the steps land (GET-724).
     Promise.resolve(ctx?.onLog?.(log.slice())).catch(() => {});
   };
+  // A Slack step's line keeps where it posted and, when it failed, the reason code (GET-901), so the
+  // job card and Results can say "Invite @Nous to #channel" or "Slack disconnected" from the log.
+  const slackLine = (s, reason = null) => s?.type !== 'slack' ? {} : {
+    ...(reason ? { reason } : {}),
+    ...(s.config?.action === 'dm' ? {} : { target: String(s.config?.channel_id ?? '').trim() || String(s.config?.channel ?? '').trim().replace(/^#/, '') || null }),
+  };
   const stop = (s, reason) => {
     const message = describeStop(s, shownAt(at_), reason);
-    note(s, reason === 'condition_not_met' ? 'stopped' : 'failed', message.replace(/^Step \d+ · [^:]+: /, ''));
+    note(s, reason === 'condition_not_met' ? 'stopped' : 'failed', message.replace(/^Step \d+ · [^:]+: /, ''), slackLine(s, reason));
     return { delivered: done.join(', ') || null, reason, failed: reason !== 'condition_not_met', message, log };
   };
   // "Account owner" (GET-722, the default): the email goes from the Gmail of whoever owns the
@@ -2541,6 +2548,7 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
         ...((s?.type === '__followup_draft' || s?.type === 'gmail') && lastMail ? { mail: lastMail } : {}),
         ...(s?.type === 'revbox_delivery' && lastDeliveries ? { deliveries: lastDeliveries } : {}),
         ...(s?.type === 'hubspot' && lastAccounts ? lastAccounts : {}),
+        ...slackLine(s),
       });
       lastMail = null;
       lastDeliveries = null;

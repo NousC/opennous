@@ -166,6 +166,9 @@ export {
 } from './llm/modelDoor.mjs';
 // Model provider failures sorted for people and ops, and where Claude calls go (GET-885).
 export { classifyProviderError, providerErrorSummary } from './llm/providerError.mjs';
+// Slack trouble named on the job card, the Delivery rail and Results, and alerted once (GET-901).
+export { classifySlackFailure, slackOutcomes, slackStatus, slackConnectionStatus, slackHealthView, runSlackStatus, jobUsesSlack, SLACK_CONNECTION_ERRORS, SLACK_RECONNECT_HREF, SLACK_INVITE_COMMAND } from './services/slackHealth.mjs';
+export { slackConnectionState } from './db/slackConnection.mjs';
 export { OPENROUTER_MESSAGES_BASE, openRouterClaudeId, claudeIdFromOpenRouter, claudeProvider, claudeClientOptions, routeClaudeClient } from './llm/claudeRoute.mjs';
 // Deal health — the contextual account score + its signals, shared by the API (account page,
 // /v2/deals) and the worker (nightly refresh). Plain JS, carried into dist by allowJs.

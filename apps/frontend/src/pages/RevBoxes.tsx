@@ -158,7 +158,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
         </RailSection>
         <RailSection title="Delivery" sub="Where finished work goes." icon={ArrowUpRight} action={editable && <button aria-label="Add delivery destination" className="rounded p-1 hover:bg-muted" onClick={() => { setDeliveryId(null); setDialog('delivery'); }}><Plus className="h-4 w-4" /></button>}>
           {/* The box's own destinations, then where its jobs deliver on their own (GET-868, read-only: open the job to change it). */}
-          <DeliveryList delivery={box.delivery} jobDeliveries={detail.data?.job_deliveries ?? []} editable={editable}
+          <DeliveryList delivery={box.delivery} jobDeliveries={detail.data?.job_deliveries ?? []} slack={detail.data?.slack ?? null} editable={editable}
             onOpen={deliveryId => { setDeliveryId(deliveryId); setDialog('delivery'); }}
             onRemove={deliveryId => change({ delivery: box.delivery.filter(x => x.id !== deliveryId) })}
             onOpenJob={job => { setTab('jobs'); setFresh(null); setBuilder({ job }); }}

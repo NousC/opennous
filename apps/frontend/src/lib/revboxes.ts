@@ -14,11 +14,18 @@ export type ContextBlock = { id: string; title: string; body: string };
  */
 export type Delivery = { id: string; kind: 'slack' | 'email' | 'gmail' | 'webhook'; target: string; to?: string; cc?: string; channel?: string; mailbox_email?: string | null; format?: string };
 /** Where one of the box's jobs delivers on its own, from its real steps (server-derived, read-only). */
+/**
+ * Slack trouble as the server words it (GET-901, core slackStatus): "Slack disconnected" with a
+ * Reconnect link, "Invite @Nous to #channel" with the command to copy, or "Channel archived".
+ */
+export type SlackStatus = { kind: 'disconnected' | 'broken' | 'invite' | 'archived'; text: string; fix?: { label: string; href: string } | null; copy?: string | null; channel?: string | null };
 export type JobDelivery = {
   job_id: string; job_name: string | null; kind: 'slack' | 'email' | 'gmail' | 'webhook'; label: string; target: string;
   /** The step this target belongs to (GET-872): the rail's job-step dialog edits it in place. */
   step_id?: string | null; step_type?: string; editable?: boolean;
   channel_id?: string | null; channel?: string | null; to?: string; cc?: string; mailbox_id?: string | null;
+  /** This Slack step's trouble, if any (GET-901). */
+  slack_status?: SlackStatus | null;
 };
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 /** "a@x, b@y" as a list. */
@@ -89,6 +96,8 @@ export type BoxDetail = {
   box: RevBox; context: ContextFile[]; jobs: (RevBoxJob | RevBoxRoutine)[]; routines?: RevBoxRoutine[]; job_deliveries?: JobDelivery[];
   people?: BoxPerson[];
   builtin_jobs?: BoxBuiltinJob[]; builtin_taken?: { key: BuiltinJobKey; box_id: string; box_name: string | null }[];
+  /** Slack trouble (GET-901): the connection's own state, and each box Slack destination's, by its id. Null: nothing posts to Slack. */
+  slack?: { connection: SlackStatus | null; deliveries: Record<string, SlackStatus> } | null;
 };
 export type Account = { id: string; name: string; domain: string | null; icp_score: number | null; people_count: number; deal_count: number; won_deals: number; lost_deals: number; last_activity_at: string | null; latest_signal: { title: string; kind: string; at: string } | null };
 export type Catalog = { accounts: Account[]; members: { id: string; name: string; email: string }[]; documents: { id: string; title: string }[]; connections: { id: string; slug: string; name: string; email: string | null }[] };
@@ -194,6 +203,8 @@ export type RevBoxRoutine = {
   trigger_kind?: string; trigger_config?: Record<string, unknown> | null; timezone?: string | null;
   trigger_label?: string | null; last_run_at?: string | null; last_run_state?: string | null;
   steps?: { id: string; type: string }[]; version?: number;
+  /** Why its Slack posts fail now, if they do (GET-901). */
+  slack_status?: SlackStatus | null;
 };
 
 function previewHeader(): Record<string, string> {

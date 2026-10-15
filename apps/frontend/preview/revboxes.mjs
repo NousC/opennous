@@ -93,6 +93,40 @@ if (!state.seeded.page_polish) {
     result: r.title ? { title: r.title, body: r.body, kind: 'report' } : null, deliveries: (r.deliveries ?? []).map(d => ({ id: randomUUID(), state: d.state, error: d.error ?? null, destination: { kind: d.kind, target: d.target } })) });
   state.seeded.page_polish = true;
 }
+// GET-901: Slack trouble on a box. "Harborline daily digest" posts to a private channel the bot was
+// never invited to (its last run failed: "Invite @Nous to #harborline-leadership"), and delivers to a
+// box Slack destination that was archived since. Start the preview with PREVIEW_SLACK=disconnected
+// (or broken) to see every Slack job, the rail and Results say "Slack disconnected · Reconnect".
+if (!state.seeded.slack_health) {
+  const H = 3_600_000, at = (h) => new Date(Date.now() - h * H).toISOString();
+  const hb = base('Harborline daily digest', 'A morning digest of the pipeline for the leadership channel.', true, { mode: 'all', account_ids: [], min_icp: 70 });
+  const archived = { id: randomUUID(), kind: 'slack', target: 'C07HBOLDOPS', channel: 'harborline-ops-2025' };
+  hb.delivery = [archived];
+  state.boxes.unshift(hb);
+  const digest = { id: randomUUID(), revbox_id: hb.id, source: 'routine', name: 'Pipeline digest', enabled: true, trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'UTC', trigger_label: 'Every day at 08:00 (UTC)', last_run_at: at(3), version: 1, created_by: 'u1', steps: [
+    { id: 'write', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the pipeline digest.' } },
+    { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'G07HBLEAD01', channel: 'harborline-leadership', text: '{{steps.write.output}}', format: 'digest' } },
+  ] };
+  const box = { id: randomUUID(), revbox_id: hb.id, source: 'routine', name: 'Deal-room handoff', enabled: true, trigger_kind: 'deal_closed_won', trigger_config: {}, timezone: 'UTC', trigger_label: 'When a deal is won', last_run_at: at(20), version: 1, created_by: 'u1', steps: [
+    { id: 'brief', type: 'agent', config: { mode: 'write', prompt: 'Write the handoff.' } },
+    { id: 'deliver', type: 'revbox_delivery', config: { format: 'handoff' } },
+  ] };
+  state.routines.unshift(digest, box);
+  const runs = [
+    { job: digest, h: 3, state: 'failed', error: "Step 2 · Slack: Slack can't see that channel. If it's private, invite the Nous app: type /invite @Nous in the channel",
+      failure: { text: "Slack can't see that channel. If it's private, invite the Nous app: type /invite @Nous in the channel", fix: null },
+      step_log: [{ step: 1, id: 'write', type: 'agent', status: 'ok' }, { step: 2, id: 'post', type: 'slack', status: 'failed', reason: 'slack_channel_not_found', target: 'G07HBLEAD01', detail: "Slack can't see that channel" }] },
+    { job: box, h: 20, state: 'failed', error: 'Step 2 · RevBox delivery: revbox_delivery_failed: slack C07HBOLDOPS: that channel is archived',
+      failure: { text: 'Revbox delivery failed: slack C07HBOLDOPS: that channel is archived', fix: null },
+      step_log: [{ step: 2, id: 'deliver', type: 'revbox_delivery', status: 'failed', deliveries: [{ id: archived.id, kind: 'slack', target: 'C07HBOLDOPS', ok: false, error: 'slack_is_archived' }] }],
+      deliveries: [{ kind: 'slack', target: 'C07HBOLDOPS', state: 'failed', error: 'that channel is archived' }] },
+    { job: digest, h: 27, state: 'completed', title: 'Pipeline digest', body: 'Three deals moved to evaluating yesterday; Fernpoint asked for a security review.', credits: 0.9,
+      step_log: [{ step: 2, id: 'post', type: 'slack', status: 'ok', target: 'G07HBLEAD01' }] },
+  ];
+  for (const r of runs) state.results.push({ id: randomUUID(), revbox_id: hb.id, job_id: r.job.id, job_name: r.job.name, kind: 'routine', state: r.state, created_at: at(r.h), error: r.error ?? null, failure: r.failure ?? null, credits: r.credits ?? 0.3, account_ids: [],
+    step_log: r.step_log, result: r.title ? { title: r.title, body: r.body, kind: 'report' } : null, deliveries: (r.deliveries ?? []).map(d => ({ id: randomUUID(), state: d.state, error: d.error ?? null, destination: { kind: d.kind, target: d.target } })) });
+  state.seeded.slack_health = true;
+}
 // GET-874: a "Closed won/lost analysis" box. Job 1 analyses each won or lost deal against the box's ICP
 // and adds a row to "Win/loss deals"; job 2 writes the monthly win/loss report from last month's rows;
 // job 3 the quarterly one. ~25 fake rows, each linked to the deal-analysis run that added it.
@@ -280,6 +314,31 @@ let jobProposalModule = null;
 try { jobProposalModule = await import('../../../packages/core/dist/db/revboxJobProposal.mjs'); } catch { /* not built */ }
 let scheduleModule = null;
 try { scheduleModule = await import('../../../packages/core/dist/services/routineSchedule.mjs'); } catch { /* not built */ }
+// Slack trouble on the cards, the rail and Results (GET-901), derived as the API derives it.
+let slackHealthModule = null;
+try { slackHealthModule = await import('../../../packages/core/dist/services/slackHealth.mjs'); } catch { /* not built */ }
+/** The preview's Slack connection: PREVIEW_SLACK=disconnected | broken, else connected and working. */
+const previewSlackConnection = () => ({ disconnected: { connected: false, working: false }, broken: { connected: true, working: false } }[process.env.PREVIEW_SLACK] ?? { connected: true, working: true });
+/** The box's Slack state, as GET /api/revboxes/:id carries it. */
+function previewSlack(box, routines) {
+  if (!slackHealthModule) return { routines, slack: null, deliveries: (d) => d };
+  const runs = state.results.filter(r => r.revbox_id === box.id && r.kind === 'routine').sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).map(r => ({ routine_id: r.job_id, step_log: r.step_log ?? [] }));
+  const v = slackHealthModule.slackHealthView({ connection: previewSlackConnection(), routines, runs, box });
+  const usesSlack = routines.some(r => slackHealthModule.jobUsesSlack(r.steps, box)) || box.delivery.some(d => d.kind === 'slack');
+  const byDest = Object.fromEntries(Object.entries(v.deliveries).filter(([k]) => k.startsWith('box:')).map(([k, s]) => [k.slice(4), s]));
+  return {
+    routines: routines.map(r => ({ ...r, slack_status: v.jobs[r.id] ?? null })),
+    slack: usesSlack ? { connection: v.connection, deliveries: byDest } : null,
+    deliveries: (rows) => rows.map(j => j.kind === 'slack' && j.step_id ? { ...j, slack_status: v.deliveries[`step:${j.job_id}:${j.step_id}`] ?? v.connection ?? null } : j),
+  };
+}
+/** A failed routine run's Slack trouble (Results), as the API adds it. */
+function previewRunSlack(run, box) {
+  if (!slackHealthModule || !run.failure || run.kind !== 'routine') return run;
+  const steps = state.routines.find(r => r.id === run.job_id)?.steps ?? [];
+  const slack = slackHealthModule.runSlackStatus({ connection: previewSlackConnection(), run, steps, box });
+  return slack ? { ...run, failure: { ...run.failure, slack } } : run;
+}
 // The preview user's own Gmail accounts, as /api/actions/mailboxes answers in server.mjs.
 const PREVIEW_MAILBOXES = [{ id: 'mb-1', kind: 'gmail', email: 'avery@opennous.example' }, { id: 'mb-2', kind: 'gmail', email: 'test.user.0001@gmail.com' }];
 function previewSignalKey(name, taken) {
@@ -531,8 +590,9 @@ export async function handleRevboxPreview(req, res, url, json) {
     let output;
     if (parts.length === 1 && req.method === 'GET') {
       const routines = state.routines.filter(r => r.revbox_id === box.id);
-      output = { box: { ...box, builtin_jobs: builtinJobsOf(box), access }, jobs: [...routines, ...jobs()], context: context(), job_deliveries: builderModule?.revboxJobDeliveries(routines, { mailboxes: PREVIEW_MAILBOXES }) ?? [],
-        people: previewPeople(box), ...previewRunAccounts(box), ...previewBuiltins(box) };
+      const sl = previewSlack(box, routines);
+      output = { box: { ...box, builtin_jobs: builtinJobsOf(box), access }, jobs: [...sl.routines, ...jobs()], context: context(), job_deliveries: sl.deliveries(builderModule?.revboxJobDeliveries(routines, { mailboxes: PREVIEW_MAILBOXES }) ?? []),
+        slack: sl.slack, people: previewPeople(box), ...previewRunAccounts(box), ...previewBuiltins(box) };
     }
     else if (parts.length === 1 && req.method === 'PATCH') {
       const error = validateRevboxPatch(payload); if (error) fail(400, error);
@@ -591,7 +651,7 @@ export async function handleRevboxPreview(req, res, url, json) {
       if (payload.approve) run.deliveries = [{ id: randomUUID(), state: 'sent', error: null, destination: { kind: 'slack', target: '#cs-leadership' } }];
       output = { ok: true, status: payload.approve ? 'ok' : 'rejected' };
     }
-    else if (parts[1] === 'results') {if(parts[3]==='approve'){const run=state.results.find(r=>r.revbox_id===box.id&&r.id===parts[2]);if(!run)fail(404,'Result not found.');if(run.state!=='needs_review')fail(409,'This result was already reviewed.');run.state='completed';output={run};}else output={results:state.results.filter(r=>r.revbox_id===box.id).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)))};}
+    else if (parts[1] === 'results') {if(parts[3]==='approve'){const run=state.results.find(r=>r.revbox_id===box.id&&r.id===parts[2]);if(!run)fail(404,'Result not found.');if(run.state!=='needs_review')fail(409,'This result was already reviewed.');run.state='completed';output={run};}else output={results:state.results.filter(r=>r.revbox_id===box.id).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).map(r=>previewRunSlack(r,box))};}
     else if (parts[1] === 'jobs' && parts[3] === 'enabled') {
       const job=jobs().find(j=>j.id===parts[2]);if(!job)fail(404,'Job not found.');
       if(payload.enabled){const error=revboxExecutionRequirements(job,box);if(error)fail(400,error);if(job.plan.questions.length)fail(400,'Resolve the open questions before enabling this job.');}

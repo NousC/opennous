@@ -3,7 +3,7 @@ import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { requireAiCredits } from '../../lib/plans.mjs';
 import { computeCost } from '../../lib/llmUsage.mjs';
 import { Router } from 'express';
-import { latestSignalView } from '@nous/core';
+import { latestSignalView, slackHealthView, runSlackStatus, jobUsesSlack, slackConnectionState } from '@nous/core';
 import {
   getSupabaseClient, listDocuments, getDocument,
   listRevboxes, createRevbox, patchRevbox, loadRevbox, revboxDetails,
@@ -267,9 +267,45 @@ revboxesRouter.get('/:id', route(async (req, res, sb) => {
     revboxBuiltinActivity(sb, req.workspaceId, detail.box.builtin_jobs, { allowed: visible }),
     detail.box.builtin_jobs.length ? builtinFacts(sb, req.workspaceId) : null,
   ]);
-  res.json({ ...detail, context, routines: routines.map(routineOut), job_deliveries,
+  // Slack trouble on the cards and the rail (GET-901): the connection now and each place's latest outcome.
+  const slack = await boxSlackHealth(sb, req.workspaceId, routines, detail.box);
+  res.json({ ...detail, context, routines: routines.map(r => ({ ...routineOut(r), slack_status: slack?.jobs[r.id] ?? null })),
+    job_deliveries: withSlackStatus(job_deliveries, slack),
+    slack: slack ? { connection: slack.connection, deliveries: boxDeliveryStatuses(slack) } : null,
     builtin_jobs: builtinJobsOut(detail.box.builtin_jobs, activity, facts), builtin_taken: taken });
 }));
+/**
+ * The box's Slack state (GET-901, core slackHealthView): read only when a job or destination posts to
+ * Slack, one connection read and one runs read (the newest 100 runs of the box's jobs). Null when
+ * nothing posts to Slack or the state cannot be read: the surfaces then show nothing, never a guess.
+ */
+export async function boxSlackHealth(sb, ws, routines, box, { connectionState = slackConnectionState } = {}) {
+  const usesSlack = (routines ?? []).some(r => jobUsesSlack(r.steps, box)) || (box?.delivery ?? []).some(d => d?.kind === 'slack');
+  if (!usesSlack) return null;
+  try {
+    const [connection, runs] = await Promise.all([
+      connectionState(sb, ws),
+      sb.from('agent_routine_runs').select('routine_id, status, step_log, state, started_at').eq('workspace_id', ws).in('routine_id', routines.map(r => r.id))
+        .order('started_at', { ascending: false }).limit(100).then(r => (r.error ? [] : r.data ?? [])),
+    ]);
+    if (!connection) return null;
+    return slackHealthView({ connection, routines, runs, box });
+  } catch (e) {
+    console.warn('[revboxes] slack health', e?.message ?? e);
+    return null;
+  }
+}
+/** The rail's job rows with their Slack state: a job's own Slack step, keyed by its job and step. Pure. */
+export function withSlackStatus(jobDeliveries, slack) {
+  if (!slack) return jobDeliveries;
+  return (jobDeliveries ?? []).map(j => j?.kind === 'slack' && j.step_id ? { ...j, slack_status: slack.deliveries[`step:${j.job_id}:${j.step_id}`] ?? slack.connection ?? null } : j);
+}
+/** The box destinations' Slack state, by destination id ({ d1: status }). Pure. */
+export function boxDeliveryStatuses(slack) {
+  const out = {};
+  for (const [key, s] of Object.entries(slack?.deliveries ?? {})) if (key.startsWith('box:')) out[key.slice(4)] = s;
+  return out;
+}
 revboxesRouter.patch('/:id', route(async (req, res, sb) => {
   if (req.body?.scope?.mode === 'selected') {
     const ids = req.body.scope.account_ids;
@@ -353,8 +389,27 @@ revboxesRouter.get('/:id/results', route(async (req,res,sb)=>{
   // The box's workflow-engine jobs (GET-868): their runs, with what each cost in credits.
   const routines=await listRevboxRoutines(sb,{workspaceId:req.workspaceId,revboxId:req.params.id,userId:req.internalUserId});
   const routineRuns=await revboxRoutineRuns(sb,req.workspaceId,routines,{allowed:await allowed(sb,req)});
+  // A failed run that hit Slack says which Slack trouble, with its action (GET-901).
+  await withRunSlackStatus(sb,req,routines,routineRuns);
   res.json({results:[...results,...routineRuns].sort((a,b)=>String(b.created_at??'').localeCompare(String(a.created_at??'')))});
 }));
+/**
+ * Results' failed routine runs gain failure.slack (GET-901: core runSlackStatus, against the connection
+ * now). Reads the connection and the box only when a failed run touched Slack. Never throws.
+ */
+export async function withRunSlackStatus(sb, req, routines, runs, { connectionState = slackConnectionState, box = null } = {}) {
+  const failed = runs.filter(r => r.failure && (/Slack/.test(String(r.error ?? '')) || (r.step_log ?? []).some(e => e?.type === 'slack' || (e?.deliveries ?? []).some(d => d?.kind === 'slack'))));
+  if (!failed.length) return runs;
+  try {
+    const [connection, theBox] = await Promise.all([connectionState(sb, req.workspaceId), box ?? loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id).catch(() => null)]);
+    const steps = new Map(routines.map(r => [r.id, r.steps]));
+    for (const run of failed) {
+      const slack = runSlackStatus({ connection, run, steps: steps.get(run.job_id) ?? [], box: theBox });
+      if (slack) run.failure = { ...run.failure, slack };
+    }
+  } catch (e) { console.warn('[revboxes] run slack status', e?.message ?? e); }
+  return runs;
+}
 /** agent_routine_runs.status -> the Results row's `state` (revbox_runs' states, so one UI reads both). */
 const ROUTINE_RUN_STATE = { running: 'running', waiting: 'running', ok: 'completed', completed: 'completed', error: 'failed', failed: 'failed', awaiting_approval: 'needs_review' };
 export function routineRunState(status) {

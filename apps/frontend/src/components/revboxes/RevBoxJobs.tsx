@@ -18,12 +18,15 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { when } from '@/lib/format';
-import { routineTriggerLabel, SIGNAL_CHOICES, TOOL_NAMES, type BoxBuiltinJob, type RevBoxJob, type RevBoxRoutine } from '@/lib/revboxes';
+import { routineTriggerLabel, SIGNAL_CHOICES, TOOL_NAMES, type BoxBuiltinJob, type RevBoxJob, type RevBoxRoutine, type SlackStatus } from '@/lib/revboxes';
+import { SlackStatusLine } from '@/components/revboxes/SlackStatusLine';
 import { builtinActivity, builtinState } from '@/lib/builtinJobs';
 import { Logo } from '@/components/revboxes/WorkflowCard';
 import { OPEN_PRIORITIES } from '@/components/shell/PrioritiesButton';
 
-export type JobRow = { id: string; name: string; trigger: string; enabled: boolean; lastRunAt: string | null; routine: boolean; webhook: boolean };
+export type JobRow = { id: string; name: string; trigger: string; enabled: boolean; lastRunAt: string | null; routine: boolean; webhook: boolean;
+  /** Why its Slack posts fail now (GET-901), from the server; shown as one line under the row. */
+  slack?: SlackStatus | null };
 type RunLite = { job_id: string; state?: string | null; status?: string | null; created_at: string };
 /** A run's state; a row that only carries the engine's `status` still reads. */
 const runState = (r: RunLite | undefined) => r ? String(r.state ?? (r.status === 'error' ? 'failed' : r.status) ?? '') : '';
@@ -42,7 +45,7 @@ export function jobRows(jobs: (RevBoxJob | RevBoxRoutine)[], routines: RevBoxRou
       rows.push({ id: j.id, name: j.name, trigger, enabled: !!j.enabled, lastRunAt: null, routine: false, webhook: t.kind === 'webhook_in' });
     } else {
       const r = j as RevBoxRoutine;
-      rows.push({ id: r.id, name: r.name, trigger: routineTriggerLabel(r), enabled: !!r.enabled, lastRunAt: r.last_run_at ?? null, routine: true, webhook: r.trigger_kind === 'webhook_in' });
+      rows.push({ id: r.id, name: r.name, trigger: routineTriggerLabel(r), enabled: !!r.enabled, lastRunAt: r.last_run_at ?? null, routine: true, webhook: r.trigger_kind === 'webhook_in', slack: r.slack_status ?? null });
     }
   }
   return rows;
@@ -96,6 +99,8 @@ export function RevBoxJobs({ rows, runs, editable, busy, fresh, onNew, onToggle,
           {!row.routine && row.webhook && <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => onWebhookKey(row)}><Link2 className="h-3 w-3" />Webhook key</Button>}
           <Switch aria-label={`${row.enabled ? 'Pause' : 'Switch on'} ${row.name}`} className="ml-1" checked={row.enabled} disabled={acting} onCheckedChange={() => onToggle(row)} />
         </span>}
+        {/* Slack trouble (GET-901): its own line, outside the row's button, with the action. */}
+        {row.slack && <div className="-mt-2 basis-full pb-1.5 pl-[25px]"><SlackStatusLine status={row.slack} /></div>}
       </li>;
     })}
     {builtins.map(b => <li key={b.key} className="py-2"><BuiltinCard job={b} onOpen={onOpenBuiltin} /></li>)}

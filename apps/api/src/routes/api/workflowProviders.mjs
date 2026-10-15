@@ -13,7 +13,6 @@ import { connectProvider, disconnectProvider } from '../../providers/connect.mjs
 import { decrypt, encryptCredentials } from '../../providers/crypto.mjs';
 import { isWorkspaceMember, isWorkspaceAdmin } from '../../lib/authz.mjs';
 import { sourceScope, canSeeConnection, canManageConnection, connectForbidden } from '../../providers/sourceScope.mjs';
-import { auditFromReq } from '../../lib/audit.mjs';
 import { lastSyncedByConnection } from '../../providers/lastSynced.mjs';
 import { syncProgressByConnection } from '../../providers/syncProgress.mjs';
 
@@ -429,14 +428,9 @@ workflowProvidersRouter.delete('/connections/:id', verifySupabaseAuth, async (re
     const denied = await manageDenied(supabase, existing, req);
     if (denied) return res.status(denied.status).json(denied.body);
 
-    await disconnectProvider({ supabase, connectionId: id });
-    auditFromReq(req, {
-      action: 'integration.disconnect',
-      target_type: 'connection',
-      target_id: id,
-      target_workspace_id: existing.workspace_id,
-      metadata: { provider: existing.name },
-    });
+    // The audit row (who, from where, which provider) is written by disconnectProvider (GET-901).
+    await disconnectProvider({ supabase, connectionId: id, via: 'disconnect_route',
+      actor: { user_id: req.internalUserId ?? null, email: req.user?.email ?? null, ip: req.ip ?? null } });
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error' });

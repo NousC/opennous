@@ -809,6 +809,57 @@ the card reads "#channel · Report layout". A box destination can carry its own 
   follow none with an 8s timeout. Every hop is checked against the SSRF guard.
 - Preview: `/preview/slack-blocks` on the preview API (every layout's AI JSON and blocks).
 
+### Slack trouble: named, auto-joined, alerted once (GET-901)
+
+A daily report job failed twice without anyone being told: once because the bot was not in the
+private channel after Slack was reconnected (`channel_not_found`), once because the workspace's Slack
+connection row had been removed overnight ("Slack isn't connected"). Now:
+
+- **What a failure means** (core `packages/core/src/services/slackHealth.mjs`, pure):
+  `classifySlackFailure(reason)` sorts a step reason, a raw Slack error or an older log's words into
+  `disconnected` (no connection), `broken` (`invalid_auth`, `account_inactive`, `token_revoked`,
+  `not_authed`, `missing_scope`, `token_expired`, `app_uninstalled`, `tokens_revoked`, ...),
+  `not_in_channel`, `channel_not_found`, `archived` or `other`. A Slack step's log line now keeps
+  `target` (the channel it posts to) and, when it failed, `reason` (the code), so the state is read
+  from the log, not guessed from words.
+- **What the app shows** (`slackHealthView`, `runSlackStatus`, derived on the server from the
+  connection NOW (`slackConnectionState`: is there a Slack row, is it `is_verified`) plus the latest
+  outcome per place a job posts): `Slack disconnected · Reconnect`, `Slack connection stopped working ·
+  Reconnect` (both link to `/company-sources?connect=slack`), `Invite @Nous to #channel` with
+  `/invite @Nous` to copy, or `Channel archived · #channel`. `GET /api/revboxes/:id` adds
+  `routines[].slack_status`, `job_deliveries[].slack_status` and `slack: { connection, deliveries }`
+  (box destinations by id); `GET /:id/results` adds `failure.slack` to a failed run. The job row, the
+  Delivery rail (connection state once on top, a channel's under its row) and the open Results row show
+  it (`SlackStatusLine`). A reconnect clears a connection state at once; an invite clears on the next
+  run that posts there. Nothing posts to Slack: no reads, no state. Test runs are ignored.
+- **Auto-join** (`apps/api/src/cloud/lib/automationSlack.mjs`): when `chat.postMessage` answers
+  `not_in_channel` or `channel_not_found` for a channel id, one `conversations.info` call; a PUBLIC,
+  unarchived channel the bot is not in is joined (`conversations.join`) and the post retried once. It
+  needs the `channels:join` bot scope, which the app does **not** request today: the code only tries
+  when the install's `bot_scope` lists it. To turn it on, add `channels:join` to the live app's bot
+  scopes, to `slack-app-manifest.yaml` and to `BOT_SCOPES` in `oauthSlack.mjs`, then have workspaces
+  reconnect. Until then, and always for a private channel, the state is "Invite @Nous to #channel".
+  A `#name` from an older step is never looked up.
+- **Alerts** (`apps/api/src/cloud/lib/slackHealth.mjs`): a connection failure from a post (any run,
+  the worker's too, since its posts go through the API), a removed Slack connection, and Slack's
+  `app_uninstalled` / `tokens_revoked` events (`/slack/events`; subscribe to both in the app's Event
+  Subscriptions, no scope needed) each report once per incident: one email to the workspace's owners
+  and admins (the `sync_failures` notification; one who switched its email off is skipped) naming who
+  removed it and how many jobs post to Slack, and one `opsAlert` (`[slack-health] ws=… <problem>
+  source=… error=… connection=… by=…`). Deduped across processes by a `team_ops_email_log` row
+  (`slack_<problem>:<workspace>:<incident>`, the incident being the removed connection's id, or a
+  broken connection's id plus when it was last connected) and in-process for 15 minutes. A broken
+  connection is marked `is_verified = false` (reconnecting, or a post that works again, sets it back).
+- **The audit trail** (`apps/api/src/lib/audit.mjs` `recordConnectionRemovals`): every path that
+  deletes a connection row writes `audit_log` `integration.disconnect` with the actor (user, email,
+  IP, or none for a system path), `metadata.via` (`disconnect_route`, `account_erasure`,
+  `workspace_deleted`, `admin_user_deleted`, `admin_team_deleted`), `provider_type`, and for Slack the
+  team and bot user ids, plus a `[connection-removed]` log line. Connections a workspace or team
+  deletion cascades away are read first and recorded after. The Slack OAuth callback writes
+  `integration.connect` with `via: oauth_connect | oauth_reconnect` and what a reconnect replaced.
+- **Preview**: the "Harborline daily digest" box shows the invite and archived states; start the
+  preview with `PREVIEW_SLACK=disconnected` (or `broken`) for the connection states.
+
 ## File ownership while building in parallel
 
 - Backend agent: `apps/api/src/cloud/lib/jobBuilder/**`, `apps/api/src/cloud/routes/api/revboxBuilder.mjs`

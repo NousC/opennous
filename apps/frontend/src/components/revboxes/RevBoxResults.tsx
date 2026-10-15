@@ -21,13 +21,14 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, ChevronRight, Table2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Prose } from '@/components/AgentMarkdown';
-import { revboxesRequest, type RevBoxDataset } from '@/lib/revboxes';
+import { revboxesRequest, type RevBoxDataset, type SlackStatus } from '@/lib/revboxes';
+import { SlackStatusLine } from '@/components/revboxes/SlackStatusLine';
 import { DatasetTable } from '@/components/revboxes/DatasetTable';
 import { cn } from '@/lib/utils';
 import { when } from '@/lib/format';
 
 type Delivery = { id: string; state: string; error: string | null; destination?: { kind?: string; target?: string } | null };
-type Failure = { text: string; fix: { label: string; href: string } | null };
+type Failure = { text: string; fix: { label: string; href: string } | null; slack?: SlackStatus | null };
 type Run = {
   credits?: number; id: string; job_id: string; job_name?: string | null; kind?: string; state?: string | null; status?: string | null;
   created_at: string; error?: string | null; failure?: Failure | null;
@@ -141,7 +142,9 @@ function ResultRow({ run, jobName, open, onToggle, ws, token, boxId, editable, r
       <span className="shrink-0 text-[11.5px] tabular-nums text-muted-foreground">{when(run.created_at)}{credits(run.credits) && <span className="ml-3">{credits(run.credits)}</span>}</span>
     </button>
     {open && <div className="space-y-3 pb-4 pl-[18px] pr-1 pt-1">
-      {failure && <p role="alert" className="text-[12.5px] text-risk">{failure.text}{failure.fix && <> · <Link to={failure.fix.href} className="inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-2 hover:underline">{failure.fix.label}<ArrowUpRight className="h-3 w-3" /></Link></>}</p>}
+      {failure && <p role="alert" className="text-[12.5px] text-risk">{failure.text}{failure.fix && !failure.slack && <> · <Link to={failure.fix.href} className="inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-2 hover:underline">{failure.fix.label}<ArrowUpRight className="h-3 w-3" /></Link></>}</p>}
+      {/* What to do about it now (GET-901): Reconnect, the invite to copy, or an archived channel. */}
+      {failure?.slack && <SlackStatusLine status={failure.slack} className="-mt-2" />}
       {state === 'needs_review' && editable && <div className="flex items-center gap-2">
         <span className="text-[12px] text-muted-foreground">Waiting for review.</span>
         <Button size="sm" className="h-7 text-[12px]" disabled={busy} onClick={() => void act(run.kind === 'routine' ? '/decide' : '/approve', run.kind === 'routine' ? { approve: true } : undefined)}>Approve</Button>

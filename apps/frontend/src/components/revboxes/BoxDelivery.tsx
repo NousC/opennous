@@ -25,7 +25,8 @@ import { useMailboxes } from '@/components/MailboxPicker';
 import { Logo } from '@/components/revboxes/WorkflowCard';
 import { freshAccessToken } from '@/lib/freshToken';
 import { cn } from '@/lib/utils';
-import { deliveryLabel, recipients, revboxesRequest, type Delivery, type JobDelivery, type RevBox } from '@/lib/revboxes';
+import { deliveryLabel, recipients, revboxesRequest, type Delivery, type JobDelivery, type RevBox, type SlackStatus } from '@/lib/revboxes';
+import { SlackStatusLine } from '@/components/revboxes/SlackStatusLine';
 
 const field = 'w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-foreground/35 focus:ring-2 focus:ring-foreground/5 disabled:opacity-60';
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
@@ -51,8 +52,10 @@ const isWarning = (j: JobDelivery | DeliveryWarning): j is DeliveryWarning => (j
 /** A destination with nothing to deliver to yet (left out at run time, dropped on Cancel). */
 export const unfinished = (d: Delivery) => d.kind === 'email' ? !recipients(d.to ?? d.target).length
   : !d.target.trim() || (d.kind === 'gmail' && !recipients(d.to).length);
-export function DeliveryList({ delivery, jobDeliveries, editable, onOpen, onRemove, onOpenJob, onOpenJobStep }: {
+export function DeliveryList({ delivery, jobDeliveries, editable, onOpen, onRemove, onOpenJob, onOpenJobStep, slack = null }: {
   delivery: Delivery[]; jobDeliveries: (JobDelivery | DeliveryWarning)[]; editable: boolean;
+  /** Slack trouble (GET-901): the connection's own state on top, each Slack destination's under it. */
+  slack?: { connection: SlackStatus | null; deliveries: Record<string, SlackStatus> } | null;
   onOpen: (id: string) => void; onRemove: (id: string) => void; onOpenJob?: (job: { id: string; name: string }) => void;
   /** A job's own target, edited in place (GET-872). Without it, or for a step only the chat can change, the row opens the chat. */
   onOpenJobStep?: (row: JobDelivery) => void;
@@ -61,18 +64,25 @@ export function DeliveryList({ delivery, jobDeliveries, editable, onOpen, onRemo
   const warnings = jobDeliveries.filter(isWarning);
   const targets = jobDeliveries.filter(j => !isWarning(j));
   if (!delivery.length && !targets.length) return <p className="px-2 py-1 text-[12px] text-muted-foreground">No destinations yet.</p>;
+  // A connection problem is said once, on top; a channel problem under its row.
+  const rowStatus = (s: SlackStatus | null | undefined) => (s && s.kind !== 'disconnected' && s.kind !== 'broken' ? s : null);
   return <>
+    {slack?.connection && <div className="mb-1 px-2 py-1"><SlackStatusLine status={slack.connection} /></div>}
     {delivery.map(d => <div key={d.id} className="mb-1 rounded-lg px-2 py-2 hover:bg-muted/50">
       <div className="flex items-center gap-2"><DeliveryMark kind={d.kind} /><button className="min-w-0 flex-1 truncate text-left text-[12px]" title={deliveryLabel(d)} onClick={() => onOpen(d.id)}>{deliveryLabel(d)}</button>{editable && <button aria-label="Remove destination" onClick={() => onRemove(d.id)}><Trash2 className="h-3 w-3 text-muted-foreground" /></button>}</div>
       {warnings.filter(w => w.destination_id === d.id).map(w => <p key={`${w.job_id}:${d.id}`} role="note" className="mt-1 flex gap-1.5 pl-[22px] text-[10.5px] leading-snug text-amber-700 dark:text-amber-400"><AlertTriangle className="mt-px h-3 w-3 shrink-0" />{w.label}</p>)}
+      {d.kind === 'slack' && rowStatus(slack?.deliveries?.[d.id]) && <div className="pl-[22px]"><SlackStatusLine status={rowStatus(slack?.deliveries?.[d.id])} /></div>}
     </div>)}
     {targets.map(j => {
       const row = <><DeliveryMark kind={j.kind} /><span className="min-w-0 flex-1"><span className="block truncate text-[12px]">{j.label}</span><span className="block truncate text-[10.5px] text-muted-foreground">via {j.job_name ?? 'a job'}</span></span></>;
       const inPlace = !!onOpenJobStep && !!j.step_id && j.editable !== false;
       const hint = inPlace ? `Used by "${j.job_name ?? 'job'}". Click to change where it goes.` : `Set in the job "${j.job_name ?? 'job'}". Change it in the job's chat.`;
+      const status = rowStatus(j.slack_status);
+      const key = `${j.job_id}:${j.kind}:${j.label}`;
+      const line = status && <div className="-mt-1 mb-1 pl-[30px]"><SlackStatusLine status={status} /></div>;
       return editable && (inPlace || onOpenJob)
-        ? <button key={`${j.job_id}:${j.kind}:${j.label}`} title={hint} onClick={() => inPlace ? onOpenJobStep!(j) : onOpenJob!({ id: j.job_id, name: j.job_name ?? 'Job' })} className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-muted/50">{row}</button>
-        : <div key={`${j.job_id}:${j.kind}:${j.label}`} title={hint} className="mb-1 flex items-center gap-2 rounded-lg px-2 py-2">{row}</div>;
+        ? <div key={key}><button title={hint} onClick={() => inPlace ? onOpenJobStep!(j) : onOpenJob!({ id: j.job_id, name: j.job_name ?? 'Job' })} className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-muted/50">{row}</button>{line}</div>
+        : <div key={key}><div title={hint} className="mb-1 flex items-center gap-2 rounded-lg px-2 py-2">{row}</div>{line}</div>;
     })}
   </>;
 }

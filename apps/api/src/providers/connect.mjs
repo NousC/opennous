@@ -23,7 +23,7 @@ import { normalizeCredentials } from './credentials.mjs';
 import { revokeConnectionTokens } from './revoke.mjs';
 import { disconnectComposioConnection } from './composio.mjs';
 import { NATIVE_GOOGLE, shouldRevokeNativeGrant } from './googleNative.mjs';
-import { auditLog } from '../lib/audit.mjs';
+import { auditLog, recordConnectionRemovals } from '../lib/audit.mjs';
 import { ingestOnConnect } from '../lib/connectIngest.mjs';
 import { sourceScope } from './sourceScope.mjs';
 import { recogniseOwnPeople } from '@nous/core';
@@ -194,18 +194,21 @@ export async function connectProvider({
  * Best-effort: a provider that refuses the delete must not block the user from removing
  * the connection on our side.
  */
-export async function disconnectProvider({ supabase, connectionId }) {
+export async function disconnectProvider({ supabase, connectionId, actor = null, via = 'disconnect_route' }) {
   const { data: conn } = await supabase
     .from('workflow_provider_connections')
-    .select('id, workspace_id, managed_by, account_email, composio_connection_id, composio_trigger_ids, encrypted_credentials, workflow_providers!inner(name)')
+    .select('id, workspace_id, name, managed_by, account_email, composio_connection_id, composio_trigger_ids, encrypted_credentials, workflow_providers!inner(name)')
     .eq('id', connectionId)
     .maybeSingle();
+  // Who removed it and how, on the audit trail (GET-901); a removed Slack connection is also told.
+  const recorded = () => { if (conn) recordConnectionRemovals(supabase, [conn], { actor, via }); };
 
   // Composio-managed connections (Gmail / Calendar): tear down the triggers + connected
   // account at Composio, then drop our row. There is no native webhook or OAuth token to revoke.
   if (conn?.managed_by === 'composio') {
     await disconnectComposioConnection({ supabase, connection: conn });
     await supabase.from('workflow_provider_connections').delete().eq('id', connectionId);
+    recorded();
     return { ok: true };
   }
 
@@ -231,5 +234,6 @@ export async function disconnectProvider({ supabase, connectionId }) {
   }
 
   await supabase.from('workflow_provider_connections').delete().eq('id', connectionId);
+  recorded();
   return { ok: true };
 }
