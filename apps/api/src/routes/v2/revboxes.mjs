@@ -13,10 +13,10 @@
 //        GET-874: `datasets` (tables created or reused) and, when the proposal named next_jobs,
 //        `next_session_id` + `next_jobs`: post the next message with session_id = next_session_id
 //
-// The builder is the in-app Job Builder, non-streaming: the same turn, its events collected. It is
-// part of the API plan on every edition (GET-905): Cloud runs it on our model bill, self-host on the
-// operator's own keys (Settings → Instance setup shows which). A build whose router is handed no
-// builder answers 501 job_builder_unavailable; the reads still work.
+// The builder is the in-app Job Builder, non-streaming: the same turn, its events collected. It runs
+// on our model bill, so it is Cloud's (cloud/lib/jobBuilder/); Cloud registers it at boot through
+// registerJobBuilder, as it registers the routine runner for /v2/workflows. Without the Cloud layer
+// (self-host) the builder routes answer 501 job_builder_unavailable; the reads still work.
 //
 // A RevBox belongs to a person (owner, editors, viewers), so these act as the key's member. A
 // workspace-level key with no member answers 403 member_key_required.
@@ -24,10 +24,9 @@ import { Router } from 'express';
 import { getSupabaseClient, listRevboxes, revboxDetails } from '@nous/core';
 import { resolveTeamAndPlan } from '../../lib/access.mjs';
 import { automationLimitHit } from '../api/automations.mjs';
-import { jobBuilder as defaultJobBuilder, turnInput, collectTurn } from '../../lib/jobBuilder/index.mjs';
 
-let jobBuilder = { ...defaultJobBuilder, turnInput, collectTurn };
-/** Replace the builder: { openSession, runTurn, approve, openForJob, turnInput, collectTurn }. */
+let jobBuilder = null;
+/** Cloud's builder: { openSession, runTurn, approve, openForJob, turnInput, collectTurn }. */
 export function registerJobBuilder(impl) { jobBuilder = impl; }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,7 +47,7 @@ export function makeRevboxesV2Router({ getSb = getSupabaseClient, builder = () =
   };
   const needBuilder = (res) => {
     const b = builder();
-    if (!b) { res.status(501).json({ error: 'job_builder_unavailable', message: 'The Job Builder is not available on this build.' }); return null; }
+    if (!b) { res.status(501).json({ error: 'job_builder_unavailable', message: 'The Job Builder runs on OpenNous Cloud only.' }); return null; }
     return b;
   };
 

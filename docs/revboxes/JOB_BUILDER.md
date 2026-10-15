@@ -139,7 +139,7 @@ Table `revbox_builder_sessions`: `id, workspace_id, revbox_id, user_id, job_id (
 messages jsonb (Anthropic-format transcript), proposal jsonb (latest), state ('open'|'approved'|'abandoned'),
 created_at, updated_at`. Service role only; access = RevBox edit rights.
 
-## Agent tools (server, `apps/api/src/lib/jobBuilder/`)
+## Agent tools (server, `apps/api/src/cloud/lib/jobBuilder/`)
 
 All read-only except `ask` and `propose_job`, which end the turn.
 
@@ -447,7 +447,7 @@ Every day 08:00 (New York) · [HubSpot][Slack] → #ops-daily · asks first     
   `timezone`, `name`, legacy columns via `scheduleColumns`/`destinationColumns`, `revbox_id`, and
   `enabled: true` for a new job, and for an Edit the job's current `enabled` (a paused job stays
   paused), after the enable endpoint's checks when it will be on: a trigger kind with a runner (core),
-  the credit gate and the plan's automation limit (`enableCheck`, passed by the builder; an
+  the credit gate and the plan's automation limit (`enableCheck`, passed by the Cloud builder; an
   existing job is counted with `excludeId`, as the enable endpoint does).
   A failed check still saves the job, off, and approve returns `{ routine, enabled: false, reason }`.
   A clock job gets `next_run_at` from `nextRunAt` (the routine runner's scheduler); enabling through
@@ -919,7 +919,7 @@ connection row had been removed overnight ("Slack isn't connected"). Now:
 
 ## File ownership while building in parallel
 
-- Backend agent (every edition since GET-905; self-host runs it on its own keys, model `JOB_BUILDER_MODEL`, Slack targets registered by Cloud): `apps/api/src/lib/jobBuilder/**`, `apps/api/src/routes/api/revboxBuilder.mjs`
+- Backend agent: `apps/api/src/cloud/lib/jobBuilder/**`, `apps/api/src/cloud/routes/api/revboxBuilder.mjs`
   (mounted at `/api/revboxes/:id/builder`), `apps/api/src/routes/v2/revboxes.mjs`, the HubSpot access
   helper, `AI_CREDIT_FEATURES`, their tests.
 - Engine agent: migration, `packages/core/src/db/revboxBuilder.mjs` (sessions + approve -> routine),

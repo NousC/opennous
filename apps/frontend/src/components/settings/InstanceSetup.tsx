@@ -174,7 +174,7 @@ export function InstanceSetup() {
         ))}
         <p className="px-2 pb-2 pt-1 text-[12px] leading-relaxed text-muted-foreground">
           Change a job's model with <span className="font-mono">EXTRACTION_MODEL</span>, <span className="font-mono">WRITING_MODEL</span> or{" "}
-          <span className="font-mono">INSIGHT_BOARD_MODEL</span>, and the Job Builder's with <span className="font-mono">JOB_BUILDER_MODEL</span> (a Claude model). An id that starts with <span className="font-mono">claude-</span> runs on {ai.providers.claudeVia === "openrouter" ? "OpenRouter" : "your Anthropic key"}; any other id runs on {ai.providers.openRouter ? "OpenRouter" : ai.providers.endpoint}.
+          <span className="font-mono">INSIGHT_BOARD_MODEL</span>. An id that starts with <span className="font-mono">claude-</span> runs on {ai.providers.claudeVia === "openrouter" ? "OpenRouter" : "your Anthropic key"}; any other id runs on {ai.providers.openRouter ? "OpenRouter" : ai.providers.endpoint}.
         </p>
       </SettingsGroup>
 

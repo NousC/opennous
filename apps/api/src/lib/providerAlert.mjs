@@ -15,7 +15,6 @@
 // is one incident. Provider internals and keys never reach the user.
 import { classifyProviderError, providerErrorSummary } from '@nous/core';
 import { opsAlert } from './opsAlert.mjs';
-import { isSelfHosted } from './plans.mjs';
 
 export const ALERT_WINDOW_MS = 15 * 60 * 1000;
 
@@ -49,21 +48,10 @@ export const providerAlert = makeProviderAlert();
  * user should see -> { kind, code, message }, or null when it is not a provider failure we can
  * name (the caller keeps its generic message). `subject` names the model in the sentence.
  */
-export function providerFailure(err, { provider = 'unknown', feature = null, subject = 'The AI model', alert = providerAlert, selfHosted = isSelfHosted() } = {}) {
+export function providerFailure(err, { provider = 'unknown', feature = null, subject = 'The AI model', alert = providerAlert } = {}) {
   const { kind } = classifyProviderError(err);
   if (kind === 'other') return null;
   try { alert({ provider, kind, feature, err }); } catch { /* never mask the failure */ }
   if (kind === 'rate_limit') return { kind, code: 'model_busy', message: 'The AI model is busy. Try again in a minute.' };
-  // Self-host runs on the operator's own keys (GET-905): nobody else is alerted, so say what to fix.
-  if (selfHosted) return { kind, code: 'model_unavailable', message: kind === 'billing'
-    ? `${subject} isn't available: its provider account is out of credit. Top it up, or set another key in nous.env (Settings → Instance setup).`
-    : `${subject} isn't available: its API key was rejected. Check the key in nous.env (Settings → Instance setup).` };
   return { kind, code: 'model_unavailable', message: `${subject} isn't available right now. We've been alerted and are fixing it.` };
-}
-
-/** What to tell the person when no model key is set at all. Shared by the Job Builder. */
-export function noProviderMessage(subject = 'The AI model', { selfHosted = isSelfHosted() } = {}) {
-  return selfHosted
-    ? `${subject} has no model key. Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY in nous.env and restart (Settings → Instance setup).`
-    : `${subject} isn't available right now. We've been alerted and are fixing it.`;
 }

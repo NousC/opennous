@@ -20,17 +20,7 @@ async function serve(router, user = { workspaceId: 'ws', memberUserId: 'u1' }) {
 }
 const post = (url, body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-test('the builder is on every edition: the default router reaches it, no 501 (GET-905)', async () => {
-  const srv = await serve(makeRevboxesV2Router({ getSb: () => ({}) }));
-  try {
-    // An empty body gets the builder's own input check, which only a present builder runs.
-    const r = await post(`${srv.url}/v2/revboxes/${BOX}/jobs/builder`, {});
-    assert.equal(r.status, 400);
-    assert.equal((await r.json()).error, 'message_required');
-  } finally { await srv.close(); }
-});
-
-test('a router handed no builder answers 501 job_builder_unavailable', async () => {
+test('without the Cloud layer the builder routes answer 501 job_builder_unavailable', async () => {
   const srv = await serve(makeRevboxesV2Router({ getSb: () => ({}), builder: () => null }));
   try {
     const r = await post(`${srv.url}/v2/revboxes/${BOX}/jobs/builder`, { message: 'x' });
