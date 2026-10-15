@@ -443,10 +443,70 @@ export function groupConversations(rows, cited = new Set()) {
   return [...groups.values()];
 }
 
-async function inChunks(ids, size, fn) {
+/**
+ * Run fn over slices of `ids`, `parallel` at a time, results in chunk order (GET-903: these used
+ * to run one after another).
+ */
+async function inChunks(ids, size, fn, parallel = 8) {
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size));
+  const results = new Array(chunks.length);
+  let next = 0;
+  const worker = async () => { while (next < chunks.length) { const i = next++; results[i] = await fn(chunks[i]); } };
+  await Promise.all(Array.from({ length: Math.min(parallel, chunks.length) }, worker));
+  return results.flat();
+}
+
+// GET-903. `claims.supporting_observation_ids && {…}` has no element statistics to plan on, so
+// Postgres guesses 0.5% of all claims per id. Past a handful of ids that guess is most of the
+// table and it seq-scans every claim in the database: 5 s a 300-id chunk on prod, 20 s a page.
+// Measured through PostgREST on prod, 10 ids still use the GIN index (45–70 ms) and 12 already
+// seq-scan (550+ ms), so the chunk is 8, with room under that edge. The guess is a fixed share of
+// the table, so the edge does not move as claims grow. No LIMIT on these reads: a LIMIT tips the
+// same guess back to a seq scan.
+export const CLAIM_CHUNK = 8;
+export function claimLookupChunks(ids) {
   const out = [];
-  for (let i = 0; i < ids.length; i += size) out.push(...(await fn(ids.slice(i, i + size))));
+  for (let i = 0; i < (ids?.length ?? 0); i += CLAIM_CHUNK) out.push(ids.slice(i, i + CLAIM_CHUNK));
   return out;
+}
+
+// Paging (GET-903). The cursor is a point in time: the next page holds what was observed at or
+// before it (`incl`), or strictly before it. A page never ends part-way through an instant, so a
+// meeting's per-attendee copies (one instant) never straddle two pages.
+export function encodeCursor(c) {
+  return c ? Buffer.from(JSON.stringify({ ts: c.ts, incl: !!c.incl })).toString('base64url') : null;
+}
+export function decodeCursor(s) {
+  if (!s || typeof s !== 'string') return null;
+  try {
+    const c = JSON.parse(Buffer.from(s, 'base64url').toString('utf8'));
+    if (!c || typeof c.ts !== 'string' || Number.isNaN(Date.parse(c.ts))) return null;
+    return { ts: c.ts, incl: !!c.incl };
+  } catch { return null; }
+}
+
+/**
+ * Raw rows read newest first, `fetched` of them asked for. A short read is the tail of the
+ * window. A full one may have cut an instant in two, so its last instant is left for the next
+ * page — unless the whole read is one instant, which is kept and stepped strictly past. Pure.
+ */
+export function pageRows(rows, fetched) {
+  const list = rows ?? [];
+  if (list.length < fetched || !list.length) return { rows: list, next: null };
+  const last = list[list.length - 1].observed_at;
+  const kept = list.filter((r) => r.observed_at !== last);
+  if (!kept.length) return { rows: list, next: { ts: last, incl: false } };
+  return { rows: kept, next: { ts: last, incl: true } };
+}
+
+/** At most `limit` items (newest first), never splitting one instant across pages. Pure. */
+export function cutItems(items, limit) {
+  if (items.length <= limit) return { items, next: null };
+  const edge = items[limit].when;
+  const kept = items.filter((i) => String(i.when) > String(edge));
+  if (kept.length) return { items: kept, next: { ts: edge, incl: true } };
+  return { items: items.filter((i) => String(i.when) >= String(edge)), next: { ts: edge, incl: false } };
 }
 
 activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) => {
@@ -456,42 +516,28 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
     const daysParam = req.query.days;
     const days = daysParam === 'all' ? null : Math.min(Math.max(parseInt(daysParam, 10) || 30, 1), 365);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 200);
+    const cursor = decodeCursor(req.query.cursor);
     const supabase = getSupabaseClient();
 
     // Messages, not conversations: an email thread arrives as one row per message. Several times
     // the page size is read so that, grouped into threads, the page still holds `limit` rows.
+    // Only the three text fields the row shows come back, not the whole value (a meeting's carries
+    // its transcript: 0.44 s for a page against 0.09 s without it, GET-903).
+    const fetched = Math.min(limit * 5, 1000);
     let q = supabase.from('observations')
-      .select('id, entity_id, property, source, value, observed_at, thread_id:raw->>thread_id, end_time:raw->>end_time')
+      .select('id, entity_id, property, source, observed_at, summary:value->>summary, description:value->>description, title:value->>title, thread_id:raw->>thread_id, end_time:raw->>end_time')
       .eq('workspace_id', workspaceId)
       .in('property', Object.keys(KIND))
       .order('observed_at', { ascending: false })
-      .limit(Math.min(limit * 5, 1000));
+      .limit(fetched);
     if (days) q = q.gte('observed_at', new Date(Date.now() - days * DAY).toISOString());
+    if (cursor) q = cursor.incl ? q.lte('observed_at', cursor.ts) : q.lt('observed_at', cursor.ts);
 
-    const { data: rows, error } = await q;
+    const { data: raw, error } = await q;
     if (error) throw error;
-    const ids = (rows ?? []).map((r) => r.id);
-
-    // FAILED: pipeline_events, where the extractor records a model it could not reach or an answer
-    // it could not read. READ (for calls, meetings, and email read before the thread markers):
-    // claims citing the conversation.
-    const [failedRows, claimRows] = ids.length ? await Promise.all([
-      supabase.from('pipeline_events')
-        .select('kind, detail')
-        .eq('workspace_id', workspaceId)
-        .in('kind', ['unavailable', 'unparseable'])
-        .gte('occurred_at', new Date(Date.now() - (days ?? 365) * DAY).toISOString())
-        .limit(500)
-        .then((r) => r.data ?? []),
-      inChunks(ids, 300, (chunk) => supabase.from('claims')
-        .select('supporting_observation_ids')
-        .eq('workspace_id', workspaceId)
-        .overlaps('supporting_observation_ids', chunk)
-        .limit(2000)
-        .then((r) => r.data ?? [])),
-    ]) : [[], []];
-    const failed = new Set(failedRows.map((e) => e?.detail?.activity_id).filter(Boolean));
-    const cited = new Set(claimRows.flatMap((c) => c.supporting_observation_ids ?? []));
+    const paged = pageRows(raw ?? [], fetched);
+    const rows = paged.rows.map(({ summary, description, title, ...r }) => ({ ...r, value: { summary, description, title } }));
+    const ids = rows.map((r) => r.id);
 
     // ONE ROW PER EMAIL THREAD (GET-503). The page listed every message as an "Email thread" and
     // billed each one a credit, so a three-message thread cost three and an automated notice we
@@ -506,16 +552,38 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
       t.messages.push(r);
       threads.set(key, t);
     }
-
-    // What the reader did with each thread: its read marker (what came out, when) or its skip
-    // marker (the rule that passed it over). Written by workers/emailThreadsDaily.mjs.
     const tids = [...threads.values()].map((t) => t.threadId).filter(Boolean);
-    const markers = tids.length ? await inChunks(
-      tids.flatMap((id) => [`gmail_${id}`, `gmail_skip_${id}`]), 300,
-      (chunk) => supabase.from('observations').select('property, external_id, value, observed_at')
-        .eq('workspace_id', workspaceId).eq('source', 'gmail').in('property', ['noema.read', 'noema.skip'])
-        .in('external_id', chunk).then((r) => r.data ?? []),
-    ) : [];
+
+    // Three reads, side by side (GET-903: they used to wait on each other).
+    // FAILED: pipeline_events, where the extractor records a model it could not reach or an answer
+    // it could not read. READ (for calls, meetings, and email read before the thread markers):
+    // claims citing the conversation. And what the reader did with each thread: its read marker
+    // (what came out, when) or its skip marker (the rule that passed it over), written by
+    // workers/emailThreadsDaily.mjs.
+    const [failedRows, claimRows, markers] = ids.length ? await Promise.all([
+      supabase.from('pipeline_events')
+        .select('kind, detail')
+        .eq('workspace_id', workspaceId)
+        .in('kind', ['unavailable', 'unparseable'])
+        .gte('occurred_at', new Date(Date.now() - (days ?? 365) * DAY).toISOString())
+        .limit(500)
+        .then((r) => r.data ?? []),
+      inChunks(ids, CLAIM_CHUNK, (chunk) => supabase.from('claims')
+        .select('supporting_observation_ids')
+        .eq('workspace_id', workspaceId)
+        .overlaps('supporting_observation_ids', chunk)
+        .then((r) => { if (r.error) throw r.error; return r.data ?? []; }), 16),
+      tids.length ? inChunks(
+        tids.flatMap((id) => [`gmail_${id}`, `gmail_skip_${id}`]), 300,
+        (chunk) => supabase.from('observations').select('property, external_id, value, observed_at')
+          .eq('workspace_id', workspaceId).eq('source', 'gmail').in('property', ['noema.read', 'noema.skip'])
+          .in('external_id', chunk).then((r) => r.data ?? []),
+        4,
+      ) : [],
+    ]) : [[], [], []];
+    const failed = new Set(failedRows.map((e) => e?.detail?.activity_id).filter(Boolean));
+    const cited = new Set(claimRows.flatMap((c) => c.supporting_observation_ids ?? []));
+
     const readMark = new Map(), skipMark = new Map();
     for (const m of markers) {
       if (m.property === 'noema.read') readMark.set(m.external_id.slice('gmail_'.length), m);
@@ -590,11 +658,13 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
       };
     });
 
-    const items = [...emailItems, ...otherItems]
-      .sort((a, b) => String(b.when).localeCompare(String(a.when)))
-      .slice(0, limit);
+    const sorted = [...emailItems, ...otherItems]
+      .sort((a, b) => String(b.when).localeCompare(String(a.when)));
+    const page = cutItems(sorted, limit);
 
-    return res.json({ days, items });
+    // The next page starts where this one stopped (GET-903). An email thread whose older messages
+    // fall past the cut can show again there; the page keeps the first, newest, copy of an id.
+    return res.json({ days, items: page.items, next_cursor: encodeCursor(page.next ?? paged.next) });
   } catch (err) {
     console.error('[GET /api/activity-stats/conversations]', err);
     return res.status(500).json({ error: 'internal_error' });

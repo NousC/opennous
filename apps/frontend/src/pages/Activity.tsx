@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GetStartedButton } from "@/pages/GetStarted";
 import { InstanceSetupCard } from "@/components/settings/InstanceSetupCard";
 import { BackfillProgressButton } from "@/components/BackfillProgressButton";
@@ -17,6 +17,8 @@ import { num } from "@/lib/format";
 import { toolLogo } from "@/lib/toolLogo";
 import { ListTile } from "@/components/ui/list";
 import { PageToolbar } from "@/components/ui/page-top-bar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { FIRST_PAGE, NEXT_PAGE, conversationsQuery, mergePage } from "@/lib/activityLedger";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
@@ -79,26 +81,52 @@ export default function Activity(_props: { mine?: boolean } = {}) {
   const workspaceId = userData?.workspace?.id ?? "";
   const [convos, setConvos] = useState<Conversation[] | null>(null);
   const [loading, setLoading] = useState(false);
+  // Paged (GET-903): a small first page, then the next on request from the server's cursor.
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Which read is current: an answer for a window the user has already left is dropped.
+  const generation = useRef(0);
   // The window is a SERVER filter — it changes what we ask for. Sources and status are CLIENT
-  // filters over what came back, because the log is already capped at 200 rows and re-fetching
-  // to hide a row nobody wants is a round trip for nothing.
+  // filters over the rows loaded so far: re-fetching to hide a row nobody wants is a round trip
+  // for nothing.
   const [days, setDays] = useState<number | null>(30);
   const [sources, setSources] = useState<Set<string>>(new Set());
   // Which statuses to show; empty means all.
   const [statuses, setStatuses] = useState<Set<string>>(new Set());
 
-  const load = useCallback(async () => {
-    if (!workspaceId) return;
-    setLoading(true);
-    try {
-      const t = (await freshAccessToken()) ?? token;
-      const window = days == null ? "all" : String(days);
-      const c = await fetch(`${apiUrl}/api/activity-stats/conversations?workspaceId=${workspaceId}&days=${window}&limit=200`, { headers: { Authorization: `Bearer ${t}` } });
-      const cd = c.ok ? await c.json() : { items: [] };
-      setConvos(Array.isArray(cd.items) ? cd.items : []);
-    } catch { setConvos([]); } finally { setLoading(false); }
+  const fetchPage = useCallback(async (limit: number, after: string | null) => {
+    const t = (await freshAccessToken()) ?? token;
+    const c = await fetch(`${apiUrl}/api/activity-stats/conversations?${conversationsQuery(workspaceId, days, limit, after)}`, { headers: { Authorization: `Bearer ${t}` } });
+    const cd = c.ok ? await c.json() : { items: [] };
+    return { items: (Array.isArray(cd.items) ? cd.items : []) as Conversation[], next: typeof cd.next_cursor === "string" ? cd.next_cursor : null };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, days]);
+
+  const load = useCallback(async () => {
+    if (!workspaceId) return;
+    const gen = ++generation.current;
+    setLoading(true);
+    setConvos(null);
+    setCursor(null);
+    try {
+      const page = await fetchPage(FIRST_PAGE, null);
+      if (gen !== generation.current) return;
+      setConvos(page.items);
+      setCursor(page.next);
+    } catch { if (gen === generation.current) setConvos([]); } finally { if (gen === generation.current) setLoading(false); }
+  }, [workspaceId, fetchPage]);
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return;
+    const gen = generation.current;
+    setLoadingMore(true);
+    try {
+      const page = await fetchPage(NEXT_PAGE, cursor);
+      if (gen !== generation.current) return;
+      setConvos((prev) => mergePage(prev, page.items));
+      setCursor(page.next);
+    } catch { /* keep what is shown; the button stays to try again */ } finally { setLoadingMore(false); }
+  }, [cursor, loadingMore, fetchPage]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -212,7 +240,10 @@ export default function Activity(_props: { mine?: boolean } = {}) {
 
       {/* ONE table on every plan (polish pass, GET-657): what we read, and what each read cost —
           the API plan's ledger, which is the refreshed one. */}
-      <ApiLedger rows={shownConvos} loading={convos === null} empty={convos !== null && convos.length === 0} days={days} creditTotal={creditTotal} />
+      <ApiLedger
+        rows={shownConvos} loading={convos === null} empty={convos !== null && convos.length === 0} days={days} creditTotal={creditTotal}
+        more={!!cursor} loadingMore={loadingMore} onMore={loadMore}
+      />
     </div>
   );
 }
@@ -226,8 +257,9 @@ const STATUS_TONE_API: Record<string, string> = {
 };
 
 /** The API plan's ledger (GET-628): the same rows and columns, in the board's table. */
-function ApiLedger({ rows, loading, empty, days, creditTotal }: {
+function ApiLedger({ rows, loading, empty, days, creditTotal, more, loadingMore, onMore }: {
   rows: Conversation[]; loading: boolean; empty: boolean; days: number | null; creditTotal: number;
+  more: boolean; loadingMore: boolean; onMore: () => void;
 }) {
   // The ⌘K palette's card (GET-658, round 2): small light column labels, rows inset with a
   // rounded hover band and no lines between, each source led by its tool's logo.
@@ -248,6 +280,17 @@ function ApiLedger({ rows, loading, empty, days, creditTotal }: {
             </TableRow>
           </TableHeader>
           <TableBody>
+            {/* Loading draws the rows' shape (GET-903), not a line of text in an empty table. */}
+            {loading && Array.from({ length: 8 }, (_, i) => (
+              <TableRow key={`sk${i}`} className="border-0 hover:bg-transparent" aria-hidden="true">
+                <TableCell className={td}><Skeleton className="h-2.5 w-16" /></TableCell>
+                <TableCell className={td}><span className="flex items-center gap-2"><Skeleton className="size-[18px] rounded-[5px]" /><Skeleton className="h-2.5 w-14" /></span></TableCell>
+                <TableCell className={td}><Skeleton className="h-2.5" style={{ width: `${[46, 38, 52, 41][i % 4]}%` }} /></TableCell>
+                <TableCell className={td}><Skeleton className="h-2.5" style={{ width: `${[62, 48, 70, 55][i % 4]}%` }} /></TableCell>
+                <TableCell className={cn(td, "text-right")}><Skeleton className="ml-auto h-2.5 w-5" /></TableCell>
+                <TableCell className={cn(td, "text-right")}><Skeleton className="ml-auto h-2.5 w-12" /></TableCell>
+              </TableRow>
+            ))}
             {rows.map((c) => (
               <TableRow key={c.id} className="border-0 hover:bg-hover">
                 <TableCell className={cn(td, "text-[12px] tabular-nums text-muted-foreground/70")}>{format(new Date(c.when), "MMM d, HH:mm")}</TableCell>
@@ -276,10 +319,10 @@ function ApiLedger({ rows, loading, empty, days, creditTotal }: {
             ))}
           </TableBody>
         </Table>
-        {loading && <div className="px-5 py-12 text-center text-[13px] text-muted-foreground/60">Loading…</div>}
+        {loading && <span className="sr-only" role="status">Loading activity</span>}
         {!loading && rows.length === 0 && (
           <div className="px-5 py-12 text-center text-[13px] text-muted-foreground/60">
-            {empty ? `Nothing read in ${days == null ? "any window" : `the last ${days} days`}.` : "Nothing matches these filters."}
+            {empty ? `Nothing read in ${days == null ? "any window" : `the last ${days} days`}.` : more ? "Nothing matches these filters in the rows loaded so far." : "Nothing matches these filters."}
           </div>
         )}
         {rows.length > 0 && (
@@ -289,6 +332,18 @@ function ApiLedger({ rows, loading, empty, days, creditTotal }: {
               {rows.some((c) => c.estimated) && <span> · * billed at the median 30 minutes</span>}
             </span>
             <span className="tabular-nums text-foreground">{num(creditTotal)} credits</span>
+          </div>
+        )}
+        {/* Older rows, a page at a time (GET-903). The totals above count the rows loaded so far. */}
+        {!loading && more && (
+          <div className="flex justify-center px-2 pb-1 pt-2">
+            <button
+              onClick={onMore}
+              disabled={loadingMore}
+              className="inline-flex h-7 items-center rounded-lg border border-border bg-card px-3 text-[12px] text-ink-2 shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover hover:text-foreground disabled:opacity-60"
+            >
+              {loadingMore ? "Loading more…" : "Show older"}
+            </button>
           </div>
         )}
       </div>
