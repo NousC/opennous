@@ -8,6 +8,7 @@ import { upsertNousPerson, logNousObservation } from '../../lib/dogfood.mjs';
 import { hasIcp } from '../../lib/icp.mjs';
 import { hasLiveWebhook } from '../../lib/webhookStatus.mjs';
 import { isWorkspaceSetUp, selfServeOnboardingEnabled } from '../../lib/onboardingState.mjs';
+import { crmImportStatus } from '../../lib/connectIngest.mjs';
 
 // The onboarding reports are the in-app agent's work, which is Cloud's (cloud/lib/onboardingReports.mjs).
 // Cloud registers the runner at boot (GET-754); without it POST /reports starts nothing.
@@ -143,11 +144,14 @@ onboardingRouter.get('/checklist', verifySupabaseAuth, async (req, res) => {
     const mine = (conns ?? []).filter(c => c.owner_user_id === req.internalUserId).map(c => c?.provider?.name).filter(Boolean);
     const crm = (crmSync ?? [])[0] ?? null;
     const crmConnected = !!crm || names.some(n => CRM_PROVIDERS.includes(n));
+    const crmProvider = crm?.provider ?? names.find(n => CRM_PROVIDERS.includes(n)) ?? null;
+    // The connect-time import as a job: running, failed (with why) or done (GET-853).
+    const crmImport = crmConnected ? await crmImportStatus(supabase, workspaceId, crmProvider).catch(() => null) : null;
     const backfill = !job ? 'none'
       : job.status === 'paused_awaiting_confirmation' ? 'waiting'
       : job.done ? 'done' : 'running';
     return res.json({
-      crm: { done: crmConnected, provider: crm?.provider ?? names.find(n => CRM_PROVIDERS.includes(n)) ?? null, imported: !!crm?.last_synced_at, accounts: accounts ?? 0 },
+      crm: { done: crmConnected, provider: crmProvider, imported: !!crm?.last_synced_at, accounts: accounts ?? 0, import: crmImport },
       // Email and meeting notes are personal: THIS person's own connection is what the step asks.
       // Which ones, so the panel can show their logos (GET-549).
       mail: { done: mine.some(n => MAIL_PROVIDERS.includes(n)), workspace: names.some(n => MAIL_PROVIDERS.includes(n)), providers: [...new Set(mine.filter(n => MAIL_PROVIDERS.includes(n)))] },

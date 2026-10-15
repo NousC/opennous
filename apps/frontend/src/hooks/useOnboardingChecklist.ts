@@ -7,7 +7,11 @@ import { useAuth } from "@/contexts/AuthContext";
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
 export type OnboardingChecklist = {
-  crm: { done: boolean; provider: string | null; imported: boolean; accounts: number };
+  crm: {
+    done: boolean; provider: string | null; imported: boolean; accounts: number;
+    /** The connect-time import as a job (GET-853): running, failed with why, or done. */
+    import?: { state: "none" | "running" | "failed" | "done"; at: string | null; error: string | null; partial?: boolean } | null;
+  };
   mail: { done: boolean; providers?: string[] };
   notes: { done: boolean; providers?: string[] };
   backfill: { state: "none" | "waiting" | "running" | "done"; started: boolean; start_on_payment?: boolean };

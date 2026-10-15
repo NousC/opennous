@@ -19,6 +19,8 @@ export function InstanceSetupCard() {
 
   const [title, line] = !c
     ? ["Finish setting up your instance", "Choose your AI models and see which integrations are ready."]
+    : c.crm.import?.state === "failed"
+      ? ["Your CRM import didn't finish", "Retry it from the Backfill card in Instance setup."]
     : !c.crm.done && !c.mail.done && !c.notes.done
       ? ["Connect your CRM and tools", "Start with your CRM so every conversation lands on the right account, then email and meeting notes."]
       : c.backfill.state === "running"

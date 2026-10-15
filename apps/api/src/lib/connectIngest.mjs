@@ -114,6 +114,53 @@ function log(supabase, workspaceId, source, eventType, summary, metadata) {
   }).then(() => {}, () => {});
 }
 
+// THE IMPORT AS A JOB THE OWNER CAN SEE (GET-853). A connect-time import takes minutes to hours
+// on a real portal, runs in this process, and used to say nothing until it finished: a failed
+// scope call or a restart mid-pull left "Importing your accounts…" spinning forever. Its own log
+// rows already mark every step; crmImportStatus reads the newest one back as running, failed or
+// done, and a run with no word for IMPORT_STALE_MS is treated as interrupted, so Retry appears.
+const IMPORT_EVENTS = ['sync_started', 'sync_scoped', 'sync_settling', 'sync_complete', 'sync_partial', 'sync_failed'];
+const IMPORT_RUNNING = new Set(['sync_started', 'sync_scoped', 'sync_settling']);
+export const IMPORT_STALE_MS = 3 * 60 * 60_000;
+/** Imports running in this process, so a Retry cannot start a second pull of the same CRM. */
+const importsInFlight = new Set();
+
+/** Where a connect-time CRM import stands, from its newest log row. Pure over the row. */
+export function importStateFrom(row, { now = Date.now(), inFlight = false } = {}) {
+  if (!row) return inFlight ? { state: 'running', at: null, error: null } : { state: 'none', at: null, error: null };
+  const at = row.occurred_at ?? null;
+  if (IMPORT_RUNNING.has(row.event_type)) {
+    const age = now - new Date(at ?? 0).getTime();
+    if (inFlight || age < IMPORT_STALE_MS) return { state: 'running', at, error: null, step: row.event_type };
+    return { state: 'failed', at, error: 'The import stopped before it finished, most likely because the server restarted.' };
+  }
+  if (row.event_type === 'sync_failed') return { state: 'failed', at, error: String(row.summary ?? 'The import failed.').slice(0, 300) };
+  return { state: 'done', at, error: null, partial: row.event_type === 'sync_partial' };
+}
+
+export async function crmImportStatus(supabase, workspaceId, provider) {
+  if (!provider) return { state: 'none', at: null, error: null };
+  const { data } = await supabase.from('workspace_system_log')
+    .select('event_type, summary, occurred_at')
+    .eq('workspace_id', workspaceId).eq('source', provider)
+    .in('event_type', IMPORT_EVENTS).eq('metadata->>trigger', 'connect')
+    .order('occurred_at', { ascending: false }).limit(1).maybeSingle();
+  return importStateFrom(data ?? null, { inFlight: importsInFlight.has(`${workspaceId}:${provider}`) });
+}
+
+/**
+ * Run the connect-time import again for the workspace's CRM (the Retry button, GET-853). Returns
+ * at once: the pull runs in the background and its log rows report progress.
+ */
+export async function retryCrmImport(supabase, workspaceId) {
+  const crm = await crmState(supabase, workspaceId);
+  if (!crm) return { error: 'no_crm' };
+  if (importsInFlight.has(`${workspaceId}:${crm.provider}`)) return { error: 'already_running' };
+  importFromCrm(supabase, workspaceId, crm.provider, crm.connectionId)
+    .catch(e => console.error('[CONNECT_INGEST] retry failed:', e?.message || e));
+  return { ok: true, provider: crm.provider };
+}
+
 /**
  * Import everything a freshly-connected CRM holds. Returns what it pulled, or a `skipped`
  * reason — never throws, because the caller is the connect path.
@@ -123,12 +170,18 @@ export async function importFromCrm(
   { only = null, since = null, until = null, companyIds = null } = {},
 ) {
   const startedAt = new Date().toISOString();
+  const flight = `${workspaceId}:${provider}`;
+  importsInFlight.add(flight);
+  await log(supabase, workspaceId, provider, 'sync_started', `Importing from ${provider}`, { trigger: 'connect' });
   try {
     const { data: conn } = await supabase
       .from('workflow_provider_connections')
       .select('id, encrypted_credentials')
       .eq('id', connectionId).maybeSingle();
-    if (!conn?.encrypted_credentials) return { skipped: 'no_credentials' };
+    if (!conn?.encrypted_credentials) {
+      await log(supabase, workspaceId, provider, 'sync_failed', `${provider}: no credentials on the connection — reconnect it`, { trigger: 'connect' });
+      return { skipped: 'no_credentials' };
+    }
 
     const creds = {};
     for (const [k, v] of Object.entries(conn.encrypted_credentials)) {
@@ -254,6 +307,8 @@ export async function importFromCrm(
     await log(supabase, workspaceId, provider, 'sync_failed',
       `${provider} connect sync failed — ${e.message}`, { trigger: 'connect', error: e.message });
     return { error: e.message };
+  } finally {
+    importsInFlight.delete(flight);
   }
 }
 

@@ -76,6 +76,8 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   if (!c) return null;
   const crmName = c.crm.provider ? toolName(c.crm.provider) : "CRM";
@@ -89,6 +91,7 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
   const windowDays = p?.window_days ?? 90;
   const running = state === "running", done = state === "done" && !newSource;
   const paused = state === "paused_provider";
+  const importState = c.crm.import?.state ?? (c.crm.imported ? "done" : "none");
   const found = foundLine(p?.estimate?.conversations);
   const { read, of, pct } = backfillCount(p);
 
@@ -106,6 +109,23 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
       setError(e instanceof Error ? e.message : "Couldn't start the backfill.");
     }
     setBusy(false);
+  };
+
+  // Run the CRM import again after it failed or was interrupted (GET-853).
+  const retryImport = async () => {
+    setRetrying(true); setRetryError(null);
+    try {
+      const r = await fetch(`${apiUrl}/api/crm/import/retry`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.message || body?.error || "Couldn't restart the import.");
+      reload();
+    } catch (e) {
+      setRetryError(e instanceof Error ? e.message : "Couldn't restart the import.");
+    }
+    setRetrying(false);
   };
 
   // Ask the worker to try the provider now rather than at its next 5-minute probe (GET-852).
@@ -127,10 +147,27 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
 
   return (
     <SettingsGroup title="Backfill">
-      <Step n={1} done={c.crm.done} title={c.crm.done ? `${crmName} connected` : "Connect your CRM (recommended first)"}
-        action={!c.crm.done && <Link to="/company-sources" className={btn}>Connect</Link>}>
+      <Step n={1} done={c.crm.done && importState !== "failed"} title={c.crm.done ? `${crmName} connected` : "Connect your CRM (recommended first)"}
+        action={!c.crm.done ? <Link to="/company-sources" className={btn}>Connect</Link>
+          : importState === "failed" && (
+            <button type="button" className={btn} disabled={retrying} onClick={retryImport}>
+              {retrying && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}Retry import
+            </button>
+          )}>
         {c.crm.done
-          ? (c.crm.imported ? `${num(c.crm.accounts)} accounts imported.` : <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Importing your accounts, deals and activity…</span>)
+          ? (importState === "failed" ? (
+              <span className="block space-y-0.5">
+                <span className="block text-destructive">The import didn't finish{c.crm.accounts ? ` (${num(c.crm.accounts)} accounts so far)` : ""}.</span>
+                {c.crm.import?.error && <span className="block break-words">{c.crm.import.error}</span>}
+                {retryError && <span className="block text-destructive">{retryError}</span>}
+              </span>
+            )
+            : importState === "running" || !c.crm.imported ? (
+              <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />
+                Importing your accounts, deals and activity…{c.crm.accounts ? ` ${num(c.crm.accounts)} accounts so far.` : ""}
+              </span>
+            )
+            : `${num(c.crm.accounts)} accounts imported.${c.crm.import?.partial ? " A few records didn't import; the nightly sync tries them again." : ""}`)
           : "HubSpot, Salesforce or Attio. Its records import when it connects (HubSpot: the last 12 months), so every conversation lands on the right account."}
       </Step>
 

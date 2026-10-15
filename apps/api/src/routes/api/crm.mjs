@@ -8,7 +8,7 @@ import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 
 // Both helpers moved to lib/connectIngest.mjs, which is now the single implementation of
 // "a CRM connected, pull it in" — this route and the connect path share it.
-import { adoptStagesAfterSync, trainFromSyncedDeals } from '../../lib/connectIngest.mjs';
+import { adoptStagesAfterSync, trainFromSyncedDeals, retryCrmImport } from '../../lib/connectIngest.mjs';
 import { requireFeature } from '../../lib/access.mjs';
 import { enrichContact } from '../../services/enrichment.mjs';
 import { enqueueWorkspaceHistoryBackfill } from '../../lib/historyBackfill.mjs';
@@ -531,6 +531,24 @@ crmRouter.post('/hygiene/proposals/:id', verifySupabaseAuth, requireCrmSync, asy
     return res.json({ ok: true, proposal: final || row, applied: result.applied, reason: result.reason });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/crm/import/retry — run the connect-time import again after it failed or was
+// interrupted (GET-853). Owners and admins; returns at once, and the Backfill card follows the
+// import through the onboarding checklist.
+crmRouter.post('/import/retry', verifySupabaseAuth, requireCrmSync, async (req, res) => {
+  try {
+    if (!(req.workspaceRole === 'owner' || req.workspaceRole === 'admin')) return res.status(403).json({ error: 'admin_required' });
+    const workspaceId = req.workspaceId ?? req.body?.workspaceId;
+    if (!workspaceId) return res.status(400).json({ error: 'workspaceId_required' });
+    const r = await retryCrmImport(getSupabaseClient(), workspaceId);
+    if (r.error === 'no_crm') return res.status(404).json({ error: 'no_crm', message: 'No CRM is connected.' });
+    if (r.error === 'already_running') return res.status(409).json({ error: 'already_running', message: 'The import is already running.' });
+    return res.json(r);
+  } catch (err) {
+    console.error('[POST /api/crm/import/retry]', err);
+    return res.status(500).json({ error: 'internal_error' });
   }
 });
 
