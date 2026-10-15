@@ -232,6 +232,7 @@ export { previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMe
 // page — so a workspace nobody opened never closed a task. One customer sat with nearly every task still open (GET-384).
 // Shared here so the page and the scheduled sweep run one implementation, not two.
 export { autoCloseActionItems, personNamedIn, promisedAtOf } from './services/actionItemClosure.mjs';
+export { closeTasksBySentEmail, emailCandidatesFor, settleVerdict, parseEmailVerdict, buildEmailJudgePrompt, emailReason, taskEvidenceForViewer, isSelfFiled, nameLike, namesPerson } from './services/taskEmailClosure.mjs';
 export { hubspotObjects, hubspotObjectFields, readHubspotRecords, summarizeRecords, periodsFor } from './services/hubspotRead.mjs';
 export { hubspotFieldChanges, changesFromHistory, changeText } from './services/hubspotFieldTrigger.mjs';
 

@@ -104,7 +104,7 @@ export async function closeActionItemsForActivity(
 
   const { data: rows, error } = await supabase
     .from('claims')
-    .select('id, value')
+    .select('id, property, value')
     .eq('workspace_id', workspaceId)
     .eq('entity_id', entityId)
     .like('property', 'action_item.%')
@@ -117,6 +117,10 @@ export async function closeActionItemsForActivity(
   for (const row of rows) {
     const v = (row.value ?? {}) as { title?: string; status?: string; owner_kind?: string; [k: string]: unknown };
     if (!v.title || (v.status ?? 'open') !== 'open') continue;
+    // A task out of an internal meeting is filed on its OWNER (GET-904). An activity landing on
+    // that record is the owner's own mail or meeting, with anyone: it says nothing about the person
+    // the task is for. The email tier of the closure sweep judges those against what was sent.
+    if (String((row as { property?: string }).property ?? '').startsWith('action_item.internal_') || v.internal_meeting === true) continue;
     const owner = v.owner_kind ?? 'user';
 
     const rule = applicable.find(r => {

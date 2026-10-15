@@ -23,7 +23,13 @@
 
 import { getSupabaseClient, logWorkerRun, autoCloseActionItems, withBackfillLock, lockHolder, LockHeldError } from '@nous/core';
 
-export async function runActionItemClosure() {
+// A pass the model provider could not finish is tried again, an hour later, up to three times
+// (GET-904). Before, a judge that hit a 402 logged it and moved on, and the task waited a whole
+// day for the next sweep, which on the day credit ran out meant it waited for a person.
+export const RETRY_AFTER_MS = 60 * 60_000;
+export const MAX_RETRIES = 3;
+
+export async function runActionItemClosure({ workspaceIds: only = null, attempt = 0, schedule = setTimeout } = {}) {
   const supabase = getSupabaseClient();
 
   // Only workspaces that actually hold an open task. A sweep over every workspace would spend its
@@ -42,17 +48,21 @@ export async function runActionItemClosure() {
     return;
   }
 
-  const workspaceIds = [...new Set((rows ?? []).map(r => r.workspace_id).filter(Boolean))];
+  const workspaceIds = [...new Set((rows ?? []).map(r => r.workspace_id).filter(Boolean))]
+    .filter(id => !only || only.includes(id));
   if (!workspaceIds.length) return;
 
   let totalClosed = 0;
+  const deferredIn = [];
   for (const workspaceId of workspaceIds) {
     const startedAt = new Date();
     try {
+      const stats = { deferred: 0 };
       // One writer at a time (GET-412): a backfill holding the workspace skips this pass.
       const closed = await withBackfillLock(supabase, workspaceId, 'actionItemClosure', { holder: lockHolder('actionItemClosure'), leaseMinutes: 30 },
-        () => autoCloseActionItems(supabase, workspaceId));
+        () => autoCloseActionItems(supabase, workspaceId, { stats }));
       totalClosed += closed.length;
+      if (stats.deferred) deferredIn.push(workspaceId);
       // A run that closed nothing is still a run. Recording it is what makes "the sweep is
       // working and there was nothing to close" distinguishable from "the sweep never ran" —
       // the exact ambiguity that hid this for months.
@@ -60,9 +70,9 @@ export async function runActionItemClosure() {
         workspaceId,
         worker: 'action_item_closure',
         status: 'success',
-        summary: closed.length
+        summary: (closed.length
           ? `closed ${closed.length} task${closed.length === 1 ? '' : 's'}`
-          : 'nothing to close',
+          : 'nothing to close') + (stats.deferred ? `; ${stats.deferred} deferred (model unavailable)` : ''),
         startedAt,
         finishedAt: new Date(),
       }).catch(() => {});
@@ -85,4 +95,12 @@ export async function runActionItemClosure() {
   }
 
   console.log(`[ACTION_ITEM_CLOSURE] swept ${workspaceIds.length} workspace(s), closed ${totalClosed}`);
+
+  if (deferredIn.length && attempt < MAX_RETRIES) {
+    console.log(`[ACTION_ITEM_CLOSURE] ${deferredIn.length} workspace(s) deferred on the model; retry ${attempt + 1}/${MAX_RETRIES} in ${RETRY_AFTER_MS / 60_000} min`);
+    const t = schedule(() => runActionItemClosure({ workspaceIds: deferredIn, attempt: attempt + 1, schedule })
+      .catch(err => console.error('[ACTION_ITEM_CLOSURE] retry', err?.message ?? err)), RETRY_AFTER_MS);
+    t?.unref?.();
+  }
+  return { closed: totalClosed, deferredIn };
 }

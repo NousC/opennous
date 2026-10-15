@@ -57,7 +57,21 @@ export type TaskRecord = {
   completed_at?: string | null;
   completed_reason?: string | null;
   completed_by?: string | null;
-  completed_evidence?: { quote?: string | null; source_title?: string | null } | null;
+  completed_evidence?: TaskEvidence | null;
+  /** An email that probably did it, for a person to confirm: "Looks done — close?" (GET-904). */
+  suggested_done?: { reason: string | null; evidence: TaskEvidence | null } | null;
+};
+
+/** What an auto-close rested on: a quote, and for an email, who it went to and where to read it. */
+export type TaskEvidence = {
+  kind?: string | null;
+  quote?: string | null;
+  source_title?: string | null;
+  source_url?: string | null;
+  with_name?: string | null;
+  at?: string | null;
+  /** The email is in a mailbox this viewer cannot open: who and when only. */
+  redacted?: boolean;
 };
 
 export type DueBucket = "overdue" | "today" | "week" | "next" | "later" | "none";

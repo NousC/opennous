@@ -44,6 +44,8 @@ export function statusValue(prev, status, now, { reason = null } = {}) {
     completed_evidence: status === 'done' ? null : p.completed_evidence ?? null,
     // REOPENING IS A VERDICT ON THE CLOSE (GET-407): only what happens after it may close it again.
     reopened_at: status === 'open' && p.status === 'done' ? now : p.reopened_at ?? null,
+    // A person settled it: the "looks done, close?" question is answered either way (GET-904).
+    ...(p.suggested_done ? { suggested_done: null } : {}),
   };
 }
 

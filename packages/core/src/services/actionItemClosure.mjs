@@ -13,8 +13,10 @@
 // Deliberately conservative: only close on evidence that is unambiguous, and
 // record WHY it closed so a wrong call is auditable and reversible.
 
-import { createMessage, messageText } from '../llm/modelDoor.mjs';
+import { createMessage, messageText, ModelUnavailableError } from '../llm/modelDoor.mjs';
 import { BOOKING_TITLE } from './actionItems.js';
+import { getInternalEntityIds } from '../db/teamMembers.js';
+import { closeTasksBySentEmail, isSelfFiled } from './taskEmailClosure.mjs';
 
 const DAY = 86_400_000;
 
@@ -205,7 +207,8 @@ async function openActionItems(supabase, workspaceId) {
   return rows;
 }
 
-export async function autoCloseActionItems(supabase, workspaceId) {
+export async function autoCloseActionItems(supabase, workspaceId, opts = {}) {
+  const { emailJudge, stats } = opts;
   const rows = await openActionItems(supabase, workspaceId);
   if (!rows?.length) return [];
 
@@ -272,12 +275,23 @@ export async function autoCloseActionItems(supabase, workspaceId) {
 
   const namedPersonFor = (row, title) => personNamedIn(title, peopleOf.get(row.entity_id) ?? []);
 
+  // Teammates. A task filed on one of them (every task out of an internal meeting is filed on its
+  // owner) has no "them" on its record: the activity there is the owner's own mail and meetings.
+  let internalIds = new Set();
+  try { internalIds = await getInternalEntityIds(supabase, workspaceId); } catch { /* none known */ }
+
   const closed = [];
+  const closedIds = new Set();
   const unjudged = [];   // no rule fits — the model gets these
 
   for (const row of open) {
     const v = row.value || {};
     const owner = v.owner_kind ?? 'user';
+    // The rules below read "an email on this record after the promise" as "you contacted them".
+    // On the owner's own record that is any email they were on: a "draft the email to X" task
+    // closed on an unrelated digest a day before the real email went out (GET-904). Those tasks
+    // are judged on what their owner sent to the person they name, in the email tier below.
+    if (isSelfFiled(row, internalIds)) continue;
     // A promise to book a meeting closes on a meeting, never on the recap email (GET-786).
     const rule = COMPLETION_RULES.find(r => r.match.test(v.title) && !(r.kind === 'email' && BOOKING_TITLE.test(v.title)));
     // No rule fits → the model reads the evidence, but only for OUR own freeform
@@ -328,18 +342,27 @@ export async function autoCloseActionItems(supabase, workspaceId) {
       .from('claims')
       .update({ value: next })
       .eq('id', row.id);
-    if (!upErr) closed.push({ id: `${row.entity_id}:${row.property}`, title: v.title, reason: rule.reason });
+    if (!upErr) { closedIds.add(row.id); closed.push({ id: `${row.entity_id}:${row.property}`, title: v.title, reason: rule.reason }); }
   }
 
+  // ── The email tier: what the owner SENT to the person the task names (GET-904) ──
+  // Any mailbox in the workspace, any filing: the task from a co-founder call and the email to the
+  // customer it was about sit on different records, and only this tier reads them together.
+  const emailJudged = await closeTasksBySentEmail(supabase, workspaceId, open.filter(r => !closedIds.has(r.id)),
+    { judge: emailJudge, stats, internalIds, accountOf, closed });
+
   // ── Tier 2 — the ones no rule can judge ──
-  await judgeUnjudged(supabase, workspaceId, unjudged, byEntity, closed);
+  // Not the self-filed ones: their record's activity is their owner's, and a judge reading a
+  // teammate's week will find "contact" everywhere and completion nowhere.
+  await judgeUnjudged(supabase, workspaceId,
+    unjudged.filter(r => !emailJudged.has(r.id) && !isSelfFiled(r, internalIds)), byEntity, closed, stats);
 
   return closed;
 }
 
 const MAX_JUDGED = 12;   // bound the spend on any single Tasks load
 
-async function judgeUnjudged(supabase, workspaceId, rows, byEntity, closed) {
+async function judgeUnjudged(supabase, workspaceId, rows, byEntity, closed, stats) {
   // The model door routes by model name — an OpenRouter model needs OPENROUTER_API_KEY and no
   // Anthropic key at all. Gating on the Anthropic key alone meant a worker configured for
   // OpenRouter, which is how production runs, never judged anything.
@@ -348,16 +371,25 @@ async function judgeUnjudged(supabase, workspaceId, rows, byEntity, closed) {
   // Only bother with items where something ACTUALLY happened afterwards — no
   // activity since the promise means there is nothing to read, so don't pay for
   // a model call to be told "no".
-  const candidates = [];
+  //
+  // Newest activity first, and never the same evidence twice: this took the first twelve rows by
+  // entity id on every pass, so a workspace with more than twelve such tasks judged the same
+  // twelve forever and the rest never (GET-904). A "no" records how far it read
+  // (close_check.judge_through); only activity after that brings the task back.
+  const all = [];
   for (const row of rows) {
     const promisedAt = promisedAtOf(row);
+    const through = Date.parse(row.value?.close_check?.judge_through ?? '');
     const since = (byEntity.get(row.entity_id) ?? []).filter(o => {
       const at = new Date(o.observed_at).getTime();
       return at > promisedAt && at - promisedAt < 90 * DAY;
     });
-    if (since.length) candidates.push({ row, promisedAt, since });
-    if (candidates.length >= MAX_JUDGED) break;
+    if (!since.length) continue;
+    const newest = Math.max(...since.map(o => new Date(o.observed_at).getTime()));
+    if (Number.isFinite(through) && newest <= through) continue;
+    all.push({ row, promisedAt, since, newest });
   }
+  const candidates = all.sort((a, b) => b.newest - a.newest).slice(0, MAX_JUDGED);
   if (!candidates.length) return;
 
   // The observations we already loaded carry no text — fetch the words, because
@@ -388,7 +420,8 @@ async function judgeUnjudged(supabase, workspaceId, rows, byEntity, closed) {
     richByEntity.get(o.entity_id).push({ ...o, text: t.slice(0, 400) });
   }
 
-  for (const { row, promisedAt } of candidates) {
+  for (let i = 0; i < candidates.length; i++) {
+    const { row, promisedAt, newest } = candidates[i];
     const v = row.value || {};
     const evidence = (richByEntity.get(row.entity_id) ?? [])
       .filter(o => new Date(o.observed_at).getTime() > promisedAt)
@@ -407,10 +440,21 @@ async function judgeUnjudged(supabase, workspaceId, rows, byEntity, closed) {
         quote: v.quote ?? null,
       }, evidence);
     } catch (e) {
+      // A model failure must never close or drop a task, and it is not a "no" either: nothing is
+      // recorded, and when the provider itself is down the rest of the batch waits for the retry
+      // instead of failing one by one (twelve 402s in a row on GET-904's day).
       console.error('[autoclose] judge failed:', e.message);
-      continue;   // a model failure must never close or drop a task
+      if (e instanceof ModelUnavailableError) {
+        if (stats) stats.deferred = (stats.deferred ?? 0) + (candidates.length - i);
+        break;
+      }
+      continue;
     }
-    if (!verdict.done) continue;
+    if (!verdict.done) {
+      const check = { ...(v.close_check ?? {}), judge_through: new Date(newest).toISOString(), at: new Date().toISOString() };
+      await supabase.from('claims').update({ value: { ...v, close_check: check } }).eq('id', row.id);
+      continue;
+    }
 
     const next = {
       ...v,
