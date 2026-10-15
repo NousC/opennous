@@ -10,7 +10,7 @@
 // recorder as `meeting.done:granola`; plain `meeting.done` is any recorder.
 //
 // No signal is a schedule: when the user picks nothing, the job most likely runs on a clock.
-import { SIGNAL_LABEL } from './automationRun.mjs';
+import { SIGNAL_LABEL } from './signalLabels.mjs';
 
 export const MEETING_PROVIDERS = ['granola', 'fireflies', 'fathom'];
 const PROVIDER_LABEL = { granola: 'Granola', fireflies: 'Fireflies', fathom: 'Fathom' };

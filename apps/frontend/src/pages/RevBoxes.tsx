@@ -50,7 +50,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
   const [jobStep, setJobStep] = useState<JobDelivery | null>(null);
   // The Job Builder (GET-868) replaces the jobs list while it is open: null = closed, job = null
   // for a new job, else Edit on that job.
-  const [builder, setBuilder] = useState<{ job: { id: string; name: string } | null } | null>(null);
+  const [builder, setBuilder] = useState<{ job: { id: string; name: string; enabled?: boolean } | null } | null>(null);
   const [fresh, setFresh] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'members' | 'context' | 'accounts' | 'block' | 'delivery' | null>(null);
@@ -133,7 +133,7 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
             : <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-1 md:px-10"><RevBoxJobs rows={rows} runs={runCounts.data?.results ?? []} editable={editable} busy={busy} fresh={fresh}
                 onNew={() => setBuilder({ job: null })}
                 onToggle={row => void jobAction(row, '/enabled', 'PUT', { enabled: !row.enabled })}
-                onChange={row => setBuilder({ job: { id: row.id, name: row.name } })}
+                onChange={row => setBuilder({ job: { id: row.id, name: row.name, enabled: row.enabled } })}
                 onTest={row => { setBusy(row.id); setError(''); setNotice(''); void revboxesRequest(ws, token, `/${id}/jobs/${row.id}/test`, { method: 'POST' }).then(async () => { setNotice(`Testing ${row.name} on real data. Nothing is sent; the result shows in Results, labelled Test.`); await cache.invalidateQueries({ queryKey: ['revbox-results', ws, id] }); }).catch(e => setError(message(e))).finally(() => setBusy(null)); }}
                 onWebhookKey={row => void revboxesRequest<{ key: string }>(ws, token, `/${id}/jobs/${row.id}/webhook-key`, { method: 'POST' }).then(r => setWebhookKey(r.key)).catch(e => setError(message(e)))}
                 builtins={builtins} onRemoveBuiltin={key => void setBuiltins(builtins.map(b => b.key).filter(k => k !== key))} /></div>}

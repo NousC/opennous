@@ -1,58 +1,73 @@
-// The builder's proposal (GET-868, redesigned GET-858): one quiet card that reads left to right.
-// Header: the job's name (editable) and its cost per run; under it the one-line summary. Then the
-// flow as a row of small tiles joined by hairline connectors: what starts the job, one tile per REAL
-// step, and the box's destinations when the job delivers there. A tile's title says what the step
-// type does (never the model's words), its subtitle the human target. Anything that leaves the
-// workspace (webhook hosts, email recipients) is named in its tile's subtitle, read from the server's
-// `facts` (or the raw step config when facts are missing), so a step the model mislabelled cannot
-// hide where it sends things (GET-858 review); HubSpot writes carry a "writes" tag. There is no
-// Details disclosure (GET-872): the tiles are the whole story. Warnings are one muted line with
-// the fix as a link, "+N more" for the rest. A tile is compact: the logo inline before its one-line
-// title, the subtitle under it. The row scrolls sideways when narrow and stacks under
-// 480px. Earlier proposals render dimmed with no actions; approved ones carry an Approved badge.
-import { useEffect, useState, type ReactNode } from 'react';
+// A RevBox job's card (GET-868, redesigned GET-858, GET-884): the job reads as an agent at work, not
+// a workflow. Header: the job's name (editable on a live proposal), its state (On/Off in an Edit
+// view, else Approved) and its cost per run. Then the brief: one sentence in the agent's voice
+// ("Every morning I read yesterday's Company Daily Stats in HubSpot, write the report and post it to
+// #ops-daily."), built by the SERVER from the job's facts (core jobBrief; `proposal.brief`), never
+// from the model's summary or display titles, so a prompt cannot put words on the card. Under it
+// three rows: Starts (the trigger), Uses (the logos of the tools it touches) and Delivers (every
+// target, from the server's `facts` and the box's destinations: a Slack channel the server did not
+// find is shown by id and flagged; email recipients and webhook hosts are named in full; HubSpot
+// writes carry a "writes" tag; "In the app" when it sends nothing). An approval step adds "Asks you
+// before sending". No step tiles. Warnings are one muted line with the fix as a link, "+N more" for
+// the rest. Earlier proposals render dimmed with no actions.
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, Check, ChevronRight, Clock3, Mail, Sparkles, Table2, Webhook, Zap } from 'lucide-react';
+import { ArrowUpRight, Check, Hand, Mail, Sparkles, Table2, Webhook } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toolLogo } from '@/lib/toolLogo';
-import { SIGNAL_CHOICES, TOOL_NAMES, deliveryLabel, recipients, type Delivery, type JobProposal, type ProposalFact, type ProposalWarning } from '@/lib/revboxes';
+import { TOOL_NAMES, type Delivery, type JobProposal, type ProposalWarning } from '@/lib/revboxes';
+import { asksFirst, jobDelivers, jobStarts, jobUses, type CardTarget } from '@/lib/jobCard';
 
-export function WorkflowCard({ proposal, destinations, editable, current, approving, busy, approved, onApprove, onMakeChanges }: {
+export function WorkflowCard({ proposal, destinations, editable, current, approving, busy, approved, enabled, onApprove, onMakeChanges }: {
   proposal: JobProposal; destinations: Delivery[]; editable: boolean;
   /** Only the latest proposal of a session is actionable; earlier ones stay readable, quieter. */
   current: boolean; approving?: boolean; approved?: boolean;
+  /** The live job's switch (Edit view): shown as On/Off instead of Approved. */
+  enabled?: boolean;
   /** A builder turn is streaming: the proposal may still change, so neither action is offered. */
   busy?: boolean;
   onApprove: (name: string) => void; onMakeChanges: () => void;
 }) {
   const [name, setName] = useState(proposal.name);
   useEffect(() => setName(proposal.name), [proposal.name]);
-  const nodes = flowNodes(proposal, destinations);
   const blocked = !!approving || !!busy;
   const actionable = editable && current && !approved;
   const credits = proposal.estimated_credits_per_run;
-  return <section aria-label={`Proposed job: ${name}`} className={cn('rounded-2xl border border-hairline bg-card shadow-card transition-opacity duration-base', !current && 'opacity-60')}>
+  const uses = jobUses(proposal, destinations);
+  const delivers = jobDelivers(proposal, destinations);
+  return <section aria-label={`Job: ${name}`} className={cn('rounded-2xl border border-hairline bg-card shadow-card transition-opacity duration-base', !current && !approved && 'opacity-60')}>
     <header className="px-5 pt-4">
       <div className="flex items-center gap-3">
         <input aria-label="Job name" value={name} maxLength={120} disabled={!actionable} onChange={e => setName(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
           className="-mx-1 min-w-0 flex-1 truncate rounded-md bg-transparent px-1 py-0.5 text-[16px] font-medium tracking-[-0.01em] text-foreground outline-none transition-colors hover:enabled:bg-hover focus:bg-hover disabled:opacity-100" />
-        {approved && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-ink-2"><Check className="h-3 w-3" strokeWidth={2.5} />Approved</span>}
+        {approved && enabled !== undefined
+          ? <span className="inline-flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-ink-2"><span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', enabled ? 'bg-emerald-600' : 'bg-muted-foreground/40')} />{enabled ? 'On' : 'Off'}</span>
+          : approved && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-ink-2"><Check className="h-3 w-3" strokeWidth={2.5} />Approved</span>}
         {credits != null && <span className="shrink-0 text-[12px] tabular-nums text-muted-foreground">~{credits} {credits === 1 ? 'credit' : 'credits'} / run</span>}
       </div>
-      {proposal.summary && <p className="mt-0.5 line-clamp-2 text-[13px] leading-[1.45] text-muted-foreground">{proposal.summary}</p>}
+      {/* The brief: the server's sentence only (never the model's summary). */}
+      {proposal.brief?.text && <p className="mt-1.5 text-[13.5px] leading-[1.55] text-ink-2">{proposal.brief.text}</p>}
     </header>
 
-    {/* The flow. Sideways scroll with snap (no scrollbar chrome); a column under 480px. */}
-    <ol aria-label="What the job does" className="scrollbar-hide mt-4 flex snap-x snap-mandatory scroll-px-5 items-stretch overflow-x-auto px-5 py-1 max-[480px]:flex-col max-[480px]:overflow-visible">
-      {nodes.map((n, i) => <li key={n.key} className="flex shrink-0 items-stretch max-[480px]:flex-col">
-        {i > 0 && <Connector />}
-        <FlowNode node={n} />
-      </li>)}
-    </ol>
+    <dl aria-label="What the job does" className="mt-4 grid grid-cols-[76px_minmax(0,1fr)] gap-x-3 gap-y-2.5 px-5 text-[12.5px] leading-5">
+      <dt className="text-muted-foreground">Starts</dt>
+      <dd className="min-w-0 text-foreground">{jobStarts(proposal)}</dd>
+      {uses.length > 0 && <>
+        <dt className="text-muted-foreground">Uses</dt>
+        <dd className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-foreground">
+          {uses.map(t => <span key={t} className="inline-flex items-center gap-1.5"><Mark tool={t} /><span>{toolName(t)}</span></span>)}
+        </dd>
+      </>}
+      <dt className="text-muted-foreground">Delivers</dt>
+      <dd className="min-w-0 space-y-1">
+        {delivers.length ? delivers.map(t => <Target key={t.key} target={t} />) : <span className="text-foreground">In the app</span>}
+      </dd>
+    </dl>
+    {asksFirst(proposal) && <p className="mt-2.5 flex items-center gap-1.5 px-5 text-[12px] text-muted-foreground"><Hand className="h-3 w-3" aria-hidden />Asks you before sending</p>}
 
-    <Warnings warnings={proposal.warnings} />
+    <Warnings warnings={proposal.warnings ?? []} />
     {/* Chaining (GET-874): the jobs this chat sets up after this one, once it is approved. */}
     {!!proposal.next_jobs?.length && !approved && <p className="mt-3 truncate px-5 text-[12px] text-muted-foreground">Then in this chat: {proposal.next_jobs.join(' · ')}</p>}
 
@@ -63,32 +78,22 @@ export function WorkflowCard({ proposal, destinations, editable, current, approv
   </section>;
 }
 
+const toolName = (t: string) => (t === 'email' ? 'Email' : TOOL_NAMES[t] ?? t.charAt(0).toUpperCase() + t.slice(1));
 
-/** One tile of the flow. `facts`: what the step touches as [label, value, mono?]; not drawn since Details went (GET-872). */
-type Node = { key: string; mark: ReactNode; title: string; subtitle: string; external: boolean; writes: boolean; unchecked: boolean; facts: [string, string, boolean?][] };
-
-function FlowNode({ node }: { node: Node }) {
-  const label = [node.title, node.subtitle, node.writes && 'writes to HubSpot', node.external && 'sends data outside the workspace'].filter(Boolean).join(', ');
-  return <div tabIndex={0} aria-label={label} title={`${node.title}\n${node.subtitle}`}
-    className={cn('flex snap-start flex-col justify-center gap-0.5 self-center rounded-xl bg-muted/60 px-2.5 py-2.5 outline-none ring-offset-card focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 max-[480px]:w-full max-[480px]:max-w-none',
-      // A tile that sends data out may grow (to 240px) so its addresses are read, not cut.
-      node.external ? 'w-max min-w-[164px] max-w-[240px]' : 'w-[164px]')}>
-    <span className="flex min-w-0 items-center gap-1.5">
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">{node.mark}</span>
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-[18px] text-foreground">{node.title}</span>
-      {node.writes && <span className="shrink-0 rounded-[5px] bg-warning/10 px-1 text-[10px] font-medium leading-[15px] text-warning">writes</span>}
-    </span>
-    {node.subtitle && <span className={cn('block pl-[22px] text-[12px] leading-4', node.external ? 'line-clamp-3 text-ink-2 [overflow-wrap:anywhere]' : 'truncate text-muted-foreground')}>{node.subtitle}</span>}
-  </div>;
+/** A tool's mark in the rows: its logo; OpenNous email and webhooks have their own icons. */
+function Mark({ tool }: { tool: string }) {
+  if (tool === 'email') return <Mail className="h-3.5 w-3.5 text-muted-foreground" />;
+  return <span className="flex h-3.5 w-3.5 items-center justify-center [&>img]:h-3.5 [&>img]:w-3.5 [&>svg]:h-3.5 [&>svg]:w-3.5"><Logo tool={tool} /></span>;
 }
 
-/** A hairline with a small chevron between two tiles; it turns to point down when the row stacks. */
-function Connector() {
-  return <span aria-hidden className="flex w-7 shrink-0 items-center self-center max-[480px]:h-5 max-[480px]:w-full max-[480px]:justify-center">
-    <span className="flex w-full items-center max-[480px]:w-5 max-[480px]:rotate-90">
-      <span className="h-px flex-1 bg-border" /><ChevronRight className="-ml-[7px] h-3 w-3 shrink-0 text-muted-foreground/50" strokeWidth={2} />
-    </span>
-  </span>;
+/** One Delivers line: its mark and what it says. What leaves the workspace is never cut short. */
+function Target({ target: t }: { target: CardTarget }) {
+  const label = [t.text, t.writes && 'writes to HubSpot', t.external && 'sends data outside the workspace', t.problem && 'not found in Slack'].filter(Boolean).join(', ');
+  return <div aria-label={label} title={t.text} className="flex min-w-0 items-start gap-1.5">
+    <span className="mt-[3px] shrink-0"><Mark tool={t.tool} /></span>
+    <span className={cn('min-w-0', t.external ? 'text-ink-2 [overflow-wrap:anywhere]' : 'truncate text-foreground', t.problem && 'text-warning')}>{t.text}</span>
+    {t.writes && <span className="mt-[2px] shrink-0 rounded-[5px] bg-warning/10 px-1 text-[10px] font-medium leading-[15px] text-warning">writes</span>}
+  </div>;
 }
 
 /** Warnings: one muted line (the first), "+N more" for the rest; each with its fix as a link. */
@@ -113,164 +118,6 @@ function FixLink({ href, label }: { href: string; label: string }) {
   return /^https?:\/\//.test(href)
     ? <a href={href} target="_blank" rel="noreferrer" className={cls}>{label}<ArrowUpRight className="h-3 w-3" /></a>
     : <Link to={href} className={cls}>{label}<ArrowUpRight className="h-3 w-3" /></Link>;
-}
-
-// ─── What the tiles say ───────────────────────────────────────────────────────────────────────
-
-/** "#cs-handoffs · Report": the Slack layout a Slack step posts in (GET-858), from its config. */
-const DATASET_WINDOWS: Record<string, string> = { last_7_days: 'Last 7 days', last_30_days: 'Last 30 days', last_month: 'Last month', last_quarter: 'Last quarter', all: 'All rows' };
-const SLACK_LAYOUTS: Record<string, string> = { report: 'Report', approval: 'Approval', alert: 'Alert', handoff: 'Handoff', digest: 'Digest', notification: 'Notification', plain: 'Plain' };
-const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
-const list = (...vs: unknown[]) => vs.flatMap(v => Array.isArray(v) ? v.map(String) : str(v).split(/[,;]/)).map(x => x.trim()).filter(Boolean);
-const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
-/** "Write the VP summary" -> "VP summary": the model's title as a target, verb and article dropped. */
-const target = (title?: string) => (title ?? '').trim().replace(/^(read|write|draft|create|update|post|send|summari[sz]e|get|pull|fetch)\s+/i, '').replace(/^(the|a|an)\s+/i, '').trim();
-const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-/** The tiles: trigger, one per real step, and the box's destinations when the job delivers there and the box has some. */
-function flowNodes(p: JobProposal, destinations: Delivery[]): Node[] {
-  const facts = new Map((p.facts ?? []).map(f => [f.step_id, f] as const));
-  const display = new Map((p.display ?? []).map(d => [d.step_id, d] as const));
-  const steps = (p.steps ?? []).filter(s => s.type !== 'revbox_delivery').map(s => stepNode(s, facts.get(s.id), display.get(s.id)));
-  const delivery: Node[] = p.uses_box_delivery && destinations.length ? [deliveryNode(destinations, boxDeliveryLayout(p, destinations))] : [];
-  return [triggerNode(p.trigger), ...steps, ...delivery];
-}
-
-function triggerNode(t: JobProposal['trigger']): Node {
-  const provider = str((t.config ?? {}).provider);
-  const clock = t.kind === 'clock';
-  const kindTitle = (kind: string) => SIGNAL_CHOICES.find(([k]) => k === kind)?.[1] ?? titleCase(kind.replace(/_/g, ' '));
-  // Several signals (GET-873): the primary kind and every config.also kind, each named once.
-  const also = Array.isArray((t.config ?? {}).also) ? ((t.config ?? {}).also as unknown[]).map(x => str((x as { kind?: unknown } | null)?.kind)).filter(Boolean) : [];
-  const kinds = [...new Set([t.kind, ...also])];
-  const title = clock ? 'Schedule' : t.kind === 'manual' ? 'By hand' : kinds.map(kindTitle).join(' · ');
-  const mark = clock ? <Clock3 className="h-4 w-4 text-muted-foreground" /> : provider ? <Logo tool={provider} /> : <Zap className="h-4 w-4 text-muted-foreground" />;
-  const facts: Node['facts'] = [['When', t.label]];
-  if (kinds.length > 1 && !clock) facts.push(['Starts on', `${kinds.map(kindTitle).join(', ')} (once per event)`]);
-  if (t.timezone) facts.push(['Time zone', t.timezone]);
-  if (provider) facts.push(['Recorder', TOOL_NAMES[provider] ?? provider]);
-  // "Every day at 08:00 (Toronto)" -> "Every day 08:00" on the tile; the time zone is in Details.
-  const short = clock ? t.label.replace(/\s*\([^)]*\)\s*$/, '').replace(/\bat (\d)/, '$1') : t.label;
-  return { key: '__trigger', mark, title, subtitle: short || t.label, external: false, writes: false, unchecked: false, facts };
-}
-
-/**
- * One step's tile. The title comes from the step type, the subtitle from the server's fact (or the
- * raw config when there is none); the model's display text only names what a read or an AI step is
- * about, never where data goes.
- */
-function stepNode(s: JobProposal['steps'][number], f: ProposalFact | undefined, d: JobProposal['display'][number] | undefined): Node {
-  const c = s.config ?? {};
-  const base = { key: s.id, mark: <Logo tool={s.type} />, writes: false, external: false, unchecked: !f };
-  const facts: Node['facts'] = [];
-  switch (s.type) {
-    case 'hubspot': {
-      const action = f?.action ?? (str(c.action) || 'note');
-      const write = f ? f.access === 'write' : action !== 'read';
-      const object = f?.object ?? (str(c.object) || null);
-      const label = str(c.object_label);
-      const named = label || (object && !/^\d+-\d+$/.test(object) ? titleCase(object.replace(/_/g, ' ')) : '') || target(d?.title) || 'Records';
-      const fields = f?.fields ?? list(c.fields);
-      const title = action === 'read' ? 'Read HubSpot' : action === 'note' ? 'HubSpot note' : action === 'task' ? 'HubSpot task' : 'Update HubSpot';
-      facts.push(['Access', write ? 'Writes' : 'Reads only']);
-      if (object) facts.push(['Object', label && label !== object ? `${label} · ${object}` : object, !label]);
-      if (fields.length) facts.push(['Fields', fields.join(', '), true]);
-      for (const [k, key] of [['Window', 'window'], ['Grouped by', 'group_by'], ['Date field', 'date_property']] as const) if (str(c[key])) facts.push([k, str(c[key])]);
-      if (c.compare === true) facts.push(['Compare', 'With the period before']);
-      return { ...base, title, subtitle: named, writes: write, facts };
-    }
-    case 'agent': {
-      const pick = (f?.mode ?? c.mode) === 'pick';
-      facts.push(['Model', f?.model ?? (str(c.model) || 'opennous')], ['Mode', pick ? 'Picks' : 'Writes']);
-      if (f?.job) facts.push(['Job', f.job]);
-      if (d?.detail) facts.push(['Shape', d.detail]);
-      return { ...base, title: pick ? 'AI picks' : 'Write with AI', subtitle: target(d?.title) || 'OpenNous model', facts };
-    }
-    case 'slack': {
-      const layout = typeof c.format === 'string' ? SLACK_LAYOUTS[c.format] : undefined;
-      const tail = layout ? ` · ${layout}` : '';
-      if ((f?.action ?? c.action) === 'dm') {
-        const uid = f?.user_id ?? str(c.user_id);
-        const who = f?.user ?? null;
-        facts.push(['To', who ?? 'Slack user'], ['User id', uid || '(none)', true]);
-        if (layout) facts.push(['Layout', layout]);
-        facts.push(['Sends as', 'The OpenNous Slack app']);
-        return { ...base, title: 'Slack DM', subtitle: `${who ?? (uid || 'Slack user')}${tail}`, facts };
-      }
-      const id = f?.channel_id ?? str(c.channel_id);
-      // Without facts, the builder's own channel name is all there is: Details says it was not checked.
-      const channel = f ? f.channel ?? null : str(c.channel).replace(/^#/, '') || null;
-      facts.push(['Channel', channel ? `#${channel}` : 'Not found in Slack'], ['Channel id', id || '(none)', true]);
-      if (layout) facts.push(['Layout', layout]);
-      facts.push(['Sends as', 'The OpenNous Slack app']);
-      return { ...base, title: 'Post to Slack', subtitle: `${channel ? `#${channel}` : id || 'No channel'}${tail}`, facts };
-    }
-    case 'gmail': case 'email': {
-      const to = f ? (f.recipients ?? f.sends_to ?? []) : list(c.to, c.cc, c.bcc);
-      const draft = s.type === 'gmail' && (f?.mode ?? c.mode) === 'draft';
-      const mailbox = s.type === 'gmail' ? (f?.mailbox ?? (str((c.send_from as { id?: unknown } | undefined)?.id) || null)) : null;
-      facts.push(['To', to.join(', ') || '(no recipient)'], ['Sends as', s.type === 'email' ? 'The OpenNous sender' : mailbox ?? '(no mailbox)'], ['Mode', draft ? 'Draft only, never sent' : 'Sends']);
-      return { ...base, title: draft ? 'Draft email' : 'Send email', subtitle: to.length ? `to ${to.join(', ')}` : 'No recipient', external: true, facts };
-    }
-    case 'webhook': {
-      const url = f?.url ?? str(c.url);
-      const host = f?.host ?? hostOf(url);
-      facts.push(['Method', 'POST'], ['URL', url || '(none)', true]);
-      return { ...base, title: 'Webhook', subtitle: `→ ${host || 'no URL'}`, external: true, facts };
-    }
-    case 'approval': return { ...base, title: 'Approval', subtitle: 'Waits for a person', facts: [['Step', 'A person approves before the job goes on']] };
-    case 'dataset_append': case 'dataset_read': {
-      // A box table (GET-874). The title is the step type's; the subtitle the table's name from the
-      // server's fact (the box's own, or the one this proposal creates), else its key.
-      const key = f?.dataset_key ?? (str(c.dataset_key) || null);
-      const name = f?.dataset ?? key ?? 'No table';
-      const read = s.type === 'dataset_read';
-      const window = DATASET_WINDOWS[f?.window ?? (str(c.window) || 'all')] ?? 'All rows';
-      facts.push(['Table', name], ['Key', key ?? '(none)', true]);
-      if (read) facts.push(['Rows', window]);
-      return { ...base, title: read ? 'Read table' : 'Add to table', subtitle: `${name}${f?.new_dataset ? ' · new' : ''}${read ? ` · ${window}` : ''}`, facts };
-    }
-    case 'only_if': {
-      const rule = (f?.target ?? '').replace(/^Only if\s+/i, '');
-      return { ...base, title: 'Only if', subtitle: rule || 'A condition', facts: rule ? [['Rule', rule]] : [] };
-    }
-    default: {
-      const sendsTo = f?.external ? f.sends_to ?? [] : [];
-      if (f) facts.push(['Does', f.target]);
-      if (sendsTo.length) facts.push(['Sends to', sendsTo.join(', ')]);
-      return { ...base, title: TOOL_NAMES[s.type] ?? titleCase(s.type.replace(/_/g, ' ')),
-        subtitle: sendsTo.length ? `to ${sendsTo.join(', ')}` : target(d?.title) || f?.target || '', external: sendsTo.length > 0, facts };
-    }
-  }
-}
-
-/**
- * The Slack layout the box's Slack destinations get from this job, as the engine decides it (core
- * boxSlackFormat, GET-872): an older destination's own layout, else the one the agent chose, else
- * the job's own Slack step's, else a report for a schedule and a notification for an event.
- */
-function boxDeliveryLayout(p: JobProposal, destinations: Delivery[]): string | null {
-  const slack = destinations.filter(d => d.kind === 'slack');
-  if (!slack.length) return null;
-  const usable = (v: unknown) => typeof v === 'string' && v !== 'approval' && SLACK_LAYOUTS[v] ? v : null;
-  const own = (p.steps ?? []).find(s => s.type === 'slack' && usable(s.config?.format));
-  const key = usable(slack.find(d => usable(d.format))?.format) ?? usable(p.box_delivery_format) ?? usable(own?.config?.format) ?? (p.trigger.kind === 'clock' ? 'report' : 'notification');
-  return SLACK_LAYOUTS[key];
-}
-
-/** The box's destinations, at run time (only drawn when there are some). Outside targets first. */
-function deliveryNode(destinations: Delivery[], layout: string | null = null): Node {
-  const outside = (d: Delivery) => d.kind !== 'slack';
-  const sorted = [...destinations].sort((a, b) => Number(outside(b)) - Number(outside(a)));
-  // Every outside address or host is named (never cut to a count); Slack channels follow, counted past one.
-  const mail = sorted.filter(d => d.kind === 'email' || d.kind === 'gmail').flatMap(d => recipients(d.kind === 'email' ? d.to ?? d.target : d.to));
-  const hooks = sorted.filter(d => d.kind === 'webhook').map(d => `→ ${hostOf(d.target)}`);
-  const slack = sorted.filter(d => d.kind === 'slack').map(deliveryLabel);
-  const subtitle = [mail.length ? `to ${[...new Set(mail)].join(', ')}` : '', ...hooks, slack.length > 1 ? `${slack[0]} +${slack.length - 1}` : slack[0] ?? '', slack.length && layout ? layout : ''].filter(Boolean).join(' · ');
-  const first = sorted[0];
-  const mark = first.kind === 'slack' || first.kind === 'gmail' ? <Logo tool={first.kind} /> : first.kind === 'email' ? <Mail className="h-4 w-4 text-muted-foreground" /> : <Webhook className="h-4 w-4 text-muted-foreground" />;
-  return { key: '__delivery', mark, title: 'Box delivery', subtitle, external: sorted.some(outside), writes: false, unchecked: false,
-    facts: sorted.map(d => [d.kind === 'slack' ? 'Slack' : d.kind === 'email' ? 'Email' : d.kind === 'gmail' ? 'Gmail draft' : 'Webhook', deliveryLabel(d), d.kind === 'webhook'] as [string, string, boolean]) };
 }
 
 /** A tool's mark: the provider logo when we have one, the AI mark for agent steps, else its initial. */

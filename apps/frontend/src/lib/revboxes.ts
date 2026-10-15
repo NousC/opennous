@@ -151,6 +151,10 @@ export type JobProposal = {
   display: { step_id: string; tool: string; title: string; detail?: string }[];
   /** Server-derived, one per step. Missing on older proposals: the card then falls back to the raw step. */
   facts?: ProposalFact[];
+  /** The card's brief (GET-884), built by the server (core jobBrief) from the trigger, steps and facts,
+   *  never the model's words: the one sentence in the agent's voice, the Starts label, and whether an
+   *  approval step makes it ask before sending. Missing on proposals older than GET-884. */
+  brief?: { text: string; starts: string; asks_first: boolean };
   uses_box_delivery: boolean;
   /** The Slack layout the box's Slack destinations get for this job (the agent picks it, GET-872). */
   box_delivery_format?: string | null;

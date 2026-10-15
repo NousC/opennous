@@ -56,7 +56,7 @@ const HUMAN_TOOL: Record<string, string> = {
 export function JobBuilder({ workspaceId, token, boxId, job, destinations, editable, onApproved, onSaved }: {
   workspaceId: string; token: string; boxId: string;
   /** Set for Edit on an existing job: its earlier chat is reopened and continued. */
-  job?: { id: string; name: string } | null;
+  job?: { id: string; name: string; enabled?: boolean } | null;
   destinations: Delivery[]; editable: boolean;
   /** Kept for callers; the way out is the page's "Back to jobs" (no Close link under the input). */
   onApproved: (result: ApproveResult) => void; onClose?: () => void;
@@ -228,6 +228,8 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   }
 
   const empty = !turns.length && !history.length;
+  // The job's live state (On/Off) goes on its current card: the last proposal of its chat.
+  const lastHistoryProposal = history.reduce((at, item, i) => ('kind' in item && item.kind === 'proposal' ? i : at), -1);
   // The agent composer's shape (product owner's design): pinned to the bottom of the column, a grey
   // rounded box with no border, outlined pickers bottom-left and the dark square send button
   // bottom-right; what is attached sits above the box as soft grey tags.
@@ -249,7 +251,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
           onChange={e => setDraft(e.target.value)}
           onInput={e => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 150)}px`; }}
           onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); send(); } }}
-          placeholder={turns.length ? 'Reply, or describe what to change…' : job ? `What should change in ${job.name}?` : 'Describe the job you want…'}
+          placeholder={job ? 'Ask the agent to change something…' : turns.length ? 'Reply, or describe what to change…' : 'Describe the job you want…'}
           className="block max-h-[150px] min-h-[22px] w-full resize-none bg-transparent px-0.5 text-[14px] font-normal leading-[22px] text-foreground outline-none placeholder:font-normal placeholder:text-muted-foreground" />
         <div className="mt-3 flex items-center gap-1.5">
           <IntegrationsMenu tools={tools} loading={connections.isLoading} selected={integrations}
@@ -272,7 +274,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
       : <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 md:px-10">
       <div className="mx-auto w-full max-w-[880px] space-y-6 py-6" aria-live="polite">
         {history.length > 0 && <div className="space-y-3">
-          {history.map((item, i) => <HistoryItem key={i} item={item} destinations={destinations} />)}
+          {history.map((item, i) => <HistoryItem key={i} item={item} destinations={destinations} enabled={i === lastHistoryProposal ? job?.enabled : undefined} />)}
         </div>}
         {turns.map(turn => <div key={turn.id} className="space-y-3">
           <div className="ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-muted/70 px-4 py-2.5 text-[13px] leading-relaxed text-foreground">{turn.user}</div>
@@ -298,7 +300,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
 }
 
 /** One item of a job's earlier chat (Edit): the same bubbles and cards as a live turn, read-only. */
-function HistoryItem({ item: raw, destinations }: { item: BuilderHistoryItem; destinations: Delivery[] }) {
+function HistoryItem({ item: raw, destinations, enabled }: { item: BuilderHistoryItem; destinations: Delivery[]; enabled?: boolean }) {
   const kind = 'kind' in raw ? raw.kind : null;
   if (kind === 'ask') { const item = raw as BuilderHistoryAsk; return <details className="group text-[11.5px] text-muted-foreground">
     <summary className="cursor-pointer list-none hover:text-foreground">Asked {item.questions.length === 1 ? 'a question' : `${item.questions.length} questions`}<ChevronDown className="ml-1 inline h-3 w-3 transition-transform group-open:rotate-180" /></summary>
@@ -308,7 +310,7 @@ function HistoryItem({ item: raw, destinations }: { item: BuilderHistoryItem; de
     </dl>
   </details>; }
   if (kind === 'proposal') { const item = raw as BuilderHistoryProposal; return item.approved
-    ? <WorkflowCard proposal={item.proposal} destinations={destinations} editable={false} current={false} approved onApprove={() => {}} onMakeChanges={() => {}} />
+    ? <WorkflowCard proposal={item.proposal} destinations={destinations} editable={false} current={false} approved enabled={enabled} onApprove={() => {}} onMakeChanges={() => {}} />
     : <p className="text-[11.5px] text-muted-foreground">Proposed “{item.proposal?.name ?? 'a job'}”</p>; }
   const item = raw as BuilderHistoryText;
   return item.role === 'user'

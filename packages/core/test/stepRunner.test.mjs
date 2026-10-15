@@ -244,7 +244,7 @@ test('a run logs each step in words: what it wrote, what it did, where it failed
     { id: 's', type: 'slack', config: { channel: '#sales', text: 'hi' } },
     { id: 'h', type: 'hubspot', config: { action: 'note', body: 'x' } },
   ]), { ...doc, id: 'doc-1' }, { stage: 'call_ended', ctx: ctxOf(fakeDb()) });
-  assert.deepEqual(r.log.map(x => [x.step, x.name, x.status]), [[1, 'AI · Your instructions', 'ok'], [2, 'Slack', 'ok'], [3, 'HubSpot · Add a note', 'failed']]);
+  assert.deepEqual(r.log.map(x => [x.step, x.name, x.status]), [[1, 'Agent · Write-up', 'ok'], [2, 'Slack', 'ok'], [3, 'HubSpot · Add a note', 'failed']]);
   assert.equal(r.log[0].document_id, 'doc-1');
   assert.equal(r.log[1].detail, 'Posted to #sales');
   assert.equal(r.log[2].detail, "HubSpot isn't connected");

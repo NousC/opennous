@@ -33,7 +33,7 @@ read, ask the time, and warn if the HubSpot connection cannot read custom object
 2. Each user message runs one builder turn: a tool loop that streams events (below).
 3. A turn ends with exactly one of: plain text, an `ask` (questions), or a `proposal`.
 4. `ask`: the UI shows question cards; the answers go back as the next user message.
-5. `proposal`: the UI shows the workflow card with **Approve** and **Make changes**.
+5. `proposal`: the UI shows the job card (its brief, see "The job card") with **Approve** and **Make changes**.
 6. Approve: `POST /api/revboxes/:id/builder/:sessionId/approve` creates the job and switches it on,
    or updates the job (an Edit) keeping it on or paused as it was -> `{ routine, enabled, reason?,
    facts?, warnings?, datasets?, next_session_id?, next_jobs? }` (the last three: GET-874, "Builder
@@ -57,12 +57,16 @@ card]`. The last `propose_job` input becomes the approved proposal and is answer
 to change it" (so the next turn is valid Anthropic format), and `proposal` is the approved one. The UI shows `history` above the
 input; the user's next message continues that session with `POST /builder/:sessionId`, and approving
 updates the same routine. A job with no chat behind it (moved in by hand, made before the builder;
-GET-873) opens on its current setup: `history` is `[{ role: "assistant", text: "This job was set up
-outside the builder. Here's what it does now:" }, { kind: "proposal", proposal, approved: true }]`,
+GET-873) opens on its current setup: `history` is `[{ kind: "proposal", proposal, approved: true }]`
+(no line about where it was set up since GET-884: the card's brief is the whole message),
 the proposal built from the routine by core `proposalFromRoutine` (name, trigger with its
 `signal_key` mapped back through the signal catalog, steps, a display line per step type, the
 `revbox_delivery` step folded back into `uses_box_delivery`/`box_delivery_format`, facts via
-`proposalFacts`), and the transcript is that text plus one answered `propose_job` call. `/v2` mirrors it:
+`proposalFacts`, the brief via `withBrief`), and the transcript is one answered `propose_job` call whose
+input is the routine's whole setup (every step's config, so the AI step's prompt and the Slack
+`format` are there for the model to change; apps/api `jobBuilderEdit.test.mjs` pins an edit of both
+that approves into the same routine). The composer's placeholder in Edit is "Ask the agent to change
+something…". `/v2` mirrors it:
 `POST /v2/revboxes/:id/jobs/builder` with `{ job_id }` and no message.
 
 `history` is derived server-side (`builderSessionHistory`), tool noise stripped (tool calls and
@@ -72,7 +76,9 @@ results, thinking, the composer's hint preamble, proposals that failed validatio
 { "role": "user", "text": "…" }                    the user's words (free text instead of answers too)
 { "role": "assistant", "text": "…" }               prose, consecutive pieces joined
 { "kind": "ask", "questions": [Question], "answers": [{ "question", "answer" }] }   shown collapsed
-{ "kind": "proposal", "proposal": Proposal, "approved": true|false }              approved = dimmed card with the Approved badge
+{ "kind": "proposal", "proposal": Proposal, "approved": true|false }              approved = the card with its state (On/Off for the job's latest card, else Approved)
+
+Every proposal in `history` (and the returned `proposal`) carries a fresh `brief` (core `withBrief`).
 ```
 
 ## Builder session (persistence)
@@ -289,6 +295,50 @@ known trigger kind with a runner; every `hubspot` read has object + fields; ever
 `channel_id` that exists in `slackTargets`; every `gmail` step has a mailbox; `{{steps.X.output}}`
 references point at earlier steps; `display` covers every step.
 
+## The job card (GET-884)
+
+A job reads as an agent at work, not a workflow: no step tiles. Every place a job card shows (the
+builder's proposal, an approved card, the Edit view) is `WorkflowCard`:
+
+```
+Credit Check daily report                                   ● On   ~2 credits / run
+Every morning I read yesterday's Company Daily Stats in HubSpot, write the credit check report and post it to #ops-daily.
+Starts    Every day 08:00 (Toronto)
+Uses      [HubSpot] HubSpot  [Slack] Slack
+Delivers  #ops-daily · Report layout
+          Asks you before sending                (only with an approval step)
+[ Ask the agent to change something…  ↑ ]        (the composer, in Edit)
+```
+
+- **The sentence is the server's**, never the model's: `proposal.brief = { text, starts, asks_first }`,
+  built by core `jobBrief(proposal, facts)` (`packages/core/src/db/revboxJobBrief.mjs`) from the
+  trigger's kind and config, each step's type and config, and the facts (`proposalFacts`). The model's
+  `summary`, `display` titles and prompts never reach it; `normalizeProposal` drops any `brief` the model
+  sends. `validateBuilderProposal` returns it beside `facts` (the turn puts both on the proposal),
+  `approveBuilderProposal` stores it, `withBrief` adds it to Edit's history, approve and the transcript
+  strip it like `facts`.
+- Rules: `<when> I <clauses joined "a, b and c">[, but only if <only_if rule>].` When: a schedule says
+  "Every morning|afternoon|evening" (by `at`), "Every weekday morning", "Every Monday morning", "On the
+  first of each month", "At the start of each quarter" (no comma); an event says "When a deal is won,"
+  / "When a deal is won or lost," (won + lost merge) / "When a Granola meeting ends," / "When an account
+  shows churn risk," / "When Deal stage changes to X on a HubSpot deal," / "When your renewal risk signal
+  fires," (several joined with "or"); "An hour before each meeting,"; manual "When you run me,".
+  Clauses per step: HubSpot read "read yesterday's <object label> in HubSpot"; AI step "write <the job's
+  name, cadence words dropped, when it ends in a document noun (report, summary, digest, brief, analysis…)>",
+  else by trigger or what follows ("a win/loss analysis", "the follow-up email", "a summary of the
+  meeting", "the report" for a Report layout, "an update"); a built-in job its own verb ("draft the
+  follow-up email"); Slack "post it to #<channel the server found>" (else "Slack"), DM "send it to
+  <person> in Slack"; Gmail draft "draft it in Gmail to <recipients>"; email "email it to …"; webhook
+  "send it to <host>"; "add a row to <table>"; "read last month's rows of <table>"; HubSpot note/task/update;
+  box delivery "send it to this box's destinations". Approval steps set `asks_first` (the card's note).
+- Rows (frontend `lib/jobCard.ts`, from steps, facts and the box's destinations): **Starts**
+  `brief.starts` ("Every day 08:00 (Toronto)", "Deal won or lost", "Meeting done · Granola"); **Uses** the
+  logos of the recorder, the steps' tools and the box's destination kinds; **Delivers** each target:
+  "#channel · Report layout" (a channel the server did not find shows its id, flagged), "Gmail draft · to …
+  · from …", "Email · to …", "Webhook to <host>", "A row in <table>", HubSpot writes (tagged "writes"),
+  the box's destinations; "In the app" when it sends nowhere.
+- Run logs (Results) keep step detail; the agent step's name is "Agent · Write-up" (core `stepName`).
+
 ## Engine integration (GET-868 part 2)
 
 - Migration: `agent_routines.revbox_id uuid null` (FK to `revboxes(id, workspace_id)`, cascade),
@@ -486,9 +536,9 @@ One chat in a "Closed won/lost analysis" box sets up all three jobs of the refer
   (win_loss_deals, new), one per deal' }`; `dataset_read` -> `{ action: 'read', ..., window, target }`.
   The table's name is the box's own, or the one the proposal creates under that key. Display tools are
   `dataset_append` / `dataset_read` (or `dataset`); another tool on a table step is refused.
-- The card (WorkflowCard): tile title from the step type ("Add to table", "Read table"), a table icon,
-  subtitle the table name from the fact (" · new" for a table this approval creates; the window for a
-  read). A proposal with `next_jobs` shows one muted line "Then in this chat: Monthly … · Quarterly …".
+- The card (WorkflowCard, GET-884): the brief says "add a row to <table>" / "read last month's rows of
+  <table>" with the table's name from the fact; Delivers lists "A row in <table>" (" (new table)" for one
+  this approval creates). A proposal with `next_jobs` shows one muted line "Then in this chat: Monthly … · Quarterly …".
 - Approve (core `approveBuilderProposal`) reads the box's tables itself, validates with them, claims the
   session, creates every proposed table that the box does not have with `createRevboxDataset` (explicit
   key), THEN writes the routine, so each step's `dataset_key` resolves. A key the box has is reused as it

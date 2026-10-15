@@ -1,4 +1,5 @@
 import { revboxEventWorkspaces } from '../db/revboxRuns.mjs';
+import { SIGNAL_LABEL } from './signalLabels.mjs';
 // The automation engine (GET-426): a daily poll that turns a deal changing stage into an
 // artifact somebody receives.
 //
@@ -1485,7 +1486,7 @@ function draftsItself(step, steps) {
 // Where a run stopped, in words a person reads in History (GET-710): "Step 3 · HubSpot · Update the
 // deal: no open deal on this account in HubSpot". A stop on purpose (an Only-if that did not match)
 // is not a failure; everything else is.
-const STEP_NAME = { agent: 'AI', only_if: 'Only if', approval: 'Approval', email: 'Email', gmail: 'Gmail', webhook: 'Webhook', slack: 'Slack', hubspot: 'HubSpot', wait: 'Wait', __followup_draft: 'Gmail draft', revbox_delivery: 'RevBox delivery', dataset_append: 'Add to table', dataset_read: 'Read table' };
+const STEP_NAME = { agent: 'Agent', only_if: 'Only if', approval: 'Approval', email: 'Email', gmail: 'Gmail', webhook: 'Webhook', slack: 'Slack', hubspot: 'HubSpot', wait: 'Wait', __followup_draft: 'Gmail draft', revbox_delivery: 'RevBox delivery', dataset_append: 'Add to table', dataset_read: 'Read table' };
 const HUBSPOT_ACTION_NAME = { read: 'Read records', note: 'Add a note', task: 'Create a task', update_deal: 'Update the deal', update_contact: 'Update the contact', update_company: 'Update the company' };
 // Slack answers channel_not_found for a private channel its app was never invited to, as well as for
 // one that is gone (GET-879): the likelier fix comes first.
@@ -1553,7 +1554,7 @@ function stepName(step, index) {
   if (step?.type === '__followup_draft') return `Step ${index + 1} · Draft follow-up · Gmail`;
   if (step?.type === 'agent') {
     const c = step.config ?? {};
-    return `Step ${index + 1} · ${c.mode === 'pick' ? `OpenNous · ${JOB_NAME[c.job] ?? 'Action'}` : 'AI · Your instructions'}`;
+    return `Step ${index + 1} · ${c.mode === 'pick' ? `OpenNous · ${JOB_NAME[c.job] ?? 'Action'}` : 'Agent · Write-up'}`;
   }
   const what = STEP_NAME[step?.type] ?? step?.type ?? 'Step';
   const action = step?.type === 'hubspot' ? HUBSPOT_ACTION_NAME[step?.config?.action] : null;
@@ -2648,7 +2649,7 @@ export async function getAutomationRun(supabase, workspaceId, runId) {
   const docIds = [...new Set([...log.map(x => x.document_id), run.document_id].filter(Boolean))];
   const { data: docs } = docIds.length ? await supabase.from('documents').select('id, title, headline, sections').in('id', docIds) : { data: [] };
   const byId = new Map((docs ?? []).map(d => [d.id, d]));
-  const steps = log.length ? log : (run.document_id ? [{ step: 1, name: 'AI', status: 'ok', detail: 'Wrote it', document_id: run.document_id }] : []);
+  const steps = log.length ? log : (run.document_id ? [{ step: 1, name: 'Agent · Write-up', status: 'ok', detail: 'Wrote it', document_id: run.document_id }] : []);
   return {
     id: run.id, status: run.status, error: run.error ?? null, started_at: run.started_at,
     automation: { id: run.routine_id, name: a?.name ?? 'Deleted automation', trigger: a?.trigger_kind ?? null },
@@ -3601,13 +3602,8 @@ export async function automationEmailPreview(supabase, workspaceId, { when, step
 // HISTORY IS NOT NEWS. Facts filed from a backfill of old mail describe old conversations; a
 // signal older than the window is recorded, not sent.
 
-export const SIGNAL_LABEL = {
-  objection_raised: 'Objection raised', objection_resolved: 'Objection resolved',
-  competitor_mentioned: 'Competitor mentioned', competitor_evaluating: 'Competitor being evaluated',
-  stakeholder_identified: 'Key stakeholder identified', stakeholder_joined: 'New stakeholder', stakeholder_left: 'Stakeholder left',
-  budget_discussed: 'Budget discussed', buying_signal: 'Buying signal', next_step: 'Next step agreed',
-  expansion_signal: 'Expansion signal', expansion_declined: 'Expansion declined', churn_risk: 'Churn risk',
-};
+// The account-signal kinds' labels live in signalLabels.mjs (GET-884), so a pure module can read them.
+export { SIGNAL_LABEL };
 export const SIGNAL_KINDS = Object.keys(SIGNAL_LABEL);
 const SIGNAL_FRESH_HOURS = 72;
 /** A routine runs for one account at most once in this window, whatever new signals arrive (GET-834). */

@@ -8,7 +8,8 @@
 import { loadRevbox } from './revboxes.mjs';
 import { JOB_PROMPTS, JOB_ARTIFACTS } from '../services/automationRun.mjs';
 import { nextRunAt } from '../services/routineSchedule.mjs';
-import { proposalFromRoutine, routineFactLookups, routineProposalCatalog, OUTSIDE_BUILDER_TEXT } from './revboxJobProposal.mjs';
+import { proposalFromRoutine, routineFactLookups, routineProposalCatalog } from './revboxJobProposal.mjs';
+import { jobBrief } from './revboxJobBrief.mjs';
 import { SOLO_TRIGGER_KINDS, MAX_ALSO_TRIGGERS } from '../services/routineTriggers.mjs';
 import { normalizeDatasetColumns, datasetSlug, DATASET_WINDOWS } from '../services/datasetFormats.mjs';
 import { createRevboxDataset } from './revboxDatasets.mjs';
@@ -404,7 +405,8 @@ export function validateBuilderProposal(proposal, { slackChannelIds = null, slac
   if (proposal.next_jobs != null && (!Array.isArray(proposal.next_jobs) || proposal.next_jobs.length > MAX_NEXT_JOBS || proposal.next_jobs.some(j => !str(j) || j.length > 120))) errors.push(`next_jobs must be a list of up to ${MAX_NEXT_JOBS} job names of up to 120 characters.`);
 
   if (errors.length) return { ok: false, errors, facts };
-  return { ok: true, errors: [], facts, steps: clean, datasets: tables.datasets, trigger: { kind: proposal.trigger.kind, config: savedTriggerConfig(proposal.trigger), timezone: proposal.trigger.timezone || 'UTC' } };
+  // The card's sentence (GET-884): built from the trigger, the steps and these facts, never the model's words.
+  return { ok: true, errors: [], facts, brief: jobBrief(proposal, facts), steps: clean, datasets: tables.datasets, trigger: { kind: proposal.trigger.kind, config: savedTriggerConfig(proposal.trigger), timezone: proposal.trigger.timezone || 'UTC' } };
 }
 
 /** The legacy schedule columns. Mirrors scheduleColumns in apps/api/src/lib/flows.mjs. */
@@ -585,7 +587,7 @@ export async function approveBuilderProposal(sb, { workspaceId, revboxId, userId
 
   // The approver owns the job from now on; box Gmail drafts go out as the job's owner.
   const warnings = cols.steps.some(s => s.type === 'revbox_delivery') ? mailboxOwnerWarnings(box.delivery, mailboxOwners, userId) : [];
-  const stored = { ...p, facts: checked.facts };
+  const stored = { ...p, facts: checked.facts, brief: checked.brief };
   if (warnings.length || list(p.warnings).some(w => w?.kind === 'mailbox_owner')) stored.warnings = [...list(p.warnings).filter(w => w?.kind !== 'mailbox_owner'), ...warnings];
 
   const claimed = await one(sb.from('revbox_builder_sessions').update({ state: 'approved', proposal: stored, updated_at: now() })
@@ -740,7 +742,7 @@ export function seedTranscriptFromApproved(messages, approved, note = APPROVED_N
   const uses = last.content.filter(b => b?.type === 'tool_use');
   if (!uses.length) return out;
   const proposed = uses.find(b => b.name === 'propose_job');
-  if (proposed && isObj(approved)) { const { facts: _f, ...input } = approved; proposed.input = input; }
+  if (proposed && isObj(approved)) { const { facts: _f, brief: _b, ...input } = approved; proposed.input = input; }
   out.push({ role: 'user', content: uses.map(u => ({ type: 'tool_result', tool_use_id: u.id, content: u === proposed ? note : NOT_RUN })) });
   return out;
 }
@@ -758,7 +760,7 @@ export function seedTranscriptFromApproved(messages, approved, note = APPROVED_N
 export function sanitizeBuilderTranscript(messages, { keepText = false, approved = null } = {}) {
   if (!keepText) {
     if (!isObj(approved)) return [];
-    const { facts: _f, ...input } = approved;
+    const { facts: _f, brief: _b, ...input } = approved;
     return [
       { role: 'user', content: [{ type: 'text', text: OTHER_EDITOR_NOTE }] },
       { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_approved_job', name: 'propose_job', input: structuredClone(input) }] },
@@ -865,7 +867,16 @@ export function builderSessionHistory(messages, { proposal = null, approved = fa
     if (isObj(proposal)) lastShown.proposal = proposal;
     if (approved) lastShown.approved = true;
   }
-  return out.map(({ drop: _d, ...i }) => i);
+  return out.map(({ drop: _d, ...i }) => (i.kind === 'proposal' ? { ...i, proposal: withBrief(i.proposal) } : i));
+}
+
+/**
+ * A proposal with its card sentence (GET-884): jobBrief from its own facts, or from facts derived from
+ * its steps alone (nothing unchecked is named then). Older stored proposals have no brief. Pure.
+ */
+export function withBrief(p) {
+  if (!isObj(p)) return p;
+  return { ...p, brief: jobBrief(p, Array.isArray(p.facts) ? p.facts : proposalFacts(p)) };
 }
 
 /**
@@ -881,16 +892,19 @@ export async function openBuilderSessionForJob(sb, { workspaceId, revboxId, user
   if (!source) {
     // No chat made this job (GET-873): the chat opens on its current setup, as an approved card, so
     // the person can ask for a change and approve to update the same routine.
+    // The chat shows the job's brief only (GET-884): no line about where it was set up. The model
+    // gets the whole current setup (every step's config: the AI step's prompt, the Slack layout)
+    // as its own approved propose_job call, so it can change any of it.
     const current = proposalFromRoutine(job, await routineProposalCatalog(sb, workspaceId));
-    const shown = { ...current, facts: proposalFacts(current, routineFactLookups(current.steps)) };
+    const shown = withBrief({ ...current, facts: proposalFacts(current, routineFactLookups(current.steps)) });
     const seeded = seedTranscriptFromApproved([
       { role: 'user', content: [{ type: 'text', text: `${HINT_HEADER}\nThe user opened this job to change it. It was set up outside the builder; its current setup follows.` }] },
-      { role: 'assistant', content: [{ type: 'text', text: OUTSIDE_BUILDER_TEXT }, { type: 'tool_use', id: 'toolu_current_job', name: 'propose_job', input: current }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_current_job', name: 'propose_job', input: current }] },
     ], shown);
     await saveBuilderSession(sb, { workspaceId, sessionId: session.id, userId, messages: seeded, proposal: shown });
-    return { session: { ...session, messages: seeded, proposal: shown }, history: [{ role: 'assistant', text: OUTSIDE_BUILDER_TEXT }, { kind: 'proposal', proposal: shown, approved: true }], source_session_id: null };
+    return { session: { ...session, messages: seeded, proposal: shown }, history: [{ kind: 'proposal', proposal: shown, approved: true }], source_session_id: null };
   }
-  const approved = isObj(source.proposal) ? source.proposal : null;
+  const approved = isObj(source.proposal) ? withBrief(source.proposal) : null;
   // Review 1: the seed is always sanitized; another person's words are not carried over at all.
   const same = source.user_id === userId;
   const messages = seedTranscriptFromApproved(sanitizeBuilderTranscript(source.messages, { keepText: same, approved }), approved);

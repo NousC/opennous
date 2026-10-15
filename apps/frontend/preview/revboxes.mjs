@@ -5,6 +5,8 @@ import { COMPANIES, CONTACTS, DEALS, USERS, WS, GRAPH } from './world.mjs';
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount, revboxExecutionRequirements } from '../../../packages/core/src/services/revboxPlan.mjs';
 import { validateRevboxPatch, revboxAccess, REVBOX_BUILTIN_JOBS, builtinJobsOf } from '../../../packages/core/src/db/revboxes.mjs';
 import { normalizeDatasetColumns, datasetSlug, datasetRowsCsv, datasetValueText } from '../../../packages/core/src/services/datasetFormats.mjs';
+// The job card's brief (GET-884): the server's sentence, built from the proposal's steps and facts.
+import { jobBrief } from '../../../packages/core/src/db/revboxJobBrief.mjs';
 
 const storePath = process.env.REVBOX_PREVIEW_STATE ?? '/private/tmp/opennous-revboxes-preview.json';
 const stamp = () => new Date().toISOString();
@@ -243,6 +245,9 @@ try { catalogModule = await import('../../../packages/core/dist/services/signalC
 let builderModule = null;
 try { builderModule = await import('../../../packages/core/dist/db/revboxBuilder.mjs'); } catch { /* not built */ }
 // A clock job's next slot when approving switches it on, from the routine runner's own scheduler.
+// Edit on a job no chat made (GET-873/884): the job's current setup as an approved card.
+let jobProposalModule = null;
+try { jobProposalModule = await import('../../../packages/core/dist/db/revboxJobProposal.mjs'); } catch { /* not built */ }
 let scheduleModule = null;
 try { scheduleModule = await import('../../../packages/core/dist/services/routineSchedule.mjs'); } catch { /* not built */ }
 // The preview user's own Gmail accounts, as /api/actions/mailboxes answers in server.mjs.
@@ -801,7 +806,10 @@ function winLossReportProposal(s) {
     estimated_credits_per_run: 2,
   };
 }
-function proposalFor(s) {
+/** A proposal with the server's brief (core jobBrief), as propose_job and Edit hand it out. */
+const withBrief = (p) => (p ? { ...p, brief: jobBrief(p, p.facts) } : p);
+function proposalFor(s) { return withBrief(scriptedProposal(s)); }
+function scriptedProposal(s) {
   if (s.script === 'winloss') return winLossProposal(s);
   if (s.script === 'winloss_report') return winLossReportProposal(s);
   if (s.script === 'meeting') return meetingProposal(s);
@@ -822,7 +830,7 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     const s = sessions.get(sid);
     if (!s || s.box !== box.id || !s.proposal) { json(res, { error: 'Nothing to approve in this session.' }, 404); return; }
     if (s.state === 'approved') { json(res, { error: 'This proposal was already approved.' }, 409); return; }
-    const p = { ...s.proposal, name: payload.name?.trim() || s.proposal.name };
+    const p = withBrief({ ...s.proposal, name: payload.name?.trim() || s.proposal.name });
     const old = s.job_id ? state.routines.find(r => r.id === s.job_id) : null;
     // Approving switches it on, as the real approve does when the checks pass. A proposal named with
     // "(off)" shows the other path: saved, off, with the reason.
@@ -858,8 +866,17 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     const source = Object.values(state.builder_sessions).filter(x => x.box === box.id && x.job_id === job.id && x.state === 'approved')
       .sort((a, b) => String(b.approved_at ?? '').localeCompare(String(a.approved_at ?? '')))[0];
     const fresh = { id: randomUUID(), box: box.id, job_id: job.id, user: uid, state: 'open', stage: source ? 2 : 0, script: source?.script, request: source?.request, channel: source?.channel, format: source?.format, questions: source?.questions, answers: source?.answers, emailVp: source?.emailVp, signal: source?.signal, changes: source?.changes, name: source?.proposal?.name, proposal: source?.proposal ?? null, log: structuredClone(source?.log ?? []) };
+    // No chat made it (a seeded job): it opens on its current setup as an approved card, with no
+    // line about where it was set up (GET-884), as core openBuilderSessionForJob does.
+    if (!source && jobProposalModule) {
+      const current = jobProposalModule.proposalFromRoutine(job);
+      fresh.proposal = { ...current, facts: factsFor(current.steps, tableMap(box.id)) };
+      fresh.log = [{ kind: 'proposal', proposal: fresh.proposal, approved: true }];
+      fresh.stage = 2; fresh.script = job.steps?.some(x => x.type === 'dataset_append') ? 'winloss' : 'report';
+    }
     sessions.set(fresh.id, fresh); await persist();
-    json(res, { session_id: fresh.id, job_id: job.id, history: fresh.log, proposal: fresh.proposal }, 201); return;
+    const history = fresh.log.map(i => (i.kind === 'proposal' ? { ...i, proposal: withBrief(i.proposal) } : i));
+    json(res, { session_id: fresh.id, job_id: job.id, history, proposal: withBrief(fresh.proposal) }, 201); return;
   }
   const s = sid ? sessions.get(sid) : { id: randomUUID(), box: box.id, job_id: payload.job_id ?? null, user: uid, state: 'open', stage: 0, log: [] };
   if (!s || s.box !== box.id) { json(res, { error: 'Builder session not found.' }, 404); return; }

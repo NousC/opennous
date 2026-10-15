@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openBuilderSessionForJob, approveBuilderProposal, validateBuilderProposal, APPROVED_NOTE } from '../dist/db/revboxBuilder.mjs';
-import { proposalFromRoutine, signalKeyForRoutine, OUTSIDE_BUILDER_TEXT } from '../dist/db/revboxJobProposal.mjs';
+import { proposalFromRoutine, signalKeyForRoutine } from '../dist/db/revboxJobProposal.mjs';
 import { signalCatalog, customSignalEntry } from '../dist/services/signalCatalog.mjs';
 import { runStepsForTest as runSteps, registerStepHandler } from '../dist/services/automationRun.mjs';
 
@@ -121,7 +121,7 @@ test('the routine as a proposal validates, with box delivery folded back in', ()
   assert.equal(p.uses_box_delivery, true);
   assert.equal(p.box_delivery_format, 'digest');
   assert.deepEqual(p.display.map(d => [d.step_id, d.tool, d.title]), [
-    ['summary', 'ai', 'Write it with AI'], ['post', 'slack', 'Post to #ops-daily'], ['mail', 'gmail', 'Email lead@example.com'],
+    ['summary', 'ai', 'Write from the agent\'s instructions'], ['post', 'slack', 'Post to #ops-daily'], ['mail', 'gmail', 'Email lead@example.com'],
     ['hook', 'webhook', 'Send to hooks.example.com'], ['note', 'hubspot', 'Add a note in HubSpot'],
   ]);
   const v = validateBuilderProposal(p, { slackChannelIds: ['C0OPS'], mailboxIds: ['mbx-1'] });
@@ -132,17 +132,21 @@ test('Edit on a hand-made job opens on its setup as an approved card, and approv
   const sb = database({ agent_routines: [handRoutine()] });
   const opened = await openBuilderSessionForJob(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner', jobId: 'r-hand' });
   assert.equal(opened.source_session_id, null);
-  assert.deepEqual(opened.history[0], { role: 'assistant', text: OUTSIDE_BUILDER_TEXT });
-  assert.equal(opened.history[1].kind, 'proposal');
-  assert.equal(opened.history[1].approved, true);
-  assert.equal(opened.history[1].proposal.name, 'Usage daily');
-  assert.equal(opened.history[1].proposal.facts.find(f => f.step_id === 'post').channel, 'ops-daily');
+  // GET-884: no line about where the job was set up; the chat opens on its brief alone.
+  assert.equal(opened.history.length, 1);
+  assert.equal(opened.history[0].kind, 'proposal');
+  assert.equal(opened.history[0].approved, true);
+  assert.equal(opened.history[0].proposal.name, 'Usage daily');
+  assert.equal(opened.history[0].proposal.facts.find(f => f.step_id === 'post').channel, 'ops-daily');
+  assert.equal(opened.history[0].proposal.brief.text, 'Every morning I write the report, post it to #ops-daily, email it to lead@example.com, send it to hooks.example.com, save it as a note in HubSpot and send it to this box\'s destinations.');
+  assert.equal(opened.history[0].proposal.brief.starts, 'Every day 08:00 (Toronto)');
   const row = sb.tables.revbox_builder_sessions.find(r => r.id === opened.session.id);
   // A valid transcript to continue: user, assistant (text + propose_job), user (the approved answer).
   assert.deepEqual(row.messages.map(m => m.role), ['user', 'assistant', 'user']);
-  assert.equal(row.messages[1].content[0].text, OUTSIDE_BUILDER_TEXT);
-  assert.equal(row.messages[1].content[1].name, 'propose_job');
-  assert.equal(row.messages[1].content[1].input.facts, undefined);
+  assert.equal(row.messages[1].content.length, 1);
+  assert.equal(row.messages[1].content[0].name, 'propose_job');
+  assert.equal(row.messages[1].content[0].input.facts, undefined);
+  assert.equal(row.messages[1].content[0].input.brief, undefined);
   assert.deepEqual(row.messages[2].content, [{ type: 'tool_result', tool_use_id: 'toolu_current_job', content: APPROVED_NOTE }]);
   // Approving it as it is updates the same routine (no second job), keeping it off as it was.
   const out = await approveBuilderProposal(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner', sessionId: opened.session.id, slackChannelIds: ['C0OPS'], mailboxIds: ['mbx-1'] });

@@ -66,7 +66,7 @@ export function displayForStep(s) {
       if (action.startsWith('update_')) return line(`Update the ${action.slice(7)} in HubSpot`);
       return line('Add a note in HubSpot');
     }
-    case 'agent': return c.mode === 'pick' ? line(JOB_NAMES[c.job] ?? 'Write it with AI', str(c.extra)) : line('Write it with AI', str(c.prompt));
+    case 'agent': return c.mode === 'pick' ? line(JOB_NAMES[c.job] ?? 'Agent step', str(c.extra)) : line('Write from the agent\'s instructions', str(c.prompt));
     case 'slack': return c.action === 'dm' ? line(`Message ${str(c.user_name) || 'a person'} in Slack`) : line(`Post to #${String(c.channel ?? c.channel_id ?? 'a channel').replace(/^#/, '')}`, c.format ? `${String(c.format).replace(/^./, x => x.toUpperCase())} layout` : null);
     case 'gmail': return line(`${c.mode === 'draft' ? 'Draft' : 'Email'} ${str(c.to) || 'someone'}`, c.send_from?.email ? `from ${c.send_from.email}` : null);
     case 'email': return line(`Email ${str(c.to) || 'someone'}`);
@@ -119,6 +119,3 @@ export function routineFactLookups(steps) {
 export async function routineProposalCatalog(sb, workspaceId) {
   try { return await loadSignalCatalog(sb, workspaceId); } catch { return signalCatalog(); }
 }
-
-/** What the seeded chat's assistant says above the card. */
-export const OUTSIDE_BUILDER_TEXT = "This job was set up outside the builder. Here's what it does now:";
