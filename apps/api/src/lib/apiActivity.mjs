@@ -245,9 +245,12 @@ export async function loadActivity(supabase, { workspaceId, window: w, now = Dat
 // ── The call list ────────────────────────────────────────────────────────────
 
 const ROUTE_MAX = 200;
+const CLIENT_MAX = 200;
+/** The client filter's value for calls that named no client (null or empty; "Unknown" on the page). */
+export const UNKNOWN_CLIENT = '(unknown)';
 
 /**
- * The list's query string → { window, limit, before, beforeId, surface, route, status, keyId, q }
+ * The list's query string → { window, limit, before, beforeId, surface, route, status, keyId, client, q }
  * | { error }. Unknown values of a closed set are an error, not ignored, so a typo does not silently
  * show everything.
  */
@@ -264,8 +267,9 @@ export function parseCallsQuery(q = {}) {
   const keyId = q.key ? String(q.key) : null;
   if (keyId && !isUUID(keyId)) return { error: 'invalid_key' };
   const route = typeof q.route === 'string' && q.route.trim() ? q.route.trim().slice(0, ROUTE_MAX) : null;
+  const client = typeof q.client === 'string' && q.client.trim() ? q.client.trim().slice(0, CLIENT_MAX) : null;
   const search = typeof q.q === 'string' && q.q.trim() ? q.q.trim().slice(0, SEARCH_MAX) : null;
-  return { window, limit, before: c.at, beforeId: c.id, surface, route, status, keyId, q: search };
+  return { window, limit, before: c.at, beforeId: c.id, surface, route, status, keyId, client, q: search };
 }
 
 /**
@@ -282,7 +286,7 @@ export function ilikeContains(s) {
  */
 export async function loadCalls(supabase, {
   workspaceId, window, limit = CALLS_DEFAULT_LIMIT, before = null, beforeId = null,
-  surface = null, route = null, status = null, keyId = null, q: search = null, now = Date.now(),
+  surface = null, route = null, status = null, keyId = null, client = null, q: search = null, now = Date.now(),
 }) {
   let q = supabase.from('api_request_log')
     .select('id, at, surface, route, target, status, latency_ms, client, api_key_id')
@@ -293,6 +297,9 @@ export async function loadCalls(supabase, {
   if (status === 'ok') q = q.lt('status', 400);
   if (status === 'error') q = q.gte('status', 400);
   if (keyId) q = q.eq('api_key_id', keyId);
+  // The summary groups a null client with an empty one (coalesce(client, '')), so Unknown is both.
+  if (client === UNKNOWN_CLIENT) q = q.or('client.is.null,client.eq.""');
+  else if (client) q = q.eq('client', client);
   if (search) q = q.ilike('target', ilikeContains(search));
   if (before && beforeId) q = q.or(afterCursorFilter('at', before, beforeId));
   else if (before) q = q.lt('at', before);

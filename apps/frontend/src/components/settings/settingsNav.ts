@@ -85,7 +85,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "members",         label: "Members",               group: "Workspace", show: isWorkspaceAdmin },
     // When, how often and about what the workspace's API and MCP were called (GET-898). Admins, both
     // plans; not self-host, whose Settings keeps only what lives nowhere else (GET-839).
-    { id: "activity-log",    label: "API & MCP activity",    group: "Workspace", show: isWorkspaceAdmin && !selfHosted },
+    { id: "activity-log",    label: "Agent activity",        group: "Workspace", show: isWorkspaceAdmin && !selfHosted },
     // Billing IS the Usage page on every plan (GET-660), so the row says so and goes there.
     { id: "billing",         label: "Usage and billing",     group: "Workspace", href: "/usage", show: isWorkspaceAdmin && !selfHosted },
     // Support — the operator's Admin row is the Workspace layer's (cloud/settings/navRows, GET-761).

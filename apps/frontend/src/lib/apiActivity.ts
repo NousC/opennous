@@ -1,5 +1,6 @@
-// Settings > Workspace > API & MCP activity (GET-898), shaped from GET /api/usage/activity and
-// /api/usage/activity/calls. Pure, so tests/apiActivity.test.ts pins it. A missing number is a
+// Settings > Workspace > Agent activity (GET-898, renamed GET-900), shaped from GET
+// /api/usage/activity and /api/usage/activity/calls. Pure (the fetch helper takes its token
+// source and fetch as arguments), so tests/apiActivity.test.ts pins it. A missing number is a
 // dash, never a zero we did not count.
 
 export type ActivityWindow = "24h" | "7d" | "30d" | "90d";
@@ -37,8 +38,11 @@ export type CallsPage = { calls: Call[]; next_before: string | null };
 
 export type CallFilters = {
   surface?: Surface | null; route?: string | null; status?: "ok" | "error" | null;
-  key?: string | null; q?: string | null;
+  key?: string | null; client?: string | null; q?: string | null;
 };
+
+/** The client filter's value for calls that named no client ("Unknown" in the list). */
+export const UNKNOWN_CLIENT = "(unknown)";
 
 /** The calls endpoint's query string for a window, filters and a cursor. Empty filters are left out. */
 export function callsQuery(window: ActivityWindow, f: CallFilters = {}, before?: string | null, limit = 50): string {
@@ -47,6 +51,7 @@ export function callsQuery(window: ActivityWindow, f: CallFilters = {}, before?:
   if (f.route) p.set("route", f.route);
   if (f.status) p.set("status", f.status);
   if (f.key) p.set("key", f.key);
+  if (f.client) p.set("client", f.client);
   const q = f.q?.trim();
   if (q) p.set("q", q);
   if (before) p.set("before", before);
@@ -114,3 +119,57 @@ export function splitNote(t: Activity["totals"] | null | undefined): string {
   if (!t) return "";
   return `${t.mcp.toLocaleString("en-US")} MCP · ${t.rest.toLocaleString("en-US")} REST`;
 }
+
+// ── Fetching ─────────────────────────────────────────────────────────────────
+
+/** A non-2xx answer: the HTTP status and the API's error code. Status 0 is a network failure. */
+export class HttpError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export type TokenSource = (opts?: { force?: boolean }) => Promise<string | null>;
+
+/**
+ * GET an activity endpoint as the signed-in user. The token is minted per request (never one
+ * captured at mount: session tokens live about a minute, and a token kept in React state goes
+ * stale in a background tab, so the API answers 401 invalid_token). On a 401 it forces a new token
+ * and tries once more. Anything else non-2xx throws HttpError(status, error code).
+ */
+export async function activityGet<T>(
+  url: string,
+  getToken: TokenSource,
+  doFetch: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<T> {
+  const call = async (token: string | null) => {
+    try {
+      return await doFetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    } catch {
+      throw new HttpError(0, "network_error");
+    }
+  };
+  let r = await call(await getToken());
+  if (r.status === 401) r = await call(await getToken({ force: true }));
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new HttpError(r.status, (body as { error?: string })?.error ?? `http_${r.status}`);
+  }
+  return r.json() as Promise<T>;
+}
+
+/** The muted diagnosis line under a load error: "401 · sign in again", "500 · internal_error". */
+export function errorNote(err: unknown): string {
+  if (err instanceof HttpError) {
+    if (err.status === 0) return "No connection to the API";
+    if (err.status === 401) return "401 · sign in again";
+    return `${err.status} · ${err.code}`;
+  }
+  return err instanceof Error && err.message ? err.message : "Unknown error";
+}
+
+export const isSignedOut = (err: unknown) => err instanceof HttpError && err.status === 401;

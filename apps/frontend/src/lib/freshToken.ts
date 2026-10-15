@@ -16,20 +16,23 @@
 // (There is no cycle risk: lib/preview imports nothing.)
 import { PREVIEW } from "@/lib/preview";
 
-let tokenGetter: (() => Promise<string | null>) | null = null;
+// `force` skips the provider's token cache (Clerk getToken({ skipCache }), Supabase
+// refreshSession()): for the one retry after a 401, when the cached token was already rejected.
+type TokenGetter = (opts?: { force?: boolean }) => Promise<string | null>;
+let tokenGetter: TokenGetter | null = null;
 
 /** Called once by the active auth provider module. */
-export function registerTokenGetter(fn: () => Promise<string | null>) {
+export function registerTokenGetter(fn: TokenGetter) {
   tokenGetter = fn;
 }
 
-export async function freshAccessToken(): Promise<string | null> {
+export async function freshAccessToken(opts?: { force?: boolean }): Promise<string | null> {
   // Preview mode has no auth provider — the stub token keeps the header
   // present so callers behave identically; the mock API ignores it.
   if (PREVIEW) return "preview-token";
   if (!tokenGetter) return null;
   try {
-    return await tokenGetter();
+    return await tokenGetter(opts);
   } catch {
     return null;
   }

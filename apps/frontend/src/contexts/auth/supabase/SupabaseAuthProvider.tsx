@@ -9,8 +9,9 @@ import { getSupabaseAuthClient, supabaseError } from "./client";
 // the Clerk provider does, so every useAuth() caller works unchanged.
 
 // getSession() refreshes an expired access token before returning it.
-registerTokenGetter(async () => {
-  const { data, error } = await getSupabaseAuthClient().auth.getSession();
+registerTokenGetter(async (opts) => {
+  const auth = getSupabaseAuthClient().auth;
+  const { data, error } = opts?.force ? await auth.refreshSession() : await auth.getSession();
   if (error) return null;
   return data.session?.access_token ?? null;
 });

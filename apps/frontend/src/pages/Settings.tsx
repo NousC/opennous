@@ -1409,8 +1409,8 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {/* Full width, like the other connection pages (GET-668). */}
           {section === "context" && <SectionShell title="Context"><ContextLibrary /></SectionShell>}
           {section === "signals" && <SectionShell title="Signals"><SignalsSettings /></SectionShell>}
-          {/* API & MCP activity (GET-898): when, how often and about what the API and MCP were called. */}
-          {section === "activity-log" && <SectionShell title="API & MCP activity" wide><ApiActivity /></SectionShell>}
+          {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}
+          {section === "activity-log" && <SectionShell title="Agent activity" wide><ApiActivity /></SectionShell>}
           {section === "repo"         && <RepositoriesPane token={token ?? ""} workspaceId={workspaceId} />}
           {/* The Workspace layer's sections (memory, skills, config, models, changes, spend,
               adoption, reporting, insights, categories, agents, runs), each with its own shell. */}

@@ -1,4 +1,4 @@
-// Preview fixtures for Settings > Workspace > API & MCP activity (GET-898): a seeded 90-day call
+// Preview fixtures for Settings > Workspace > Agent activity (GET-898, GET-900): a seeded 90-day call
 // log, aggregated the way GET /api/usage/activity and /api/usage/activity/calls answer (the SQL
 // function api_request_log_activity and apps/api/src/lib/apiActivity.mjs). Same seed every start,
 // times relative to now, so the page always has a recent day to show. Served on every preview plan.
@@ -58,7 +58,7 @@ function seed() {
         id: id++, at: new Date(at).toISOString(), surface: mcp ? "mcp" : "rest", route, target: about,
         status: err ? (rnd() < 0.5 ? 404 : 429) : 200,
         latency_ms: Math.round((mcp ? 180 : 90) + rnd() * rnd() * 2400),
-        client: mcp ? (key === KEYS[1] ? "n8n" : rnd() < 0.7 ? "Claude Code" : "Cursor") : (key === KEYS[2] ? "Python-urllib/3.13" : "curl"),
+        client: mcp ? (key === KEYS[1] ? "n8n" : rnd() < 0.7 ? "Claude Code" : "Cursor") : (key === KEYS[2] ? "Python-urllib/3.13" : rnd() < 0.2 ? null : "curl"),
         api_key_id: key.id,
       });
     }
@@ -138,7 +138,7 @@ function activity(q) {
 function calls(q) {
   const win = winOf(q);
   const limit = Math.min(Number(q.get("limit")) || 50, 200);
-  const surface = q.get("surface"), route = q.get("route"), status = q.get("status"), key = q.get("key");
+  const surface = q.get("surface"), route = q.get("route"), status = q.get("status"), key = q.get("key"), client = q.get("client");
   const search = (q.get("q") ?? "").toLowerCase();
   const before = q.get("before");
   const [bAt, bId] = before ? [before.slice(0, before.lastIndexOf("|")), Number(before.slice(before.lastIndexOf("|") + 1))] : [null, null];
@@ -147,6 +147,7 @@ function calls(q) {
     && (!surface || r.surface === surface) && (!route || r.route === route)
     && (!status || (status === "error" ? r.status >= 400 : r.status < 400))
     && (!key || r.api_key_id === key)
+    && (!client || (client === "(unknown)" ? !r.client : r.client === client))
     && (!search || (r.target ?? "").toLowerCase().includes(search) || (aboutOf(r.target)?.name ?? "").toLowerCase().includes(search))
     && (!bAt || r.at < bAt || (r.at === bAt && r.id < bId)));
   const page = rows.slice(0, limit);

@@ -1,31 +1,43 @@
-# API & MCP activity
+# Agent activity
 
-Settings → Workspace → **API & MCP activity** (`/settings?section=activity-log`, GET-898) shows
-when, how often and about what the workspace's API and MCP were called. Workspace owners and
-admins only, on the API and Workspace plans. Self-host does not show it. The old
-`?section=access-log` link lands here.
+Settings → Workspace → **Agent activity** (`/settings?section=activity-log`; GET-898, renamed
+from "API & MCP activity" in GET-900) shows when, how often and about what the workspace's agents
+and scripts called the API and MCP with its API keys. Workspace owners and admins only, on the API
+and Workspace plans. Self-host does not show it. The old `?section=access-log` link lands here.
 
 ## What it shows
 
-Pick a window: 24 hours (hourly bars, UTC), 7, 30 or 90 days (daily bars, UTC days, today included).
+Pick a window on the top right: 24 hours (hourly bars, UTC), 7, 30 or 90 days (daily bars, UTC
+days, today included). Rows are kept 90 days.
 
-- **Header:** total calls with the MCP / REST split, error rate (status 400 and up), p50 and p95
-  latency, how many keys and clients made calls.
-- **Calls over time:** stacked MCP and REST bars per hour or day.
-- **Top tools and routes:** an MCP call shows its tool name (`get_account`); a REST call shows the
-  route pattern (`/v2/accounts/:id`), never the filled-in path. Calls, error rate, p95. Click a row
-  to filter the call list to it.
-- **Most asked about:** the `target` of each call (an entity id, a domain or an email, when the
-  request carried one cheaply). Ids, domains and emails that belong to this workspace's companies
-  and people show the name and link to the account or person page. Anything else (a document id,
-  a name) shows raw.
-- **By key:** the key's name (never its secret or hash), calls, errors, last call. A revoked key
-  that made calls in the window is marked. Click to filter.
-- **By client:** the calling agent (Claude Code, Cursor, n8n, curl, …) from the MCP client name or
-  the User-Agent. "Unknown" when the request said nothing.
-- **Calls:** newest first. Time, surface, tool or route, about, status, latency, key, client.
-  Filter by surface, tool or route, status (OK or errors), key, and a search over the target.
-  Paged with a cursor ("Load more"). IP prefixes are stored but never shown.
+- **Header:** Activity (total calls, with the MCP / REST split), error rate (status 400 and up),
+  p50 and p95 latency, how many keys and clients made calls.
+- **Activity over time:** stacked MCP and REST bars per hour or day.
+- **Activity:** every call, newest first. Time, surface, tool or route, about, status, latency,
+  key, client. An MCP call shows its tool name (`get_account`); a REST call shows the route pattern
+  (`/v2/accounts/:id`), never the filled-in path. "About" is the call's `target` (an entity id, a
+  domain or an email, when the request carried one cheaply); ids, domains and emails that belong
+  to this workspace's companies and people show the name and link to the account or person page.
+  A key is its name (never its secret or hash). The client is the calling agent (Claude Code,
+  Cursor, n8n, curl, …) from the MCP client name or the User-Agent, "Unknown" when the request
+  said nothing. Paged with a cursor ("Load more"). IP prefixes are stored but never shown.
+- **Filters** on the list: MCP or REST, tool or route, status (OK or errors), key, client, and a
+  search over what the call was about. The tool/route, key and client menus are filled from the
+  window's summary (its top routes, keys and clients). GET-900 removed the four tables (top tools
+  and routes, most asked about, by key, by client); filtering the list answers the same questions.
+
+If a read fails the page says which one, shows the HTTP status and error code in a muted line
+(`401 · sign in again`, `500 · internal_error`) and offers Retry; on a 401 also "Sign in again".
+
+### Session tokens (GET-900)
+
+Every request mints its token at the moment of the call (`activityGet` in
+`apps/frontend/src/lib/apiActivity.ts`, through `freshAccessToken()`), and a 401 forces a new token
+and retries once. Before GET-900 the page sent `session.access_token`, a React mirror of the Clerk
+token refreshed every 30 seconds by a timer that a background tab throttles. A Clerk token lives
+about a minute, so switching to 30 or 90 days after the tab had sat (a new query key, a new
+request) sent a rotated-out token; the API answered 401 `invalid_token` (not logged), and the page
+showed "Could not load the activity" while the 7-day numbers it already had stayed on screen.
 
 ## Where the numbers come from
 
@@ -38,8 +50,8 @@ reach `/v2` and are not counted. Rows are kept 90 days (`apiRequestLogRetention`
 
 | Read | Endpoint | Source |
 |---|---|---|
-| Header, chart, top lists | `GET /api/usage/activity?window=24h\|7d\|30d\|90d` | `api_request_log_activity()` (supabase/migrations/2026_10_15_api_request_log_activity.sql), one jsonb aggregate |
-| Call list | `GET /api/usage/activity/calls?window=&surface=&route=&status=ok\|error&key=&q=&limit=&before=` | `api_request_log`, keyset-paged on `(at, id)` |
+| Header, chart, filter menus | `GET /api/usage/activity?window=24h\|7d\|30d\|90d` | `api_request_log_activity()` (supabase/migrations/2026_10_15_api_request_log_activity.sql), one jsonb aggregate |
+| Activity list | `GET /api/usage/activity/calls?window=&surface=&route=&status=ok\|error&key=&client=&q=&limit=&before=` (`client=(unknown)`: no client named) | `api_request_log`, keyset-paged on `(at, id)` |
 
 Both are session-authed (`?workspaceId=`), scoped to the viewer's workspace, and answer 403 to a
 member. Code: `apps/api/src/lib/apiActivity.mjs`, `apps/api/src/routes/api/apiActivity.mjs`;
@@ -47,7 +59,7 @@ the page is `apps/frontend/src/components/settings/ApiActivity.tsx`.
 
 The aggregate runs in SQL because PostgREST returns at most 1000 rows with no error past that.
 Until the migration is applied, `/api/usage/activity` answers 503 `activity_unavailable` and the
-page says the summary needs a database update; the call list works without it.
+page says the summary needs a database update; the activity list works without it.
 
 ## Known gap: older stdio MCP packages
 
@@ -60,4 +72,5 @@ npm release of `apps/mcp` fixes it for stdio users.
 
 `node apps/frontend/preview/server.mjs` serves a seeded 90-day call log
 (`apps/frontend/preview/fixtures/api-activity.mjs`), so `/settings?section=activity-log` on :8080
-shows the page with data on every preview plan.
+shows the page with data on every preview plan (a few REST calls name no client, so the
+Unknown client filter has rows).

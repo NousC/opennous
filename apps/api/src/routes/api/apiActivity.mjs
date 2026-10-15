@@ -42,7 +42,8 @@ export function makeActivityHandler({ getClient = getSupabaseClient, now = () =>
 }
 
 /**
- * GET /api/usage/activity/calls?window=&surface=mcp|rest&route=&status=ok|error&key=<uuid>&q=&limit=&before=
+ * GET /api/usage/activity/calls?window=&surface=mcp|rest&route=&status=ok|error&key=<uuid>&client=&q=&limit=&before=
+ *   (client=(unknown) is the calls that named no client)
  * → { calls: [{ id, at, surface, route, target, about, status, latency_ms, client, key: { id, name } }],
  *     next_before }
  */

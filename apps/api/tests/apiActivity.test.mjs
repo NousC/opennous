@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseWindow, windowBuckets, windowSince, fillSeries, shapeTotals, errorRate, targetKind,
-  resolveTargets, loadActivity, parseCallsQuery, ilikeContains, loadCalls,
+  resolveTargets, loadActivity, parseCallsQuery, ilikeContains, loadCalls, UNKNOWN_CLIENT,
   ActivityUnavailableError, ActivityReadError,
 } from '../src/lib/apiActivity.mjs';
 import { activityGate, makeActivityHandler, makeActivityCallsHandler } from '../src/routes/api/apiActivity.mjs';
@@ -204,7 +204,7 @@ test('loadActivity: a missing function is "unavailable", any other error throws,
 
 test('parseCallsQuery: defaults, caps, and closed sets reject typos', () => {
   const d = parseCallsQuery({});
-  assert.deepEqual(d, { window: '7d', limit: 50, before: null, beforeId: null, surface: null, route: null, status: null, keyId: null, q: null });
+  assert.deepEqual(d, { window: '7d', limit: 50, before: null, beforeId: null, surface: null, route: null, status: null, keyId: null, client: null, q: null });
   assert.equal(parseCallsQuery({ limit: '5000' }).limit, 200);
   assert.deepEqual(parseCallsQuery({ surface: 'soap' }), { error: 'invalid_surface' });
   assert.deepEqual(parseCallsQuery({ status: 'fine' }), { error: 'invalid_status' });
@@ -215,6 +215,19 @@ test('parseCallsQuery: defaults, caps, and closed sets reject typos', () => {
   assert.equal(p.route, 'get_account');
   assert.equal(p.q, 'harbor');
   assert.equal(p.beforeId, '42');
+  assert.equal(parseCallsQuery({ client: ' Claude Code ' }).client, 'Claude Code');
+  assert.equal(parseCallsQuery({ client: '   ' }).client, null);
+});
+
+test('loadCalls: the client filter, and Unknown is a null or empty client (GET-900)', async () => {
+  const named = fakeSupabase({ tables: worldTables({ api_request_log: { data: [], error: null } }) });
+  await loadCalls(named, { workspaceId: WS, window: '7d', client: 'Cursor', now: NOW });
+  assert.ok(has(named.calls.from.find((x) => x.table === 'api_request_log'), 'eq', 'client', 'Cursor'));
+  const unknown = fakeSupabase({ tables: worldTables({ api_request_log: { data: [], error: null } }) });
+  await loadCalls(unknown, { workspaceId: WS, window: '7d', client: UNKNOWN_CLIENT, now: NOW });
+  const q = unknown.calls.from.find((x) => x.table === 'api_request_log');
+  assert.ok(has(q, 'or', 'client.is.null,client.eq.""'));
+  assert.ok(!q.filters.some((f) => f[0] === "eq" && f[1] === "client"));
 });
 
 test('ilikeContains: the search matches literally', () => {

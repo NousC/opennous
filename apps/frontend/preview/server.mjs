@@ -185,7 +185,7 @@ const routes = [
   ...apiPlanRoutes,
   ...(API_PLAN ? (await import("./fixtures/api-plan-p1.mjs")).routes : []),
   ...apiDataRoutes,
-  // Settings > API & MCP activity (GET-898): a seeded call log, on every plan.
+  // Settings > Agent activity (GET-898, GET-900): a seeded call log, on every plan.
   ...(await import("./fixtures/api-activity.mjs")).routes,
   ["GET", /^\/me$/, () => ME],
   ["GET", /^\/api\/me$/, () => ME],

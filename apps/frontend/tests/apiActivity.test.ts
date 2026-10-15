@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   callsQuery, pct, ms, aboutHref, aboutLabel, clientLabel, keyLabel, bucketLabel, latencyNote, splitNote, isError,
+  activityGet, errorNote, isSignedOut, HttpError, UNKNOWN_CLIENT,
 } from "../src/lib/apiActivity.ts";
 
 test("callsQuery: window and limit always, empty filters left out, search trimmed", () => {
@@ -60,4 +61,73 @@ test("header notes", () => {
   assert.equal(latencyNote(t), "p95 2.1 s");
   assert.equal(latencyNote({ ...t, p95_ms: null }), "");
   assert.equal(splitNote(null), "");
+});
+
+// ── GET-900: the fetch helper. 30 and 90 days failed because the page sent a token captured in
+// React state, which had rotated out; the API answered 401 and the page said "Could not load". ──
+
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+function recorder(answers: Response[]) {
+  const seen: { url: string; auth: string | undefined }[] = [];
+  const doFetch = async (url: string, init: RequestInit) => {
+    seen.push({ url, auth: (init.headers as Record<string, string>)?.Authorization });
+    return answers.shift() ?? json(500, { error: "no_more_answers" });
+  };
+  return { seen, doFetch };
+}
+
+test("activityGet: mints a token for every request, never reuses one", async () => {
+  let n = 0;
+  const tokens: (boolean | undefined)[] = [];
+  const getToken = async (o?: { force?: boolean }) => { tokens.push(o?.force); return `t${++n}`; };
+  const { seen, doFetch } = recorder([json(200, { window: "7d" }), json(200, { window: "30d" })]);
+  assert.deepEqual(await activityGet("/a?window=7d", getToken, doFetch), { window: "7d" });
+  assert.deepEqual(await activityGet("/a?window=30d", getToken, doFetch), { window: "30d" });
+  assert.deepEqual(seen.map((s) => s.auth), ["Bearer t1", "Bearer t2"]);
+  assert.deepEqual(tokens, [undefined, undefined], "no forced refresh when the token works");
+});
+
+test("activityGet: a 401 forces a new token and retries once", async () => {
+  const getToken = async (o?: { force?: boolean }) => (o?.force ? "fresh" : "stale");
+  const { seen, doFetch } = recorder([json(401, { error: "invalid_token" }), json(200, { ok: 1 })]);
+  assert.deepEqual(await activityGet("/a", getToken, doFetch), { ok: 1 });
+  assert.deepEqual(seen.map((s) => s.auth), ["Bearer stale", "Bearer fresh"]);
+});
+
+test("activityGet: still 401 after the refresh throws HttpError 401, tried only twice", async () => {
+  const { seen, doFetch } = recorder([json(401, { error: "invalid_token" }), json(401, { error: "invalid_token" })]);
+  const err = await activityGet("/a", async () => "x", doFetch).catch((e) => e);
+  assert.ok(err instanceof HttpError);
+  assert.equal(err.status, 401);
+  assert.equal(err.code, "invalid_token");
+  assert.equal(seen.length, 2);
+  assert.ok(isSignedOut(err));
+  assert.equal(errorNote(err), "401 · sign in again");
+});
+
+test("activityGet: other errors carry status and code, no retry; a dropped connection is status 0", async () => {
+  const { seen, doFetch } = recorder([json(503, { error: "activity_unavailable" })]);
+  const err = await activityGet("/a", async () => "x", doFetch).catch((e) => e);
+  assert.equal(err.status, 503);
+  assert.equal(err.code, "activity_unavailable");
+  assert.equal(seen.length, 1);
+  assert.equal(errorNote(err), "503 · activity_unavailable");
+  const html = await activityGet("/a", async () => "x", async () => new Response("<html>", { status: 502 })).catch((e) => e);
+  assert.equal(errorNote(html), "502 · http_502");
+  const down = await activityGet("/a", async () => "x", async () => { throw new TypeError("Failed to fetch"); }).catch((e) => e);
+  assert.equal(down.status, 0);
+  assert.equal(errorNote(down), "No connection to the API");
+  assert.ok(!isSignedOut(down));
+});
+
+test("activityGet: no token sends no Authorization header (the API then answers 401)", async () => {
+  const { seen, doFetch } = recorder([json(200, {})]);
+  await activityGet("/a", async () => null, doFetch);
+  assert.equal(seen[0].auth, undefined);
+});
+
+test("callsQuery: the client filter (GET-900), Unknown as its own value", () => {
+  assert.equal(callsQuery("7d", { client: "Claude Code" }), "window=7d&limit=50&client=Claude+Code");
+  assert.equal(callsQuery("7d", { client: UNKNOWN_CLIENT }), "window=7d&limit=50&client=%28unknown%29");
 });

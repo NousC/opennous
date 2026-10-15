@@ -121,11 +121,11 @@ test("RevBoxes on: Context and Signals in their own section, after Connections, 
   assert.equal(resolveSection("signals", off), "profile");
 });
 
-test("API & MCP activity: Workspace group, admins on both plans, not self-host; access-log lands there (GET-898)", () => {
+test("Agent activity (was API & MCP activity, GET-900): Workspace group, admins on both plans, not self-host; access-log lands there (GET-898)", () => {
   for (const tier of ["api", "custom"] as const) {
     const nav = settingsNav({ tier, isWorkspaceAdmin: true, isOwner: false });
     const row = nav.find((i) => i.id === "activity-log")!;
-    assert.equal(row.label, "API & MCP activity", tier);
+    assert.equal(row.label, "Agent activity", tier);
     assert.equal(row.group, "Workspace", tier);
     assert.ok(!("href" in row), "a Settings page, not a link out");
     const ws = groupNav(nav).find((g) => g.group === "Workspace")!;
