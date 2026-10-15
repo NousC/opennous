@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { JobBuilder } from '@/components/revboxes/JobBuilder';
+import { ContextDocSheet } from '@/components/revboxes/ContextDocSheet';
 import { RevBoxJobs, jobRows, type JobRow } from '@/components/revboxes/RevBoxJobs';
 import { DeliveryDialogBody, DeliveryList, JobStepDialog, unfinished } from '@/components/revboxes/BoxDelivery';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -176,7 +177,9 @@ function RevBoxDetail({ id, ws, token, userId }: { id: string; ws: string; token
       onSaved={job_deliveries => { cache.setQueryData<BoxDetail>(['revbox', ws, id], old => old ? { ...old, job_deliveries } : old); setJobStep(null); setNotice('Saved. The job delivers there from its next run.'); void reload(); }}
       onChat={job => { setJobStep(null); setTab('jobs'); setFresh(null); setBuilder({ job }); }} />
     <Dialog open={!!webhookKey} onOpenChange={open=>{if(!open)setWebhookKey(null);}}><DialogContent><DialogHeader><DialogTitle>Webhook trigger</DialogTitle><DialogDescription>Save this key now. Send POST requests to /hooks/revboxes with x-revbox-key and a unique Idempotency-Key header for each event.</DialogDescription></DialogHeader><input aria-label="Webhook secret" readOnly value={webhookKey??''} className={field} /></DialogContent></Dialog>
-    <Dialog open={!!file} onOpenChange={open => { if (!open) setFile(null); }}><DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{file?.title}</DialogTitle><DialogDescription>{file?.document_id ? 'Linked document' : 'Uploaded reference'}</DialogDescription></DialogHeader><pre className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-muted-foreground">{file?.body || 'This document has no text content.'}</pre></DialogContent></Dialog>
+    {/* A context file reads as a document (GET-895); it is edited in the library, where its permissions live. */}
+    <ContextDocSheet doc={file && { id: file.id, title: file.title, body: file.body, kind: file.kind, linkedDocument: !!file.document_id }} onClose={() => setFile(null)}
+      actions={file && <Button asChild size="sm" variant="outline"><Link to={`/settings?section=context&file=${file.id}`}>Open in library<ArrowUpRight /></Link></Button>} />
   </div>;
 }
 

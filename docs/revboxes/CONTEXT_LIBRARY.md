@@ -138,8 +138,24 @@ Marking or rebuilding on an `external` workspace without `confirm_scorer_switch:
 
 - **Settings > Context** (`apps/frontend/src/components/settings/ContextLibrary.tsx`):
   - One "Library" card with Upload and Add knowledge.
-  - Each file shows its title, a kind badge (ICP, Instructions or Reference), its box chips and who can see it.
-  - Expanding a file shows its text plus Edit (title, text, kind, sharing, tags), Mark as ICP, Rebuild ICP scoring and Delete.
+  - Each file is one compact row: its title, a kind badge (ICP, Instructions or Reference), its box chips, who can see it and when it was last updated.
+  - Clicking a row opens the file as a document (GET-895, see "Context as documents" below), with Edit, Tags & sharing (the full dialog: title, text, kind, sharing, tags), Mark as ICP, Unmark ICP, Rebuild ICP scoring and Delete.
+  - `?section=context&file=<id>` opens that file on arrival. The box page links there to edit a file.
   - When the API answers `icp_scorer_switch_required`, a small dialog shows its message with "Use this file for scoring" and "Cancel". Confirming sends the same request again with `confirm_scorer_switch: true`. The outcome is shown plainly after, e.g. "Scoring rebuilt from this file: 20 signals".
-- **The box page** (`RevBoxes.tsx`): "Add from your library" lists library files not yet tagged to the box. It sits above the documents list. Upload still creates a library file tagged to the box.
-- **Preview** (`apps/frontend/preview/revboxes.mjs`): seeds the ICP file tagged to two boxes ("Closed won/lost analysis" and "Customer onboarding") and a workspace "Email voice" instructions file. The preview workspace starts on the `external` scorer (`icp_scorer` in the store), so Mark as ICP and Rebuild ask first; confirming switches it to `nous`.
+- **The box page** (`RevBoxes.tsx`): "Add from your library" lists library files not yet tagged to the box. It sits above the documents list. Upload still creates a library file tagged to the box. Clicking a file in the Context card opens the same document sheet, read-only, with "Open in library" to edit it there.
+- **Preview** (`apps/frontend/preview/revboxes.mjs`): seeds the ICP file tagged to two boxes ("Closed won/lost analysis" and "Customer onboarding"), a workspace "Email voice" instructions file, and (GET-895) a markdown "Win/loss report format" file plus a markdown "Report format" instruction block on the won/lost box, so the document sheet shows headings, numbered and bullet lists, a table, bold, code and a quote. The preview workspace starts on the `external` scorer (`icp_scorer` in the store), so Mark as ICP and Rebuild ask first; confirming switches it to `nous`.
+
+### Context as documents (GET-895)
+
+Context files and instruction blocks are shown as documents, not as raw text in an expand/collapse row.
+
+- **The sheet** (`apps/frontend/src/components/revboxes/ContextDocSheet.tsx`): a right-side sheet, up to 680px wide and full width on a phone. The header has the kind badge, where the file comes from, who can see it, when it was updated, the title and the box chips. The body scrolls inside the sheet. Actions sit in a footer.
+- **Rendering**: the app's own markdown renderer, `Prose` in `AgentMarkdown.tsx` (react-markdown with remark-gfm, the same renderer and `doc` typography as Results reports). It renders headings, numbered and bullet lists, tables, bold, italic, code and quotes. It has no raw-HTML plugin, so HTML in a file is shown as text and never injected, and `javascript:` links are stripped. Wide tables and code blocks scroll sideways on their own.
+- **How the text is read** (`apps/frontend/src/lib/contextDoc.ts`, pinned by `apps/frontend/tests/contextDoc.test.ts`):
+  - `docFormat` decides `markdown`, `json` or `plain`. One markdown signal (a heading, list item, table row, fence, quote, bold, italic, inline code or link) is enough.
+  - Plain text is split into paragraphs on blank lines and keeps its single line breaks (`plainParagraphs`), so a hand-written note does not fold into one run-on paragraph.
+  - A JSON upload is shown as a pretty-printed code block.
+  - A first `#` or `##` heading that only repeats the file's title is dropped (`withoutRepeatedTitle`), since the sheet already shows the title.
+- **Editing**: Edit switches the sheet to a markdown editor with Write and Preview tabs and Save and Cancel. Save sends `PATCH /api/revboxes/context-files/:id` with `{ title, body }`. Edit shows only when the file's `can_edit` is true, and for the ICP file only to workspace owners and admins. A linked document has no Edit: its text is edited in the document. Closing the sheet with unsaved changes asks first.
+- **Instruction blocks** (`revboxes.blocks`) open in the same sheet, read-only, with "Open RevBox".
+

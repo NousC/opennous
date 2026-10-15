@@ -163,6 +163,35 @@ if (!state.seeded.context_library) {
   state.files.push({ id: randomUUID(), title: 'Email voice', kind: 'instructions', body: 'Plain, short sentences. One ask per email. No exclamation marks.', document_id: null, visibility: 'workspace', created_by: 'u1', created_at: stamp(), updated_at: stamp(), icp_marked_at: null });
   state.seeded.context_library = true;
 }
+// Context as documents (GET-895): a markdown-rich library file and a markdown instruction block on the
+// won/lost box, so the document sheet shows headings, lists, a table, bold and code at :8080.
+if (!state.seeded.context_docs) {
+  const REPORT_FORMAT = [
+    '# Win/loss report format', '',
+    'Every report a job in this box writes follows this shape. Lead with the **number**, then the reasons.', '',
+    '## Structure', '',
+    '1. **Headline**: win rate and value won, against the month before.',
+    '2. **Fit table**: wins and losses by ICP fit.',
+    '3. **Why we won** and **why we lost**: three bullets each, most frequent first.',
+    '4. **What to change**: at most three actions, each with an owner.', '',
+    '## The fit table', '',
+    '| Fit | Won | Lost | Note |', '|---|---:|---:|---|',
+    '| Strong | 5 | 1 | The segment to double down on |', '| Partial | 1 | 1 | Qualify harder before the demo |', '| Poor | 0 | 1 | Should not have reached a demo |', '',
+    '### Style', '',
+    '- Plain sentences, no jargon. *One idea per bullet.*',
+    '- Name competitors exactly as they appear on the deal, e.g. `Lumen Track`.',
+    '- Round money to the nearest thousand: $214,000, not $213,862.', '',
+    '> If a month has fewer than five closed deals, say so and skip the percentages.',
+  ].join('\n');
+  const wl = state.boxes.find(b => /won\/lost/i.test(b.name));
+  const f = { id: randomUUID(), title: 'Win/loss report format', kind: 'instructions', body: REPORT_FORMAT, document_id: null, visibility: 'workspace', created_by: 'u1', created_at: stamp(), updated_at: stamp(), icp_marked_at: null };
+  state.files.push(f);
+  if (wl) {
+    state.links.push({ revbox_id: wl.id, file_id: f.id, created_at: stamp() });
+    if (!wl.blocks.some(b => b.title === 'Report format')) wl.blocks.push({ id: randomUUID(), title: 'Report format', body: '## Report format\n\nOpen with the result in one sentence, then:\n\n- **Fit**: Strong, Partial or Poor, with the reason.\n- **Primary reason**: the one thing that decided it.\n- **Competitor**: as named on the deal, or "none".\n\n### Example\n\n| Deal | Fit | Reason |\n|---|---|---|\n| Platform | Strong | Reporting depth closed it |' });
+  }
+  state.seeded.context_docs = true;
+}
 // Who scores the preview workspace (GET-878): it starts on 'external' (its own model), so Mark as
 // ICP and Rebuild ask first; confirming switches it to 'nous'. `icp_scorer` in the store resets it.
 state.icp_scorer ??= 'external';
