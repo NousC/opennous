@@ -20,8 +20,13 @@ test("no payload is no number, not zero", () => {
 test("sources keep the server's order and fall back to the name", () => {
   assert.deepEqual(connectedSources({ tools: [{ name: "gmail", label: "Gmail", logo_url: "g.png" }, { name: "fireflies", label: "", logo_url: null }] }), [
     { name: "gmail", label: "Gmail", logo: "g.png" },
-    { name: "fireflies", label: "fireflies", logo: null },
+    { name: "fireflies", label: "fireflies", logo: "/provider-logos/fireflies.svg" },
   ]);
+});
+
+test("a tool with no server logo shows the app's own mark; an unknown tool keeps the letter", () => {
+  const s = connectedSources({ tools: [{ name: "granola", label: "Granola", logo_url: null }, { name: "attio", label: "Attio" }, { name: "mystery", label: "Mystery", logo_url: null }] });
+  assert.deepEqual(s?.map((x) => x.logo), ["/provider-logos/granola.svg", "/provider-logos/attio.svg", null]);
 });
 
 test("a member's calls-today card says it is theirs", () => {

@@ -1210,3 +1210,14 @@
     color: hsl(var(--muted-foreground));
   }
 }
+
+/* Dark-ink tool logos on the dark theme (GET-856). These marks are a single near-black colour, so
+   on a dark tile they vanished (Granola most visibly). Invert them in dark mode, except where the
+   logo sits on a white tile of its own (automation marks, account logos), where they read as is. */
+.dark img:is(
+  [src*="/provider-logos/granola."], [src*="/provider-logos/attio."], [src*="/provider-logos/apollo."],
+  [src*="/provider-logos/cal_com."], [src*="/provider-logos/notion."], [src*="/provider-logos/openai."],
+  [src*="/provider-logos/cursor.svg"]
+):not(.bg-white):not(.bg-white *) {
+  filter: invert(1) hue-rotate(180deg);
+}

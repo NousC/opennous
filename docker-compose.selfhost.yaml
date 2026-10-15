@@ -152,7 +152,7 @@ services:
         VITE_API_URL: ""
         # Off on self-host: company favicons and Gravatar photos would tell Google and Gravatar
         # which domains and (hashed) emails are in your workspace. Set true in nous.env to show them.
-        VITE_EXTERNAL_IMAGES: ${VITE_EXTERNAL_IMAGES:-false}
+        VITE_EXTERNAL_IMAGES: ${VITE_EXTERNAL_IMAGES:-true}
 
   caddy:
     volumes:

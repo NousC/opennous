@@ -110,6 +110,6 @@ jobs:
             VITE_SUPABASE_URL=__NOUS_RUNTIME_SUPABASE_URL__
             VITE_SUPABASE_ANON_KEY=__NOUS_RUNTIME_SUPABASE_ANON_KEY__
             VITE_API_URL=
-            VITE_EXTERNAL_IMAGES=false
+            VITE_EXTERNAL_IMAGES=true
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max

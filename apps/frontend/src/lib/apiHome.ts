@@ -2,6 +2,8 @@
 // tests/apiHome.test.ts pins them. A failed or missing read is null — the card shows a dash,
 // never a zero we did not count.
 
+import { toolLogo } from "./toolLogo.ts";
+
 /** GET /api/usage/by-key?days=1 → { days, keys: [{ calls, credits, … }] } (GET-623). */
 export type UsageByKey = { days?: number; keys?: { api_key_id: string; calls: number; credits?: number }[] } | null | undefined;
 
@@ -25,5 +27,7 @@ export type Source = { name: string; label: string; logo: string | null };
 
 export function connectedSources(d: ReadTools): Source[] | null {
   if (!d || !Array.isArray(d.tools)) return null;
-  return d.tools.map((t) => ({ name: t.name, label: t.label || t.name, logo: t.logo_url ?? null }));
+  // The server's logo when it sends one, else the tool's own mark shipped with the app (GET-856),
+  // so a tool the server has no logo for shows its logo, not a letter.
+  return d.tools.map((t) => ({ name: t.name, label: t.label || t.name, logo: t.logo_url ?? toolLogo(t.name) }));
 }
