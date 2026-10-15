@@ -134,3 +134,9 @@ test('the estimate carries a per-type breakdown, because the preview names what 
   assert.equal(r.byType.email_thread.conversations, 800);
   assert.ok(r.byType.meeting.usd > 0 && r.byType.email_thread.usd > 0);
 });
+
+test('self-host prices a backfill as Custom (no allowance, no ceiling) whatever the subscription (GET-850)', async () => {
+  const { backfillPlanId } = await import('../src/lib/historyBackfill.mjs');
+  assert.equal(backfillPlanId({ plan_id: 'free', status: 'active' }, { selfHosted: true }), 'custom');
+  assert.notEqual(backfillPlanId({ plan_id: 'api', status: 'active' }, { selfHosted: false }), 'custom');
+});

@@ -24,6 +24,7 @@
 
 import { conversationCredits } from '@nous/core';
 import { mayReadWorkspace } from '../lib/creditGate.mjs';
+import { isSelfHosted } from '../lib/cloud.mjs';
 
 /** A backfill window closes thirty days after it opened — the api's rule (getTeamAiCredits). */
 export const BACKFILL_WINDOW_MAX_DAYS = 30;
@@ -56,6 +57,9 @@ export async function backfillCreditState(supabase, job, deps = {}) {
   const count = deps.conversationCredits ?? conversationCredits;
   const gate = deps.mayReadWorkspace ?? mayReadWorkspace;
   if (!job?.workspace_id) return { ...OPEN };
+  // Self-host reads with the operator's own keys: no allowance to stop at, even for a job priced
+  // before GET-850 against the team's `free` subscription.
+  if ((deps.selfHosted ?? isSelfHosted())) return { ...OPEN, kind: 'self_hosted' };
   try {
     const window = backfillWindowOf(job, deps.now ?? Date.now());
     if (window) {

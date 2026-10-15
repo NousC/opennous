@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { checkBackfillBudget } from './backfillBudget.mjs';
 import { countHistoryAtSource, monthlyCredits } from './historyCount.mjs';
-import { getPlanFromSubscription, getTeamAiCredits } from './plans.mjs';
+import { getPlanFromSubscription, getTeamAiCredits, isSelfHosted } from './plans.mjs';
 import { ownerJobFilter } from './backfillStart.mjs';
 import { sendEmail } from '@nous/core';
 
@@ -170,6 +170,16 @@ export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { l
 //
 // Fails OPEN. A workspace whose plan or counts we cannot read gets its backfill, because
 // a lookup failing is not a reason to hold someone's onboarding.
+/**
+ * The plan a backfill is priced against. A self-hosted install has no allowance and no ceiling: it
+ * reads with the operator's own keys, so it prices as Custom (no limit) whatever subscription row
+ * the team carries (every team gets a `free` one at sign-up, GET-850).
+ */
+export function backfillPlanId(subscription, { selfHosted = isSelfHosted() } = {}) {
+  if (selfHosted) return 'custom';
+  return getPlanFromSubscription(subscription)?.id ?? 'custom';
+}
+
 async function assessBackfillBudget(supabase, workspaceId, { windowDays = 90, addresses = [], ownerUserId = null } = {}) {
   try {
     const { data: ws } = await supabase
@@ -180,8 +190,10 @@ async function assessBackfillBudget(supabase, workspaceId, { windowDays = 90, ad
     if (ws?.team_id) {
       const { data: subscription } = await supabase
         .from('subscriptions').select('*').eq('team_id', ws.team_id).maybeSingle();
-      planId = getPlanFromSubscription(subscription)?.id ?? 'custom';
-      try { used = (await getTeamAiCredits(supabase, ws.team_id, subscription))?.backfill?.used ?? 0; } catch { used = 0; }
+      planId = backfillPlanId(subscription);
+      if (!isSelfHosted()) {
+        try { used = (await getTeamAiCredits(supabase, ws.team_id, subscription))?.backfill?.used ?? 0; } catch { used = 0; }
+      }
     }
 
     const since = new Date(Date.now() - windowDays * 86400_000).toISOString();

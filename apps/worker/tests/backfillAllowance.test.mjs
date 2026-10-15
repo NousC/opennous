@@ -19,19 +19,19 @@ const counted = (backfill, total = 0) => async () => ({ backfill, total });
 const noGate = async () => { throw new Error('the month gate must not be asked for a backfill'); };
 
 test('a paid backfill keeps going past 2,000 credits: it runs to its 6,000 allowance', async () => {
-  const at2500 = await backfillCreditState({}, job(), { now: NOW, conversationCredits: counted(2500, 9000), mayReadWorkspace: noGate });
+  const at2500 = await backfillCreditState({}, job(), { selfHosted: false, now: NOW, conversationCredits: counted(2500, 9000), mayReadWorkspace: noGate });
   assert.equal(at2500.gated, true);
   assert.equal(at2500.kind, 'backfill');
   assert.equal(at2500.allowance, 6000);
   assert.equal(at2500.remaining, 3500, 'the month (9,000 read) does not touch the backfill');
   assert.ok(at2500.remaining > BACKFILL_CREDIT_FLOOR, 'so it does not pause');
-  const at6000 = await backfillCreditState({}, job(), { now: NOW, conversationCredits: counted(6000), mayReadWorkspace: noGate });
+  const at6000 = await backfillCreditState({}, job(), { selfHosted: false, now: NOW, conversationCredits: counted(6000), mayReadWorkspace: noGate });
   assert.equal(at6000.remaining, 0, 'and stops at its own allowance');
 });
 
 test('the count is the backfill window, the way the billing page counts it', async () => {
   let args = null;
-  await backfillCreditState({}, job(), { now: NOW, conversationCredits: async (...a) => { args = a; return { backfill: 0, total: 0 }; } });
+  await backfillCreditState({}, job(), { selfHosted: false, now: NOW, conversationCredits: async (...a) => { args = a; return { backfill: 0, total: 0 }; } });
   const [, wsIds, since, until, windows] = args;
   assert.deepEqual(wsIds, ['ws1']);
   assert.equal(since, job().state.started_at);
@@ -40,7 +40,7 @@ test('the count is the backfill window, the way the billing page counts it', asy
 });
 
 test('no limit (Custom) is not gated', async () => {
-  const s = await backfillCreditState({}, job({ state: { started_at: job().state.started_at, estimate: { allowance: null } } }), { now: NOW, conversationCredits: counted(50_000) });
+  const s = await backfillCreditState({}, job({ state: { started_at: job().state.started_at, estimate: { allowance: null } } }), { selfHosted: false, now: NOW, conversationCredits: counted(50_000) });
   assert.equal(s.gated, false);
 });
 
@@ -59,18 +59,18 @@ test('the window closes after 30 days, like the api', () => {
 test('a job with no backfill window (an import) spends the month, as the real plan says', async () => {
   const imp = { job_id: 'j2', workspace_id: 'ws1', state: null };
   const asks = [];
-  const s = await backfillCreditState({}, imp, {
+  const s = await backfillCreditState({}, imp, { selfHosted: false,
     mayReadWorkspace: async (ws, o) => { asks.push(o); return { allowed: true, reason: null, untilStop: 7000 }; },
     conversationCredits: async () => { throw new Error('not counted locally'); },
   });
   assert.deepEqual(s, { gated: true, remaining: 7000, allowance: null, used: 0, kind: 'month' });
   assert.equal(asks[0].fresh, true);
-  const over = await backfillCreditState({}, imp, { mayReadWorkspace: async () => ({ allowed: false, reason: 'over_credit_limit' }) });
+  const over = await backfillCreditState({}, imp, { selfHosted: false, mayReadWorkspace: async () => ({ allowed: false, reason: 'over_credit_limit' }) });
   assert.equal(over.remaining, 0);
 });
 
 test('a counting error does not wedge the backfill', async () => {
-  const s = await backfillCreditState({}, job(), { now: NOW, conversationCredits: async () => { throw new Error('db'); } });
+  const s = await backfillCreditState({}, job(), { selfHosted: false, now: NOW, conversationCredits: async () => { throw new Error('db'); } });
   assert.equal(s.gated, false);
 });
 
@@ -110,4 +110,10 @@ test('the daily read (the month) is still stopped by the month', async () => {
   const h = harness(10, { allowed: false, reason: 'over_credit_limit', hardCap: false, untilStop: 0 });
   const stats = await readWorkspace({}, 'ws1', { deps: h.deps });
   assert.equal(stats.read, 0);
+});
+
+test('self-host: a backfill is never held to an allowance, even one priced against a free plan (GET-850)', async () => {
+  const s = await backfillCreditState({}, job(), { selfHosted: true, now: NOW, conversationCredits: counted(50_000), mayReadWorkspace: async () => ({ allowed: false }) });
+  assert.equal(s.gated, false);
+  assert.equal(s.kind, 'self_hosted');
 });
