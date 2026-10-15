@@ -353,13 +353,42 @@ Slack through box delivery, optional); job 3, quarterly, reads the quarter's row
   `entity_id` is an account, person or deal the viewer cannot see is hidden (`viewerVisibleAccountSet`, a
   deal counts as its company); counts, pages and the CSV follow the same rule.
 
+### Deal jobs: one run per deal (GET-881)
+
+The daily deal pass (core `runAutomationsForWorkspace`, worker `runAutomationDailyPoll`) reads closes
+from `deal_outcomes`, one entry per deal and outcome (a ledger row with no `deal_id` is one per account
+and outcome). Run keys (`agent_routine_runs.dedupe_key`), permanent:
+- a job that listens to the close's outcome (`deal_closed_won` / `deal_closed_lost`, primary or `also`):
+  `<job>:deal:<deal id>:<closed_won|closed_lost>`, so an account's second won or lost deal runs too,
+  and one close runs a won+lost(+stage-move) job once;
+- a close with no deal id, a stage move, and a close that reaches a job only through
+  `deal_stage_changed`: `<job>:<account>:<stage>`, as before. The same close read off the account's
+  stage history does not run a job that listens to the outcome (the ledger row does).
+- Jobs from before per-deal keys: an old `<job>:<account>:<stage>` run counts as covering every deal on
+  that account and outcome that closed before the run started; only later closes run. A second deal
+  the old key hid is not back-filled (a Test can still write it up).
+- A deal that closed before the job was created is skipped, as before.
+
+Limits per pass (`DEAL_PASS_LIMITS`): 20 runs per job, 50 per workspace (was 5 for the whole
+workspace); a pass that hits one stops, logs it, and the next pass carries on oldest-first. Before each
+run the pass asks the `credit_gate` step handler (the worker registers its cached, fail-open
+`mayReadWorkspace`); a "no" stops the pass for that workspace. A Test (`onlyAutomation`) skips the
+dedupe, the limits and the gate, as before.
+
+The AI step's `deal` is the deal that fired the run (by id), with `name`, `stage`, `pipeline`, `amount`
++ `currency`, `crm_close_date`, `owner` (the deal entity's claims) and `stage_history` (its `stage`
+observations, repeats folded, last 20); `other_deals_on_record` carry their names. The hourly deal
+events (`emitDealEventsPoll`: webhooks and `revbox_events`) read the same per-deal list; their keys
+were already `<deal id>:<stage>`.
+
 ### Steps (workflow engine, RevBox jobs only; `INTERNAL_STEP_TYPES`, never on `/v2/workflows`)
 
 - `dataset_append` `{ dataset_key, dedupe_from?: 'deal'|'account'|'none' }`: the previous AI step's output
   as one row. An AI step written in the run (a digest) gets `datasetRowInstruction` (the row's JSON
   shape, `{ row, summary }`) as its output instruction, like a Slack layout, and its document keeps the
   summary and "Label: value" lines. Words not written as JSON (a deal's account brief from the event
-  runner) are shaped by one metered call (`automation-run:<run>:dataset:<step>`). Values are coerced to the
+  runner) are shaped by one metered call (`automation-run:<run>:dataset:<step id>`; History counts it in the
+  run's credits, on that step when the run's step log names it, GET-881). Values are coerced to the
   column types; unknown keys dropped. `entity_id` = the event's deal, else its account; source run and job
   recorded. Dedupe (default `deal`): `deal` keys by the deal only when the run has one,
   `deal:<deal id>:<stage>`; a deal run with no deal id (a close read from the stage history) keys

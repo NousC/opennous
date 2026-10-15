@@ -140,7 +140,9 @@ test('deal runner: a won-or-lost job runs for the win and for the loss; a close 
   });
   await runAutomationsForWorkspace(db, 'w1', '2026-10-01T00:00:00Z', { max: 50 }).catch(() => {});
   const keys = db.inserts.filter(i => i.table === 'agent_routine_runs').map(i => i.payload.dedupe_key).sort();
-  assert.deepEqual(keys, ['r_multi:a1:closed_won', 'r_multi:a2:closed_lost', 'r_stage:a1:closed_won', 'r_stage:a2:closed_lost', 'r_won:a1:closed_won']);
+  // Per deal for a job that listens to the outcome (GET-881); a close that reaches a job only
+  // through its stage-move trigger keys on the account, as stage moves do.
+  assert.deepEqual(keys, ['r_multi:deal:d1:closed_won', 'r_multi:deal:d2:closed_lost', 'r_stage:a2:closed_lost', 'r_stage:deal:d1:closed_won', 'r_won:deal:d1:closed_won']);
 });
 
 test('HubSpot runner: each watched field of a job (primary or also) is read with its own config', async () => {

@@ -1,6 +1,8 @@
 // What automations cost, in credits (GET-714). Every model call an automation run makes is recorded
 // in llm_usage with request_id `automation-run:<run id>:step:<n>` (automationRun.mjs makeArtifact),
-// so a run's cost is the sum of its rows, and a step's is the sum of that step's. Credits are the
+// or, for the calls that shape an AI step's words for a later step, `automation-run:<run id>:dataset:<step id>`
+// (an Add to table row) and `automation-run:<run id>:slack:<step id>` (a Slack layout) (GET-881), so a
+// run's cost is the sum of its rows, and a step's is the sum of that step's. Credits are the
 // plan's own rate (REQUESTED_USD_PER_CREDIT, the one the credit meter bills at: one credit per
 // $0.005), rounded up, so History and Usage and billing say what the meter charged (GET-721).
 import { REQUESTED_USD_PER_CREDIT } from '@nous/core';
@@ -23,10 +25,22 @@ async function usageRows(supabase, workspaceId, since) {
   return out;
 }
 
-/** "automation-run:<run>:step:<n>" → { runId, step }. Pure. */
+/**
+ * "automation-run:<run>:step:<n>" → { runId, step }; "automation-run:<run>:dataset|slack:<step id>" →
+ * { runId, step: null, stepId } (stepId null when the call had none, written as "x"). Pure.
+ */
 export function parseRunRequestId(id) {
-  const m = /^automation-run:([0-9a-f-]{36})(?::step:(\d+))?$/i.exec(String(id ?? ''));
-  return m ? { runId: m[1], step: m[2] ? Number(m[2]) : null } : null;
+  const s = String(id ?? '');
+  const m = /^automation-run:([0-9a-f-]{36})(?::step:(\d+))?$/i.exec(s);
+  if (m) return { runId: m[1], step: m[2] ? Number(m[2]) : null };
+  const shaped = /^automation-run:([0-9a-f-]{36}):(?:dataset|slack):(.+)$/i.exec(s);
+  return shaped ? { runId: shaped[1], step: null, stepId: shaped[2] === 'x' ? null : shaped[2] } : null;
+}
+
+/** A run's step ids → the step numbers History shows, from its step log (or its steps). */
+function stepNumbers(run) {
+  const log = Array.isArray(run?.step_log) ? run.step_log : Array.isArray(run?.steps) ? run.steps : [];
+  return new Map(log.filter(e => e?.id && Number.isFinite(e?.step)).map(e => [e.id, e.step]));
 }
 
 /** Credits per run, with each step's share. Map runId → { credits, steps: [{ step, credits }] }. */
@@ -35,12 +49,15 @@ export async function creditsForRuns(supabase, workspaceId, runs) {
   if (!runs.length) return out;
   const oldest = runs.map(r => r.started_at).filter(Boolean).sort()[0] ?? null;
   const wanted = new Set(runs.map(r => r.id));
+  const numbers = new Map(runs.map(r => [r.id, stepNumbers(r)]));
   const cost = new Map();   // runId → Map(step → usd)
   for (const row of await usageRows(supabase, workspaceId, oldest)) {
     const p = parseRunRequestId(row.request_id);
     if (!p || !wanted.has(p.runId)) continue;
     const steps = cost.get(p.runId) ?? new Map();
-    steps.set(p.step ?? 0, (steps.get(p.step ?? 0) ?? 0) + (Number(row.cost_usd) || 0));
+    // A shaping call lands on the step that named it when the run's log says which; else on 0 (the run).
+    const step = p.step ?? (p.stepId ? numbers.get(p.runId)?.get(p.stepId) : null) ?? 0;
+    steps.set(step, (steps.get(step) ?? 0) + (Number(row.cost_usd) || 0));
     cost.set(p.runId, steps);
   }
   for (const [runId, steps] of cost) {

@@ -19,6 +19,7 @@ import {
 import { getSupabaseClient, sweepSupportAccess, registerCrmPushHandler, pushActivityToAllCrms, logWorkerRun, registerActivityHook, pipelineStageHook, crmAgentHook, registerCommitteeProvider, loadBuyingCommittee } from '@nous/core';
 import { registerEvidenceLayer } from './lib/evidence/index.mjs';
 import { registerRevboxStepHandlers } from './lib/revboxStepHandlers.mjs';
+import { mayReadWorkspace } from './lib/creditGate.mjs';
 // Gmail and Google Calendar are scheduled scans through Composio (services/gmailSync.mjs,
 // services/calendarSync.mjs); their push triggers only get new items in sooner — GET-221, GET-234.
 import { syncAllCalendars } from './services/calendarSync.mjs';
@@ -98,6 +99,8 @@ registerStepHandler('slack', viaApi('slack', (r) => ({ ok: false, reason: `slack
 registerStepHandler('gmail_draft', viaApi('gmail-draft', (r) => ({ status: 'failed', error: r })));
 registerStepHandler('meter', viaApi('meter', () => ({ ok: false })));
 registerStepHandler('smtp_send', viaApi('smtp-send', (r) => ({ ok: false, reason: `smtp_${r}` })));
+// The daily deal pass asks before each run (GET-881): the same cached, fail-open gate extraction uses.
+registerStepHandler('credit_gate', ({ workspaceId }) => mayReadWorkspace(workspaceId));
 // A RevBox job run here (GET-868): its box webhooks (and every webhook step) go through the SSRF
 // guard, and its account-scoped box references are read as its owner may see them.
 registerRevboxStepHandlers(registerStepHandler);

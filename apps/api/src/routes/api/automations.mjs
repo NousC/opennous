@@ -838,7 +838,7 @@ automationsRouter.get('/runs/:runId', async (req, res) => {
     const supabase = getSupabaseClient();
     const run = await getAutomationRun(supabase, req.workspaceId, req.params.runId);
     if (!run) return res.status(404).json({ error: 'not_found' });
-    const credits = await creditsForRuns(supabase, req.workspaceId, [{ id: run.id, started_at: run.started_at }]).catch(() => new Map());
+    const credits = await creditsForRuns(supabase, req.workspaceId, [{ id: run.id, started_at: run.started_at, steps: run.steps }]).catch(() => new Map());
     const c = credits.get(run.id);
     return res.json({ ...run, credits: c?.credits ?? 0, steps: run.steps.map(x => ({ ...x, credits: c?.steps?.find(y => y.step === x.step)?.credits ?? 0 })) });
   } catch (err) {

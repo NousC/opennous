@@ -84,7 +84,17 @@ function triggerFor(stage) {
 // nightly stage recompute touches every account that has ever been closed-won. A cap does
 // not make that correct, but it makes it survivable: the run stops, says so, and somebody
 // looks, instead of filling the graph while nobody is watching.
-const MAX_RUNS_PER_PASS = 5;
+//
+// PER JOB, WITH A CEILING FOR THE WORKSPACE (GET-881). The ceiling used to be five runs for the
+// whole workspace, shared by every deal job in it. A workspace closing four or five deals a day,
+// with an onboarding job on the wins beside an analysis job on every close, needed more than five
+// runs on an ordinary day, fell behind, and caught up only on quiet days. Now each job gets its
+// own allowance, enough for several days of closes, so one busy job cannot starve another; the
+// workspace ceiling is what still makes a recompute flood or a first pass over a big backlog
+// survivable: it stops, says so, and the next pass carries on oldest-first. Every run also asks
+// the credit gate first (the `credit_gate` step handler, the worker's), so a workspace out of
+// credits stops here rather than after the bill.
+export const DEAL_PASS_LIMITS = Object.freeze({ perJob: 20, perWorkspace: 50 });
 
 /**
  * Deals that ACTUALLY CLOSED in the window, from deal_outcomes.
@@ -135,19 +145,20 @@ async function closedDeals(supabase, workspaceId, since, { newestFirst = false }
     for (const c of cos ?? []) isAccount.add(c.id);
   }
 
-  // ONE WRITE-UP PER ACCOUNT PER STAGE, even when several deals closed together. An account
-  // that closes several deals on the same day would otherwise get several identical summaries:
-  // more noise and none of the information.
+  // ONE ENTRY PER DEAL AND OUTCOME (GET-881). This used to keep one per account and stage, so an
+  // account's second lost deal never reached a job at all: a job that analyses every close saw the
+  // first and never the next. A ledger row with no deal (a stage-derived close) is still one per
+  // account and stage, which is all it can tell apart.
   const seen = new Set();
   const out = [];
   let skipped = 0;
   for (const d of rows) {
     if (!isAccount.has(d.entity_id)) { skipped++; continue; }
     const stage = d.outcome === 'won' ? 'closed_won' : 'closed_lost';
-    const key = `${d.entity_id}:${stage}`;
+    const key = d.deal_id ? `deal:${d.deal_id}:${stage}` : `${d.entity_id}:${stage}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ entityId: d.entity_id, dealId: d.deal_id ?? null, stage, trigger: triggerFor(stage), at: d.closed_at });
+    out.push({ entityId: d.entity_id, dealId: d.deal_id ?? null, stage, trigger: triggerFor(stage), at: d.closed_at, fromLedger: true });
   }
   if (skipped) console.log(`[automations] skipped ${skipped} closed deal(s) that resolve to no account`);
   return out;
@@ -379,10 +390,18 @@ async function gatherAccount(supabase, workspaceId, entityId) {
     supabase.from('workspaces').select('name, icp_text').eq('id', workspaceId).maybeSingle(),
     // THE DEAL ITSELF. A closed-won handoff that never says what was bought, for how much, or
     // when it closed is a profile of a company, not a handoff of a customer.
-    supabase.from('deal_outcomes').select('outcome, value_usd, opened_at, closed_at')
+    supabase.from('deal_outcomes').select('deal_id, outcome, value_usd, opened_at, closed_at')
       .eq('workspace_id', workspaceId).eq('entity_id', entityId)
       .order('closed_at', { ascending: false }).limit(10),
   ]);
+  // Each deal's name (GET-881), in one read: "the lost deal" is not a row anybody can find again.
+  const dealIds = [...new Set((deals ?? []).map(d => d.deal_id).filter(Boolean))];
+  const dealNames = new Map();
+  if (dealIds.length) {
+    const { data: names } = await supabase.from('claims').select('entity_id, value')
+      .eq('workspace_id', workspaceId).in('entity_id', dealIds).eq('property', 'name').is('invalid_at', null);
+    for (const n of names ?? []) { const v = claimValue(n.value); if (v != null && v !== '') dealNames.set(n.entity_id, String(v)); }
+  }
 
   // EVERY FACT CARRIES WHERE IT CAME FROM — source_ref, the sentence somebody said, and who
   // said it — so the writer can cite it and a reader can open the call. A handoff whose
@@ -612,6 +631,8 @@ async function gatherAccount(supabase, workspaceId, entityId) {
         .map(t => ({ name: t.name, engagements_on_this_account: t.engagements })),
     },
     deals: (deals ?? []).map(d => ({
+      deal_id: d.deal_id ?? null,
+      name: d.deal_id ? dealNames.get(d.deal_id) ?? null : null,
       outcome: d.outcome,
       value_usd: d.value_usd ?? null,
       record_created: toDay(d.opened_at),
@@ -815,7 +836,49 @@ function agentStepOf(a) {
   return i >= 0 ? i + 1 : 1;
 }
 
-async function makeArtifact(supabase, workspaceId, { artifact, entityId, stage, prompt, dryRun = false, context = null, materialOnly = false, signal = null, call = null, runId = null, agentStep = null, format = 'brief' }) {
+/** A deal as the writer reads it, without its internal id (the model would quote it). Pure. */
+const withoutId = ({ deal_id: _id, ...d }) => d;
+
+/**
+ * One deal's own record for the writer (GET-881): its name, stage, pipeline, amount and close date
+ * as the CRM sync last wrote them (the deal entity's claims), and its stage history (the sync's
+ * append-only `stage` observations, repeats folded, oldest first). Two reads; anything missing is
+ * left out, never guessed. Null when nothing is on file.
+ */
+async function dealDetail(supabase, workspaceId, dealId) {
+  try {
+    const [{ data: claims }, { data: obs }] = await Promise.all([
+      supabase.from('claims').select('property, value')
+        .eq('workspace_id', workspaceId).eq('entity_id', dealId).is('invalid_at', null)
+        .in('property', ['name', 'stage', 'pipeline', 'value', 'currency', 'close_date', 'owner_name']),
+      supabase.from('observations').select('value, observed_at')
+        .eq('workspace_id', workspaceId).eq('entity_id', dealId).eq('kind', 'state').eq('property', 'stage')
+        .order('observed_at', { ascending: true }).limit(200),
+    ]);
+    const c = Object.fromEntries((claims ?? []).map(r => [r.property, claimValue(r.value)]));
+    const history = [];
+    for (const o of obs ?? []) {
+      const v = claimValue(o.value);
+      if (v == null || v === '') continue;
+      if (history.length && history[history.length - 1].stage === String(v)) continue;
+      history.push({ stage: String(v), on: o.observed_at ? String(o.observed_at).slice(0, 10) : null });
+    }
+    const out = {
+      ...(c.name ? { name: String(c.name) } : {}),
+      ...(c.stage ? { stage: String(c.stage) } : {}),
+      ...(c.pipeline ? { pipeline: String(c.pipeline) } : {}),
+      ...(c.value != null && c.value !== '' ? { amount: c.value, ...(c.currency ? { currency: String(c.currency) } : {}) } : {}),
+      ...(c.close_date ? { crm_close_date: String(c.close_date).slice(0, 10) } : {}),
+      ...(c.owner_name ? { owner: String(c.owner_name) } : {}),
+      ...(history.length ? { stage_history: history.slice(-20) } : {}),
+    };
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId = null, stage, prompt, dryRun = false, context = null, materialOnly = false, signal = null, call = null, runId = null, agentStep = null, format = 'brief' }) {
   const g = await gatherAccount(supabase, workspaceId, entityId);
   const kind = artifact === 'call_score' ? 'call_score'
     : artifact === 'call_summary' ? 'call_summary' : 'account_summary';
@@ -853,8 +916,13 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, stage, 
     when: c.when,
   }));
 
+  // THE DEAL THAT FIRED IT, by id when the run names one (GET-881): an account with two lost deals
+  // was otherwise always written up about its latest one. Its name, stage, pipeline and amount
+  // as the CRM has them, and the stages it went through, so a win/loss table can say which deal
+  // a row is about and how it ran.
   const wanted = stage === 'closed_lost' ? 'lost' : 'won';
-  const thisDeal = g.deals.find(d => d.outcome === wanted) ?? null;
+  const thisDeal = (dealId && g.deals.find(d => d.deal_id === dealId)) || g.deals.find(d => d.outcome === wanted) || null;
+  const dealRecord = thisDeal?.deal_id ? await dealDetail(supabase, workspaceId, thisDeal.deal_id) : null;
   const materialObject = fitMaterial(withContext({
     // "Deal status: closed_won" is a column name wearing a suit. The model echoes whatever
     // it is handed, so hand it the words a person would use.
@@ -889,12 +957,13 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, stage, 
     // deal record is often opened days before it is marked won and read as the cycle it said
     // "6 days" for an account worked for 11 months.
     deal: thisDeal && {
-      ...thisDeal,
+      ...withoutId(thisDeal),
+      ...(dealRecord ?? {}),
       days_from_first_contact_to_close: g.history?.first_interaction && thisDeal.closed
         ? Math.max(0, Math.round((new Date(thisDeal.closed) - new Date(g.history.first_interaction)) / 86_400_000))
         : null,
     },
-    other_deals_on_record: g.deals.filter(d => d !== thisDeal),
+    other_deals_on_record: g.deals.filter(d => d !== thisDeal).map(withoutId),
     people: g.people,
     other_people_on_file: g.people_not_shown,
     recent_activity: g.activity.map(a => {
@@ -2192,6 +2261,7 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
             // An Add to table step reads this write-up (GET-874): it must state what the table records.
             datasetCoverage(await datasetFor(datasetAppendAfter(steps, steps.indexOf(s))))].filter(Boolean).join('\n\n'))) || null,
           entityId: c.account_id || ctx.entityId, stage: stage ?? 'automation', context: c.context ?? null,
+          dealId: c.account_id && c.account_id !== ctx.entityId ? null : ctx.dealId ?? null,
           signal: ctx.signal ?? null, call: ctx.call ?? null, runId: ctx.runId ?? null, agentStep: shownAt(at_) + 1,
           format: job === 'follow_up' ? 'email' : 'brief',
         });
@@ -2659,7 +2729,7 @@ const DEAL_TEST_KINDS = ['deal_closed_won', 'deal_closed_lost', 'deal_stage_chan
  * The latest closed deals a deal-triggered job can be tested on, newest first: won and/or lost as
  * its triggers (primary and `also`) say, on an account, visible to the job's owner (the
  * `revbox_visible_accounts` handler; without it no account is assumed visible). One per account and
- * outcome, like the daily pass. `pick` = one of these ids. -> [{ id, kind, label, at, source,
+ * outcome (the daily pass runs per deal since GET-881; a Test needs one recent example). `pick` = one of these ids. -> [{ id, kind, label, at, source,
  * entityId, dealId, stage, account }].
  */
 async function dealTestTriggers(supabase, workspaceId, automation, { limit = 10, pick = null } = {}) {
@@ -2868,6 +2938,7 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
       const stage = trigger.stage ?? (trigger.kind === 'call_ended' ? 'call_ended' : (trigger.signal?.kind ?? 'automation'));
       const doc = await makeArtifact(supabase, workspaceId, {
         artifact: a.artifact, entityId: agentCfg.account_id || trigger.entityId, stage, prompt: await withBoxContext(supabase, workspaceId, a, a.prompt),
+        dealId: agentCfg.account_id && agentCfg.account_id !== trigger.entityId ? null : trigger.dealId ?? null,
         context: agentCfg.context ?? null, call: trigger.call ?? null, signal: trigger.signal ?? null,
         runId, agentStep: agentStepOf(a), format: formatOf(a),
       });
@@ -3075,7 +3146,7 @@ async function deliverLegacy(automation, doc, { stage = null, at = null, ctx = n
 }
 
 /** One workspace's automations against one day of stage changes. */
-export async function runAutomationsForWorkspace(supabase, workspaceId, since, { onlyAccount = null, onlyAutomation = null, max = null } = {}) {
+export async function runAutomationsForWorkspace(supabase, workspaceId, since, { onlyAccount = null, onlyAutomation = null, max = null, maxPerJob = null } = {}) {
   const { data: routines } = await supabase
     .from('agent_routines')
     .select('*')
@@ -3131,12 +3202,23 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
   // first outing wrote hundreds of documents, which is a thing you find out afterwards.
   if (onlyAccount) changes = changes.filter(c => c.entityId === onlyAccount);
   let ran = 0;
-  // One event, one run per routine, even when it matches two of the routine's triggers (a close
-  // read both as an outcome and as a stage move): the dedupe key names the account and stage only.
+  // What this pass has started, in all and per job, against DEAL_PASS_LIMITS. A test counts only
+  // what it finished (it stops at its first document); the daily pass counts every run it starts,
+  // failed ones too, because a failure can still have spent the model call.
+  let started = 0;
+  const startedBy = new Map();
+  const ceiling = max ?? DEAL_PASS_LIMITS.perWorkspace;
+  const perJob = maxPerJob ?? DEAL_PASS_LIMITS.perJob;
+  const capped = new Set();
+  let stopped = null;
+  // One event, one run per routine, even when it matches two of the routine's triggers: a close
+  // read both as an outcome and as a stage move runs once (see below), and one deal's key is the
+  // same whichever of won, lost or stage moves matched it.
   const ranThisPass = new Set();
+  outer:
   for (const change of changes) {
-    if (ran >= (max ?? MAX_RUNS_PER_PASS)) {
-      console.warn(`[automations] stopping at ${MAX_RUNS_PER_PASS} runs — ${changes.length} changes in this window looks like a recompute, not a day's news`);
+    if ((onlyAutomation ? ran : started) >= ceiling) {
+      console.warn(`[automations] ${workspaceId}: stopping at ${ceiling} runs this pass — ${changes.length} changes in the window; the rest wait for the next pass`);
       break;
     }
     for (const a of dealAutomations) {
@@ -3144,26 +3226,64 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
       // automation only ICP moves, and no deal automation an ICP one.
       if (change.trigger === 'icp_tier_changed' ? !listens(a, 'icp_tier_changed')
         : (!listens(a, 'deal_stage_changed') && !listens(a, change.trigger))) continue;
+      // A CLOSE SEEN AS A STAGE MOVE IS NOT A SECOND CLOSE (GET-881). A job that listens to won or
+      // lost takes its closes from the outcome ledger, one per deal; the same close read off the
+      // account's stage history has no deal to name and would run the job again under the
+      // account. A job that only listens to stage moves still runs on it, as before.
+      if (!change.fromLedger && (change.trigger === 'deal_closed_won' || change.trigger === 'deal_closed_lost')
+        && listens(a, change.trigger)) continue;
       // A DEAL THAT CLOSED BEFORE THIS AUTOMATION EXISTED IS NOT NEWS FOR IT. This is what
       // keeps the back catalogue quiet without a seeding pass: hundreds of wins closed before you
       // set the thing up, and every one of them fails this line. A test ignores it, because
       // nothing may have closed since you created it and you still want to see the output.
       if (!onlyAutomation && a.created_at && change.at && String(change.at) < String(a.created_at)) continue;
-      // ONE RUN PER AUTOMATION, PER ACCOUNT, PER STAGE — FOREVER. No date in the key.
+      // ONE RUN PER AUTOMATION, PER DEAL, PER OUTCOME — FOREVER. No date in the key.
       //
-      // This is the actual cause of the flood. The key used to carry the day, so a nightly
-      // recompute produced a new key for a deal that had been closed-won for months and the
-      // automation fired again, and again the night after. A deal is won once; writing it up
-      // is a thing that happens once. Moving to a new stage is a new key and fires properly.
-      const dedupe = change.dedupe ? `${a.id}:${change.dedupe}` : `${a.id}:${change.entityId}:${change.stage}`;
+      // The key used to carry the day, so a nightly recompute produced a new key for a deal that
+      // had been closed-won for months and the automation fired again, and again the night after.
+      // Then it named the account (GET-881 changed that): an account's second won or lost deal
+      // found the key taken and never ran. A deal is won once; writing it up happens once. Per deal
+      // only for a job that listens to that outcome: a close with no deal on the ledger, a stage
+      // move, and a close reaching a job that only listens to stage moves (which reads accounts
+      // moving, not deals) still key on the account and stage, exactly as before.
+      const legacy = `${a.id}:${change.entityId}:${change.stage}`;
+      const perDeal = Boolean(change.fromLedger && change.dealId && listens(a, change.trigger));
+      const dedupe = change.dedupe ? `${a.id}:${change.dedupe}`
+        : perDeal ? `${a.id}:deal:${change.dealId}:${change.stage}` : legacy;
       if (ranThisPass.has(dedupe)) continue;
-      ranThisPass.add(dedupe);
       // A test may repeat itself; the daily pass may not.
       if (!onlyAutomation) {
+        if ((startedBy.get(a.id) ?? 0) >= perJob) { capped.add(a.name ?? a.id); continue; }
         const { data: seen } = await supabase.from('agent_routine_runs')
           .select('id').eq('routine_id', a.id).eq('dedupe_key', dedupe).maybeSingle();
-        if (seen) continue;
+        if (seen) { ranThisPass.add(dedupe); continue; }
+        // A JOB FROM BEFORE PER-DEAL KEYS ran once per account under the account's key, on the first
+        // of its deals to close after the job was made. That run covered a deal that had closed by
+        // the time it started; which one is not recorded, so every deal on that account and outcome
+        // that closed before it started counts as covered, and only later closes run. Safe over
+        // complete: nothing is ever written up twice, and a second deal the old key hid is not
+        // back-filled (a test run can still write it up).
+        if (dedupe !== legacy) {
+          const { data: old } = await supabase.from('agent_routine_runs')
+            .select('id, started_at').eq('routine_id', a.id).eq('dedupe_key', legacy).maybeSingle();
+          if (old && (!old.started_at || !change.at || String(change.at) <= String(old.started_at))) { ranThisPass.add(dedupe); continue; }
+        }
+        // THE CREDIT GATE, before anything is spent. The worker registers it (cached, fails open);
+        // without it every run is allowed, as before. A "no" stops the pass: what is left stays
+        // unkeyed and runs on the first pass after the workspace has credits again.
+        const gate = STEP_HANDLERS.credit_gate
+          ? await Promise.resolve(STEP_HANDLERS.credit_gate({ supabase, workspaceId })).catch(() => null)
+          : null;
+        if (gate && gate.allowed === false) {
+          stopped = gate.reason ?? 'out_of_credits';
+          console.warn(`[automations] ${workspaceId}: credit gate said no (${stopped}) — deal runs paused until the next pass`);
+          break outer;
+        }
+        if (started >= ceiling) break outer;
+        started++;
+        startedBy.set(a.id, (startedBy.get(a.id) ?? 0) + 1);
       }
+      ranThisPass.add(dedupe);
 
       const { data: run } = await supabase.from('agent_routine_runs').insert({
         workspace_id: workspaceId, routine_id: a.id, dedupe_key: dedupe, status: 'running',
@@ -3174,6 +3294,8 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
         const agentCfg = (Array.isArray(a.steps) ? a.steps : []).find(s => s?.type === 'agent')?.config ?? {};
         const doc = await makeArtifact(supabase, workspaceId, {
           artifact: a.artifact, entityId: agentCfg.account_id || change.entityId, stage: change.stage, prompt: await withBoxContext(supabase, workspaceId, a, a.prompt),
+          // The deal that fired it (GET-881), unless the step reads a fixed other account.
+          dealId: agentCfg.account_id && agentCfg.account_id !== change.entityId ? null : change.dealId ?? null,
           context: agentCfg.context ?? null, runId: run?.id ?? null, agentStep: agentStepOf(a), format: formatOf(a),
         });
         // A TEST SENDS. You are testing whether the automation works, and sending is half
@@ -3197,7 +3319,8 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
       }
     }
   }
-  return { ran, changes: changes.length };
+  if (capped.size) console.warn(`[automations] ${workspaceId}: ${[...capped].join(', ')} reached ${perJob} runs this pass; the rest run on the next`);
+  return { ran, changes: changes.length, ...(stopped ? { stopped } : {}) };
 }
 
 /** The daily pass, across every workspace that has an event automation enabled. */
@@ -3413,7 +3536,7 @@ export async function automationContextPreview(supabase, workspaceId, { when, st
   const account = agentCfg.account_id || pick?.entity_id || null;
   if (!account) return { samples, sample: null, material: null, counts: {} };
   const stage = when === 'deal_closed_lost' ? 'closed_lost' : 'closed_won';
-  const full = await makeArtifact(supabase, workspaceId, { artifact: null, entityId: account, stage, prompt: null, materialOnly: true });
+  const full = await makeArtifact(supabase, workspaceId, { artifact: null, entityId: account, dealId: account === pick?.entity_id ? pick?.deal_id ?? null : null, stage, prompt: null, materialOnly: true });
   const len = (v) => (Array.isArray(v) ? v.length : v ? 1 : 0);
   const m = full.material;
   const counts = {
