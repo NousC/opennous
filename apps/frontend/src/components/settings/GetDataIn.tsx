@@ -1,8 +1,10 @@
-// Settings → Instance setup → "Backfill" (self-host, GET-848). Self-host has no setup
-// pop-up, so this is where an operator is walked through the three things that fill the graph, in
-// the order that works: the CRM first (its 12-month import starts when it connects, and every
-// conversation is filed onto its accounts), then email and meeting notes, then the revenue
-// backfill, which reads the history with the install's own AI models. Everything is read live from
+// Settings → Instance setup → "Backfill" (self-host, GET-848, GET-851). Self-host has no setup
+// pop-up, so this is where an operator is walked through what fills the graph, in the order that
+// works best: the CRM first (its records import when it connects, and conversations are filed onto
+// its accounts), then email and meeting notes, then the revenue backfill, which reads their
+// history with the install's own AI models. The CRM is recommended, not required: the backfill
+// runs on email and meeting notes alone. What it reads is exactly BACKFILL_SOURCES; Granola is not
+// among them, it syncs on its own. Everything is read live from
 // /api/onboarding/checklist and /api/backfill/preview, the same reads the Cloud pop-up used.
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -16,6 +18,10 @@ import { cn } from "@/lib/utils";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 const num = (n: number) => n.toLocaleString("en-US");
+
+// The tools the backfill reads history from (contactHistoryEnricher on the worker). Granola, Fellow
+// and RingCentral are not among them: Granola syncs every 15 minutes, 90 days back, by itself.
+const BACKFILL_SOURCES = new Set(["gmail", "gmail_oauth", "google_calendar", "fireflies", "fathom", "calendly", "cal_com", "slack", "linkedin", "instantly"]);
 
 type Job = { tier: string; model: string; route: "anthropic" | "openai_compatible" };
 
@@ -75,8 +81,13 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
   const crmName = c.crm.provider ? toolName(c.crm.provider) : "CRM";
   const sources = [...(c.mail.providers ?? []), ...(c.notes.providers ?? [])].map(toolName);
   const state = p?.state ?? (c.backfill.state === "running" ? "running" : c.backfill.state === "done" ? "done" : "none");
-  const running = state === "running", done = state === "done";
-  const hasSources = c.crm.done || sources.length > 0;
+  const providerIds = [...(c.mail.providers ?? []), ...(c.notes.providers ?? [])];
+  const readable = providerIds.filter((id) => BACKFILL_SOURCES.has(id));
+  const granolaOnly = providerIds.includes("granola") && readable.length === 0;
+  // A finished backfill and a new one waiting: a tool was connected since, and its history is unread.
+  const newSource = !!p?.ran_before && (p?.state === "awaiting_confirmation" || p?.state === "over_allowance");
+  const windowDays = p?.window_days ?? 90;
+  const running = state === "running", done = state === "done" && !newSource;
   const found = foundLine(p?.estimate?.conversations);
   const { read, of, pct } = backfillCount(p);
 
@@ -98,33 +109,42 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
 
   return (
     <SettingsGroup title="Backfill">
-      <Step n={1} done={c.crm.done} title={c.crm.done ? `${crmName} connected` : "Connect your CRM"}
+      <Step n={1} done={c.crm.done} title={c.crm.done ? `${crmName} connected` : "Connect your CRM (recommended first)"}
         action={!c.crm.done && <Link to="/company-sources" className={btn}>Connect</Link>}>
         {c.crm.done
-          ? (c.crm.imported ? `${num(c.crm.accounts)} accounts imported from the last 12 months.` : <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Importing your accounts, deals and activity…</span>)
-          : "HubSpot, Salesforce or Attio. Its last 12 months import the moment it connects, and every conversation is filed onto its accounts."}
+          ? (c.crm.imported ? `${num(c.crm.accounts)} accounts imported.` : <span className="inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" />Importing your accounts, deals and activity…</span>)
+          : "HubSpot, Salesforce or Attio. Its records import when it connects (HubSpot: the last 12 months), so every conversation lands on the right account."}
       </Step>
 
       <Step n={2} done={c.mail.done && c.notes.done} title="Connect email and meeting notes"
         action={!(c.mail.done && c.notes.done) && <Link to="/integrations" className={btn}>Connect</Link>}>
         {sources.length ? `${sources.join(", ")} connected.` : "Gmail, and your notetaker: Fireflies, Granola or Fathom. Each person connects their own."}
+        {providerIds.includes("granola") && <> Granola syncs by itself every 15 minutes, going back 90 days.</>}
       </Step>
 
-      <Step n={3} done={done} title="Run the revenue backfill"
+      <Step n={3} done={done} title={newSource ? "Run the backfill for your new tool" : "Run the revenue backfill"}
         action={!running && !done && !confirming && (
-          <button type="button" className={primary} disabled={!c.crm.done || !hasSources} onClick={() => setConfirming(true)}>Run backfill</button>
+          <button type="button" className={primary} disabled={readable.length === 0} onClick={() => setConfirming(true)}>
+            {newSource ? "Run again" : "Run backfill"}
+          </button>
         )}>
-        {done ? "Done. Your history is read and filed onto its accounts."
+        {done ? "Done. Your history is read and filed onto its accounts. Connect a new tool and this offers to read its history too."
           : running ? (
             <div className="mt-1.5 max-w-[360px] space-y-1.5">
               <Bar pct={pct} />
               <span>Reading your history… {of ? `${num(read)} of ${num(of)}` : `${num(read)} read`}</span>
             </div>
           )
-          : !c.crm.done ? "Connect your CRM first: the backfill files every conversation onto its account."
+          : readable.length === 0 ? (granolaOnly
+            ? "Nothing for the backfill to read yet: Granola brings in its own meetings. Connect Gmail, Fireflies or Fathom to backfill their history."
+            : "Connect Gmail, Fireflies or Fathom first: the backfill reads their history.")
           : confirming ? (
             <div className="mt-1.5 space-y-2 rounded-lg border border-border/70 bg-background p-3 text-[12.5px] text-foreground">
-              <p>{found ? `Found ${found} from the last 12 months.` : "Reads the last 12 months from your connected tools."}</p>
+              <p>{found ? `Found ${found}.` : "Reads the history of your connected tools."}</p>
+              <p className="text-muted-foreground">
+                Email and calendar go back {windowDays} days; Fireflies and Fathom meetings as far back as they hold.
+                {!c.crm.done && " Without a CRM, people and companies are created from the conversations themselves."}
+              </p>
               <p className="text-muted-foreground">
                 This reads each one with your AI models ({modelsLine(jobs, providerLabel)}). Make sure your provider account has enough credit.
               </p>
@@ -137,7 +157,8 @@ export function GetDataIn({ jobs, providerLabel }: { jobs: Job[]; providerLabel:
               </div>
             </div>
           )
-          : "Reads the last 12 months of email, meetings and calls, and fills every account with what was said."}
+          : newSource ? `You connected ${readable.map(toolName).join(", ")} since the last backfill. Run it again to read the new history; what was already read is skipped.`
+          : `Reads ${readable.map(toolName).join(", ")}: email and calendar from the last ${windowDays} days, meetings as far back as each tool holds.${c.crm.done ? "" : " Tip: connect your CRM first so every conversation lands on the right account."}`}
       </Step>
     </SettingsGroup>
   );

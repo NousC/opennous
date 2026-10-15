@@ -8,7 +8,9 @@ import { num } from "./format.ts";
 
 /** What the backfill step needs from /api/backfill/preview. */
 export type BackfillPreview = {
-  state: "none" | "awaiting_confirmation" | "over_allowance" | "needs_support" | "running" | "done";
+  state: "none" | "awaiting_confirmation" | "over_allowance" | "needs_support" | "running" | "done" | "dismissed";
+  /** A backfill already finished here: a new waiting one is for a tool connected since (GET-851). */
+  ran_before?: boolean;
   plan_live?: boolean;
   /** Credits a month the paid plan includes; null on Free, unpaid or unlimited (GET-682). */
   plan_credits?: number | null;

@@ -19,11 +19,11 @@ export function InstanceSetupCard() {
 
   const [title, line] = !c
     ? ["Finish setting up your instance", "Choose your AI models and see which integrations are ready."]
-    : !c.crm.done
-      ? ["Connect your CRM", "Its last 12 months import the moment it connects. Then connect email and meeting notes."]
+    : !c.crm.done && !c.mail.done && !c.notes.done
+      ? ["Connect your CRM and tools", "Start with your CRM so every conversation lands on the right account, then email and meeting notes."]
       : c.backfill.state === "running"
         ? ["Your revenue backfill is running", "Every account fills in as your history is read."]
-        : ["Run your revenue backfill", "Read the last 12 months of email, meetings and calls onto every account."];
+        : ["Run your revenue backfill", "Read the history of your connected tools onto every account."];
 
   return (
     <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-border/70 bg-card px-4 py-3 sm:mx-5">
