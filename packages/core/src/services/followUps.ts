@@ -20,6 +20,8 @@
 //  - The same meeting can arrive from Fellow AND HubSpot. Same account within 90 minutes is one
 //    meeting, never two cards.
 
+import { emailVoiceBlock } from './emailVoiceBlock.mjs';
+
 /** Meeting events a card can come from. */
 export const FOLLOW_UP_MEETING_PROPERTIES = ['interaction.meeting_held', 'interaction.meeting_scheduled'] as const;
 /** Below this many characters of REAL text (after the invite is stripped) there is nothing to follow up on. */
@@ -310,6 +312,11 @@ export interface FollowUpPromptInput {
   existingTasks: string[];
   /** The open card this meeting merges into: its tasks (with ids) and its email, if any. */
   previous: { tasks: { id: string; text: string }[]; summary: string | null } | null;
+  /**
+   * The team's email voice (GET-902): the "Email voice" context file of the box that holds the
+   * follow-up. When set, the email is written in it; when absent, the email line reads as it always did.
+   */
+  emailVoice?: string | null;
 }
 
 const FOLLOW_UP_SYSTEM = `You prepare the follow-up a salesperson or account manager does right after a customer meeting.
@@ -317,6 +324,7 @@ You are given the notes or transcript of the meeting(s). Use ONLY what the text 
 products, names or commitments. If something is unclear, leave it out.`;
 
 export function buildFollowUpPrompt(input: FollowUpPromptInput): { system: string; user: string } {
+  const voice = emailVoiceBlock(input.emailVoice ?? '');
   const deals = input.deals.length
     ? input.deals.map((d) => `- ${d.name ?? 'Deal'} · stage ${d.stage ?? '?'} · ${d.value != null ? `$${d.value}` : 'no amount'} · closes ${d.close_date ?? '?'}`).join('\n')
     : '- (no open deal in the CRM)';
@@ -344,11 +352,11 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "keep_previous": ["ids of earlier tasks that still apply"],
   "drop_previous": [ { "id": "earlier task id", "reason": "why it no longer applies" } ],
   "updates": [ { "label": "Next step | Note | Budget | Timeline | Decision maker | Competitor | Risk", "value": "a fact worth logging in the CRM, one line", "quote": "supporting words or null", "speaker": "who said it or null" } ],
-  "email": { "subject": "short subject", "body": "the follow-up email to the customer, plain text, under 150 words, warm and specific: thank them, recap what was agreed, state the next steps with owners and dates when known, signed by ${input.repName ?? 'the rep'}" },
+  "email": { "subject": "short subject", "body": "${voice ? `the follow-up email to the customer, plain text, written in THE TEAM'S EMAIL VOICE below, covering what was agreed and the next steps, signed by ${input.repName ?? 'the rep'}` : `the follow-up email to the customer, plain text, under 150 words, warm and specific: thank them, recap what was agreed, state the next steps with owners and dates when known, signed by ${input.repName ?? 'the rep'}`}" },
   "stage_change": { "should_move": true | false, "reason": "only when the text clearly shows the deal moved (e.g. they asked for a proposal, signed, or said no); else null" },
   "insights": [ { "category": "pain | goal | objection | budget | timeline | competitor | authority | risk_signal | expansion_signal", "text": "one line", "quote": "supporting words" } ]
 }
-Rules: 0-6 tasks, 0-5 updates, 0-5 insights. Tasks are only things OUR side must do (a thing the customer owes becomes "Follow up with <name> on …"). No task that repeats one already on our list. If the meeting was internal or had no customer substance, return empty arrays and "email": null.`;
+Rules: 0-6 tasks, 0-5 updates, 0-5 insights. Tasks are only things OUR side must do (a thing the customer owes becomes "Follow up with <name> on …"). No task that repeats one already on our list. If the meeting was internal or had no customer substance, return empty arrays and "email": null.${voice ? `\n\n${voice}` : ''}`;
   return { system: FOLLOW_UP_SYSTEM, user };
 }
 

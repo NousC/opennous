@@ -52,6 +52,37 @@ A box's run reads **only the files tagged to that box**, whatever their visibili
 
 The per-box instruction blocks (`revboxes.blocks`) are unchanged. They are edited on the box and listed read-only under the library in Settings > Context.
 
+## The Email voice file (GET-902)
+
+How the emails a box's built-in jobs draft should read is a context file, "Email voice" (kind
+`instructions`), tagged to the box that holds the built-in.
+
+- **Before GET-902** the voice was fixed in code and nobody could change it. The after-call follow-up's
+  email followed one line of its prompt (core `buildFollowUpPrompt`: "plain text, under 150 words, warm
+  and specific: thank them, recap what was agreed, state the next steps with owners and dates when
+  known, signed by the rep"). The detectors' drafts followed the house rules every email draft shares
+  (`EMAIL_DRAFT_SYSTEM`: 50 to 90 words, never more than 120, no preamble, one next step, no colons,
+  em dashes or cliches) plus the sender's own directives (`buildMemberBlock`). There was no workspace
+  or brand voice setting (the old `voice` playbook was retired with the foundations).
+- **Ensured on the box's read** (`GET /api/revboxes/:id`, `withBoxEmailVoice`; core
+  `ensureBoxEmailVoice`): a box that holds an email-drafting built-in (all five today) and has no
+  instructions file titled "Email voice" (any case) gets one, owned by the box's owner, visibility
+  `boxes`, seeded with the voice its drafter used until now (`FOLLOW_UP_EMAIL_VOICE` when it holds the
+  follow-up, else `DETECTOR_EMAIL_VOICE`). Idempotent; two at once keep the oldest. A box that has one
+  is never rewritten. The read names it as `email_voice_id`, and the rail shows it without a remove
+  control (the drafters read it; removing it would bring the default back on the next read).
+- **The drafters read it** (core `builtinEmailVoices`: the boxes holding the built-ins, their links,
+  the files; three reads once per pass, never per draft). The follow-up worker passes it to
+  `buildFollowUpPrompt` (`emailVoice`): the email line then says to write in the voice, and the voice
+  follows as a block. The detectors append it to the draft's system prompt after the house rules and
+  the sender's directives (`draftSystem`, `voiceFor`: the detector's `templateId` is its built-in's
+  key). The block (`emailVoiceBlock`) says the voice wins where it differs on length, tone, structure
+  or sign-off, and that it only says how the email reads. Without a file the prompts are exactly as
+  before. Drafts already written are never changed.
+- **Editing it**: like any file (the library's document sheet, GET-895: "make it more concise / more
+  formal / more relaxed"), or by asking the built-in's chat, which rewrites the whole text and saves it
+  with the asker's own rights (JOB_BUILDER.md "Built-in jobs behave as jobs").
+
 ## The ICP file and ICP scoring
 
 ICP scoring for a `nous` workspace is the learned scorecard (`scorecard_signals`). The LLM step that builds it from prose is `seedScorecardFromMemory` in `apps/api/src/cloud/lib/scorecardSeed.mjs`.
@@ -143,7 +174,7 @@ Marking or rebuilding on an `external` workspace without `confirm_scorer_switch:
   - `?section=context&file=<id>` opens that file on arrival. The box page links there to edit a file.
   - When the API answers `icp_scorer_switch_required`, a small dialog shows its message with "Use this file for scoring" and "Cancel". Confirming sends the same request again with `confirm_scorer_switch: true`. The outcome is shown plainly after, e.g. "Scoring rebuilt from this file: 20 signals".
 - **The box page** (`RevBoxes.tsx`): "Add from your library" lists library files not yet tagged to the box. It sits above the documents list. Upload still creates a library file tagged to the box. Clicking a file in the Context card opens the same document sheet, read-only, with "Open in library" to edit it there.
-- **Preview** (`apps/frontend/preview/revboxes.mjs`): seeds the ICP file tagged to two boxes ("Closed won/lost analysis" and "Customer onboarding"), a workspace "Email voice" instructions file, and (GET-895) a markdown "Win/loss report format" file plus a markdown "Report format" instruction block on the won/lost box, so the document sheet shows headings, numbered and bullet lists, a table, bold, code and a quote. The preview workspace starts on the `external` scorer (`icp_scorer` in the store), so Mark as ICP and Rebuild ask first; confirming switches it to `nous`.
+- **Preview** (`apps/frontend/preview/revboxes.mjs`): seeds the ICP file tagged to two boxes ("Closed won/lost analysis" and "Customer onboarding"), a workspace "Email voice" instructions file (and, GET-902, each built-in box's own "Email voice" file on its first read), and (GET-895) a markdown "Win/loss report format" file plus a markdown "Report format" instruction block on the won/lost box, so the document sheet shows headings, numbered and bullet lists, a table, bold, code and a quote. The preview workspace starts on the `external` scorer (`icp_scorer` in the store), so Mark as ICP and Rebuild ask first; confirming switches it to `nous`.
 
 ### Context as documents (GET-895)
 

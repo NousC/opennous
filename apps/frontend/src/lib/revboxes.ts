@@ -96,6 +96,8 @@ export type BoxDetail = {
   box: RevBox; context: ContextFile[]; jobs: (RevBoxJob | RevBoxRoutine)[]; routines?: RevBoxRoutine[]; job_deliveries?: JobDelivery[];
   people?: BoxPerson[];
   builtin_jobs?: BoxBuiltinJob[]; builtin_taken?: { key: BuiltinJobKey; box_id: string; box_name: string | null }[];
+  /** The box's "Email voice" context file (GET-902), which its built-ins' drafts follow; the rail keeps it. */
+  email_voice_id?: string | null;
   /** Slack trouble (GET-901): the connection's own state, and each box Slack destination's, by its id. Null: nothing posts to Slack. */
   slack?: { connection: SlackStatus | null; deliveries: Record<string, SlackStatus> } | null;
 };
@@ -193,6 +195,8 @@ export type BuilderEvent =
   /** The integrations the job will use, as the agent settled them (connection slugs). The composer
    *  attaches them like user picks, and they ride along as `hints.integrations` on the next turn. */
   | { type: 'integrations'; slugs: string[] }
+  /** A built-in job's chat changed the built-in (GET-902): its On/Off, or its email voice. The page refreshes the box. */
+  | { type: 'builtin'; key: BuiltinJobKey; enabled?: boolean; email_voice?: boolean }
   | { type: 'done' };
 /** What the composer's Integrations and Signals pickers add to every builder message. */
 export type BuilderHints = { integrations: string[]; signals: string[] };
@@ -221,7 +225,7 @@ function previewHeader(): Record<string, string> {
  */
 export async function streamBuilderTurn(opts: {
   workspaceId: string; token: string; boxId: string; sessionId: string | null;
-  body: ({ message: string; job_id?: string | null } | { answers: BuilderAnswer[] } | { retry: true }) & { hints?: BuilderHints };
+  body: ({ message: string; job_id?: string | null; builtin?: BuiltinJobKey | null } | { answers: BuilderAnswer[] } | { retry: true }) & { hints?: BuilderHints };
   signal?: AbortSignal; onEvent: (event: BuilderEvent) => void;
 }): Promise<void> {
   const { workspaceId, token, boxId, sessionId, body, signal, onEvent } = opts;
@@ -277,7 +281,9 @@ export type BuilderHistoryAsk = { kind: 'ask'; questions: BuilderQuestion[]; ans
 export type BuilderHistoryProposal = { kind: 'proposal'; proposal: JobProposal; approved: boolean };
 /** The last turn got no answer (a provider error, a closed tab): its message is saved; Try again runs it. */
 export type BuilderHistoryFailed = { kind: 'failed'; text: string };
-export type BuilderHistoryItem = BuilderHistoryText | BuilderHistoryAsk | BuilderHistoryProposal | BuilderHistoryFailed;
+/** A built-in job's card (GET-902): the first item of its chat, drawn from the box's own copy of the built-in. */
+export type BuilderHistoryBuiltin = { kind: 'builtin'; key: BuiltinJobKey };
+export type BuilderHistoryItem = BuilderHistoryText | BuilderHistoryAsk | BuilderHistoryProposal | BuilderHistoryFailed | BuilderHistoryBuiltin;
 /**
  * Open a job's chat: POST /api/revboxes/:id/builder with `{ job_id }` and no message returns the
  * person's own conversation on the job (the same session every time, GET-889) with every turn so far
@@ -285,6 +291,16 @@ export type BuilderHistoryItem = BuilderHistoryText | BuilderHistoryAsk | Builde
  */
 export function openBuilderForJob(workspaceId: string, token: string, boxId: string, jobId: string) {
   return revboxesRequest<{ session_id: string; job_id: string; history: BuilderHistoryItem[]; proposal: JobProposal | null }>(workspaceId, token, `/${boxId}/builder`, { method: 'POST', body: JSON.stringify({ job_id: jobId }) });
+}
+
+/**
+ * Open a built-in job's chat (GET-902): POST /api/revboxes/:id/builder with `{ builtin }` and no
+ * message returns the person's chat on it (reused, or new and seeded with its card) as JSON, its card
+ * first in `history`. Continue it with streamBuilderTurn. It is never a routine: approving a proposal
+ * in it creates a new job in the box.
+ */
+export function openBuilderForBuiltin(workspaceId: string, token: string, boxId: string, key: BuiltinJobKey) {
+  return revboxesRequest<{ session_id: string; builtin: BuiltinJobKey; history: BuilderHistoryItem[] }>(workspaceId, token, `/${boxId}/builder`, { method: 'POST', body: JSON.stringify({ builtin: key }) });
 }
 
 /** "Every day at 08:00 (Toronto)" from a routine row when the server did not label it. */

@@ -23,6 +23,11 @@
 // the monthly and quarterly reports after the closed-deal analysis that fills their table). Approving
 // it answers with `next_session_id`: the card turns Approved, the page refreshes its jobs (onSaved),
 // the chat moves to that session and asks for the next job itself. The last approval closes as before.
+//
+// A built-in job (GET-902) opens this same chat (`builtin`): its card is the agent's first message
+// (openBuilderForBuiltin; the session has no job, so approving a proposal here creates a NEW job in
+// the box). The agent explains the built-in, changes its email voice or its On/Off where allowed
+// (a `builtin` event: the page refreshes the box), and builds a custom job for what it cannot do.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -31,11 +36,12 @@ import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AskCard } from '@/components/revboxes/AskCard';
 import { Logo, WorkflowCard } from '@/components/revboxes/WorkflowCard';
+import { BuiltinCard } from '@/components/revboxes/RevBoxJobs';
 import { meetingSignalOptions, MEETING_CONNECT_HINT, MEETING_CONNECT_HREF } from '@/lib/signalOptions';
 import {
-  approveBuilderProposal, openBuilderForJob, streamBuilderTurn, revboxesRequest, signalsRequest, signalKeyLabel,
+  approveBuilderProposal, openBuilderForBuiltin, openBuilderForJob, streamBuilderTurn, revboxesRequest, signalsRequest, signalKeyLabel,
   SIGNAL_GROUP_LABEL, TOOL_NAMES,
-  type BuilderAnswer, type BuilderEvent, type BuilderHints, type BuilderHistoryAsk, type BuilderHistoryFailed, type BuilderHistoryItem, type BuilderHistoryProposal, type BuilderHistoryText, type BuilderQuestion, type Catalog, type Delivery, type ApproveResult, type JobProposal,
+  type BoxBuiltinJob, type BuilderAnswer, type BuilderEvent, type BuilderHints, type BuilderHistoryAsk, type BuilderHistoryFailed, type BuilderHistoryItem, type BuilderHistoryProposal, type BuilderHistoryText, type BuilderQuestion, type Catalog, type Delivery, type ApproveResult, type JobProposal,
   type SignalCatalog, type SignalGroup,
 } from '@/lib/revboxes';
 
@@ -58,10 +64,14 @@ const HUMAN_TOOL: Record<string, string> = {
   search_accounts: 'Searching accounts', signal_catalog: 'Reading signals', revbox_datasets: 'Reading this box’s tables',
 };
 
-export function JobBuilder({ workspaceId, token, boxId, job, destinations, editable, onApproved, onSaved }: {
+export function JobBuilder({ workspaceId, token, boxId, job, builtin = null, destinations, editable, onApproved, onSaved, onBuiltinChanged }: {
   workspaceId: string; token: string; boxId: string;
   /** Set when a job is opened: its chat so far is shown and continued. */
   job?: { id: string; name: string; enabled?: boolean } | null;
+  /** A built-in job's chat (GET-902): its card first, then the person's chat on it. */
+  builtin?: BoxBuiltinJob | null;
+  /** The chat changed the built-in (its On/Off, its email voice): refresh the box. */
+  onBuiltinChanged?: () => void;
   destinations: Delivery[]; editable: boolean;
   /** Kept for callers; the way out is the page's "Back to jobs" (no Close link under the input). */
   onApproved: (result: ApproveResult) => void; onClose?: () => void;
@@ -74,7 +84,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
   const [sessionId, setSessionId] = useState<string | null>(null);
   /** Edit: the job's earlier chat, and whether it is still loading. */
   const [history, setHistory] = useState<BuilderHistoryItem[]>([]);
-  const [opening, setOpening] = useState(!!job && editable);
+  const [opening, setOpening] = useState((!!job || !!builtin) && editable);
   /** Tools the user attached (slugs) and the signals that start the job (catalog keys, any of them;
    *  ['schedule'] = on a clock; [] = not chosen). Several signals: GET-873. */
   const [integrations, setIntegrations] = useState<string[]>([]);
@@ -114,6 +124,23 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
       }); });
     return () => { live = false; };
   }, [workspaceId, token, boxId, job, editable]);
+  // A built-in's chat (GET-902): its card, then the person's chat on it. A viewer sees the card only;
+  // on failure the card shows and the first message opens the chat (`builtin` in the body).
+  const builtinKey = builtin?.key ?? null;
+  useEffect(() => {
+    if (!builtinKey) return;
+    const card: BuilderHistoryItem[] = [{ kind: 'builtin', key: builtinKey }];
+    if (!editable) { setHistory(card); return; }
+    let live = true;
+    openBuilderForBuiltin(workspaceId, token, boxId, builtinKey)
+      .then(r => { if (live) { setSessionId(r.session_id); setHistory(r.history?.length ? r.history : card); } })
+      .catch(() => { if (live) setHistory(card); })
+      .finally(() => { if (!live) return; setOpening(false); requestAnimationFrame(() => {
+        const el = scroller.current; if (el) el.scrollTop = el.scrollHeight;
+        input.current?.focus();
+      }); });
+    return () => { live = false; };
+  }, [workspaceId, token, boxId, builtinKey, editable]);
   // Follow the stream while it is near the bottom; leave the reader alone if they scrolled up.
   useEffect(() => {
     const el = scroller.current;
@@ -167,12 +194,13 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
         if (slugs.length) setIntegrations(list => [...list, ...slugs.filter(s => !list.includes(s))]);
         break;
       }
+      case 'builtin': onBuiltinChanged?.(); break;
       case 'error': patch(id, t => ({ ...t, error: { message: ev.message, code: ev.code } })); break;
       case 'done': patch(id, t => ({ ...t, streaming: false })); break;
     }
   }
 
-  async function run(user: string, body: { message: string; job_id?: string | null } | { answers: BuilderAnswer[] } | { retry: true }, session: string | null = sessionId) {
+  async function run(user: string, body: { message: string; job_id?: string | null; builtin?: BoxBuiltinJob['key'] | null } | { answers: BuilderAnswer[] } | { retry: true }, session: string | null = sessionId) {
     if (streaming) return;
     const id = crypto.randomUUID();
     setTurns(prev => [...prev, { id, user, items: [], streaming: true }]);
@@ -197,7 +225,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
     if (!text || streaming || approving || opening || !editable) return;
     setDraft('');
     if (input.current) input.current.style.height = 'auto';
-    void run(text, { message: text, ...(!sessionId && job ? { job_id: job.id } : {}) });
+    void run(text, { message: text, ...(!sessionId && job ? { job_id: job.id } : {}), ...(!sessionId && builtin ? { builtin: builtin.key } : {}) });
   }
   /** Run the turn that got no answer again (its message is saved already). */
   function retry() {
@@ -269,7 +297,7 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
           onChange={e => setDraft(e.target.value)}
           onInput={e => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 150)}px`; }}
           onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); send(); } }}
-          placeholder={job ? 'Ask the agent to change something…' : turns.length ? 'Reply, or describe what to change…' : 'Describe the job you want…'}
+          placeholder={builtin ? `Ask about ${builtin.name}, or what to change…` : job ? 'Ask the agent to change something…' : turns.length ? 'Reply, or describe what to change…' : 'Describe the job you want…'}
           className="block max-h-[150px] min-h-[22px] w-full resize-none bg-transparent px-0.5 text-[14px] font-normal leading-[22px] text-foreground outline-none placeholder:font-normal placeholder:text-muted-foreground" />
         <div className="mt-3 flex items-center gap-1.5">
           <IntegrationsMenu tools={tools} loading={connections.isLoading} selected={integrations}
@@ -306,6 +334,8 @@ export function JobBuilder({ workspaceId, token, boxId, job, destinations, edita
             if (kind === 'ask' && i === lastItem && waiting === 'ask' && !(item as BuilderHistoryAsk).answers.length)
               return <AskCard key={i} questions={(item as BuilderHistoryAsk).questions} disabled={streaming || !editable} onSubmit={answers => answer((item as BuilderHistoryAsk).questions, answers)} />;
             // A turn that got no answer: say so, with Try again while it is still the last thing here.
+            // A built-in's card (GET-902): the box's own copy, so it shows its current On/Off and sentence.
+            if (kind === 'builtin') return builtin ? <BuiltinCard key={i} job={builtin} /> : null;
             if (kind === 'failed') return <ErrorRow key={i} message={(item as BuilderHistoryFailed).text} onRetry={i === lastItem && waiting === 'failed' && editable ? retry : undefined} busy={streaming} />;
             return <HistoryItem key={i} item={item} destinations={destinations} enabled={i === lastHistoryProposal ? job?.enabled : undefined} />;
           })}

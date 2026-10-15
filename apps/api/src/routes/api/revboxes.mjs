@@ -13,7 +13,7 @@ import {
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
   compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxConnections, revboxMembership,
   listRevboxDatasets, createRevboxDataset, updateRevboxDataset, listDatasetRows, exportDatasetCsv,
-  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxWorkedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, builtinJobBrief, ensureDefaultBuiltinBoxes, FOLLOW_UP_RECORDERS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+  ensureBoxEmailVoice, emailDraftingBuiltins, isEmailVoiceFile, revboxContextRows, signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxWorkedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, builtinJobBrief, ensureDefaultBuiltinBoxes, FOLLOW_UP_RECORDERS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
 } from '@nous/core';
 import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
 import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
@@ -248,8 +248,27 @@ revboxesRouter.get('/catalog', route(async (req, res, sb) => {
   const [members, accounts, docs, connections] = await Promise.all([revboxWorkspaceMembers(sb, req.workspaceId), revboxAccountCatalog(sb, req.workspaceId, await allowed(sb, req)), documents(sb, req), revboxConnections(sb, req.workspaceId, req.internalUserId)]);
   res.json({ members: members.map(m => ({ id: m.user_id, name: m.user?.name ?? m.user?.email ?? 'Member', email: m.user?.email ?? '', role: m.role })), accounts, documents: docs.map(d => ({ id: d.id, title: d.title })), connections });
 }));
+/**
+ * A box that holds an email-drafting built-in has its "Email voice" context file (GET-902): added
+ * here, idempotently, on the box's read when it is missing (core ensureBoxEmailVoice, seeded with the
+ * voice the drafter used until now), and named as `email_voice_id` so the rail keeps it (the drafters
+ * read it; removing it would bring the default back on the next read). Checked against the context
+ * the read already has, so a box that has it costs nothing more. A failure never fails the read.
+ */
+export async function withBoxEmailVoice(sb, ws, detail, { ensure = ensureBoxEmailVoice, reread = () => revboxContextRows(sb, ws, detail.box.id) } = {}) {
+  if (!emailDraftingBuiltins(detail.box).length) return { ...detail, email_voice_id: null };
+  let context = detail.context ?? [];
+  let voice = context.find(isEmailVoiceFile) ?? null;
+  if (!voice) {
+    try {
+      const made = await ensure(sb, ws, detail.box);
+      if (made) { context = await reread(); voice = context.find(c => c.id === made.id) ?? null; }
+    } catch (e) { console.warn('[revboxes] email voice', detail.box.id, e?.message ?? e); }
+  }
+  return { ...detail, context, email_voice_id: voice?.id ?? null };
+}
 revboxesRouter.get('/:id', route(async (req, res, sb) => {
-  const detail = await revboxDetails(sb, req.workspaceId, req.internalUserId, req.params.id);
+  const detail = await withBoxEmailVoice(sb, req.workspaceId, await revboxDetails(sb, req.workspaceId, req.internalUserId, req.params.id));
   // Linked references inherit document visibility on every read, including after revocation.
   const context = [];
   for (const c of detail.context) {

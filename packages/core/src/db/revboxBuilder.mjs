@@ -1120,3 +1120,70 @@ export async function listRevboxJobDeliveries(sb, { workspaceId, revboxId, userI
   }
   return { routines, job_deliveries };
 }
+
+// ── A built-in job's chat (GET-902) ────────────────────────────────────────────
+//
+// A built-in job (core REVBOX_BUILTIN_JOBS) is not a routine: OpenNous runs it. Clicking its card
+// opens the same chat as a builder job, on a session with NO job_id (so approve can only ever create
+// a NEW job in the box, never edit the built-in as a routine). The session is marked by its seed:
+// the first user message is the composer's context naming the built-in (`[builtin:<key>]`), then the
+// agent's card (the built-in's brief) as its first reply. The loop reads the mark (builtinOfTranscript)
+// and gives the model the built-in's facts and the builtin_job tool. One chat per person per built-in
+// per box: their newest open one is reused.
+
+const BUILTIN_MARK = /\[builtin:([a-z_]+)\]/;
+
+/**
+ * The seed of a built-in's chat: the composer's context naming it (never the user's words), then the
+ * agent's card as its first reply. `card`: { name, text, details?, starts?, enabled? }. Valid
+ * Anthropic format (user, assistant). Pure.
+ */
+export function builtinSeedTranscript(key, card = {}) {
+  const name = str(card.name) || key;
+  const state = card.enabled === true ? 'On for the whole workspace.' : card.enabled === false ? 'Off for the whole workspace.' : '';
+  const lines = [str(card.text), ...(Array.isArray(card.details) ? card.details.map(str).filter(Boolean) : []), state].filter(Boolean);
+  return [
+    { role: 'user', content: [{ type: 'text', text: `${HINT_HEADER}\nThe user opened the built-in job "${name}" [builtin:${key}] in this box, to ask about it or change it. It is not a workflow; see the system prompt.` }] },
+    { role: 'assistant', content: [{ type: 'text', text: `${name}. ${lines.join(' ')}`.trim() }] },
+  ];
+}
+
+/** The built-in a chat is about, from its seed (the first message, the composer's context), or null. Pure. */
+export function builtinOfTranscript(messages) {
+  const first = Array.isArray(messages) ? messages[0] : null;
+  if (first?.role !== 'user') return null;
+  const t = contentBlocks(first.content).find(b => b.type === 'text')?.text ?? '';
+  if (!String(t).startsWith(HINT_HEADER)) return null;
+  return String(t).split('\n\n')[0].match(BUILTIN_MARK)?.[1] ?? null;
+}
+
+/**
+ * A built-in chat's history for the UI: its card first ({ kind: 'builtin', key }), then every turn
+ * after the seed, as builderSessionHistory shows a job's chat. Pure.
+ */
+export function builtinSessionHistory(session) {
+  const messages = Array.isArray(session?.messages) ? session.messages : [];
+  const key = builtinOfTranscript(messages);
+  return [{ kind: 'builtin', key }, ...builderSessionHistory(messages.slice(2), { proposal: session?.proposal ?? null, approved: session?.state === 'approved' })];
+}
+
+/**
+ * Open a built-in's chat (GET-902) -> { session, history }; no model call. Box edit rights, and the
+ * box must list the built-in. The person's newest open chat on it in this box is reused as it is;
+ * else a new session (job_id null) is seeded with the card. `card` is the built-in's brief as the
+ * API builds it (builtinJobBrief, with the workspace's facts).
+ */
+export async function openBuilderSessionForBuiltin(sb, { workspaceId, revboxId, userId, key, card = {} }) {
+  const box = await loadRevbox(sb, workspaceId, userId, revboxId, true);
+  const listed = Array.isArray(box.builtin_jobs) ? box.builtin_jobs : [];
+  if (!listed.includes(key)) fail(404, 'This built-in job is not in this RevBox.');
+  const mine = (await rows(sb.from('revbox_builder_sessions').select('*').eq('workspace_id', workspaceId).eq('revbox_id', revboxId).eq('user_id', userId).eq('state', 'open')
+    .is('job_id', null).order('updated_at', { ascending: false }).limit(50))).sort(byNewest);
+  const open = mine.find(r => builtinOfTranscript(r.messages) === key);
+  if (open) return { session: open, history: builtinSessionHistory(open) };
+  const session = await createBuilderSession(sb, { workspaceId, revboxId, userId, jobId: null });
+  const messages = builtinSeedTranscript(key, card);
+  await saveBuilderSession(sb, { workspaceId, sessionId: session.id, userId, messages, proposal: null });
+  const seeded = { ...session, messages, proposal: null };
+  return { session: seeded, history: builtinSessionHistory(seeded) };
+}

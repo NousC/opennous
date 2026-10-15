@@ -4,25 +4,23 @@
 // switch pauses it). Clicking a builder job's row (or Enter/Space on it: the row's main area is a
 // button) opens the job's chat, the person's own conversation on it (GET-889; there is no Edit
 // button). Legacy rows carry `plan` and cannot be opened in the builder. Built-in jobs (GET-872)
-// follow as agent cards like the builder's (GET-897): name with a small "Built in" tag, the
-// workspace's real On/Off (read-only: OpenNous runs them, detectors and the after-call follow-up,
-// for the whole workspace, so there is no per-box switch), the server's sentence in the agent's
-// voice (core builtinJobBrief), one meta line (Starts · tool logos → Priorities) and what it did in
-// 30 days. Clicking one opens a read-only panel (BuiltinJobPanel), never a builder chat. There is no
-// remove control: an invisible hover X here is how a built-in fell out of its box. Test
-// (GET-873), on hover or focus of a builder job's row: one run now on real data with every external
-// send held; the output and what it would have sent show in Results, labelled Test. Test and the
-// switch never open the chat.
-import { ArrowUpRight, Link2, Loader2, Plus } from 'lucide-react';
+// follow as the same compact row as a routine (GET-902): the dot, the name, "Starts · On · Last run"
+// (its last draft), no Test and no switch (its On/Off is the workspace's, read-only here); what it
+// did lately is the row's tooltip. Clicking one opens the job chat, like any job (JobBuilder with
+// `builtin`): its card (BuiltinCard: the name with ● On/Off, the server's sentence, core
+// builtinJobBrief, and Starts · tool logos → Priorities) is the agent's first message; the agent explains it,
+// changes what can change (its email voice, its On/Off where allowed) and builds a custom job in the
+// box for what it cannot do. There is no remove control: an invisible hover X here is how a built-in
+// fell out of its box (GET-897). Test
+import { Link2, Loader2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { when } from '@/lib/format';
 import { routineTriggerLabel, SIGNAL_CHOICES, TOOL_NAMES, type BoxBuiltinJob, type RevBoxJob, type RevBoxRoutine, type SlackStatus } from '@/lib/revboxes';
 import { SlackStatusLine } from '@/components/revboxes/SlackStatusLine';
-import { builtinActivity, builtinState } from '@/lib/builtinJobs';
+import { builtinRowMeta, builtinState, builtinTooltip } from '@/lib/builtinJobs';
 import { Logo } from '@/components/revboxes/WorkflowCard';
-import { OPEN_PRIORITIES } from '@/components/shell/PrioritiesButton';
 
 export type JobRow = { id: string; name: string; trigger: string; enabled: boolean; lastRunAt: string | null; routine: boolean; webhook: boolean;
   /** Why its Slack posts fail now (GET-901), from the server; shown as one line under the row. */
@@ -53,7 +51,7 @@ export function jobRows(jobs: (RevBoxJob | RevBoxRoutine)[], routines: RevBoxRou
 
 export function RevBoxJobs({ rows, runs, editable, busy, fresh, onNew, onToggle, onChange, onTest, onWebhookKey, builtins = [], onOpenBuiltin }: {
   rows: JobRow[]; runs: RunLite[]; editable: boolean; busy: string | null;
-  /** The built-in jobs this box holds (GET-872), as agent cards (GET-897); a click opens the read-only panel. */
+  /** The built-in jobs this box holds (GET-872), as job rows (GET-902); a click opens the job chat. */
   builtins?: BoxBuiltinJob[]; onOpenBuiltin?: (job: BoxBuiltinJob) => void;
   /** The job the builder just created or changed: highlighted for a moment. */
   fresh: string | null;
@@ -103,14 +101,31 @@ export function RevBoxJobs({ rows, runs, editable, busy, fresh, onNew, onToggle,
         {row.slack && <div className="-mt-2 basis-full pb-1.5 pl-[25px]"><SlackStatusLine status={row.slack} /></div>}
       </li>;
     })}
-    {builtins.map(b => <li key={b.key} className="py-2"><BuiltinCard job={b} onOpen={onOpenBuiltin} /></li>)}
+    {/* Built-ins (GET-902): the same row as a routine's. No Test (OpenNous runs them) and no switch here
+        (their On/Off is the workspace's, read-only on the row and changed in the chat where allowed). */}
+    {builtins.map(b => {
+      const info = <>
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', b.enabled ? 'bg-emerald-600' : 'bg-muted-foreground/35')} aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium text-foreground">{b.name}</span>
+          <span className="mt-0.5 block truncate text-[11.5px] text-muted-foreground">{builtinRowMeta(b, when)}</span>
+        </span>
+      </>;
+      const opens = editable && !!onOpenBuiltin;
+      return <li key={b.key} title={builtinTooltip(b, when)} onClick={opens ? () => onOpenBuiltin!(b) : undefined}
+        className={cn('group flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-2 py-1.5 transition-colors hover:bg-hover/60', opens && 'cursor-pointer')}>
+        {opens
+          ? <button type="button" aria-label={`Open ${b.name}'s chat`} onClick={e => { e.stopPropagation(); onOpenBuiltin!(b); }}
+              className="-mx-1 flex min-w-0 flex-1 items-center gap-4 rounded-lg px-1 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">{info}</button>
+          : <span className="flex min-w-0 flex-1 items-center gap-4 py-2">{info}</span>}
+      </li>;
+    })}
   </ul>;
 }
 
 const toolName = (t: string) => TOOL_NAMES[t] ?? t.charAt(0).toUpperCase() + t.slice(1);
-const openPriorities = () => window.dispatchEvent(new Event(OPEN_PRIORITIES));
 
-/** The one meta line: Starts · tool logos → where its work lands. */
+/** The one meta line, as a job card's: Starts · tool logos → where its work lands. */
 function BuiltinMeta({ job }: { job: BoxBuiltinJob }) {
   const tools = job.brief?.tools ?? [];
   const starts = job.brief?.starts ?? job.cadence;
@@ -125,64 +140,25 @@ function BuiltinMeta({ job }: { job: BoxBuiltinJob }) {
   </p>;
 }
 
-/** The workspace's real On/Off for a built-in, read-only (a dot and the word), or nothing when unknown. */
-function BuiltinOnOff({ enabled }: { enabled?: boolean | null }) {
-  const state = builtinState(enabled);
-  if (!state) return null;
-  return <span title="OpenNous runs it for the whole workspace. It has no per-box switch." className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
-    <span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', state === 'On' ? 'bg-emerald-600' : 'bg-muted-foreground/40')} />{state}
-  </span>;
-}
-
 /**
- * A built-in job as an agent card (GET-897), the builder's card in its saved form: name with a
- * "Built in" tag and its On/Off, the server's sentence, the meta line and what it did in 30 days
- * (opening Priorities). The card opens the read-only panel.
+ * A built-in job's card (GET-902), a job card like WorkflowCard's approved one: the name with "● On"
+ * or "● Off" (the workspace's real switch; nothing when unknown), the server's sentence and the meta
+ * line. What it did lately is the tooltip. The job chat shows it as its first message; `onOpen`
+ * (unused in the list, which shows rows) makes it a button.
  */
-function BuiltinCard({ job, onOpen }: { job: BoxBuiltinJob; onOpen?: (job: BoxBuiltinJob) => void }) {
-  return <section aria-label={`Built-in job: ${job.name}`} onClick={onOpen ? () => onOpen(job) : undefined}
-    className={cn('rounded-xl border border-hairline bg-card px-4 py-3 transition-colors', onOpen && 'cursor-pointer hover:bg-hover/50')}>
-    <header className="flex items-center gap-2">
-      {onOpen
-        ? <button type="button" onClick={e => { e.stopPropagation(); onOpen(job); }} className="min-w-0 truncate rounded text-left text-[14px] font-medium tracking-[-0.005em] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60">{job.name}</button>
-        : <span className="min-w-0 truncate text-[14px] font-medium tracking-[-0.005em] text-foreground">{job.name}</span>}
-      <span className="shrink-0 rounded-md bg-muted px-1.5 py-px text-[10.5px] text-muted-foreground">Built in</span>
-      <span className="flex-1" />
-      <BuiltinOnOff enabled={job.enabled} />
+export function BuiltinCard({ job, onOpen }: { job: BoxBuiltinJob; onOpen?: (job: BoxBuiltinJob) => void }) {
+  const state = builtinState(job.enabled);
+  const body = <>
+    <header className="flex items-center gap-3">
+      <span className="min-w-0 flex-1 truncate py-0.5 text-[14px] font-medium tracking-[-0.005em] text-foreground">{job.name}</span>
+      {state && <span className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] text-muted-foreground"><span aria-hidden className={cn('h-1.5 w-1.5 rounded-full', state === 'On' ? 'bg-emerald-600' : 'bg-muted-foreground/40')} />{state}</span>}
     </header>
     <p className="mt-1 text-[13px] leading-[1.5] text-ink-2">{job.brief?.text ?? job.does}</p>
     <BuiltinMeta job={job} />
-    <p className="mt-1 flex items-center gap-1.5 text-[12px] text-muted-foreground">
-      <span className="tabular-nums">{builtinActivity(job, when)}</span>
-      <span aria-hidden className="text-muted-foreground/50">·</span>
-      <button type="button" onClick={e => { e.stopPropagation(); openPriorities(); }} className="inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-2 hover:underline">See in Priorities<ArrowUpRight className="h-3 w-3" /></button>
-    </p>
-  </section>;
-}
-
-/**
- * The read-only panel a built-in card opens (GET-897): what it does in the agent's words, the meta
- * line, how it works, whether it runs and what it did lately, and a link to its items. No builder
- * chat: OpenNous runs it, and it has nothing to configure per box.
- */
-export function BuiltinJobPanel({ job, boxName, onClose }: { job: BoxBuiltinJob; boxName: string; onClose: () => void }) {
-  const state = builtinState(job.enabled);
-  return <div className="space-y-4">
-    <div>
-      <p className="text-[13.5px] leading-[1.55] text-foreground">{job.brief?.text ?? job.does}</p>
-      <BuiltinMeta job={job} />
-    </div>
-    {!!job.brief?.details?.length && <ul className="space-y-1.5 text-[12.5px] leading-[1.5] text-ink-2">
-      {job.brief.details.map(d => <li key={d} className="flex gap-2"><span aria-hidden className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60" />{d}</li>)}
-    </ul>}
-    <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-[12.5px]">
-      <dt className="text-muted-foreground">Status</dt>
-      <dd>{state ? `${state} for the whole workspace` : 'Run by OpenNous for the whole workspace'}{state === 'Off' ? '. Ask OpenNous to switch it on.' : ''}</dd>
-      <dt className="text-muted-foreground">In this box</dt>
-      <dd>Listed in {boxName}, so its work reads as this box's. It runs the same in any box.</dd>
-      <dt className="text-muted-foreground">Lately</dt>
-      <dd className="tabular-nums">{builtinActivity(job, when)}</dd>
-    </dl>
-    <Button size="sm" variant="outline" onClick={() => { onClose(); openPriorities(); }}>Open its items in Priorities<ArrowUpRight /></Button>
-  </div>;
+  </>;
+  const look = 'block w-full rounded-xl border border-hairline bg-card px-4 py-3 text-left';
+  const tip = builtinTooltip(job, when);
+  return onOpen
+    ? <button type="button" title={tip} aria-label={`Open ${job.name}'s chat`} onClick={() => onOpen(job)} className={cn(look, 'transition-colors hover:bg-hover/50 outline-none focus-visible:ring-2 focus-visible:ring-ring/60')}>{body}</button>
+    : <section title={tip} aria-label={`Job: ${job.name}`} className={look}>{body}</section>;
 }

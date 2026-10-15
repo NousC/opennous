@@ -6,7 +6,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { builtinActivity, builtinState, builtinChip, addBuiltinBody } from "../src/lib/builtinJobs.ts";
+import { builtinActivity, builtinState, builtinChip, addBuiltinBody, builtinTooltip, prioritiesDestination, builtinRowMeta } from "../src/lib/builtinJobs.ts";
 import { buildItems, builtinOf } from "../src/components/priorities/inboxModel.ts";
 
 const ago = (iso: string) => `at ${iso.slice(11, 16)}`;
@@ -46,4 +46,22 @@ test("a built-in's item in Priorities gets its box's chip, only for a box the vi
 
 test("adding a built-in sends the change, not the page's copy of the list", () => {
   assert.deepEqual(addBuiltinBody("expansion", 4), { builtin_add: ["expansion"], revision: 4 });
+});
+
+// GET-902: a built-in looks like a job. What it did lately moves into its card's tooltip, and its box's
+// Delivery shows Priorities, where the built-ins deliver, instead of "No destinations yet".
+test("the card's activity is its tooltip", () => {
+  assert.equal(builtinTooltip({ drafts_30d: 43, last_draft_at: "2026-10-15T11:42:00Z" }, ago), "What it did: 43 in the last 30 days · last at 11:42. Its work waits in Priorities.");
+});
+
+test("a box with built-ins delivers to Priorities; one without has no such destination", () => {
+  assert.deepEqual(prioritiesDestination([{ key: "sales_follow_up" }]), { label: "Priorities", sub: "drafts you approve" });
+  assert.equal(prioritiesDestination([]), null);
+  assert.equal(prioritiesDestination(undefined), null);
+});
+
+test("a built-in's row reads like a routine's: Starts · On · Last run", () => {
+  assert.equal(builtinRowMeta({ cadence: "After each call", enabled: true, last_draft_at: "2026-10-15T11:42:00Z", brief: { starts: "After each meeting" } }, ago), "After each meeting · On · Last run at 11:42");
+  assert.equal(builtinRowMeta({ cadence: "Nightly", enabled: false, last_draft_at: null }, ago), "Nightly · Off · Not run yet");
+  assert.equal(builtinRowMeta({ cadence: "Hourly", enabled: null, last_draft_at: null }, ago), "Hourly · Not run yet");
 });

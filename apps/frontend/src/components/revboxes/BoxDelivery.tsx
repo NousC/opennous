@@ -16,7 +16,7 @@
 // automatically); both take To and an optional Cc.
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowUpRight, Lock, Mail, MessageSquare, Search, Trash2, Webhook, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, Flag, Lock, Mail, MessageSquare, Search, Trash2, Webhook, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ import { freshAccessToken } from '@/lib/freshToken';
 import { cn } from '@/lib/utils';
 import { deliveryLabel, recipients, revboxesRequest, type Delivery, type JobDelivery, type RevBox, type SlackStatus } from '@/lib/revboxes';
 import { SlackStatusLine } from '@/components/revboxes/SlackStatusLine';
+import { OPEN_PRIORITIES } from '@/components/shell/PrioritiesButton';
 
 const field = 'w-full rounded-lg border border-border bg-background px-3 py-2 text-[13px] text-foreground outline-none focus:border-foreground/35 focus:ring-2 focus:ring-foreground/5 disabled:opacity-60';
 const EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
@@ -52,8 +53,10 @@ const isWarning = (j: JobDelivery | DeliveryWarning): j is DeliveryWarning => (j
 /** A destination with nothing to deliver to yet (left out at run time, dropped on Cancel). */
 export const unfinished = (d: Delivery) => d.kind === 'email' ? !recipients(d.to ?? d.target).length
   : !d.target.trim() || (d.kind === 'gmail' && !recipients(d.to).length);
-export function DeliveryList({ delivery, jobDeliveries, editable, onOpen, onRemove, onOpenJob, onOpenJobStep, slack = null }: {
+export function DeliveryList({ delivery, jobDeliveries, editable, onOpen, onRemove, onOpenJob, onOpenJobStep, slack = null, priorities = null }: {
   delivery: Delivery[]; jobDeliveries: (JobDelivery | DeliveryWarning)[]; editable: boolean;
+  /** Where the box's built-in jobs deliver (GET-902, lib/builtinJobs prioritiesDestination): a destination like the others, never removable. */
+  priorities?: { label: string; sub: string } | null;
   /** Slack trouble (GET-901): the connection's own state on top, each Slack destination's under it. */
   slack?: { connection: SlackStatus | null; deliveries: Record<string, SlackStatus> } | null;
   onOpen: (id: string) => void; onRemove: (id: string) => void; onOpenJob?: (job: { id: string; name: string }) => void;
@@ -63,11 +66,15 @@ export function DeliveryList({ delivery, jobDeliveries, editable, onOpen, onRemo
   // A `warning` row (review 8) is not a target: a box Gmail destination a job cannot draft in, shown under it.
   const warnings = jobDeliveries.filter(isWarning);
   const targets = jobDeliveries.filter(j => !isWarning(j));
-  if (!delivery.length && !targets.length) return <p className="px-2 py-1 text-[12px] text-muted-foreground">No destinations yet.</p>;
+  if (!delivery.length && !targets.length && !priorities) return <p className="px-2 py-1 text-[12px] text-muted-foreground">No destinations yet.</p>;
   // A connection problem is said once, on top; a channel problem under its row.
   const rowStatus = (s: SlackStatus | null | undefined) => (s && s.kind !== 'disconnected' && s.kind !== 'broken' ? s : null);
   return <>
     {slack?.connection && <div className="mb-1 px-2 py-1"><SlackStatusLine status={slack.connection} /></div>}
+    {/* Priorities (GET-902): where the built-ins deliver, as drafts you approve. It opens Priorities; there is nothing to remove. */}
+    {priorities && <button type="button" title="The built-in jobs here deliver to Priorities: their drafts wait there for you to approve." onClick={() => window.dispatchEvent(new Event(OPEN_PRIORITIES))} className="mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-muted/50">
+      <Flag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /><span className="min-w-0 flex-1 truncate text-[12px]">{priorities.label} <span className="text-muted-foreground">· {priorities.sub}</span></span>
+    </button>}
     {delivery.map(d => <div key={d.id} className="mb-1 rounded-lg px-2 py-2 hover:bg-muted/50">
       <div className="flex items-center gap-2"><DeliveryMark kind={d.kind} /><button className="min-w-0 flex-1 truncate text-left text-[12px]" title={deliveryLabel(d)} onClick={() => onOpen(d.id)}>{deliveryLabel(d)}</button>{editable && <button aria-label="Remove destination" onClick={() => onRemove(d.id)}><Trash2 className="h-3 w-3 text-muted-foreground" /></button>}</div>
       {warnings.filter(w => w.destination_id === d.id).map(w => <p key={`${w.job_id}:${d.id}`} role="note" className="mt-1 flex gap-1.5 pl-[22px] text-[10.5px] leading-snug text-amber-700 dark:text-amber-400"><AlertTriangle className="mt-px h-3 w-3 shrink-0" />{w.label}</p>)}

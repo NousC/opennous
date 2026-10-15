@@ -239,6 +239,8 @@ export { hubspotFieldChanges, changesFromHistory, changeText } from './services/
 export * from "./db/revboxes.mjs";
 export * from './db/accountNames.mjs';
 export * from "./db/contextLibrary.mjs";
+// The built-in drafters' editable email voice (GET-902).
+export * from "./db/emailVoice.mjs";
 export * from "./services/revboxPlan.mjs";
 
 export * from './services/revboxCompiler.mjs';

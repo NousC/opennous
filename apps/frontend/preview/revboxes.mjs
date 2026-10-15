@@ -8,6 +8,8 @@ import { normalizeDatasetColumns, datasetSlug, datasetRowsCsv, datasetValueText 
 // The job card's brief (GET-884): the server's sentence, built from the proposal's steps and facts.
 import { jobBrief, builtinJobBrief } from '../../../packages/core/src/db/revboxJobBrief.mjs';
 import { latestSignalView } from '../../../packages/core/src/services/signalTone.mjs';
+// The built-ins' editable email voice (GET-902): the seed and how the file is recognised, as core has them.
+import { emailVoiceSeed, isEmailVoiceFile, emailDraftingBuiltins, EMAIL_VOICE_TITLE } from '../../../packages/core/src/db/emailVoice.mjs';
 
 const storePath = process.env.REVBOX_PREVIEW_STATE ?? '/private/tmp/opennous-revboxes-preview.json';
 const stamp = () => new Date().toISOString();
@@ -435,10 +437,18 @@ function previewRunAccounts(box) {
  * report run's account_ids stand for the dealers its HubSpot read and its table named).
  */
 export function previewWorkedAccounts(box) {
-  const worked = new Set(previewRunAccounts(box).run_accounts.map(a => a.id));
+  const worked = new Set([...previewRunAccounts(box).run_accounts.map(a => a.id), ...previewBuiltinAccounts(box)]);
   const selected = new Set(previewRevboxAccounts.filter(a => revboxMatchesAccount(box.scope, a)).map(a => a.id));
   const accounts = previewRevboxAccounts.filter(a => selected.has(a.id) || worked.has(a.id)).map(a => ({ ...a, selected: selected.has(a.id), worked_on: worked.has(a.id) }));
   return { accounts, breakdown: { selected: accounts.filter(a => a.selected).length, worked_on: accounts.filter(a => a.worked_on).length } };
+}
+/**
+ * As core revboxBuiltinEntityIds (GET-902): the accounts a box's built-ins worked on in 30 days (the
+ * follow-up's cards, the detectors' drafts). The preview's activity, as fixed slices of its accounts.
+ */
+const BUILTIN_ACCOUNTS = { sales_follow_up: [0, 9], stale_deal: [9, 13], deal_signals: [12, 15], deal_risk: [15, 17], expansion: [17, 17] };
+function previewBuiltinAccounts(box) {
+  return builtinJobsOf(box).flatMap(k => previewRevboxAccounts.slice(...(BUILTIN_ACCOUNTS[k] ?? [0, 0])).map(a => a.id));
 }
 /** The box behind /accounts?revbox=<id> in the preview, or null. */
 export const previewRevboxById = (id) => state.boxes.find(b => b.id === id) ?? null;
@@ -447,7 +457,7 @@ const BUILTIN_ACTIVITY = { sales_follow_up: [12, 3], stale_deal: [7, 30], deal_s
 function previewBuiltins(box) {
   const keys = builtinJobsOf(box);
   return { builtin_jobs: REVBOX_BUILTIN_JOBS.filter(j => keys.includes(j.key)).map(({ drafts: _, ...j }) => ({ ...j, drafts_30d: BUILTIN_ACTIVITY[j.key][0], last_draft_at: BUILTIN_ACTIVITY[j.key][1] == null ? null : AGO(BUILTIN_ACTIVITY[j.key][1]),
-      brief: builtinJobBrief(j.key, PREVIEW_BUILTIN_FACTS), enabled: j.key !== 'expansion' })),
+      brief: builtinJobBrief(j.key, PREVIEW_BUILTIN_FACTS), enabled: previewBuiltinOn(j.key) })),
     builtin_taken: state.boxes.filter(b => b.id !== box.id).flatMap(b => builtinJobsOf(b).map(key => ({ key, box_id: b.id, box_name: b.name }))) };
 }
 /**
@@ -463,6 +473,21 @@ function ensurePreviewBuiltinBoxes() {
     changed = true;
   }
   return changed;
+}
+/** A built-in's On/Off in the preview: Expansion signals starts off; the follow-up's chat can switch it (GET-902). */
+const previewBuiltinOn = (key) => (key === 'sales_follow_up' && state.follow_up_off ? false : key !== 'expansion');
+/**
+ * As the API's box read (GET-902, withBoxEmailVoice): a box holding an email-drafting built-in gets its
+ * "Email voice" file once, seeded with the voice its drafter used until now, tagged to it. -> { id, created } | null.
+ */
+function ensurePreviewEmailVoice(box) {
+  const keys = emailDraftingBuiltins(box);
+  if (!keys.length) return null;
+  const have = boxFiles(box.id).find(isEmailVoiceFile);
+  if (have) return { id: have.id, created: false };
+  const f = { id: randomUUID(), title: EMAIL_VOICE_TITLE, kind: 'instructions', body: emailVoiceSeed(keys), document_id: null, visibility: 'boxes', created_by: box.owner_id, created_at: stamp(), updated_at: stamp(), icp_marked_at: null };
+  state.files.push(f); state.links.push({ revbox_id: box.id, file_id: f.id, created_at: stamp() });
+  return { id: f.id, created: true };
 }
 // The preview's connected recorders and CRM write-back, as the API's builtinFacts reads them.
 const PREVIEW_BUILTIN_FACTS = { recorders: ['granola', 'fireflies'], crm: 'hubspot' };
@@ -589,10 +614,13 @@ export async function handleRevboxPreview(req, res, url, json) {
     const context = () => boxFiles(box.id);
     let output;
     if (parts.length === 1 && req.method === 'GET') {
+      const voice = ensurePreviewEmailVoice(box);
+      if (voice?.created) await persist();
+      const emailVoiceId = voice?.id ?? null;
       const routines = state.routines.filter(r => r.revbox_id === box.id);
       const sl = previewSlack(box, routines);
       output = { box: { ...box, builtin_jobs: builtinJobsOf(box), access }, jobs: [...sl.routines, ...jobs()], context: context(), job_deliveries: sl.deliveries(builderModule?.revboxJobDeliveries(routines, { mailboxes: PREVIEW_MAILBOXES }) ?? []),
-        slack: sl.slack, people: previewPeople(box), ...previewRunAccounts(box), ...previewBuiltins(box) };
+        slack: sl.slack, people: previewPeople(box), ...previewRunAccounts(box), ...previewBuiltins(box), email_voice_id: emailVoiceId };
     }
     else if (parts.length === 1 && req.method === 'PATCH') {
       const error = validateRevboxPatch(payload); if (error) fail(400, error);
@@ -1035,6 +1063,15 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     }
     await persist(); json(res, { routine, enabled: !reason, ...(reason ? { reason } : {}), ...(tables.length ? { datasets: tables } : {}), ...chain }); return;
   }
+  // A built-in job's chat (GET-902): the person's open chat on it in this box, reused; else a new one
+  // whose first item is its card. Never a routine: approving a proposal here creates a new job.
+  if (!sid && payload.builtin && payload.message === undefined && payload.answers === undefined) {
+    if (!builtinJobsOf(box).includes(payload.builtin)) { json(res, { error: 'This built-in job is not in this RevBox.' }, 404); return; }
+    const open = Object.values(state.builder_sessions).find(x => x.box === box.id && x.builtin === payload.builtin && x.user === uid && x.state === 'open');
+    const chat = open ?? { id: randomUUID(), box: box.id, job_id: null, builtin: payload.builtin, user: uid, state: 'open', stage: 0, log: [{ kind: 'builtin', key: payload.builtin }], updated_at: stamp() };
+    if (!open) { sessions.set(chat.id, chat); await persist(); }
+    json(res, { session_id: chat.id, builtin: chat.builtin, history: historyOf(chat) }, 201); return;
+  }
   // Open a job's chat: the person's open session on it, reused; else a new one seeded from its last approved chat.
   if (!sid && payload.job_id && payload.message === undefined && payload.answers === undefined) {
     const job = state.routines.find(r => r.revbox_id === box.id && r.id === payload.job_id);
@@ -1057,7 +1094,7 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     sessions.set(fresh.id, fresh); await persist();
     json(res, { session_id: fresh.id, job_id: job.id, history: historyOf(fresh), proposal: withBrief(fresh.proposal) }, 201); return;
   }
-  const s = sid ? sessions.get(sid) : { id: randomUUID(), box: box.id, job_id: payload.job_id ?? null, user: uid, state: 'open', stage: 0, log: [] };
+  const s = sid ? sessions.get(sid) : { id: randomUUID(), box: box.id, job_id: payload.job_id ?? null, user: uid, state: 'open', stage: 0, log: payload.builtin ? [{ kind: 'builtin', key: payload.builtin }] : [], ...(payload.builtin ? { builtin: payload.builtin } : {}) };
   if (!s || s.box !== box.id) { json(res, { error: 'Builder session not found.' }, 404); return; }
   if (s.state === 'approved') { json(res, { error: 'This builder session is closed. Start a new one.', code: 'session_closed' }, 409); return; }
   if (payload.retry === true && !s.failed) { json(res, { error: 'There is nothing to try again: the last message was answered.', code: 'nothing_to_retry' }, 409); return; }
@@ -1096,7 +1133,47 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
   // signal (Granola when named), anything else a schedule. Emitted as the real builder does.
   // hints.signals (GET-873; the preview plays the first), or an older composer's hints.signal.
   const hinted = payload.hints?.signals?.length ? payload.hints.signals[0] : payload.hints && 'signal' in payload.hints ? payload.hints.signal : null;
-  const words = message ?? '';
+  let words = message ?? '';
+  // A built-in's chat (GET-902), scripted: it explains the built-in, rewrites its email voice, switches
+  // the follow-up on or off, and offers a custom job for what it cannot do (then builds it as usual).
+  if (s.builtin && !s.building) {
+    const def = REVBOX_BUILTIN_JOBS.find(j => j.key === s.builtin);
+    const brief = builtinJobBrief(s.builtin, PREVIEW_BUILTIN_FACTS);
+    const builtinTool = async (status, summary) => tool(status, 'builtin_job', summary);
+    if (s.offered && /^\s*(yes|yep|sure|ok(ay)?|please|do it|go ahead)\b/i.test(words)) {
+      // They want the custom job: built the normal way, from what they asked for.
+      s.building = true; s.offered = false; words = s.offerRequest ?? words;
+    } else if (/concise|shorter|formal|relaxed|casual|friendl|warm|tone|voice|wordy|longer/i.test(words)) {
+      const shown = boxFiles(box.id).find(isEmailVoiceFile);
+      const file = shown ? state.files.find(f => f.id === shown.id) : null;
+      await builtinTool('Reading this built-in job…', `${def.name}: ${previewBuiltinOn(s.builtin) ? 'on' : 'off'}`);
+      if (!file) { await prose(`${def.name} drafts no email here, so it has no email voice to change.`); }
+      else {
+        const asks = [/concise|shorter|wordy/i.test(words) && 'Keep it short: at most 80 words, two short paragraphs.', /formal/i.test(words) && 'Formal and polite; no slang, no exclamation marks.', /relaxed|casual|friendl|warm/i.test(words) && 'Relaxed and friendly, like a note to a colleague.', /longer/i.test(words) && 'A little more detail is fine: up to 150 words.'].filter(Boolean);
+        file.body = `${file.body.trim()}\n\nChanged ${new Date().toISOString().slice(0, 10)}:\n${(asks.length ? asks : [`As asked: ${words.trim()}`]).map(x => `- ${x}`).join('\n')}`;
+        file.updated_at = stamp();
+        await builtinTool('Updating the email voice…', 'Email voice updated');
+        await send({ type: 'builtin', key: s.builtin, email_voice: true }, 60);
+        await prose(`Done. New ${def.name.toLowerCase()} drafts follow the updated Email voice (${asks.length ? asks.join(' ').toLowerCase() : 'as you asked'}). Drafts already in Priorities stay as they are; the voice is in this box's Context if you want to read or edit it.`);
+      }
+    } else if (/\b(switch|turn) (it )?(off|on)\b|\bpause\b|\bstop\b|\bresume\b/i.test(words)) {
+      const on = /\b(on|resume)\b/i.test(words) && !/\boff\b/i.test(words);
+      if (s.builtin !== 'sales_follow_up') await prose(`OpenNous switches ${def.name} on or off for the whole workspace, so I can't do it here. Ask OpenNous and it is done the same day.`);
+      else {
+        await builtinTool(`Switching it ${on ? 'on' : 'off'}…`, `Switched ${on ? 'on' : 'off'}`);
+        state.follow_up_off = !on;
+        await send({ type: 'builtin', key: s.builtin, enabled: on }, 60);
+        await prose(on ? `${def.name} is on again: after the next meeting, its card waits in Priorities.` : `${def.name} is off for the whole workspace. What it already drafted stays in Priorities.`);
+      }
+    } else if (/slack|post|report|hubspot|notion|send it|webhook|summar/i.test(words)) {
+      s.offered = true; s.offerRequest = words;
+      await prose(`${def.name} can't do that: it only drafts ${s.builtin === 'sales_follow_up' ? 'the follow-up, its tasks and CRM updates' : 'a follow-up email'} for you to approve in Priorities. I can set up a custom job in this box that does it, alongside ${def.name}. Want me to?`);
+    } else {
+      await builtinTool('Reading this built-in job…', `${def.name}: ${previewBuiltinOn(s.builtin) ? 'on' : 'off'}`);
+      await prose(`${brief.text} ${brief.details.join(' ')} You can ask me to change its email voice${s.builtin === 'sales_follow_up' ? ', switch it off or on' : ''}, or to set up a custom job in this box for something it does not do.`);
+    }
+    if (!s.building) { s.updated_at = stamp(); await persist(); await send({ type: 'done' }); res.end(); return; }
+  }
   const meant = /\bmeetings?\b|\bcalls?\b/i.test(words) ? (/fireflies/i.test(words) ? 'meeting.done:fireflies' : /fathom/i.test(words) ? 'meeting.done:fathom' : 'meeting.done:granola') : null;
   const announceTrigger = async (key) => {
     s.signal = key;

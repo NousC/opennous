@@ -14,9 +14,9 @@ import { randomUUID } from 'node:crypto';
 import {
   DETECTORS, quietOpenDeals, staleDealFiring, signalFirings, gateFiring, planDrafts, draftedToday,
   rankRecipients, speakerMatches, originMarker, ledgerKey, runDetectorDraftsForWorkspace, recKeyOf,
-  runDetectorDrafts, allowedWorkspaces, dealSignalFirings, DEAL_SIGNALS, DETECTOR_ORDER,
+  runDetectorDrafts, allowedWorkspaces, dealSignalFirings, DEAL_SIGNALS, DETECTOR_ORDER, draftSystem, voiceFor,
 } from '../src/lib/detectorDrafts.mjs';
-import { parseEmailDraft } from '../src/lib/emailDraft.mjs';
+import { parseEmailDraft, EMAIL_DRAFT_SYSTEM } from '../src/lib/emailDraft.mjs';
 import { originOf } from '../src/lib/actionOrigin.mjs';
 
 const DAY = 86_400_000;
@@ -698,4 +698,38 @@ test('the hourly deal-signal pass does not run the other detectors', async () =>
   assert.equal(r.drafted, 0);
   assert.equal(candidates, 0);
   assert.equal(s.db.pending_actions.length, 0);
+});
+
+// GET-902: the drafts follow the team's "Email voice", the context file of the box that holds each
+// detector's built-in, read once per pass; without one they read exactly as before.
+test('the drafts are written in the voice of the box that holds the detector', async () => {
+  const s = world();
+  let reads = 0;
+  const voices = new Map([['stale_deal', { text: 'Formal, three sentences at most.' }], ['deal_risk', { text: 'Relaxed and short.' }]]);
+  const { deps, calls } = fakeDeps({ emailVoices: async () => { reads += 1; return voices; } });
+  const systems = [];
+  const create = deps.createMessage;
+  deps.createMessage = async (req) => { systems.push(req.system); return create(req); };
+  const r = await run(s, deps);
+  assert.equal(r.drafted, 3);
+  assert.equal(reads, 1, 'read once per pass');
+  assert.equal(calls.model, 3);
+  assert.equal(systems.filter(x => x.includes('Formal, three sentences at most.')).length, 1);
+  assert.equal(systems.filter(x => x.includes('Relaxed and short.')).length, 1);
+  // Expansion's box has no voice file: its draft reads as before (house rules and the sender only).
+  assert.equal(systems.filter(x => x === draftSystem({ memberBlock: 'You are writing as Theo.' })).length, 1);
+  assert.ok(systems.every(x => x.startsWith(EMAIL_DRAFT_SYSTEM)));
+});
+
+test('a voice that cannot be read leaves the drafts as they were', async () => {
+  const s = world();
+  const { deps } = fakeDeps({ emailVoices: async () => { throw new Error('down'); } });
+  const systems = [];
+  const create = deps.createMessage;
+  deps.createMessage = async (req) => { systems.push(req.system); return create(req); };
+  const r = await run(s, deps);
+  assert.equal(r.drafted, 3);
+  assert.ok(systems.every(x => x === draftSystem({ memberBlock: 'You are writing as Theo.' })));
+  assert.equal(voiceFor({ automation: 'deal_signal' }, new Map([['deal_signals', { text: 'x' }]])), 'x');
+  assert.equal(voiceFor({ automation: 'expansion_signal' }, null), null);
 });

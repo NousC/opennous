@@ -19,8 +19,9 @@
 //            champion, else whoever was in touch most recently; never a teammate, always an active
 //            address (pickRecipientEmail).
 //   draft    one email with Studio's brief (lib/emailDraft.mjs), the sender's own directives
-//            (the same member block Studio uses) and the automation's instructions, on the
-//            writing tier, metered as 'automation-email-draft'.
+//            (the same member block Studio uses), the team's email voice (GET-902: the "Email
+//            voice" context file of the box that holds the built-in, read once per pass) and the
+//            automation's instructions, on the writing tier, metered as 'automation-email-draft'.
 //   queue    a pending_actions row (status 'pending'). Nothing is sent: POST
 //            /api/actions/:id/approve stays the only way out.
 //
@@ -39,7 +40,7 @@
 
 import { getSupabaseClient, getAccountRecord, mirrorDraftAsDecision, loadDealCandidates, getRelationshipOwners,
   effectiveOwnerUserId, getInternalEntityIds, bindingConstraints, filterDerivedForViewer, filterByCitedClaimsForViewer,
-  TEAM_VIEWER } from '@nous/core';
+  TEAM_VIEWER, builtinEmailVoices, emailVoiceBlock } from '@nous/core';
 import { pickRecipientEmail } from './recipientEmail.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft, DEFAULT_SUBJECT } from './emailDraft.mjs';
 
@@ -479,6 +480,20 @@ export function originMarker(firing, { contactId = null } = {}) {
   };
 }
 
+/**
+ * The team's email voice for a firing (GET-902): the "Email voice" file of the box that holds its
+ * built-in (the detector's templateId is the built-in's key), from the pass's `voices` map. Pure.
+ */
+export function voiceFor(firing, voices) {
+  const key = DETECTORS[firing?.automation]?.templateId;
+  return (key && voices?.get?.(key)?.text) || null;
+}
+
+/** A draft's system prompt: the shared house rules, the sender's directives, then the team's voice (GET-902). Pure. */
+export function draftSystem({ memberBlock = '', voice = null } = {}) {
+  return [EMAIL_DRAFT_SYSTEM, memberBlock, emailVoiceBlock(voice)].filter(Boolean).join('\n\n');
+}
+
 /** The model's user turn for one draft. Pure. */
 export function draftRequest(firing, { recipient, context }) {
   const d = DETECTORS[firing.automation];
@@ -809,7 +824,7 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
   ctx.onSpend?.();
   const resp = await deps.createMessage({
     feature: DRAFT_FEATURE, tier: 'writing', max_tokens: 1000,
-    system: memberBlock ? `${EMAIL_DRAFT_SYSTEM}\n\n${memberBlock}` : EMAIL_DRAFT_SYSTEM,
+    system: draftSystem({ memberBlock, voice: voiceFor(firing, ctx.voices) }),
     messages: [{ role: 'user', content: draftRequest(firing, { recipient, context }) }],
   });
   deps.trackLlmUsage(supabase, { workspaceId, userId: sender, feature: DRAFT_FEATURE, model: resp.model, usage: resp.usage });
@@ -850,6 +865,7 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
 export const CORE_DEPS = {
   getAccountRecord, mirrorDraftAsDecision, loadDealCandidates, getRelationshipOwners,
   getInternalEntityIds, bindingConstraints, pickRecipientEmail, filterDerivedForViewer, filterByCitedClaimsForViewer,
+  emailVoices: builtinEmailVoices,
 };
 async function apiDeps() {
   const [{ createMessage, messageText }, { trackLlmUsage }, { requireAiCredits }, { loadMemberProfile, buildMemberBlock }] = await Promise.all([
@@ -902,6 +918,11 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
   }
   if (me) throw new Error(`members read failed: ${me.message}`);
   if (!members?.length) { summary.skipped.no_members = draft.length; return summary; }
+  // The team's email voice per built-in (GET-902), read once for the pass. Unreadable: none, and the
+  // drafts read as they always did.
+  let voices = new Map();
+  try { voices = (await deps.emailVoices?.(supabase, workspaceId)) ?? new Map(); }
+  catch (e) { console.warn('[detectorDrafts] email voice unreadable:', e?.message); }
 
   // The day's cap is charged where a model call is made. A firing that ends before one (nobody to
   // write to, a draft already waiting, the sender opted out) costs nothing and takes no slot.
@@ -914,7 +935,7 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
     const prev = { ...(state?.evidence ?? {}), attempt_fingerprint: firing.fingerprint };
     let r;
     try {
-      r = await draftOne(supabase, workspaceId, firing, { deps, members, internalIds, now, recId, onSpend: () => { spent += 1; } });
+      r = await draftOne(supabase, workspaceId, firing, { deps, members, internalIds, now, recId, voices, onSpend: () => { spent += 1; } });
     } catch (e) {
       console.error('[detectorDrafts] draft failed', workspaceId, firing.automation, firing.targetId, e?.message);
       r = { outcome: 'failed', reason: String(e?.message ?? e).slice(0, 200) };

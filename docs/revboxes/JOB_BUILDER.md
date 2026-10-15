@@ -569,7 +569,8 @@ Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first      
     connected recorders ("When a Fireflies meeting with a customer ends, I draft the follow-up email
     and propose the tasks and the CRM updates from what was said; you approve each one in
     Priorities."). Clicking a card opens a read-only panel (no builder chat) with its details and a
-    link to its items. There is no remove control on the card.
+    link to its items. There is no remove control on the card. (Superseded by GET-902 below: the
+    card is a job's card and opens the job chat.)
   - Default boxes. A Workspace-plan workspace has every built-in in a box: "Meetings Follow-up"
     (`sales_follow_up`), "Pipeline Health" (`stale_deal`, `deal_risk`, `deal_signals`), "Customer
     Growth" (`expansion`); core `DEFAULT_BUILTIN_BOXES`, `planDefaultBuiltinBoxes` (pure) and
@@ -758,6 +759,62 @@ Preview (`apps/frontend/preview/revboxes.mjs`, script `winloss`): "analyse every
 then monthly and quarterly reports" reads the tables, starts on Deal won + Deal lost, proposes the analysis
 job (with the table when the box has none, reusing it in the seeded "Closed won/lost analysis" box), and
 each approval answers `next_session_id`, whose session proposes the monthly report, then the quarterly one.
+
+## Built-in jobs behave as jobs (GET-902)
+
+For every box that holds built-ins ("Meetings Follow-up", "Pipeline Health", "Customer Growth", or any
+box a built-in was added to), a built-in looks and behaves exactly like a builder job.
+
+- **The row.** In the Jobs list a built-in is the same compact row as a routine job: the dot, the
+  name, "Starts · On · Last run …" (its last draft; `lib/builtinJobs` `builtinRowMeta`). No Test
+  (OpenNous runs it) and no switch on the row (its On/Off is the workspace's; the chat changes it
+  where allowed). No "Built in" tag; what it did lately ("43 in the last 30 days · last 18m ago") is
+  the row's tooltip (`builtinTooltip`). The read-only panel is gone.
+- **The card** (`RevBoxJobs.tsx` `BuiltinCard`, WorkflowCard's approved form: the name with ● On/Off,
+  the server's sentence, core `builtinJobBrief`, and ONE meta line `Starts · tool logos → Priorities`)
+  shows inside the job chat, as the agent's first message.
+- **The chat.** Clicking the row opens the job chat (`JobBuilder` with `builtin`), as a job's row
+  does. `POST /api/revboxes/:id/builder { builtin: key }` (no message) answers 201
+  `{ session_id, builtin, history }`: the person's open chat on that built-in in this box (reused), or
+  a new session seeded with its card (core `openBuilderSessionForBuiltin`, `builtinSeedTranscript`:
+  the composer's context naming it with `[builtin:<key>]`, then the agent's first reply, the brief).
+  `history` starts with `{ kind: 'builtin', key }`, drawn as the card from the box's own copy.
+  `{ builtin, message }` opens it and runs the turn at once; 404 when the box does not list it.
+- **Never a routine.** The session has `job_id` null, so approving a proposal in it can only create
+  a NEW job in the box. The loop recognises the chat from its seed (core `builtinOfTranscript`) and
+  loads the built-in as it is now (`helpers.builtinInfo`: its brief with the workspace's facts, its
+  On/Off, who may switch it, the box's Email voice file, ensured). The system prompt gets a section
+  (`prompt.mjs` `builtinSection`): it is not a workflow, never call propose_job to change it; what can
+  change and how; for anything it cannot do (post to Slack, another trigger, a report), say so in one
+  sentence and offer a custom job in this box, built the normal way if they agree. The composer's
+  "no trigger picked" note is left out of these chats unless something was attached.
+- **builtin_job** (only in a built-in's chat, `tools.mjs` `BUILTIN_TOOL`, `runBuiltinTool`):
+  - `status`: what it does, how, when it starts, On/Off, whether it can be switched here, its email voice.
+  - `switch { enabled }`: only the after-call follow-up (`follow_up_settings.enabled`, a workspace
+    switch), only for a workspace owner or admin. The detectors are switched by OpenNous
+    (`DETECTOR_DRAFTS_WORKSPACES`): the tool says so and changes nothing.
+  - `set_email_voice { text }`: the WHOLE new voice, saved to the box's "Email voice" file with the
+    person's own rights (core `updateContextFile`). See CONTEXT_LIBRARY.md "The Email voice file".
+  A change emits `{ type: 'builtin', key, enabled? | email_voice? }`; the page refreshes the box.
+- **Accounts.** The box's Accounts card, the Accounts page filter and the graph count the accounts
+  its built-ins worked on in the window (core `revboxBuiltinEntityIds` inside `revboxWorkedAccounts`):
+  `follow_ups.account_entity_id` created in the window, and the detectors' ledger rows
+  (`ri_recommendations`, category `automation`, their `rec_key`, updated in the window: an account, or
+  a deal as its company; only uuid targets). Ids only, from at most two indexed reads, after the
+  box's own access check; the viewer's visibility filter is applied as for runs. Nothing to cache:
+  no documents are read and no names resolved.
+- **Delivery.** A box with built-ins shows "Priorities · drafts you approve" in its Delivery card
+  (`lib/builtinJobs` `prioritiesDestination`, `DeliveryList` `priorities`), like its other
+  destinations, opening Priorities; it has no remove control. "No destinations yet" only shows for a
+  box with no destination, job target or built-in.
+- Tests: core `builtinJobsAsJobs.test.mjs`; api `src/cloud/tests/jobBuilderBuiltin.test.mjs` (the
+  scripted model), `tests/revboxBuiltinVoice.test.mjs`, `tests/detectorDrafts.test.mjs`; worker
+  `tests/followUpEmailVoice.test.mjs`; frontend `tests/builtinJobs.test.ts`.
+- Preview (`apps/frontend/preview/revboxes.mjs`): the built-in boxes count their built-ins' accounts,
+  get their Email voice file on read, and a built-in's chat is scripted: "more concise / formal /
+  relaxed" rewrites the voice file, "switch it off / on" switches the follow-up (a detector says
+  OpenNous switches it), "post it to Slack" offers a custom job and "yes" builds it the normal way,
+  anything else explains the built-in.
 
 ## Workspace plan rollout (GET-864)
 

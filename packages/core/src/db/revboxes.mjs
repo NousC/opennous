@@ -585,7 +585,9 @@ async function accountListRows(sb, ws, ids) {
  *     a step resolved from names, its output documents' links and named accounts; worked out once
  *     per finished run and kept on it, GET-896),
  *   - the accounts on its tables' rows added in that window (revbox_dataset_rows.entity_id; a deal
- *     or person counts for its company).
+ *     or person counts for its company),
+ *   - the accounts its built-in jobs worked on in that window (GET-902, revboxBuiltinEntityIds: the
+ *     after-call follow-up's cards and the detectors' drafts; a deal counts for its company).
  * Only accounts the viewer may see (`allowed`, null = unrestricted; a promise of it is awaited, so a
  * caller can start that read alongside this one); the box's own view check.
  * The reads that need only the box id start with the access check rather than after it (GET-896);
@@ -601,14 +603,16 @@ export async function revboxWorkedAccounts(sb, ws, uid, boxId, allowed = null, {
   const noNames = { matched: 0, unmatched: 0, ambiguous: 0 };
   const workedP = selectedOnly ? Promise.resolve(null) : (async () => {
     const since = new Date(at - days * 86_400_000).toISOString();
-    const [ran, tableIds] = await Promise.all([
+    const [ran, tableIds, builtinIds] = await Promise.all([
       rows(sb.from('agent_routines').select('id').eq('workspace_id', ws).eq('revbox_id', boxId))
         .then(routines => revboxRunEntities(sb, ws, { revboxId: boxId, routineIds: routines.map(r => r.id), days, now: at, ready: access })),
       revboxDatasetEntityIds(sb, ws, boxId, { since }),
+      // The built-ins the box lists (GET-902): known once the box is read, which the access check does.
+      access.then(box => revboxBuiltinEntityIds(sb, ws, builtinJobsOf(box), { since }), () => []),
     ]);
-    const resolved = await accountsOfEntities(sb, ws, [...ran.runs.flatMap(r => [...r.entities]), ...tableIds]);
+    const resolved = await accountsOfEntities(sb, ws, [...ran.runs.flatMap(r => [...r.entities]), ...tableIds, ...builtinIds]);
     await ran.kept;
-    return { ran, tableIds, ...resolved };
+    return { ran, tableIds, builtinIds, ...resolved };
   })();
   const [box, visible, scoped, w] = await Promise.all([access, visibleP, scopedP, workedP]);
   const ok = (id) => !visible || visible.has(id);
@@ -619,6 +623,8 @@ export async function revboxWorkedAccounts(sb, ws, uid, boxId, allowed = null, {
     for (const r of w.ran.runs) for (const e of r.entities) { const c = w.companyOf.get(e); if (c && w.known.has(c) && ok(c)) worked.add(c); }
     // A table row's account (its company, as the entity row says).
     for (const e of w.tableIds) { const c = w.companyOf.get(e); if (c && ok(c)) worked.add(c); }
+    // What its built-ins worked on (GET-902): a follow-up card's or a draft's account, a deal's company.
+    for (const e of w.builtinIds) { const c = w.companyOf.get(e); if (c && w.known.has(c) && ok(c)) worked.add(c); }
   }
   const byId = new Map(scoped.map(a => [a.id, a]));
   const unseen = [...worked].filter(id => !byId.has(id));
@@ -628,6 +634,35 @@ export async function revboxWorkedAccounts(sb, ws, uid, boxId, allowed = null, {
     .map(a => ({ id: a.id, name: a.name ?? 'Account', domain: a.domain ?? null, icp_score: a.icp_score ?? null, last_activity_at: a.last_activity_at ?? null, people_count: a.people_count ?? 0, selected: selected.has(a.id), worked_on: worked.has(a.id) }));
   return { box, accounts, breakdown: { selected: accounts.filter(a => a.selected).length, worked_on: accounts.filter(a => a.worked_on).length }, days, names: w ? w.ran.names : noNames };
 }
+/**
+ * The entities a box's built-in jobs worked on since `since` (GET-902), each counting as its company:
+ * the after-call follow-up's cards (follow_ups.account_entity_id, created in the window) and the
+ * detectors' drafts (their ri_recommendations ledger rows, rec_key automation.<detector>, updated in
+ * the window, the same rows the cards' activity line counts: an account, or a deal's company). Ids
+ * only, from one or two indexed reads; no visibility filter here (the caller applies it). Before the
+ * built-in columns or tables exist: none.
+ */
+// A ledger target is text; only an entity id (a uuid) is looked up as one.
+const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export async function revboxBuiltinEntityIds(sb, ws, keys, { since }) {
+  const defs = REVBOX_BUILTIN_JOBS.filter(j => (keys ?? []).includes(j.key));
+  if (!defs.length) return [];
+  const ids = new Set();
+  const gone = (e) => ['42P01', 'PGRST205', '42703', 'PGRST204'].includes(e?.code);
+  const reads = [];
+  if (defs.some(d => d.drafts.table === 'follow_ups')) {
+    reads.push(rows(sb.from('follow_ups').select('account_entity_id').eq('workspace_id', ws).gte('created_at', since).limit(5000))
+      .then(list => { for (const r of list) if (r.account_entity_id) ids.add(r.account_entity_id); }, e => { if (!gone(e)) throw e; }));
+  }
+  const recKeys = defs.map(d => d.drafts.rec_key).filter(Boolean);
+  if (recKeys.length) {
+    reads.push(rows(sb.from('ri_recommendations').select('target_type, target_id').eq('workspace_id', ws).eq('category', 'automation').in('rec_key', recKeys).gte('updated_at', since).limit(5000))
+      .then(list => { for (const r of list) if (UUID_ID.test(String(r.target_id ?? '')) && ['account', 'deal', 'person', 'contact'].includes(r.target_type)) ids.add(String(r.target_id)); }, e => { if (!gone(e)) throw e; }));
+  }
+  await Promise.all(reads);
+  return [...ids];
+}
+
 /** The entities on a box's table rows added since `since` (each counts as its company). */
 async function revboxDatasetEntityIds(sb, ws, boxId, { since }) {
   let sets;
