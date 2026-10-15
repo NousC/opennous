@@ -12,7 +12,7 @@ import {
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
   compileRevboxPlan, recordRevboxUsage, deliveryRecipients, createMessage, revboxConnections, revboxMembership,
   listRevboxDatasets, createRevboxDataset, updateRevboxDataset, listDatasetRows, exportDatasetCsv,
-  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxScopedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
+  signalsLabel, routineTriggers, listRevboxRoutines, loadRevboxRoutine, revboxRunAccounts, revboxWorkedAccounts, revboxBuiltinTaken, revboxBuiltinActivity, REVBOX_BUILTIN_JOBS, decideAutomationRun, BUILDER_TRIGGERS, startTestRun, reasonWords, registerStepHandler, revboxWorkspaceRole, listRevboxJobDeliveries, nextRunAt,
 } from '@nous/core';
 import { listMailboxes, sendableMailboxes } from '../../lib/automationMailboxes.mjs';
 import { revboxCreditGate, deliverRevboxRun } from '../../lib/revboxRuntime.mjs';
@@ -243,8 +243,8 @@ revboxesRouter.get('/:id', route(async (req, res, sb) => {
   // Where the box's jobs deliver (GET-868), derived here from their real steps, with the box's own
   // access (a private channel or recipient in a step is shown to the box's members only).
   const { routines, job_deliveries } = await listRevboxJobDeliveries(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId, mailboxes: () => listMailboxes(sb, req.workspaceId) });
-  // The built-in jobs it lists with what they drafted (GET-872). The rail's account count is the
-  // box's scope (GET /:id/accounts, GET-873), no longer the accounts in recent runs.
+  // The built-in jobs it lists with what they drafted (GET-872). The rail's account count is
+  // GET /:id/accounts: the scope plus the accounts the box's jobs worked on (GET-891).
   const visible = await allowed(sb, req);
   const [taken, activity] = await Promise.all([
     revboxBuiltinTaken(sb, req.workspaceId, req.internalUserId, req.params.id),
@@ -281,21 +281,35 @@ revboxesRouter.post('/:id/context', route(async (req, res, sb) => {
 revboxesRouter.delete('/:id/context/:contextId', route(async (req, res, sb) => {
   await removeRevboxContext(sb, req.workspaceId, req.internalUserId, req.params.id, req.params.contextId); res.json({ ok: true });
 }));
+/**
+ * The accounts a box works on, as its Accounts card counts them and the Accounts page and Account
+ * graph open on (GET-891): its selected scope plus what its jobs worked on in 30 days, viewer-visible
+ * only. `selectedOnly`: the scope alone. Both card links read this one set.
+ */
+export const revboxCardAccounts = (sb, ws, uid, boxId, visible, { selectedOnly = false } = {}) => revboxWorkedAccounts(sb, ws, uid, boxId, visible, { selectedOnly });
+/** The Account graph for exactly those accounts (GET-891): their people and deals. */
+export async function revboxCardGraph(sb, ws, uid, boxId, visible, opts = {}) {
+  const { accounts } = await revboxCardAccounts(sb, ws, uid, boxId, visible, opts);
+  return revboxScopedGraph(sb, ws, { mode: 'selected', account_ids: accounts.map(a => a.id), min_icp: 0 }, accounts);
+}
+const selectedOnly = (req) => req.query.scope === 'selected';
+// The rail's Accounts card (GET-891): "Accounts · N", N = selected ∪ worked on. ?scope=selected: the scope alone.
 revboxesRouter.get('/:id/accounts', route(async (req, res, sb) => {
-  const { box, accounts } = await revboxScopedAccounts(sb, req.workspaceId, req.internalUserId, req.params.id, await allowed(sb, req));
-  res.json({ accounts, count: accounts.length, box: { id: box.id, name: box.name, scope: box.scope } });
+  const { box, accounts, breakdown, days, names } = await revboxCardAccounts(sb, req.workspaceId, req.internalUserId, req.params.id, await allowed(sb, req), { selectedOnly: selectedOnly(req) });
+  res.json({ accounts, count: accounts.length, accounts_count: accounts.length, accounts_breakdown: breakdown, days, names, box: { id: box.id, name: box.name, scope: box.scope } });
 }));
 revboxesRouter.get('/:id/graph', route(async (req, res, sb) => {
-  const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
   const visible = await allowed(sb, req);
-  const accounts = await revboxAccountCatalog(sb, req.workspaceId, visible);
-  // ?source=runs: the accounts the box's jobs touched in their last 30 days of runs (GET-872).
+  // ?source=runs: only the accounts the box's jobs touched in their last 30 days of runs (GET-872).
   if (req.query.source === 'runs') {
+    const box = await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id);
+    const accounts = await revboxAccountCatalog(sb, req.workspaceId, visible);
     const routines = await listRevboxRoutines(sb, { workspaceId: req.workspaceId, revboxId: req.params.id, userId: req.internalUserId });
     const ran = await revboxRunAccounts(sb, req.workspaceId, { revboxId: box.id, routineIds: routines.map(r => r.id), allowed: visible });
     return res.json(await revboxScopedGraph(sb, req.workspaceId, { mode: 'selected', account_ids: ran.accounts.map(a => a.id), min_icp: 0 }, accounts));
   }
-  res.json(await revboxScopedGraph(sb, req.workspaceId, box.scope, accounts));
+  // The same accounts the Accounts card counts (GET-891); ?scope=selected: the scope alone.
+  res.json(await revboxCardGraph(sb, req.workspaceId, req.internalUserId, req.params.id, visible, { selectedOnly: selectedOnly(req) }));
 }));
 revboxesRouter.post('/:id/plan', route(async (req, res, sb) => {
   await loadRevbox(sb, req.workspaceId, req.internalUserId, req.params.id, true);

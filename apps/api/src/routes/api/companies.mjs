@@ -10,7 +10,7 @@ import {
   computeAccountHealth, selectNextStep, loadEngagementActivity, loadAccountHealthTrend,
   getAccountRecord, fetchEntityOverlays, applyCompanyOverlay,
   getRelationshipOwners, getWorkspaceMemberProfiles, effectiveOwnerUserId, accountOwnerIds,
-  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, revboxScopedAccounts,
+  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, revboxWorkedAccounts,
 } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { intelTopicsFor } from '../../lib/intelTopics.mjs';
@@ -69,6 +69,15 @@ export function revboxAccountPage(accounts, { q = '', limit = 200, offset = 0 } 
   const t = (a) => (a.last_activity_at ? Date.parse(a.last_activity_at) || 0 : -1);
   list.sort((a, b) => t(b) - t(a) || String(a.id).localeCompare(String(b.id)));
   return { ids: list.slice(offset, offset + limit).map(a => a.id), total: list.length };
+}
+
+/**
+ * One page of the accounts a RevBox works on (GET-891), the set its Accounts card counts and its
+ * Account graph draws (revboxWorkedAccounts): -> { box, page: { ids, total } }.
+ */
+export async function revboxListPage(sb, ws, uid, boxId, allowed, { q = '', limit = 200, offset = 0, selectedOnly = false } = {}) {
+  const { box, accounts } = await revboxWorkedAccounts(sb, ws, uid, boxId, allowed, { selectedOnly });
+  return { box, page: revboxAccountPage(accounts, { q, limit, offset }) };
 }
 
 /** The CRM's owner names on an account's deals, open deals first, as the shape `owners` uses. */
@@ -288,21 +297,22 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const q = String(req.query.q ?? '').trim();
-    // ?revbox=<id> (GET-873): only the accounts in that RevBox's scope, resolved by core exactly as
-    // the box resolves it (its selected ids or saved filter), with the box's own access check and the
-    // viewer's account visibility. The box's scope replaces the market and owner filters.
+    // ?revbox=<id> (GET-873, GET-891): only the accounts that RevBox works on, as its Accounts card
+    // counts them: its scope (selected ids or saved filter) plus what its jobs worked on in 30 days,
+    // resolved by core with the box's own access check and the viewer's account visibility.
+    // &revbox_scope=selected: the scope alone. It replaces the market and owner filters.
     const revboxId = String(req.query.revbox ?? '').trim();
     if (revboxId) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revboxId)) return res.status(400).json({ error: 'Invalid RevBox identifier.' });
       let scoped;
       try {
         const set = await viewerVisibleAccountSet(supabase, workspaceId, req.internalUserId, { isAdmin: req.viewerScope === 'admin' });
-        scoped = await revboxScopedAccounts(supabase, workspaceId, req.internalUserId, revboxId, set.unrestricted ? null : set.ids);
+        scoped = await revboxListPage(supabase, workspaceId, req.internalUserId, revboxId, set.unrestricted ? null : set.ids, { q, limit, offset, selectedOnly: req.query.revbox_scope === 'selected' });
       } catch (e) {
         if (e.status) return res.status(e.status).json({ error: e.message });
         throw e;
       }
-      const page = revboxAccountPage(scoped.accounts, { q, limit, offset });
+      const page = scoped.page;
       const rows = [];
       for (let i = 0; i < page.ids.length; i += 100) {
         const chunk = page.ids.slice(i, i + 100);

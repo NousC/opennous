@@ -32,7 +32,7 @@ try {
   await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Edit filter' })).toHaveCount(0);
   await expect(page.locator('canvas')).toHaveCount(0);
-  await page.getByRole('link', { name: /Selected accounts/ }).click();
+  await page.getByRole('link', { name: /Accounts ·/ }).click();
   await expect(page.getByText("No accounts match this RevBox's filter.")).toBeVisible();
   await expect(page.getByText('Atlas Health', { exact: true })).toHaveCount(0);
   await page.goto(boxUrl); await page.getByRole('link', { name: 'Account graph', exact: true }).click();

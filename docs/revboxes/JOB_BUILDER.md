@@ -445,12 +445,34 @@ Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first      
   there; the routine is saved with `edited_by` and the database versions it (automation_versions).
   -> `{ job_deliveries }`. A DM or SMTP step (`editable: false`) is changed in the chat.
 - It also returns (GET-872) `people` (owner and members with `avatar_url` from users.profile_picture_url)
-  and `builtin_jobs` / `builtin_taken` (below). The rail's Accounts card (GET-873) is "Selected
-  accounts · N", N = `GET /:id/accounts` `count` (the box's scope as core `revboxScopedAccounts`
-  resolves it: selected ids or the saved filter, viewer-visible only); it opens
-  `/accounts?revbox=<id>`, the Accounts list filtered server-side by `GET /api/companies/list?revbox=<id>`
-  (same resolution and access checks; returns `revbox: { id, name }` for the "RevBox: <name> ×" chip).
-  `GET /:id/graph?source=runs` still graphs the accounts in the box's recent runs (`revboxRunAccounts`).
+  and `builtin_jobs` / `builtin_taken` (below).
+- **The rail's Accounts card** (GET-873, GET-891) reads "Accounts · N" with a muted "S selected · W
+  worked on by its agents in 30 days". N = `GET /:id/accounts` `count` (also `accounts_count`, with
+  `accounts_breakdown: { selected, worked_on }`, `days`, and `names: { matched, unmatched, ambiguous }`):
+  core `revboxWorkedAccounts`, the union, deduped, viewer-visible only (`viewerVisibleAccountSet`), of
+  - the box's selected scope (`revboxScopedAccounts`: selected ids, or the saved filter);
+  - the accounts its jobs worked on in the last 30 days (`revboxRunAccounts`): a run's `entity_id`, the
+    account ids a step logged (`step_log[].accounts`), its output documents (`document_id` on the run
+    or on an AI step's log line) with their `subject_entity_id` and `about`/`mentions` links, and a
+    legacy run's `account_ids`; a person or deal counts for its company;
+  - the accounts on its tables' rows added in that window (`revbox_dataset_rows.entity_id`, a deal as
+    its company).
+  **Named accounts.** A HubSpot Read step grouped by a name (`group_by` other than `hs_object_id`, e.g.
+  a company-name property) and an AI step's output name accounts in words. Since GET-891 a box job
+  resolves them at run time (core `accountNamesInText` + `resolveAccountNames`) and logs the ids on
+  the step's line: `accounts`, plus `accounts_unmatched` / `accounts_ambiguous` counts. Names are read
+  from structured places only: the read's grouped rows, the first cell of each table row in the output
+  (past its header; "Total" and "Record N (no name)" are not names), **bold** names, and a title's lead
+  before " — " ("Harborline Supply — closed lost"). Matching is exact on the normalized name (case,
+  punctuation and a trailing Inc/Ltd/LLC/Corp/Co/Limited set aside); a name no account has is skipped
+  and counted, a name two accounts share is ambiguous and skipped, nothing fuzzier. Runs from before
+  GET-891 recorded nothing: on read, the newest 30 output documents in the window that have no entity
+  links and whose step logged no accounts are parsed the same way.
+  `?scope=selected` returns the scope alone. The card's two links open on the same set:
+  `/accounts?revbox=<id>` (`GET /api/companies/list?revbox=<id>`, `&revbox_scope=selected` for the
+  scope alone; returns `revbox: { id, name }` for the "RevBox: <name> ×" chip) and `/graph?revbox=<id>`
+  (`GET /:id/graph`, those accounts with their people and deals; `?scope=selected` the scope alone).
+  `GET /:id/graph?source=runs` still graphs only the accounts in the box's recent runs (`revboxRunAccounts`).
 - **Test** (GET-873): `POST /api/revboxes/:id/jobs/:jobId/test` (box edit rights, credit gate) runs a
   routine job once now on real data via core `startTestRun(..., { holdSends: true })`: read and AI
   steps run and are metered as a normal run; every Slack post, email, Gmail draft or send, webhook,

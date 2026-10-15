@@ -102,7 +102,7 @@ test('runs that name no account read as not linked, not as zero accounts', async
   w.documents = [{ id: 'dx', workspace_id: 'ws', subject_entity_id: null }];
   w.revbox_runs = [];
   const out = await revboxRunAccounts(database(w), 'ws', { revboxId: 'box', routineIds: ['job'], now: NOW });
-  assert.deepEqual(out, { accounts: [], runs: 1, linked: false });
+  assert.deepEqual(out, { accounts: [], runs: 1, linked: false, names: { matched: 0, unmatched: 0, ambiguous: 0 } });
 });
 
 test('built-in jobs: known keys only, no duplicates', () => {

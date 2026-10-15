@@ -11,7 +11,7 @@
 // of silently blanking a page.
 import http from "node:http";
 import { existsSync } from "node:fs";
-import { handleRevboxPreview, PREVIEW_SLACK } from "./revboxes.mjs";
+import { handleRevboxPreview, PREVIEW_SLACK, previewWorkedAccounts, previewRevboxById } from "./revboxes.mjs";
 import {
   WS, USERS, COMPANIES, CONTACTS, FLAGS, TASKS, PORTFOLIO, GRAPH, CAMPAIGNS,
   companyDetail, personRecord, icpRecord,
@@ -253,7 +253,15 @@ const routes = [
 
   // scope=mine|team: the redesign's My book / Team toggle. The preview viewer (Avery) is a CRM
   // owner, so "mine" always has rows; the CS page scopes by the CS owner, never the AE.
-  ["GET", /^\/api\/companies\/list$/, (_m, q) => companiesList(readScope(q.get("scope")))],
+  ["GET", /^\/api\/companies\/list$/, (_m, q) => {
+    // ?revbox=<id> (GET-873, GET-891): the accounts that box's Accounts card counts.
+    const box = q.get("revbox") ? previewRevboxById(q.get("revbox")) : null;
+    if (!box) return companiesList(readScope(q.get("scope")));
+    const ids = new Set(previewWorkedAccounts(box).accounts.filter((a) => q.get("revbox_scope") !== "selected" || a.selected).map((a) => a.id));
+    const all = companiesList(null);
+    const companies = all.companies.filter((c) => ids.has(c.id));
+    return { ...all, companies, total: companies.length, countries: [], revbox: { id: box.id, name: box.name } };
+  }],
   ["GET", /^\/api\/companies\/deals$/, (_m, q) => dealsPayload(readScope(q.get("scope")), q.get("status") ?? "all")],
   ["GET", /^\/api\/crm-pipelines$/, () => crmPipelines()],
   // The CRM sync's config, for the Pipeline's "Synced 12m ago" (GET-604).

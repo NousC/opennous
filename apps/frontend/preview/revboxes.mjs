@@ -323,6 +323,19 @@ function previewRunAccounts(box) {
     .sort((a, b) => b.runs - a.runs || a.name.localeCompare(b.name));
   return { run_accounts: accounts, run_accounts_total: accounts.length, run_accounts_runs: runs.length, run_accounts_linked: accounts.length > 0 };
 }
+/**
+ * As core revboxWorkedAccounts (GET-891): what the box's Accounts card counts and its Accounts page
+ * and Account graph open on: the selected scope plus the accounts its runs worked on in 30 days (a
+ * report run's account_ids stand for the dealers its HubSpot read and its table named).
+ */
+export function previewWorkedAccounts(box) {
+  const worked = new Set(previewRunAccounts(box).run_accounts.map(a => a.id));
+  const selected = new Set(previewRevboxAccounts.filter(a => revboxMatchesAccount(box.scope, a)).map(a => a.id));
+  const accounts = previewRevboxAccounts.filter(a => selected.has(a.id) || worked.has(a.id)).map(a => ({ ...a, selected: selected.has(a.id), worked_on: worked.has(a.id) }));
+  return { accounts, breakdown: { selected: accounts.filter(a => a.selected).length, worked_on: accounts.filter(a => a.worked_on).length } };
+}
+/** The box behind /accounts?revbox=<id> in the preview, or null. */
+export const previewRevboxById = (id) => state.boxes.find(b => b.id === id) ?? null;
 const AGO = (h) => new Date(Date.now() - h * 3_600_000).toISOString();
 const BUILTIN_ACTIVITY = { sales_follow_up: [12, 3], stale_deal: [7, 30], deal_signals: [4, 5], deal_risk: [2, 52], expansion: [0, null] };
 function previewBuiltins(box) {
@@ -478,10 +491,16 @@ export async function handleRevboxPreview(req, res, url, json) {
       if (!USERS.some(u => u.id === parts[2]) || box.owner_id === parts[2]) fail(400, 'Choose a workspace member.');
       box.members = box.members.filter(m => m.user_id !== parts[2]);
       if (payload.role) box.members.push({ user_id: parts[2], role: payload.role }); output = { ok: true };
-    } else if (parts[1] === 'accounts') output = { accounts: previewRevboxAccounts.filter(a => revboxMatchesAccount(box.scope, a)), box: { id: box.id, name: box.name, scope: box.scope } };
-    else if (parts[1] === 'graph') {
+    } else if (parts[1] === 'accounts') {
+      const selectedOnly = url.searchParams.get('scope') === 'selected';
+      const worked = previewWorkedAccounts(box);
+      const accounts = selectedOnly ? worked.accounts.filter(a => a.selected) : worked.accounts;
+      output = { accounts, count: accounts.length, accounts_count: accounts.length, accounts_breakdown: worked.breakdown, days: 30, box: { id: box.id, name: box.name, scope: box.scope } };
+    } else if (parts[1] === 'graph') {
+      // The same accounts the card counts (GET-891); ?source=runs only the run accounts; ?scope=selected the scope.
       const ran = url.searchParams.get('source') === 'runs' ? new Set(previewRunAccounts(box).run_accounts.map(a => a.id)) : null;
-      const accounts = previewRevboxAccounts.filter(a => ran ? ran.has(a.id) : revboxMatchesAccount(box.scope, a)); const ids = new Set(accounts.map(a => a.id));
+      const card = new Set(previewWorkedAccounts(box).accounts.filter(a => url.searchParams.get('scope') !== 'selected' || a.selected).map(a => a.id));
+      const accounts = previewRevboxAccounts.filter(a => ran ? ran.has(a.id) : card.has(a.id)); const ids = new Set(accounts.map(a => a.id));
       const people = CONTACTS.filter(p => ids.has(p.company_id)); const deals = DEALS.filter(d => ids.has(d.company_id));
       output = { nodes: [...accounts.map(a => ({ id: a.id, label: a.name, type: 'account', icp: a.icp_score })), ...people.map(p => ({ id: p.id, label: `${p.first_name} ${p.last_name}`, type: 'person' })), ...deals.map(d => ({ id: d.id, label: d.name, type: 'deal' }))], edges: [...people.map(p => ({ s: p.id, t: p.company_id, type: 'works_at' })), ...deals.map(d => ({ s: d.id, t: d.company_id, type: 'deal_of' }))] };
     } else if (parts[1] === 'context') {

@@ -31,6 +31,7 @@ import { randomBytes } from 'node:crypto';
 import { citeKey } from '../evidenceDetail.js';
 import { writeDocument } from '../db/documents.js';
 import { loadRevbox } from '../db/revboxes.mjs';
+import { accountNamesInText, resolveAccountNames } from '../db/accountNames.mjs';
 import { revboxContextRows } from '../db/contextLibrary.mjs';
 import { sendEmail } from '../utils/email.js';
 import { createMessage, messageText } from '../llm/modelDoor.mjs';
@@ -1880,6 +1881,17 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
   const boxCtx = automation?.revbox_id && supabase ? await revboxRoutineContext(supabase, workspaceId, automation) : null;
   // What the last revbox_delivery step did, per destination, for its log line.
   let lastDeliveries = null;
+  // The accounts a step named (GET-891): a HubSpot read's grouped names, or the names an AI step's
+  // output states, resolved to account ids and logged on the step's line (`accounts`), so the box
+  // can count what its jobs worked on. Box jobs only; best effort, a failed lookup changes nothing.
+  let lastAccounts = null;
+  const namedAccounts = async (names) => {
+    if (!supabase || !automation?.revbox_id || !names?.length) return null;
+    try {
+      const r = await resolveAccountNames(supabase, workspaceId, names);
+      return { accounts: r.ids, ...(r.unmatched.length ? { accounts_unmatched: r.unmatched.length } : {}), ...(r.ambiguous.length ? { accounts_ambiguous: r.ambiguous.length } : {}) };
+    } catch { return null; }
+  };
   // The box's datasets the steps name (GET-874), read once per run.
   const datasets = new Map();
   const datasetFor = async (st) => {
@@ -2372,6 +2384,8 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
           stepData.push({ id: s.id ?? null, step: shownAt(at_) + 1, label: c.object_label ?? c.object, text: r.text });
           if (s.id) extraVars[`steps.${s.id}.output`] = r.text;
           done.push(`hubspot_read:${r.count}`);
+          // Grouped by a name (a company, a dealer): those names are accounts this job worked on.
+          if ((c.group_by || 'hs_object_id') !== 'hs_object_id') lastAccounts = await namedAccounts((r.rows ?? []).map(g => g.group).filter(g => !/\(no name\)$/.test(String(g))));
           break;
         }
         const v = await varsFor([c.title, c.body, ...(c.properties ?? []).map(p => p?.value)]);
@@ -2515,8 +2529,9 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
     }
     // The step went through: say what it did, in words (and which document an AI step wrote).
     if (s?.type === 'agent') {
-      if (doc?.fallback) note(s, 'ok', 'No answer from the AI, so the data went on as read', { document_id: doc?.id ?? null });
-      else note(s, 'ok', doc?.title ? `Wrote ${emailParts(doc) ? 'the email' : `"${String(doc.headline || doc.title).slice(0, 80)}"`}` : 'Wrote it', { document_id: doc?.id ?? null });
+      const named = doc?.id ? await namedAccounts(accountNamesInText(documentText(doc), doc.title)) : null;
+      if (doc?.fallback) note(s, 'ok', 'No answer from the AI, so the data went on as read', { document_id: doc?.id ?? null, ...(named ?? {}) });
+      else note(s, 'ok', doc?.title ? `Wrote ${emailParts(doc) ? 'the email' : `"${String(doc.headline || doc.title).slice(0, 80)}"`}` : 'Wrote it', { document_id: doc?.id ?? null, ...(named ?? {}) });
     } else if (s?.type === 'only_if') {
       note(s, 'ok', 'The rules matched');
     } else if (s?.type !== 'approval') {
@@ -2525,9 +2540,11 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
         ...(s?.type === '__followup_draft' && doc?.id ? { document_id: doc.id } : {}),
         ...((s?.type === '__followup_draft' || s?.type === 'gmail') && lastMail ? { mail: lastMail } : {}),
         ...(s?.type === 'revbox_delivery' && lastDeliveries ? { deliveries: lastDeliveries } : {}),
+        ...(s?.type === 'hubspot' && lastAccounts ? lastAccounts : {}),
       });
       lastMail = null;
       lastDeliveries = null;
+      lastAccounts = null;
     }
   }
   return { delivered: done.join(', ') || null, log };

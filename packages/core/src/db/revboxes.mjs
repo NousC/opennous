@@ -1,5 +1,6 @@
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount } from '../services/revboxPlan.mjs';
 import { revboxContextRows, addBoxContext, unlinkContext } from './contextLibrary.mjs';
+import { accountNamesInText, resolveAccountNames, normalizeAccountName } from './accountNames.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 async function rows(q) { const { data, error } = await q; if (error) throw error; return data ?? []; }
@@ -144,27 +145,43 @@ export async function revboxPeople(sb, box) {
 }
 
 /**
- * The accounts a box's jobs actually touched in their recent runs (GET-872), most runs first. Read
- * from what the run tables record: a routine run's `entity_id`, its document's `subject_entity_id`
- * and the document's `about`/`mentions` links, and a legacy revbox run's `account_ids`. A person or
- * deal counts for its company. Only accounts in `allowed` (null = unrestricted) are returned.
- * -> { accounts: [{ id, name, domain, runs }], runs: runs in the window, linked: any run named an account }
+ * The accounts a box's jobs actually touched in their recent runs (GET-872, GET-891), most runs
+ * first. Read from what the run tables record: a routine run's `entity_id`, the accounts a step
+ * resolved and logged (`step_log[].accounts`: a HubSpot read's rows, the names in an AI step's
+ * output, recorded since GET-891), its documents (`document_id`, and the AI steps' `document_id` in
+ * the step log) with their `subject_entity_id` and `about`/`mentions` links, and a legacy revbox
+ * run's `account_ids`. A person or deal counts for its company.
+ *
+ * Runs from before GET-891 recorded no names. For them, the newest `pastDocs` (30) output documents with
+ * no entity links are read and the account names they state in a table, in bold or in the title
+ * are resolved now (accountNamesInText + resolveAccountNames: exact normalized names only).
+ * Only accounts in `allowed` (null = unrestricted) are returned.
+ * -> { accounts: [{ id, name, domain, runs }], runs: runs in the window, linked: any run named an
+ *      account, names: { matched, unmatched, ambiguous } (counts, from names resolved on this read) }
  */
-export async function revboxRunAccounts(sb, ws, { revboxId, routineIds = [], allowed = null, days = 30, now: at = Date.now() } = {}) {
+export async function revboxRunAccounts(sb, ws, { revboxId, routineIds = [], allowed = null, days = 30, now: at = Date.now(), pastDocs = 30 } = {}) {
   const since = new Date(at - days * 86_400_000).toISOString();
-  const runs = [];   // [{ id, entities: Set, docId }]
+  const runs = [];   // [{ id, entities: Set, docIds: Set, unrecorded: Set(doc ids whose step logged no accounts), at }]
   for (let i = 0; i < routineIds.length; i += 100) {
-    const page = await rows(sb.from('agent_routine_runs').select('id, entity_id, document_id').eq('workspace_id', ws)
+    const page = await rows(sb.from('agent_routine_runs').select('id, entity_id, document_id, step_log, started_at').eq('workspace_id', ws)
       .in('routine_id', routineIds.slice(i, i + 100)).gte('started_at', since).limit(2000));
-    for (const r of page) runs.push({ id: r.id, entities: new Set([r.entity_id].filter(Boolean)), docId: r.document_id ?? null });
+    for (const r of page) {
+      const run = { id: r.id, entities: new Set([r.entity_id].filter(Boolean)), docIds: new Set([r.document_id].filter(Boolean)), unrecorded: new Set(), at: String(r.started_at ?? '') };
+      for (const e of Array.isArray(r.step_log) ? r.step_log : []) {
+        if (Array.isArray(e?.accounts)) for (const id of e.accounts) if (typeof id === 'string' && id) run.entities.add(id);
+        if (e?.document_id) { run.docIds.add(e.document_id); if (!Array.isArray(e.accounts)) run.unrecorded.add(e.document_id); }
+      }
+      if (r.document_id && !(Array.isArray(r.step_log) && r.step_log.some(e => Array.isArray(e?.accounts)))) run.unrecorded.add(r.document_id);
+      runs.push(run);
+    }
   }
   if (revboxId) {
     try {
       const legacy = await rows(sb.from('revbox_runs').select('id, account_ids').eq('workspace_id', ws).eq('revbox_id', revboxId).gte('created_at', since).limit(2000));
-      for (const r of legacy) runs.push({ id: r.id, entities: new Set((r.account_ids ?? []).filter(Boolean)), docId: null });
+      for (const r of legacy) runs.push({ id: r.id, entities: new Set((r.account_ids ?? []).filter(Boolean)), docIds: new Set(), unrecorded: new Set(), at: '' });
     } catch (e) { if (!['42P01', 'PGRST205'].includes(e.code)) throw e; }
   }
-  const docIds = [...new Set(runs.map(r => r.docId).filter(Boolean))];
+  const docIds = [...new Set(runs.flatMap(r => [...r.docIds]))];
   const docEntities = new Map();   // doc id -> entity ids
   const add = (doc, entity) => { if (!doc || !entity) return; if (!docEntities.has(doc)) docEntities.set(doc, new Set()); docEntities.get(doc).add(entity); };
   for (let i = 0; i < docIds.length; i += 200) {
@@ -176,7 +193,22 @@ export async function revboxRunAccounts(sb, ws, { revboxId, routineIds = [], all
     for (const d of docs) add(d.id, d.subject_entity_id);
     for (const l of links) add(l.document_id, l.target_entity_id);
   }
-  for (const r of runs) for (const e of docEntities.get(r.docId) ?? []) r.entities.add(e);
+  // The past (GET-891): the newest output documents that name no entity and whose step logged no
+  // accounts, read for the account names they state.
+  const names = { matched: 0, unmatched: 0, ambiguous: 0 };
+  const past = [...new Set(runs.slice().sort((a, b) => b.at.localeCompare(a.at)).flatMap(r => [...r.unrecorded]).filter(d => !docEntities.has(d)))].slice(0, pastDocs);
+  if (past.length) {
+    const docs = await rows(sb.from('documents').select('id, title, body_md').eq('workspace_id', ws).in('id', past));
+    const named = new Map(docs.map(d => [d.id, accountNamesInText(d.body_md, d.title)]));
+    const all = [...new Set([...named.values()].flat())];
+    if (all.length) {
+      const resolved = await resolveAccountNames(sb, ws, all);
+      Object.assign(names, { matched: resolved.matched.length, unmatched: resolved.unmatched.length, ambiguous: resolved.ambiguous.length });
+      const idOf = new Map(resolved.matched.map(m => [normalizeAccountName(m.name), m.id]));
+      for (const [doc, list] of named) for (const n of list) add(doc, idOf.get(normalizeAccountName(n)));
+    }
+  }
+  for (const r of runs) for (const d of r.docIds) for (const e of docEntities.get(d) ?? []) r.entities.add(e);
   const entityIds = [...new Set(runs.flatMap(r => [...r.entities]))];
   // Each entity as its account: an account is itself, a person or deal is its company.
   const entities = await entityRows(sb, ws, entityIds);
@@ -195,7 +227,7 @@ export async function revboxRunAccounts(sb, ws, { revboxId, routineIds = [], all
   }
   const accounts = [...counts].map(([id, n]) => ({ id, name: known.get(id)?.name ?? 'Account', domain: known.get(id)?.domain ?? null, runs: n }))
     .sort((a, b) => b.runs - a.runs || String(a.name).localeCompare(String(b.name)));
-  return { accounts, runs: runs.length, linked };
+  return { accounts, runs: runs.length, linked, names };
 }
 async function entityRows(sb, ws, ids) {
   const out = [];
@@ -346,8 +378,66 @@ export async function revboxAccountCatalog(sb, ws, allowed = null) {
  */
 export async function revboxScopedAccounts(sb, ws, uid, boxId, allowed = null) {
   const box = await loadRevbox(sb, ws, uid, boxId);
+  // Picked accounts (GET-891): read just those, not the whole workspace catalog.
+  if (box.scope?.mode === 'selected') {
+    const ids = [...new Set((box.scope.account_ids ?? []).filter(id => typeof id === 'string' && (!allowed || allowed.has(id))))];
+    return { box, accounts: await accountListRows(sb, ws, ids) };
+  }
   const accounts = await revboxAccountCatalog(sb, ws, allowed);
   return { box, accounts: accounts.filter(a => revboxMatchesAccount(box.scope, a)) };
+}
+/** These accounts' list rows (id, name, domain, icp_score, last_activity_at, people_count), in no order. */
+async function accountListRows(sb, ws, ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const page = await rows(sb.from('entity_list_rows').select('entity_id, kind, name, domain, icp_score, last_activity_at, people_count').eq('workspace_id', ws).in('entity_id', ids.slice(i, i + 200)));
+    out.push(...page.filter(a => (a.kind ?? 'account') === 'account').map(({ kind: _, ...a }) => ({ ...a, id: a.entity_id })));
+  }
+  return out;
+}
+
+/**
+ * The accounts a box works on (GET-891), what its Accounts card counts and what the Accounts page
+ * and the Account graph open on: the union of
+ *   - its selected scope (revboxScopedAccounts),
+ *   - the accounts its jobs worked on in the last `days` (revboxRunAccounts: run entities, accounts
+ *     a step resolved from names, its output documents' links and named accounts),
+ *   - the accounts on its tables' rows added in that window (revbox_dataset_rows.entity_id; a deal
+ *     or person counts for its company).
+ * Only accounts the viewer may see (`allowed`, null = unrestricted); the box's own view check.
+ * `selectedOnly` returns the scope alone, as before GET-891.
+ * -> { box, accounts: [{ id, name, domain, icp_score, last_activity_at, people_count, selected, worked_on }],
+ *      breakdown: { selected, worked_on }, days, names: { matched, unmatched, ambiguous } }
+ */
+export async function revboxWorkedAccounts(sb, ws, uid, boxId, allowed = null, { days = 30, now: at = Date.now(), selectedOnly = false } = {}) {
+  const { box, accounts: scoped } = await revboxScopedAccounts(sb, ws, uid, boxId, allowed);
+  const selected = new Set(scoped.map(a => a.id));
+  const worked = new Set();
+  let names = { matched: 0, unmatched: 0, ambiguous: 0 };
+  if (!selectedOnly) {
+    const routines = await rows(sb.from('agent_routines').select('id').eq('workspace_id', ws).eq('revbox_id', box.id));
+    const ran = await revboxRunAccounts(sb, ws, { revboxId: box.id, routineIds: routines.map(r => r.id), allowed, days, now: at });
+    names = ran.names;
+    for (const a of ran.accounts) worked.add(a.id);
+    for (const id of await revboxDatasetAccounts(sb, ws, box.id, { since: new Date(at - days * 86_400_000).toISOString() })) if (!allowed || allowed.has(id)) worked.add(id);
+  }
+  const byId = new Map(scoped.map(a => [a.id, a]));
+  for (const a of await accountListRows(sb, ws, [...worked].filter(id => !byId.has(id)))) byId.set(a.id, a);
+  const accounts = [...byId.values()].filter(a => selected.has(a.id) || worked.has(a.id))
+    .map(a => ({ id: a.id, name: a.name ?? 'Account', domain: a.domain ?? null, icp_score: a.icp_score ?? null, last_activity_at: a.last_activity_at ?? null, people_count: a.people_count ?? 0, selected: selected.has(a.id), worked_on: worked.has(a.id) }));
+  return { box, accounts, breakdown: { selected: accounts.filter(a => a.selected).length, worked_on: accounts.filter(a => a.worked_on).length }, days, names };
+}
+/** The accounts on a box's table rows added since `since`: an account row as itself, a deal or person row as its company. */
+async function revboxDatasetAccounts(sb, ws, boxId, { since }) {
+  let sets;
+  try { sets = await rows(sb.from('revbox_datasets').select('id').eq('workspace_id', ws).eq('revbox_id', boxId)); }
+  catch (e) { if (['42P01', 'PGRST205'].includes(e.code)) return []; throw e; }
+  if (!sets.length) return [];
+  const ids = new Set();
+  for (const r of await rows(sb.from('revbox_dataset_rows').select('entity_id, created_at').eq('workspace_id', ws).in('dataset_id', sets.map(d => d.id)).gte('created_at', since).limit(5000))) if (r.entity_id) ids.add(r.entity_id);
+  const out = new Set();
+  for (const e of await entityRows(sb, ws, [...ids])) { const c = e.kind === 'account' ? e.entity_id : e.company_id; if (c) out.add(c); }
+  return [...out];
 }
 
 export async function revboxScopedGraph(sb, ws, scope, accounts) {

@@ -324,8 +324,8 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const mineOnly = owners.length === 1 && owners[0] === meId;
   const setOwners = (ids: string[]) => { setOwnersState(ids); setPages(1); };
 
-  // ?revbox=<id> (GET-873): only that RevBox's accounts, its scope resolved by the server as the
-  // box resolves it. A chip in the toolbar names the box and clears it; the market and owner
+  // ?revbox=<id> (GET-873): only that RevBox's accounts, resolved by the server: its scope plus the
+  // accounts its jobs worked on, the set its Accounts card counts (GET-891). A chip in the toolbar names the box and clears it; the market and owner
   // filters do not apply on top of a box's scope.
   const revboxId = params.get("revbox") ?? "";
   const clearRevbox = () => { const next = new URLSearchParams(params); next.delete("revbox"); setParams(next, { replace: true }); setPages(1); };
@@ -963,7 +963,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         )}
         {revboxId && (
           <span className="inline-flex h-7 max-w-[260px] items-center gap-1 rounded-lg border border-border bg-card pl-2.5 pr-1 text-[12px] text-foreground">
-            <span className="truncate">RevBox: {companiesPage?.revbox?.name ?? "…"}</span>
+            <span className="truncate" title="Selected in this RevBox, or worked on by its agents in the last 30 days">RevBox: {companiesPage?.revbox?.name ?? "…"}</span>
             <button type="button" onClick={clearRevbox} aria-label="Clear RevBox filter" className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground">
               <X className="size-3.5" />
             </button>
