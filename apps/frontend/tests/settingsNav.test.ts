@@ -8,12 +8,13 @@ import { groupNav, resolveSection, settingsNav } from "../src/components/setting
 
 const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
 
-test("API plan admin: the board's three groups, billing goes to /usage, Repo kept", () => {
+test("API plan admin: the board's three groups, billing goes to /usage, no Repo (GET-882)", () => {
   const nav = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
-  assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Connections", "Workspace"]);
+  // Repo was the API rail's only Connections row; with it gone (GET-882) the group is empty and drops.
+  assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Workspace"]);
   assert.deepEqual(ids(nav), [
     "profile", "notifications", "security",
-    "integrations", "company-sources", "webhooks", "api-keys", "repo",
+    "integrations", "company-sources", "webhooks", "api-keys",
     "general", "members", "billing",
   ]);
   const billing = nav.find((i) => i.id === "billing")!;
@@ -22,7 +23,8 @@ test("API plan admin: the board's three groups, billing goes to /usage, Repo kep
   // The sidebar holds Personal, Shared, Webhooks and API keys on API, so the rail does not repeat
   // them (GET-857); they stay routable, so /settings?section=integrations still lands on the page.
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
-  assert.deepEqual(rail, ["profile", "notifications", "security", "repo", "general", "members", "billing"]);
+  assert.deepEqual(rail, ["profile", "notifications", "security", "general", "members", "billing"]);
+  assert.equal(resolveSection("repo", nav), "profile");
   assert.equal(resolveSection("integrations", nav), "integrations");
 });
 
@@ -76,8 +78,6 @@ test("Connections rows open the standalone pages on every plan (GET-660)", () =>
     assert.equal(href("api-keys"), "/keys", tier);
     assert.equal(href("billing"), "/usage", tier);
   }
-  const api = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
-  assert.equal(api.find((i) => i.id === "repo")?.href, undefined);
   const plain = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false });
   for (const id of ["profile", "notifications", "security", "general", "members"]) {
     assert.ok(!("href" in plain.find((i) => i.id === id)!), `${id} stays in Settings`);
@@ -102,14 +102,16 @@ test("Custom plan keeps the Connections rows in the rail: its sidebar has no Int
   for (const id of ["integrations", "company-sources", "webhooks", "api-keys"]) assert.ok(rail.includes(id), id);
 });
 
-test("RevBoxes on: Context then Signals, in Workspace, on API and Workspace plans (GET-862, GET-864)", () => {
+test("RevBoxes on: Context and Signals in their own section, after Connections, on API and Workspace plans (GET-882)", () => {
   for (const tier of ["api", "custom"] as const) {
     for (const isWorkspaceAdmin of [true, false]) {
       const nav = settingsNav({ tier, isWorkspaceAdmin, isOwner: false, revboxes: true });
-      const workspace = groupNav(nav).find((g) => g.group === "Workspace")!;
-      const at = ids(workspace.items).indexOf("context");
-      assert.ok(at >= 0, `${tier} admin=${isWorkspaceAdmin}: Context in the rail`);
-      assert.equal(ids(workspace.items)[at + 1], "signals", `${tier}: Signals right after Context`);
+      const groups = groupNav(nav);
+      const own = groups.find((g) => g.group === "Context & signals")!;
+      assert.deepEqual(ids(own.items), ["context", "signals"], `${tier} admin=${isWorkspaceAdmin}: Context then Signals`);
+      assert.ok(!groups.some((g) => g.group === "Workspace" && ids(g.items).includes("context")), "not under Workspace");
+      const order = groups.map((g) => g.group);
+      assert.ok(order.indexOf("Context & signals") < (order.includes("Workspace") ? order.indexOf("Workspace") : Infinity), `${tier}: before Workspace`);
       assert.equal(resolveSection("context", nav), "context");
       assert.equal(resolveSection("signals", nav), "signals");
     }

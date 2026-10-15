@@ -7,7 +7,7 @@
 // on Account. Only a caller that mounts <Settings forceSection=…> bypasses that. Flip `show` to
 // bring a section back.
 
-export type SettingsGroup = "Account" | "Connections" | "Agent" | "Workspace" | "Analytics" | "Agents" | "Data" | "Support";
+export type SettingsGroup = "Account" | "Connections" | "Context & signals" | "Agent" | "Workspace" | "Analytics" | "Agents" | "Data" | "Support";
 
 export interface SettingsNavItem {
   /** The `?section=` id. */
@@ -33,7 +33,7 @@ export interface SettingsNavInput {
   revboxes?: boolean;
 }
 
-export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
+export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Context & signals", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
 
 type Row = SettingsNavItem & { show?: boolean };
 
@@ -67,19 +67,20 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "company-sources", label: "Shared integrations",   group: "Connections", href: "/company-sources", show: !selfHosted, unlisted: core },
     { id: "webhooks",        label: "Webhooks",              group: "Connections", href: "/webhooks", show: !selfHosted, unlisted: core },
     { id: "api-keys",        label: "API keys",              group: "Connections", href: "/keys", show: !selfHosted, unlisted: core },
-    // Raw evidence goes to the operator's own git on the API plan; on Custom it lives with us.
-    { id: "repo",            label: "Repo",                  group: "Connections", show: core && !selfHosted },
+    // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
+    // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
+    { id: "repo",            label: "Repo",                  group: "Connections", show: false },
+    // Context & signals — their own section (GET-882): what every RevBox job may read (GET-858) and
+    // the workspace's signals (GET-862). Both follow the revboxes feature, so they show on API and
+    // Workspace alike (GET-864), to members too: jobs and signals are not admin-only.
+    { id: "context",         label: "Context",               group: "Context & signals", show: !!input.revboxes },
+    { id: "signals",         label: "Signals",               group: "Context & signals", show: !!input.revboxes },
     // Agent — the Workspace layer adds Memory and Skills ahead of Automations.
     { id: "sequences",       label: "Automations",           group: "Agent", show: selfManagedAgent },
     // Workspace — admins only (GET-430). The Workspace layer's models, changes, spend and adoption
     // rows sit before Billing (off in v1, GET-211).
     // Self-host: what nous.env has configured, AI models, integrations, email (GET-837).
     { id: "instance",        label: "Instance setup",        group: "Workspace", show: !!input.selfHosted && isWorkspaceAdmin },
-    // What every RevBox job may read (GET-858), then the workspace's signals right below it (GET-862).
-    // Both follow the revboxes feature, so they show on API and Workspace alike (GET-864), to
-    // members too: jobs and signals are not admin-only.
-    { id: "context",         label: "Context",               group: "Workspace", show: !!input.revboxes },
-    { id: "signals",         label: "Signals",               group: "Workspace", show: !!input.revboxes },
     { id: "general",         label: "General",               group: "Workspace", show: isWorkspaceAdmin },
     { id: "members",         label: "Members",               group: "Workspace", show: isWorkspaceAdmin },
     // Billing IS the Usage page on every plan (GET-660), so the row says so and goes there.

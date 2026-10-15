@@ -1010,7 +1010,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
               </SettingsGroup>
 
               {/* Market focus was a page of its own for one control. Set once by an admin, so it
-                  sits here with the company. Cloud appends its Brains group (GET-839). */}
+                  sits here with the company. */}
               <SettingsGroup title="Market focus">
                 <div className="px-2 py-2"><MarketFocus /></div>
               </SettingsGroup>

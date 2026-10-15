@@ -100,7 +100,6 @@ export function ContextLibrary() {
       <Button size="sm" variant="outline" onClick={() => setDraft({ ...empty })}><Plus />Add knowledge</Button>
       <input ref={uploader} type="file" hidden accept=".md,.markdown,.txt,.csv,.json,text/*,application/json" onChange={e => { void upload(e.target.files?.[0]); e.target.value = ''; }} />
     </div>}>
-      <p className="px-2 pb-1 text-[11.5px] text-muted-foreground/70">Save context once and tag it to the RevBoxes that should use it. Each box's jobs read only the files tagged to it.</p>
       {note && <p role={note.error ? 'alert' : 'status'} className={cn('px-2 py-1.5 text-[12px]', note.error ? 'text-risk' : 'text-muted-foreground')}>{note.text}</p>}
       {data.files.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground/70">No context yet. Add knowledge or upload a file.</p>}
       {data.files.map(f => <div key={f.id}>
