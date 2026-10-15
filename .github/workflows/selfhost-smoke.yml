@@ -68,7 +68,7 @@ jobs:
           sed -i -e 's/^APP_DOMAIN=.*/APP_DOMAIN=localhost/' \
                  -e 's/^API_DOMAIN=.*/API_DOMAIN=api.localhost/' \
                  -e 's/^MCP_DOMAIN=.*/MCP_DOMAIN=mcp.localhost/' \
-                 -e 's/^ANTHROPIC_API_KEY=.*/ANTHROPIC_API_KEY=sk-ant-ci-placeholder/' nous.env
+                 -e 's/^OPENROUTER_API_KEY=.*/OPENROUTER_API_KEY=sk-or-ci-placeholder/' nous.env
           node scripts/selfhost-keys.mjs nous.env
           grep -q '^127.0.0.1 api.localhost' /etc/hosts || echo '127.0.0.1 api.localhost mcp.localhost' | sudo tee -a /etc/hosts
 

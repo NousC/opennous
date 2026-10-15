@@ -2,7 +2,7 @@
 # No Supabase account needed. Layered on top of docker-compose.yaml, which stays the
 # file for running against an external Supabase project (Nous Cloud runs that one).
 #
-#   cp nous.env.example nous.env              # set APP_DOMAIN, API_DOMAIN, MCP_DOMAIN, ANTHROPIC_API_KEY
+#   cp nous.env.example nous.env              # set APP_DOMAIN, API_DOMAIN, MCP_DOMAIN, OPENROUTER_API_KEY
 #   node scripts/selfhost-keys.mjs nous.env   # writes secrets + COMPOSE_FILE into nous.env
 #   docker compose --env-file nous.env up -d --build
 #

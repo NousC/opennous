@@ -46,12 +46,12 @@
 
 Self-host the full stack with Docker. The database and sign-in (Supabase's open-source Postgres, auth and API) run inside it, so there is no Supabase account to create.
 
-You need Docker (Compose v2.24+), Node 18+, git, three DNS records (`app`, `api`, `mcp`) pointing at the machine, and an Anthropic API key. Linux servers use Docker Engine; macOS and Windows use Docker Desktop (or Colima / OrbStack on a Mac). Intel and ARM both work. On Windows, run the commands in WSL2 (recommended) or PowerShell; `./update.sh` needs WSL2 or Git Bash.
+You need Docker (Compose v2.24+), Node 18+, git, three DNS records (`app`, `api`, `mcp`) pointing at the machine, and an AI provider key: one [OpenRouter](https://openrouter.ai) key runs every model (recommended), or use an Anthropic key, or any OpenAI-compatible endpoint, a local Ollama included. Linux servers use Docker Engine; macOS and Windows use Docker Desktop (or Colima / OrbStack on a Mac). Intel and ARM both work. On Windows, run the commands in WSL2 (recommended) or PowerShell; `./update.sh` needs WSL2 or Git Bash.
 
 ```bash
 git clone https://github.com/NousC/opennous.git && cd opennous
 cp nous.env.example nous.env
-# in nous.env, set APP_DOMAIN, API_DOMAIN, MCP_DOMAIN and ANTHROPIC_API_KEY
+# in nous.env, set APP_DOMAIN, API_DOMAIN, MCP_DOMAIN and OPENROUTER_API_KEY (or ANTHROPIC_API_KEY)
 node scripts/selfhost-keys.mjs nous.env
 docker compose --env-file nous.env up -d --build
 ```

@@ -165,15 +165,16 @@ summaries and reports, the Insights board. There are three jobs, each with its o
 
 How a model id is served:
 
-- An id that starts with `claude-` runs on `ANTHROPIC_API_KEY`.
+- An id that starts with `claude-` runs on OpenRouter when `OPENROUTER_API_KEY` is set, else on
+  `ANTHROPIC_API_KEY`.
 - Any other id runs on an OpenAI-compatible endpoint: OpenRouter by default
   (`OPENROUTER_API_KEY`), or whatever `LLM_BASE_URL` names, keyed by `LLM_API_KEY`. That
   covers OpenAI, Groq, Together, Fireworks, LiteLLM, and a local Ollama
   (`LLM_BASE_URL=http://host.docker.internal:11434/v1`, no key; on Linux, add
   `extra_hosts: ["host.docker.internal:host-gateway"]` to the api and worker services).
 
-So Anthropic alone is one key (set all three models to `claude-…` ids), OpenRouter alone is
-one key (use OpenRouter ids such as `anthropic/claude-haiku-4.5`), and you can mix them.
+So OpenRouter alone is one key for everything (the defaults work as they are), Anthropic alone
+is one key (set the models to `claude-…` ids), and you can mix them.
 **Settings → Instance setup** shows which model runs each job, whether its key is set, and
 recommended setups to copy. Change the settings in `nous.env`, then
 `docker compose --env-file nous.env up -d`.
