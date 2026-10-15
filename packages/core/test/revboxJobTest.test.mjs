@@ -39,7 +39,7 @@ function database(seed = {}) {
 const doc = { id: 'd1', title: 'Daily usage', headline: null, sections: [{ label: 'Summary', body: 'Dealer A pulled 12 (+3).' }] };
 const handRoutine = () => ({
   id: 'r-hand', workspace_id: 'ws', revbox_id: 'box', user_id: 'owner', name: 'Usage daily', enabled: false,
-  trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto',
+  trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York',
   steps: [
     { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the summary.' } },
     { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C0OPS', channel: 'ops-daily', text: '{{steps.summary.output}}', format: 'report' } },
@@ -116,7 +116,7 @@ test('a routine maps back to its signal key through the catalog', () => {
 test('the routine as a proposal validates, with box delivery folded back in', () => {
   const p = proposalFromRoutine(handRoutine());
   assert.equal(p.name, 'Usage daily');
-  assert.deepEqual(p.trigger, { signal_key: 'schedule', kind: 'clock', config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', label: 'Every day at 08:00 (Toronto)' });
+  assert.deepEqual(p.trigger, { signal_key: 'schedule', kind: 'clock', config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', label: 'Every day at 08:00 (New York)' });
   assert.deepEqual(p.steps.map(s => s.id), ['summary', 'post', 'mail', 'hook', 'note']);
   assert.equal(p.uses_box_delivery, true);
   assert.equal(p.box_delivery_format, 'digest');
@@ -139,7 +139,7 @@ test('Edit on a hand-made job opens on its setup as an approved card, and approv
   assert.equal(opened.history[0].proposal.name, 'Usage daily');
   assert.equal(opened.history[0].proposal.facts.find(f => f.step_id === 'post').channel, 'ops-daily');
   assert.equal(opened.history[0].proposal.brief.text, 'Every morning I write the report, post it to #ops-daily, email it to lead@example.com, send it to hooks.example.com, save it as a note in HubSpot and send it to this box\'s destinations.');
-  assert.equal(opened.history[0].proposal.brief.starts, 'Every day 08:00 (Toronto)');
+  assert.equal(opened.history[0].proposal.brief.starts, 'Every day 08:00 (New York)');
   const row = sb.tables.revbox_builder_sessions.find(r => r.id === opened.session.id);
   // A valid transcript to continue: user, assistant (text + propose_job), user (the approved answer).
   assert.deepEqual(row.messages.map(m => m.role), ['user', 'assistant', 'user']);

@@ -157,7 +157,7 @@ export function personNamedIn(title, candidates = []) {
  * This was `recorded_at ?? computed_at`: when we extracted it. For a task read out of a June call
  * in September, that put the promise in September, and every email and meeting between June and
  * September — the exact window the promise was kept in — fell before it and did not count.
- * One dealer's "send the credit-check signup" (said in early June) was still open in late September
+ * One dealer's "send the SSO setup guide" (said in early June) was still open in late September
  * with the signup done and the service provisioned; so was August's posters task with the posters sent.
  *
  * `occurred_at` is when it was said (GET-400, stamped by every writer now). It wins. A task

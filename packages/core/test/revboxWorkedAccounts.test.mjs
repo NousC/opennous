@@ -74,7 +74,7 @@ const world = () => ({
     { id: 'row3', workspace_id: 'ws', dataset_id: 'ds', entity_id: 'acct-stale', created_at: ago(60) },
   ],
   entity_list_rows: [
-    acct('acct-sel', 'Selected Co'), acct('acct-a', 'Northside Motors'), acct('acct-read', 'Lakeshore Auto'),
+    acct('acct-sel', 'Selected Co'), acct('acct-a', 'Northside Labs'), acct('acct-read', 'Lakeshore Health'),
     acct('acct-harbor', 'Harborline Motors'), acct('acct-fern', 'Fernpoint Auto'), acct('acct-stale', 'Old Dealer'),
     acct('acct-deal', 'Deal Holder'), acct('acct-tab', 'Table Holder'), acct('acct-hidden', 'Hidden Co'),
     acct('twin-1', 'Twin Name'), acct('twin-2', 'Twin Name Inc'),

@@ -1,7 +1,7 @@
 // A RevBox job's card (GET-868, redesigned GET-858, GET-884, made minimal GET-889): the job reads as
 // an agent at work, not a workflow. Three lines: the job's name (editable on a live proposal) with
 // its state on the right (a small "● On"/"● Off" dot in an Edit view, else a quiet "Approved"); the
-// brief, one sentence in the agent's voice ("Every morning I read yesterday's Company Daily Stats in
+// brief, one sentence in the agent's voice ("Every morning I read yesterday's Account Daily Usage in
 // HubSpot, write the report and post it to #ops-daily."), built by the SERVER from the job's facts
 // (core jobBrief; `proposal.brief`), never from the model's summary or display titles, so a prompt
 // cannot put words on the card; and ONE muted meta line (lib/jobCard jobMeta): when it starts · the

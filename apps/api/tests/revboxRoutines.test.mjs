@@ -16,8 +16,8 @@ test('RevBoxes are on for the API and Workspace plans, and still off for Free', 
 });
 
 test('a routine job reads as the UI expects, with a trigger label', () => {
-  const r = { id: 'r1', name: 'TU daily', enabled: false, trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', last_run_at: null, steps: [] };
-  assert.equal(routineTriggerLabel(r), 'Every day at 08:00 (Toronto)');
+  const r = { id: 'r1', name: 'TU daily', enabled: false, trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', last_run_at: null, steps: [] };
+  assert.equal(routineTriggerLabel(r), 'Every day at 08:00 (New York)');
   assert.equal(routineTriggerLabel({ ...r, trigger_config: { frequency: 'weekly', at: '09:30' }, timezone: 'UTC' }), 'Every Monday at 09:30 (UTC)');
   assert.equal(routineTriggerLabel({ trigger_kind: 'before_meeting', trigger_config: { offset: 60 } }), '60 minutes before a meeting');
   assert.equal(routineTriggerLabel({ trigger_kind: 'deal_closed_won', trigger_config: {} }), 'When a deal is won');
@@ -27,7 +27,7 @@ test('a routine job reads as the UI expects, with a trigger label', () => {
   assert.equal(routineTriggerLabel({ trigger_kind: 'deal_closed_won', trigger_config: { signal_keys: ['deal.won'] } }), 'When a deal is won');
   const out = routineOut(r);
   assert.equal('plan' in out, false);
-  assert.equal(out.trigger_label, 'Every day at 08:00 (Toronto)');
+  assert.equal(out.trigger_label, 'Every day at 08:00 (New York)');
   for (const k of ['id', 'name', 'enabled', 'trigger_kind', 'trigger_config', 'timezone', 'last_run_at']) assert.ok(k in out, k);
 });
 
@@ -73,7 +73,7 @@ test('routine runs come back in the Results Run shape: state, result, deliveries
     { id: 'run-live', routine_id: 'r1', workspace_id: 'ws', status: 'running', started_at: '2026-10-14T09:00:00Z' },
   ];
   const docs = [
-    { id: 'doc-ok', workspace_id: 'ws', title: 'Credit Check daily', body_md: 'All dealers up.', subject_entity_id: 'acct-a', status: 'active' },
+    { id: 'doc-ok', workspace_id: 'ws', title: 'Product Usage daily', body_md: 'All dealers up.', subject_entity_id: 'acct-a', status: 'active' },
     { id: 'doc-hidden', workspace_id: 'ws', title: 'Hidden', body_md: 'secret', subject_entity_id: 'acct-b', status: 'active' },
   ];
   const sb = { from(table) {
@@ -90,7 +90,7 @@ test('routine runs come back in the Results Run shape: state, result, deliveries
   const rows = await revboxRoutineRuns(sb, 'ws', [{ id: 'r1', name: 'TU daily' }], { allowed: new Set(['acct-a']) });
   const by = Object.fromEntries(rows.map(r => [r.id, r]));
   assert.equal(by['run-ok'].state, 'completed');
-  assert.deepEqual(by['run-ok'].result, { title: 'Credit Check daily', body: 'All dealers up.', kind: 'report' });
+  assert.deepEqual(by['run-ok'].result, { title: 'Product Usage daily', body: 'All dealers up.', kind: 'report' });
   assert.deepEqual(by['run-ok'].deliveries, [
     { id: 'dest1', state: 'sent', error: null, destination: { kind: 'slack', target: '#cs' } },
     { id: 'run-ok:1', state: 'failed', error: 'bounced', destination: { kind: 'email', target: 'vp@x.com' } },

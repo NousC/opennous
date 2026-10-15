@@ -47,7 +47,7 @@ const world = () => ({
   document_links: [],
   revbox_datasets: [],
   entity_list_rows: [
-    acct('acct-sel', 'Selected Co'), acct('acct-read', 'Lakeshore Auto'), acct('acct-harbor', 'Harborline Motors'), acct('acct-deal', 'Deal Holder'), acct('acct-other', 'Not Worked On'),
+    acct('acct-sel', 'Selected Co'), acct('acct-read', 'Lakeshore Health'), acct('acct-harbor', 'Harborline Motors'), acct('acct-deal', 'Deal Holder'), acct('acct-other', 'Not Worked On'),
     { workspace_id: 'ws', entity_id: 'deal-1', kind: 'deal', name: 'Renewal', company_id: 'acct-deal', stage: 'open' },
     { workspace_id: 'ws', entity_id: 'person-1', kind: 'person', name: 'Pat', company_id: 'acct-harbor' },
   ],

@@ -44,20 +44,20 @@ try {
   await page.screenshot({path:'/private/tmp/revbox-builder.png',fullPage:true});
   // Job Builder (GET-868): chat, scripted fake stream from preview/revboxes.mjs.
   await expect(page.getByRole('heading',{name:'What should this job do?'})).toBeVisible(); await expect(page.getByRole('button',{name:'Choose tools'})).toHaveCount(0); await expect(page.getByText('Here’s how I’d set it up')).toHaveCount(0);
-  await page.getByLabel('Describe the job').fill('Set up a job that pulls Credit Check account summaries from HubSpot and creates a report every morning for me into the Slack channel "Credit Check CS handoff".');
+  await page.getByLabel('Describe the job').fill('Set up a job that pulls Product Usage account summaries from HubSpot and creates a report every morning for me into the Slack channel "Product Usage CS handoff".');
   await page.getByLabel('Describe the job').press('ControlOrMeta+Enter');
-  await expect(page.getByText('Found Company Daily Stats · 5 Credit Check fields')).toBeVisible({timeout:15000});
+  await expect(page.getByText('Found Account Daily Usage · 5 Product Usage fields')).toBeVisible({timeout:15000});
   await expect(page.getByRole('tab',{name:'Channel'})).toBeVisible({timeout:15000}); await expect(page.getByText('Recommended',{exact:true}).first()).toBeVisible();
   await page.getByRole('tab',{name:'Report'}).click(); await page.getByText('Top 5 movers',{exact:true}).click();
   await page.getByRole('button',{name:'Submit',exact:true}).click();
   await expect(page.getByRole('button',{name:'Approve job',exact:true})).toBeVisible({timeout:15000}); await expect(page.getByRole('link',{name:'Reconnect HubSpot'})).toBeVisible(); await expect(page.getByText('Deliver to this box\'s destinations')).toBeVisible();
   await page.screenshot({path:'/private/tmp/revbox-job-review.png',fullPage:true});
   await page.getByRole('button',{name:'Make changes',exact:true}).click(); await expect(page.getByText(/What should change\?/)).toBeVisible();
-  await page.getByLabel('Job name').fill('Credit Check daily');
+  await page.getByLabel('Job name').fill('Product Usage daily');
   await page.getByRole('button', { name: 'Approve job', exact: true }).click();
-  await expect(page.getByText('Credit Check daily',{exact:true})).toBeVisible(); await expect(page.getByText(/off until you switch it on/)).toBeVisible();
+  await expect(page.getByText('Product Usage daily',{exact:true})).toBeVisible(); await expect(page.getByText(/off until you switch it on/)).toBeVisible();
   await page.getByRole('button',{name:'Switch on',exact:true}).first().click(); await expect(page.getByRole('button',{name:'Pause',exact:true}).first()).toBeVisible();
-  await page.getByRole('button',{name:'Make changes',exact:true}).first().click(); await expect(page.getByRole('heading',{name:'Change Credit Check daily'})).toBeVisible();
+  await page.getByRole('button',{name:'Make changes',exact:true}).first().click(); await expect(page.getByRole('heading',{name:'Change Product Usage daily'})).toBeVisible();
   await page.getByRole('button', { name: 'Back to jobs', exact: true }).click();
   await page.screenshot({ path: '/private/tmp/revbox-detail.png', fullPage: true });
   await page.getByRole('button', { name: 'Results', exact: true }).click(); await expect(page.getByText('No results yet',{exact:true})).toBeVisible(); await expect(page.getByRole('button',{name:'New job',exact:true})).toBeVisible(); await page.getByRole('button', { name: 'Drafts', exact: true }).click();

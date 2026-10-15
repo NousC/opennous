@@ -35,7 +35,7 @@ const world = () => ({
     { id: 'ed', name: null, email: 'jordan@x.com', profile_picture_url: '' },
   ],
   revboxes: [
-    { id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Credit Check Reporting', revision: 1, scope: { mode: 'selected', account_ids: [], min_icp: 70 }, blocks: [], delivery: [], builtin_jobs: ['stale_deal'] },
+    { id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Product Usage Reporting', revision: 1, scope: { mode: 'selected', account_ids: [], min_icp: 70 }, blocks: [], delivery: [], builtin_jobs: ['stale_deal'] },
     { id: 'other', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Private box', revision: 1, builtin_jobs: ['deal_risk', 'bogus'] },
   ],
   revbox_members: [{ workspace_id: 'ws', revbox_id: 'box', user_id: 'ed', role: 'editor' }],
@@ -55,8 +55,8 @@ const world = () => ({
     { workspace_id: 'ws', document_id: 'd1', target_entity_id: 'acct-c', kind: 'supersedes' },
   ],
   entity_list_rows: [
-    { workspace_id: 'ws', entity_id: 'acct-a', kind: 'account', name: 'Northside Motors', domain: 'northside.example', company_id: null },
-    { workspace_id: 'ws', entity_id: 'acct-b', kind: 'account', name: 'Lakeshore Auto', domain: null, company_id: null },
+    { workspace_id: 'ws', entity_id: 'acct-a', kind: 'account', name: 'Northside Labs', domain: 'northside.example', company_id: null },
+    { workspace_id: 'ws', entity_id: 'acct-b', kind: 'account', name: 'Lakeshore Health', domain: null, company_id: null },
     { workspace_id: 'ws', entity_id: 'acct-c', kind: 'account', name: 'Old Dealer', domain: null, company_id: null },
     { workspace_id: 'ws', entity_id: 'acct-hidden', kind: 'account', name: 'Hidden Co', domain: null, company_id: null },
     { workspace_id: 'ws', entity_id: 'person-b', kind: 'person', name: 'Pat', domain: null, company_id: 'acct-b' },
@@ -81,8 +81,8 @@ test('run accounts: entity ids, document subjects and about/mentions links, a pe
   assert.equal(out.runs, 4);   // r1, r2, r3 and the legacy run; not the 45-day-old one or another box's
   assert.equal(out.linked, true);
   assert.deepEqual(out.accounts, [
-    { id: 'acct-a', name: 'Northside Motors', domain: 'northside.example', runs: 3 },
-    { id: 'acct-b', name: 'Lakeshore Auto', domain: null, runs: 2 },
+    { id: 'acct-a', name: 'Northside Labs', domain: 'northside.example', runs: 3 },
+    { id: 'acct-b', name: 'Lakeshore Health', domain: null, runs: 2 },
     { id: 'acct-hidden', name: 'Hidden Co', domain: null, runs: 1 },
   ]);
 });

@@ -49,7 +49,7 @@ registerStepHandler('safe_fetch', (url, init, opts = {}) => {
 });
 
 const FREQ_LABEL = { daily: 'Every day', weekly: 'Every Monday', monthly: 'On the first of the month', quarterly: 'At the start of each quarter' };
-/** "Every day at 08:00 (Toronto)", "30 minutes before a meeting", "When a deal is won". Pure. */
+/** "Every day at 08:00 (New York)", "30 minutes before a meeting", "When a deal is won". Pure. */
 export function routineTriggerLabel(r) {
   const tc = r.trigger_config ?? {};
   if (r.trigger_kind === 'clock') {

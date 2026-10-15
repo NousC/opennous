@@ -19,7 +19,7 @@
 import { mayReadWorkspace, noteCreditsSpent } from '../lib/creditGate.mjs';
 import { getSupabaseClient, getInternalEntityIds, withBackfillLock, lockHolder, LockHeldError, CREDIT_SCALE } from '@nous/core';
 
-/** Reads between two credit checks inside one batch (GET-700). */
+/** Reads between two product usages inside one batch (GET-700). */
 export const RECHECK_EVERY = 10;
 import { loadEmailThreads, hydrateThreadBodies, selectEmailThreads, lastAt } from '../noema/emailThreads.mjs';
 import { readGmailThread, markThreadSkipped, threadSourceRef, SOURCE } from '../noema/gmailRead.mjs';

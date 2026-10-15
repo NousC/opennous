@@ -58,37 +58,37 @@ if (!state.seeded.delivery_cc) {
   }
   state.seeded.delivery_cc = true;
 }
-// GET-872: a Credit Check-like reporting box with a daily report over many dealers, a second job with
+// GET-872: a Product Usage-like reporting box with a daily report over many dealers, a second job with
 // a failed run, a run waiting for review, one still running; built-in jobs; members with photos.
 if (!state.seeded.page_polish) {
-  const tu = base('Credit Check Reporting', 'Daily Credit Check reporting for the dealer network.', true, { mode: 'selected', account_ids: [], min_icp: 70 });
-  tu.delivery = [{ id: randomUUID(), kind: 'slack', target: 'C07TU1HANDOFF', channel: 'credit-check-cs-handoff' }];
+  const tu = base('Product Usage Reporting', 'Daily Product Usage reporting for the dealer network.', true, { mode: 'selected', account_ids: [], min_icp: 70 });
+  tu.delivery = [{ id: randomUUID(), kind: 'slack', target: 'C07TU1HANDOFF', channel: 'product-usage-cs-handoff' }];
   tu.members = [{ user_id: 'u2', role: 'editor' }, { user_id: 'u3', role: 'viewer' }];
   tu.builtin_jobs = ['stale_deal'];
   state.boxes.unshift(tu);
-  const daily = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Credit Check daily summary', enabled: true, trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', trigger_label: 'Every day at 08:00 (Toronto)', last_run_at: stamp(), version: 3, created_by: 'u1', steps: [
-    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-100000001', object_label: 'Company Daily Stats', group_by: 'company_name', window: 'yesterday' } },
-    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the daily Credit Check report.' } },
-    { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C07TU1HANDOFF', channel: 'credit-check-cs-handoff', text: '{{steps.summary.output}}', format: 'report' } },
+  const daily = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Product Usage daily summary', enabled: true, trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', trigger_label: 'Every day at 08:00 (New York)', last_run_at: stamp(), version: 3, created_by: 'u1', steps: [
+    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-9000001', object_label: 'Account Daily Usage', group_by: 'company_name', window: 'yesterday' } },
+    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the daily Product Usage report.' } },
+    { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C07TU1HANDOFF', channel: 'product-usage-cs-handoff', text: '{{steps.summary.output}}', format: 'report' } },
     { id: 'box_delivery', type: 'revbox_delivery', config: { format: 'report' } },
   ] };
   const risk = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Dealer risk alert', enabled: true, trigger_kind: 'account_signal', trigger_config: {}, timezone: 'UTC', trigger_label: 'When an account signal fires', last_run_at: stamp(), version: 1, created_by: 'u1', steps: [
     { id: 'brief', type: 'agent', config: { mode: 'write', prompt: 'Say what changed and why it matters.' } },
     { id: 'approve', type: 'approval', config: {} },
     { id: 'alert', type: 'slack', config: { action: 'channel', channel_id: 'C07LEADERSHIP', channel: 'cs-leadership', text: '{{steps.brief.output}}', format: 'alert' } },
-    { id: 'mail', type: 'gmail', config: { mode: 'draft', to: 'dealer-success@credit_check.example', cc: '', body: '{{steps.brief.output}}', send_from: { id: 'mb-1', kind: 'gmail' } } },
-    { id: 'hook', type: 'webhook', config: { url: 'https://hooks.credit_check.example/risk?key=preview' } },
+    { id: 'mail', type: 'gmail', config: { mode: 'draft', to: 'dealer-success@product_usage.example', cc: '', body: '{{steps.brief.output}}', send_from: { id: 'mb-1', kind: 'gmail' } } },
+    { id: 'hook', type: 'webhook', config: { url: 'https://hooks.product_usage.example/risk?key=preview' } },
   ] };
   state.routines.unshift(daily, risk);
   const H = 3_600_000, at = (h) => new Date(Date.now() - h * H).toISOString();
   const dealers = COMPANIES.map(c => c.id);
-  const report = (n) => `## Credit Check daily · ${new Date(Date.now() - n * 24 * H).toDateString()}\n\n**1,284 pulls** yesterday across 41 dealers, up 6% on the day before.\n\n| Dealer | Pulls | Change |\n|---|---:|---:|\n| Meridian Analytics | 142 | +41 |\n| Northwind Logistics | 96 | -18 |\n| Cobalt Systems | 88 | +7 |\n\n- Northwind is down for the third day: worth a call.\n- Meridian's jump follows their new F&I hire.`;
+  const report = (n) => `## Product Usage daily · ${new Date(Date.now() - n * 24 * H).toDateString()}\n\n**1,284 pulls** yesterday across 41 dealers, up 6% on the day before.\n\n| Dealer | Pulls | Change |\n|---|---:|---:|\n| Meridian Analytics | 142 | +41 |\n| Northwind Logistics | 96 | -18 |\n| Cobalt Systems | 88 | +7 |\n\n- Northwind is down for the third day: worth a call.\n- Meridian's jump follows their new F&I hire.`;
   const runs = [
-    { job: daily, h: 2, state: 'completed', title: 'Credit Check daily · up 6%', body: report(0), accounts: dealers.slice(0, 14), credits: 1.8, deliveries: [{ kind: 'slack', target: '#credit-check-cs-handoff', state: 'sent' }] },
+    { job: daily, h: 2, state: 'completed', title: 'Product Usage daily · up 6%', body: report(0), accounts: dealers.slice(0, 14), credits: 1.8, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'sent' }] },
     { job: risk, h: 5, state: 'needs_review', title: 'Northwind Logistics: pulls down 3 days running', body: 'Northwind Logistics pulled 96 reports yesterday, down 18%, the third drop in a row. Their F&I manager left last week.\n\n**Suggested:** a check-in from the account owner today.', accounts: ['c2'], credits: 0.6 },
     { job: risk, h: 9, state: 'failed', title: null, error: "Step 3 · Slack: Slack isn't connected", failure: { text: "Slack isn't connected", fix: { label: 'Connect Slack', href: '/integrations' } }, accounts: ['c3'], credits: 0.4 },
-    { job: daily, h: 26, state: 'completed', title: 'Credit Check daily · flat', body: report(1), accounts: dealers.slice(2, 16), credits: 1.7, deliveries: [{ kind: 'slack', target: '#credit-check-cs-handoff', state: 'sent' }] },
-    { job: daily, h: 50, state: 'completed', title: 'Credit Check daily · down 2%', body: report(2), accounts: dealers.slice(4, 20), credits: 1.9, deliveries: [{ kind: 'slack', target: '#credit-check-cs-handoff', state: 'failed', error: 'channel_not_found' }] },
+    { job: daily, h: 26, state: 'completed', title: 'Product Usage daily · flat', body: report(1), accounts: dealers.slice(2, 16), credits: 1.7, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'sent' }] },
+    { job: daily, h: 50, state: 'completed', title: 'Product Usage daily · down 2%', body: report(2), accounts: dealers.slice(4, 20), credits: 1.9, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'failed', error: 'channel_not_found' }] },
     { job: daily, h: 0.05, state: 'running', title: null, accounts: [], credits: 0 },
   ];
   for (const r of runs) state.results.push({ id: randomUUID(), revbox_id: tu.id, job_id: r.job.id, job_name: r.job.name, kind: 'routine', state: r.state, created_at: at(r.h), error: r.error ?? null, failure: r.failure ?? null, credits: r.credits, account_ids: r.accounts,
@@ -496,7 +496,7 @@ export const PREVIEW_SLACK = { connected: true,
   team: { id: 'T07OPENNOUS', name: 'OpenNous', icon: face('#111827', '#4b5563') },
   channels: [
     { id: 'C07CSHANDOFFS', name: 'cs-handoffs', private: false, member: true },
-    { id: 'C07TU1HANDOFF', name: 'credit-check-cs-handoff', private: false, member: true },
+    { id: 'C07TU1HANDOFF', name: 'product-usage-cs-handoff', private: false, member: true },
     { id: 'C07LEADERSHIP', name: 'cs-leadership', private: true, member: true },
     { id: 'C07GENERAL', name: 'general', private: false, member: false },
   ], people: [{ id: 'U07AVERY', name: 'Avery Example', email: 'avery@opennous.example' }] };
@@ -606,7 +606,7 @@ export async function handleRevboxPreview(req, res, url, json) {
       state.results.unshift(run); await persist(); json(res, { run: { id: run.id, job_id: routine.id, kind: "routine", status: "running", test: true, held: true } }, 202); return true;
     }
     if (routine && parts[3] === 'run') {
-      const run = { id: randomUUID(), revbox_id: box.id, job_id: routine.id, state: 'completed', created_at: stamp(), error: null, credits: 1.8, deliveries: box.delivery.map(d => ({ id: randomUUID(), state: 'sent', error: null, destination: d })), result: { title: routine.name, kind: 'report', body: 'Preview output — no model, HubSpot or Slack was called.\n\nCredit Check pulls yesterday: 1,284 (+6% vs the day before). Biggest movers: Northside Motors (+41), Lakeshore Auto (-18).' } };
+      const run = { id: randomUUID(), revbox_id: box.id, job_id: routine.id, state: 'completed', created_at: stamp(), error: null, credits: 1.8, deliveries: box.delivery.map(d => ({ id: randomUUID(), state: 'sent', error: null, destination: d })), result: { title: routine.name, kind: 'report', body: 'Preview output — no model, HubSpot or Slack was called.\n\nProduct Usage events yesterday: 1,284 (+6% vs the day before). Biggest movers: Northside Labs (+41), Lakeshore Health (-18).' } };
       state.results.unshift(run); routine.last_run_at = run.created_at; await persist(); json(res, { run }); return true;
     }
     if (parts[1] === 'datasets') { await datasetsPreview(req, res, json, box, access, parts, payload, url, uid); return true; }
@@ -715,7 +715,7 @@ export async function handleRevboxPreview(req, res, url, json) {
 // model. Same routes and events as the real builder: POST /:id/builder starts a session,
 // /:id/builder/:sid continues, /:id/builder/:sid/approve creates the routine and switches it on.
 // The first message picks a script (scriptFor), as the real agent would read the request:
-// - report: a daily/weekly report from HubSpot, the Credit Check reference case
+// - report: a daily/weekly report from HubSpot, the Product Usage reference case
 //   (docs/revboxes/JOB_BUILDER.md). Asks the channel and the content, and the time only when the
 //   words did not give one; proposes with a HubSpot access warning.
 // - meeting: "after every meeting…". Starts on Meeting done (an event, so never a time question),
@@ -742,20 +742,20 @@ const pause = ms => new Promise(r => setTimeout(r, ms));
 const unrec = v => String(v ?? '').replace(/\s*\(recommended\)\s*$/i, '');
 const REPORT_QUESTIONS = [
   { id: 'channel', header: 'Channel', question: 'Which Slack channel should get the report?', multi: false, options: [
-    { label: '#credit-check-cs-handoff (Recommended)', description: 'Matches the name you gave · 14 members' },
+    { label: '#product-usage-cs-handoff (Recommended)', description: 'Matches the name you gave · 14 members' },
     { label: '#cs-handoffs', description: 'Already a destination of this box' },
     { label: 'DM me instead', description: 'Sent to you only' } ] },
   { id: 'content', header: 'Report', question: 'What should the report include?', multi: true, options: [
-    { label: 'Change vs the day before (Recommended)', description: 'Per dealer, all five Credit Check counts' },
+    { label: 'Change vs the day before (Recommended)', description: 'Per account, all five Product Usage counts' },
     { label: 'Top 5 movers', description: 'The dealers whose pulls moved most' },
     { label: 'Dealers with no data', description: 'Flags dealers that went quiet' } ] },
   { id: 'time', header: 'Time', question: 'When should it arrive?', multi: false, options: [
-    { label: '08:00 Toronto (Recommended)', description: 'Every day, before the CS stand-up' },
-    { label: '07:00 Toronto', description: 'Every day' },
-    { label: '08:00 Toronto, weekdays only', description: 'Skips Saturday and Sunday' } ] },
+    { label: '08:00 New York (Recommended)', description: 'Every day, before the CS stand-up' },
+    { label: '07:00 New York', description: 'Every day' },
+    { label: '08:00 New York, weekdays only', description: 'Skips Saturday and Sunday' } ] },
 ];
 // The workspace's Slack as the fake knows it: facts name channels from here, never from the proposal.
-const PREVIEW_CHANNELS = { C07TU1HANDOFF: 'credit-check-cs-handoff', C07CSHANDOFFS: 'cs-handoffs' };
+const PREVIEW_CHANNELS = { C07TU1HANDOFF: 'product-usage-cs-handoff', C07CSHANDOFFS: 'cs-handoffs' };
 const channelId = name => Object.entries(PREVIEW_CHANNELS).find(([, n]) => n === String(name ?? '').replace(/^#/, ''))?.[0] ?? null;
 /** A channel the words name ("#cs-handoffs", "the cs handoffs channel"), or null. */
 function namedChannel(words) {
@@ -764,7 +764,7 @@ function namedChannel(words) {
 }
 const channelQuestion = question => ({ id: 'channel', header: 'Channel', question, multi: false, options: [
   { label: '#cs-handoffs (Recommended)', description: 'Where the CS team works · 9 members' },
-  { label: '#credit-check-cs-handoff', description: '14 members' } ] });
+  { label: '#product-usage-cs-handoff', description: '14 members' } ] });
 const OTHER_QUESTIONS = [
   { id: 'output', header: 'Result', question: 'Where should the result go?', multi: false, options: [
     { label: 'Post it to Slack (Recommended)', description: 'To #cs-handoffs' },
@@ -819,7 +819,7 @@ function factsFor(steps, tables = new Map()) {
       const fact = { ...base, action: st.type === 'dataset_append' ? 'append' : 'read', dataset_key: c.dataset_key, dataset: t?.name ?? null, new_dataset: !!t && !t.exists };
       return st.type === 'dataset_append' ? { ...fact, dedupe_from: c.dedupe_from ?? 'deal', target: `Add a row to ${named}, one per deal` } : { ...fact, window: c.window ?? 'all', target: `Read ${named}: ${String(c.window ?? 'all').replace(/_/g, ' ')}` };
     }
-    if (st.type === 'hubspot') return { ...base, action: c.action, access: c.action === 'read' ? 'read' : 'write', object: c.object, fields: c.fields ?? [], target: `HubSpot: Read Company Daily Stats (${c.object}): ${(c.fields ?? []).join(', ')}` };
+    if (st.type === 'hubspot') return { ...base, action: c.action, access: c.action === 'read' ? 'read' : 'write', object: c.object, fields: c.fields ?? [], target: `HubSpot: Read Account Daily Usage (${c.object}): ${(c.fields ?? []).join(', ')}` };
     if (st.type === 'agent') return { ...base, model: c.model ?? 'opennous', mode: c.mode, target: `AI (${c.model ?? 'opennous'})` };
     if (st.type === 'slack') {
       const real = PREVIEW_CHANNELS[c.channel_id];
@@ -901,7 +901,7 @@ function otherProposal(s) {
   ];
   const trigger = s.signal && s.signal !== 'schedule'
     ? eventTrigger(s.signal)
-    : { signal_key: 'schedule', kind: 'clock', config: { frequency: 'weekly', at: '08:00', day_of_week: 1 }, timezone: 'America/Toronto', label: 'Every Monday at 08:00 (Toronto)' };
+    : { signal_key: 'schedule', kind: 'clock', config: { frequency: 'weekly', at: '08:00', day_of_week: 1 }, timezone: 'America/New_York', label: 'Every Monday at 08:00 (New York)' };
   return {
     name: s.name ?? 'Weekly account job',
     summary: `${trigger.label}: ${task}${toSlack ? ', then post it to #cs-handoffs' : toGmail ? ', then draft it to you in Gmail' : ', kept in this box'}.`,
@@ -920,25 +920,25 @@ function otherProposal(s) {
 function reportProposal(s) {
   const at = s.answers?.time?.match(/\d{2}:\d{2}/)?.[0] ?? '08:00';
   const weekdays = s.answers?.time?.includes('weekdays');
-  const channel = unrec(s.answers?.channel ?? '#credit-check-cs-handoff');
-  const label = `${weekdays ? 'Weekdays' : 'Every day'} at ${at} (Toronto)`;
+  const channel = unrec(s.answers?.channel ?? '#product-usage-cs-handoff');
+  const label = `${weekdays ? 'Weekdays' : 'Every day'} at ${at} (New York)`;
   const id = channel === '#cs-handoffs' ? 'C07CSHANDOFFS' : 'C07TU1HANDOFF';
   const steps = [
-    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-100000001', fields: ['credit_check_pulls', 'credit_check_approved', 'credit_check_declined', 'credit_check_pending', 'credit_check_errors'], group_by: 'company_name', date_property: 'date', window: 'yesterday', compare: true } },
-    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the VP summary of yesterday\'s Credit Check activity…' } },
+    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-9000001', fields: ['product_usage_pulls', 'product_usage_approved', 'product_usage_declined', 'product_usage_pending', 'product_usage_errors'], group_by: 'company_name', date_property: 'date', window: 'yesterday', compare: true } },
+    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the VP summary of yesterday\'s Product Usage activity…' } },
     { id: 'post', type: 'slack', config: { action: 'channel', channel_id: id, channel, format: 'report', text: '{{steps.summary.output}}' } },
     // "Also email the VP" adds a Gmail draft, so the card's "Sends data to" line can be seen.
     ...(s.emailVp ? [{ id: 'mail', type: 'gmail', config: { mode: 'draft', to: 'vp@tu.example', body: '{{steps.summary.output}}', send_from: { id: 'mbx-cs', kind: 'gmail' } } }] : []),
   ];
   return {
-    name: s.name ?? 'Credit Check daily summary',
-    summary: `${s.signal && s.signal !== 'schedule' ? eventTrigger(s.signal).label : `${weekdays ? 'Every weekday' : 'Every morning'} at ${at} Toronto time`}: read yesterday's Credit Check numbers per dealer from HubSpot, write the VP summary, post it to ${channel}.`,
+    name: s.name ?? 'Product Usage daily summary',
+    summary: `${s.signal && s.signal !== 'schedule' ? eventTrigger(s.signal).label : `${weekdays ? 'Every weekday' : 'Every morning'} at ${at} New York time`}: read yesterday's Product Usage numbers per account from HubSpot, write the VP summary, post it to ${channel}.`,
     // An event the user picked when asked what starts it (GET-892), else the schedule.
-    trigger: s.signal && s.signal !== 'schedule' ? eventTrigger(s.signal) : { signal_key: 'schedule', kind: 'clock', config: { frequency: 'daily', at, ...(weekdays ? { weekdays_only: true } : {}) }, timezone: 'America/Toronto', label },
+    trigger: s.signal && s.signal !== 'schedule' ? eventTrigger(s.signal) : { signal_key: 'schedule', kind: 'clock', config: { frequency: 'daily', at, ...(weekdays ? { weekdays_only: true } : {}) }, timezone: 'America/New_York', label },
     steps,
     facts: factsFor(steps),
     display: [
-      { step_id: 'read', tool: 'hubspot', title: 'Read Company Daily Stats', detail: '5 Credit Check fields · per dealer · yesterday vs the day before' },
+      { step_id: 'read', tool: 'hubspot', title: 'Read Account Daily Usage', detail: '5 Product Usage fields · per account · yesterday vs the day before' },
       { step_id: 'summary', tool: 'agent', title: 'Write the VP summary', detail: unrec(s.answers?.content ?? 'Change vs the day before').replace(/\s*\(recommended\)/ig, '') },
       { step_id: 'post', tool: 'slack', title: `Post to ${channel}`, detail: 'Report layout · as the OpenNous app' },
       ...(s.emailVp ? [{ step_id: 'mail', tool: 'gmail', title: 'Draft the summary to the VP' }] : []),
@@ -1239,14 +1239,14 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       // No pick and no schedule in the words: the start is asked with the rest, never defaulted (GET-892).
       s.askStart = !hinted && !SCHEDULE_WORDS.test(words);
       if (!s.askStart) await announceTrigger(hinted && !hinted.startsWith('meeting.done') && hinted !== 'deal.won' ? hinted : 'schedule');
-      await tool('Looking for Credit Check in HubSpot…', 'hubspot_find', 'Found Company Daily Stats · 5 Credit Check fields');
-      await tool('Previewing yesterday’s numbers…', 'hubspot_preview', 'Yesterday: 42 dealers with Credit Check activity');
+      await tool('Looking for Product Usage in HubSpot…', 'hubspot_find', 'Found Account Daily Usage · 5 Product Usage fields');
+      await tool('Previewing yesterday’s numbers…', 'hubspot_preview', 'Yesterday: 42 dealers with Product Usage activity');
       await settleIntegrations();
       // The time is asked only when the words did not give one.
       const at = timeIn(words);
-      if (at) s.answers = { ...(s.answers ?? {}), time: `${at} Toronto${/weekday/i.test(words) ? ', weekdays only' : ''}` };
+      if (at) s.answers = { ...(s.answers ?? {}), time: `${at} New York${/weekday/i.test(words) ? ', weekdays only' : ''}` };
       const questions = [...(s.askStart ? [TRIGGER_QUESTION] : []), ...REPORT_QUESTIONS.filter(q => q.id !== 'time' || (!at && !s.askStart))];
-      await prose(`The numbers live in the HubSpot custom object Company Daily Stats, and yesterday has real data for 42 dealers. ${questions.length === 3 ? 'Three' : 'Two'} things I can’t work out on my own:`);
+      await prose(`The numbers live in the HubSpot custom object Account Daily Usage, and yesterday has real data for 42 dealers. ${questions.length === 3 ? 'Three' : 'Two'} things I can’t work out on my own:`);
       await ask(questions);
     } else {
       await tool('Checking connected tools…', 'workspace_connections', `HubSpot, Slack, Gmail and Granola are connected${attached}`);
@@ -1260,7 +1260,7 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     // The answer to "What should start this job?" settles the trigger (GET-892).
     if (picked.start) {
       const key = triggerFromAnswer(picked.start);
-      if (key === 'schedule' && /weekday/i.test(picked.start)) s.answers.time = '08:00 Toronto, weekdays only';
+      if (key === 'schedule' && /weekday/i.test(picked.start)) s.answers.time = '08:00 New York, weekdays only';
       await announceTrigger(key);
     }
     if (s.script === 'meeting') {
@@ -1274,7 +1274,7 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       await prose('Here’s the job:');
       await propose();
     } else {
-      await tool('Resolving the Slack channel…', 'slack_channels', `${unrec(s.answers.channel || '#credit-check-cs-handoff')} · C07TU1HANDOFF`);
+      await tool('Resolving the Slack channel…', 'slack_channels', `${unrec(s.answers.channel || '#product-usage-cs-handoff')} · C07TU1HANDOFF`);
       await tool('Checking what the HubSpot connection can read…', 'hubspot_access', 'Companies and deals readable · custom objects not granted');
       await prose('Here’s the job. One thing to fix before it can run reliably:');
       await propose();
@@ -1283,7 +1283,7 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
     const text = message ?? '';
     await send({ type: 'status', text: 'Updating the job…' }, 300);
     const at = timeIn(text);
-    if (at && s.script !== 'meeting' && s.script !== 'won') s.answers = { ...(s.answers ?? {}), time: `${at} Toronto` };
+    if (at && s.script !== 'meeting' && s.script !== 'won') s.answers = { ...(s.answers ?? {}), time: `${at} New York` };
     if (/\bemail\b/i.test(text) && s.script === 'report') { s.emailVp = true; await settleIntegrations(); }
     const channel = namedChannel(text);
     if (channel && (s.script === 'meeting' || s.script === 'won')) s.channel = channel;

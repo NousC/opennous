@@ -40,7 +40,7 @@ export function signalKeyForRoutine(routine, catalog = signalCatalog()) {
   return entries.find(e => e.trigger?.kind === kind)?.key ?? null;
 }
 
-/** "Every day at 08:00 (Toronto)", "Meeting done · Granola", or the kind when nothing knows it. */
+/** "Every day at 08:00 (New York)", "Meeting done · Granola", or the kind when nothing knows it. */
 function triggerLabel(routine, key, catalog) {
   const cfg = isObj(routine?.trigger_config) ? routine.trigger_config : {};
   if (routine?.trigger_kind === 'clock') {

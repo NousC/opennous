@@ -303,7 +303,7 @@ export function openBuilderForBuiltin(workspaceId: string, token: string, boxId:
   return revboxesRequest<{ session_id: string; builtin: BuiltinJobKey; history: BuilderHistoryItem[] }>(workspaceId, token, `/${boxId}/builder`, { method: 'POST', body: JSON.stringify({ builtin: key }) });
 }
 
-/** "Every day at 08:00 (Toronto)" from a routine row when the server did not label it. */
+/** "Every day at 08:00 (New York)" from a routine row when the server did not label it. */
 export function routineTriggerLabel(job: RevBoxRoutine): string {
   if (job.trigger_label) return job.trigger_label;
   const c = (job.trigger_config ?? {}) as { frequency?: string; at?: string };

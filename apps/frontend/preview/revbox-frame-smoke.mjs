@@ -17,7 +17,7 @@ try {
   await page.getByRole('button', { name: 'Create RevBox', exact: true }).click();
   await page.getByLabel('RevBox name').waitFor();
   await page.getByRole('button', { name: 'New job', exact: true }).first().click();
-  await page.getByLabel('Describe the job').fill('Set up a job that pulls Credit Check account summaries from HubSpot and creates a report every morning for me into the Slack channel "Credit Check CS handoff".');
+  await page.getByLabel('Describe the job').fill('Set up a job that pulls Product Usage account summaries from HubSpot and creates a report every morning for me into the Slack channel "Product Usage CS handoff".');
   await page.getByLabel('Describe the job').press('ControlOrMeta+Enter');
   await expect(page.getByRole('tab', { name: 'Channel' })).toBeVisible({ timeout: 20000 });
   for (const [width, height] of [[1440, 900], [1200, 800], [900, 700], [390, 800]]) {

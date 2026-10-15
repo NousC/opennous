@@ -19,7 +19,7 @@ const join = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean
 const who = (a: string) => !/\{\{/.test(a) ? a : /attendee|person\.|people/i.test(a) ? 'the people on the call' : /owner/i.test(a) ? 'the owner' : /contact/i.test(a) ? 'the contact' : 'the right person';
 const people = (xs: string[]) => [...new Set(xs.map(who))].join(', ');
 
-/** "Every day 08:00 (Toronto)": the server's Starts label, else the trigger's own label shortened. */
+/** "Every day 08:00 (New York)": the server's Starts label, else the trigger's own label shortened. */
 export function jobStarts(p: JobProposal): string {
   if (p.brief?.starts) return p.brief.starts;
   const t = p.trigger;

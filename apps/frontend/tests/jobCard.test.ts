@@ -9,10 +9,10 @@ import { asksFirst, jobDelivers, jobStarts, jobUses } from "../src/lib/jobCard.t
 import type { Delivery, JobProposal } from "../src/lib/revboxes.ts";
 
 const job = (over: Partial<JobProposal> = {}): JobProposal => ({
-  name: "Credit Check daily report", summary: "model words",
-  trigger: { kind: "clock", config: { frequency: "daily", at: "08:00" }, timezone: "America/Toronto", label: "Every day at 08:00 (Toronto)" },
+  name: "Product Usage daily report", summary: "model words",
+  trigger: { kind: "clock", config: { frequency: "daily", at: "08:00" }, timezone: "America/New_York", label: "Every day at 08:00 (New York)" },
   steps: [
-    { id: "read", type: "hubspot", config: { action: "read", object: "2-1", object_label: "Company Daily Stats", fields: ["x"] } },
+    { id: "read", type: "hubspot", config: { action: "read", object: "2-1", object_label: "Account Daily Usage", fields: ["x"] } },
     { id: "summary", type: "agent", config: { mode: "write", prompt: "x" } },
     { id: "post", type: "slack", config: { action: "channel", channel_id: "C0OPS", channel: "made-up-name", format: "report" } },
   ],
@@ -23,8 +23,8 @@ const job = (over: Partial<JobProposal> = {}): JobProposal => ({
 });
 
 test("Starts: the server's label; the trigger's own label, shortened, on older proposals", () => {
-  assert.equal(jobStarts(job({ brief: { text: "x", starts: "Every day 08:00 (Toronto)", asks_first: false } })), "Every day 08:00 (Toronto)");
-  assert.equal(jobStarts(job()), "Every day 08:00 (Toronto)");
+  assert.equal(jobStarts(job({ brief: { text: "x", starts: "Every day 08:00 (New York)", asks_first: false } })), "Every day 08:00 (New York)");
+  assert.equal(jobStarts(job()), "Every day 08:00 (New York)");
 });
 
 test("Uses: the recorder, the steps' tools, then the box's destinations; no AI, no reads of tables", () => {
@@ -78,13 +78,13 @@ test("Delivers: the box's destinations with the layout the engine picks; none = 
 test("Meta line (GET-889): starts · tools → targets without the layout, 'In the app' when none, '· asks first' last", async () => {
   const { jobMeta, jobMetaText } = await import("../src/lib/jobCard.ts");
   const m = jobMeta(job());
-  assert.deepEqual([m.starts, m.tools, m.targets.map(t => t.text), m.asksFirst], ["Every day 08:00 (Toronto)", ["hubspot", "slack"], ["#ops-daily"], false]);
-  assert.equal(jobMetaText(m), "Every day 08:00 (Toronto) · HubSpot, Slack → #ops-daily");
+  assert.deepEqual([m.starts, m.tools, m.targets.map(t => t.text), m.asksFirst], ["Every day 08:00 (New York)", ["hubspot", "slack"], ["#ops-daily"], false]);
+  assert.equal(jobMetaText(m), "Every day 08:00 (New York) · HubSpot, Slack → #ops-daily");
   const quiet = job({ steps: [{ id: "summary", type: "agent", config: { mode: "write", prompt: "x" } }], facts: [] });
-  assert.equal(jobMetaText(jobMeta(quiet)), "Every day 08:00 (Toronto) · In the app");
+  assert.equal(jobMetaText(jobMeta(quiet)), "Every day 08:00 (New York) · In the app");
   const held = job({ steps: [...job().steps, { id: "ok", type: "approval", config: {} }] });
-  assert.equal(jobMetaText(jobMeta(held)), "Every day 08:00 (Toronto) · HubSpot, Slack → #ops-daily · asks first");
+  assert.equal(jobMetaText(jobMeta(held)), "Every day 08:00 (New York) · HubSpot, Slack → #ops-daily · asks first");
   // Email recipients stay whole; a HubSpot write says it writes.
   const sends = job({ steps: [{ id: "mail", type: "email", config: { to: "ops@harborline.example, cfo@harborline.example" } }, { id: "note", type: "hubspot", config: { action: "note" } }], facts: [] });
-  assert.equal(jobMetaText(jobMeta(sends)), "Every day 08:00 (Toronto) · Email, HubSpot → Email · to ops@harborline.example, cfo@harborline.example, A note in HubSpot (writes)");
+  assert.equal(jobMetaText(jobMeta(sends)), "Every day 08:00 (New York) · Email, HubSpot → Email · to ops@harborline.example, cfo@harborline.example, A note in HubSpot (writes)");
 });

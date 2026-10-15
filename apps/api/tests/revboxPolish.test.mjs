@@ -61,7 +61,7 @@ function boxDb() {
   return sb;
 }
 const deps = {
-  slackTargets: async () => ({ connected: true, channels: [{ id: 'C0TU', name: 'credit_check-cs' }] }),
+  slackTargets: async () => ({ connected: true, channels: [{ id: 'C0TU', name: 'product_usage-cs' }] }),
   mailboxes: async () => [],
   assertUrl: async (url) => { if (/localhost|10\.|169\.254/.test(url)) throw new Error('blocked_private_address'); },
 };
@@ -71,7 +71,7 @@ test('an editor changes a job\'s Slack channel: id and name stored, versioned, s
   const sb = boxDb();
   const job = await saveJobStepTarget(sb, args('ed', 'post', { kind: 'slack', channel_id: 'C0TU' }), deps);
   const post = job.steps.find(s => s.id === 'post');
-  assert.deepEqual(post.config, { action: 'channel', channel_id: 'C0TU', channel: 'credit_check-cs', text: '{{steps.summary.output}}' });
+  assert.deepEqual(post.config, { action: 'channel', channel_id: 'C0TU', channel: 'product_usage-cs', text: '{{steps.summary.output}}' });
   assert.equal(job.version, 4);
   assert.equal(job.enabled, true);
   const w = sb.writes.find(x => x.table === 'agent_routines');

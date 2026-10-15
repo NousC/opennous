@@ -9,22 +9,22 @@ import assert from 'node:assert/strict';
 import { validateBuilderProposal, approveBuilderProposal, sanitizeBuilderTranscript, RESULT_NOT_CARRIED, latestBuilderSessionForJob, openBuilderSessionForJob, builderSessionHistory, seedTranscriptFromApproved, APPROVED_NOTE, createBuilderSession, getBuilderSession, saveBuilderSession, setBuilderSessionState, listRevboxRoutines, builderRoutineColumns, proposalFacts, revboxJobDeliveries, listRevboxJobDeliveries } from '../dist/db/revboxBuilder.mjs';
 import { runStepsForTest as runSteps, registerStepHandler, withBoxContextForTest as withBoxContext, revboxContextText, REVBOX_CONTEXT_CHARS } from '../dist/services/automationRun.mjs';
 
-// The Credit Check reference case from docs/revboxes/JOB_BUILDER.md.
+// The Product Usage reference case from docs/revboxes/JOB_BUILDER.md.
 const dailyReport = () => ({
-  name: 'Credit Check daily summary',
-  summary: 'Every morning at 08:00 Toronto time: read yesterday\'s Credit Check numbers per dealer, write the summary, post it to #credit-check-cs-handoff.',
-  trigger: { kind: 'clock', config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', label: 'Every day at 08:00 (Toronto)' },
+  name: 'Product Usage daily summary',
+  summary: 'Every morning at 08:00 New York time: read yesterday\'s Product Usage numbers per account, write the summary, post it to #product-usage-cs-handoff.',
+  trigger: { kind: 'clock', config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', label: 'Every day at 08:00 (New York)' },
   steps: [
-    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-100000001', object_label: 'Company Daily Stats',
-      fields: ['credit_check_a', 'credit_check_b', 'credit_check_c', 'credit_check_d', 'credit_check_e'],
-      field_labels: { credit_check_a: 'A' }, group_by: 'company_name', date_property: 'date', window: 'yesterday', compare: true } },
-    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the VP summary of yesterday\'s Credit Check pulls per dealer.' } },
-    { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C0TU', channel: 'credit-check-cs-handoff', text: '{{steps.summary.output}}' } },
+    { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-9000001', object_label: 'Account Daily Usage',
+      fields: ['product_usage_a', 'product_usage_b', 'product_usage_c', 'product_usage_d', 'product_usage_e'],
+      field_labels: { product_usage_a: 'A' }, group_by: 'company_name', date_property: 'date', window: 'yesterday', compare: true } },
+    { id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write the VP summary of yesterday\'s Product Usage usage per account.' } },
+    { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C0TU', channel: 'product-usage-cs-handoff', text: '{{steps.summary.output}}' } },
   ],
   display: [
-    { step_id: 'read', tool: 'hubspot', title: 'Read Company Daily Stats', detail: '5 Credit Check fields' },
+    { step_id: 'read', tool: 'hubspot', title: 'Read Account Daily Usage', detail: '5 Product Usage fields' },
     { step_id: 'summary', tool: 'agent', title: 'Write the summary' },
-    { step_id: 'post', tool: 'slack', title: 'Post to #credit-check-cs-handoff' },
+    { step_id: 'post', tool: 'slack', title: 'Post to #product-usage-cs-handoff' },
   ],
   uses_box_delivery: true,
   warnings: [{ kind: 'unverified', message: 'No rows yesterday to preview.' }],
@@ -33,11 +33,11 @@ const dailyReport = () => ({
 });
 const lookups = { slackChannelIds: ['C0TU', 'C0OTHER'], mailboxIds: ['mbx-1'] };
 
-test('the Credit Check reference flow passes', () => {
+test('the Product Usage reference flow passes', () => {
   const r = validateBuilderProposal(dailyReport(), lookups);
   assert.deepEqual(r.errors, []);
   assert.equal(r.ok, true);
-  assert.equal(r.trigger.timezone, 'America/Toronto');
+  assert.equal(r.trigger.timezone, 'America/New_York');
   assert.deepEqual(r.steps.map(s => s.id), ['read', 'summary', 'post']);
 });
 
@@ -90,7 +90,7 @@ test('display covers every step, the trigger has a runner, Gmail names a real ma
 function database(seed = {}) {
   const tables = {
     workspace_members: [{ workspace_id: 'ws', user_id: 'owner', role: 'admin' }, { workspace_id: 'ws', user_id: 'viewer', role: 'member' }],
-    revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: true, name: 'Credit Check CS', objective: 'Keep CS ahead of Credit Check usage drops.', blocks: [{ id: 'b1', title: 'Tone', body: 'Plain, numbers first.' }], delivery: [] }],
+    revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: true, name: 'Product Usage CS', objective: 'Keep CS ahead of Product Usage usage drops.', blocks: [{ id: 'b1', title: 'Tone', body: 'Plain, numbers first.' }], delivery: [] }],
     revbox_members: [], revbox_context: [], revbox_builder_sessions: [], agent_routines: [], documents: [],
     ...seed,
   };
@@ -119,28 +119,28 @@ function database(seed = {}) {
 test('approve makes one routine on the box, switched on, with the legacy columns, ending in box delivery', async () => {
   const sb = database();
   const session = await createBuilderSession(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner' });
-  await saveBuilderSession(sb, { workspaceId: 'ws', sessionId: session.id, messages: [{ role: 'user', content: 'Credit Check every morning' }], proposal: dailyReport() });
+  await saveBuilderSession(sb, { workspaceId: 'ws', sessionId: session.id, messages: [{ role: 'user', content: 'Product Usage every morning' }], proposal: dailyReport() });
   const before = Date.now();
   const out = await approveBuilderProposal(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner', sessionId: session.id, name: 'Morning report', ...lookups });
   const { routine } = out;
   assert.equal(routine.name, 'Morning report');
   assert.equal(routine.revbox_id, 'box');
   assert.equal(routine.user_id, 'owner');
-  // Approving switches it on (GET-868 polish), with its next 08:00 Toronto slot.
+  // Approving switches it on (GET-868 polish), with its next 08:00 New York slot.
   assert.equal(out.enabled, true);
   assert.equal(out.reason, undefined);
   assert.equal(routine.enabled, true);
   const next = new Date(routine.next_run_at);
   assert.ok(next.getTime() > before && next.getTime() <= before + 25 * 3600e3, `next_run_at ${routine.next_run_at}`);
-  assert.equal(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Toronto', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(next), '08:00');
+  assert.equal(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(next), '08:00');
   assert.equal(routine.trigger_kind, 'clock');
   assert.deepEqual(routine.trigger_config, { frequency: 'daily', at: '08:00' });
   assert.equal(routine.frequency, 'daily');
   assert.equal(routine.at_time, '08:00');
   assert.equal(routine.offset_minutes, null);
-  assert.equal(routine.timezone, 'America/Toronto');
+  assert.equal(routine.timezone, 'America/New_York');
   assert.equal(routine.destination, 'slack');
-  assert.equal(routine.destination_target, 'credit-check-cs-handoff');
+  assert.equal(routine.destination_target, 'product-usage-cs-handoff');
   assert.equal(routine.artifact, null);
   assert.match(routine.prompt, /VP summary/);
   assert.deepEqual(routine.steps.map(s => s.type), ['hubspot', 'agent', 'slack', 'revbox_delivery']);
@@ -221,7 +221,7 @@ test('a failed switch-on check still saves the job, off, with the reason', async
 function transcript() {
   const p = dailyReport();
   return [
-    { role: 'user', content: [{ type: 'text', text: "[Context from the composer, not the user's words]\nIntegrations the user attached: hubspot.\nTrigger the user picked: none.\n\nCredit Check report every morning to Slack" }] },
+    { role: 'user', content: [{ type: 'text', text: "[Context from the composer, not the user's words]\nIntegrations the user attached: hubspot.\nTrigger the user picked: none.\n\nProduct Usage report every morning to Slack" }] },
     { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret', signature: 'x' }, { type: 'text', text: 'Let me look.' }, { type: 'tool_use', id: 't1', name: 'hubspot_find', input: { query: 'credit' } }] },
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: '{"objects":[]}' }] },
     { role: 'assistant', content: [{ type: 'text', text: 'Found it.' }, { type: 'tool_use', id: 'a1', name: 'ask', input: { questions: [{ id: 'time', header: 'Time', question: 'When should it arrive?', multi: false, options: [{ label: '08:00' }, { label: '07:00' }] }, { id: 'channel', header: 'Channel', question: 'Which channel?', multi: false, options: [{ label: '#a' }, { label: '#b' }] }] } }] },
@@ -236,7 +236,7 @@ test('history: the chat as the UI shows it, without tool noise', () => {
   const approved = { ...dailyReport(), name: 'Approved name', facts: [{ step_id: 'read' }] };
   const h = builderSessionHistory(transcript(), { proposal: approved, approved: true });
   assert.deepEqual(h.map(i => i.kind ?? i.role), ['user', 'assistant', 'ask', 'assistant', 'proposal']);
-  assert.equal(h[0].text, 'Credit Check report every morning to Slack');
+  assert.equal(h[0].text, 'Product Usage report every morning to Slack');
   assert.equal(h[1].text, 'Let me look.\n\nFound it.');
   assert.equal(h[3].text, 'Here is the job.');
   assert.equal(h[2].questions.length, 2);
@@ -313,7 +313,7 @@ test('Edit on a job with no chat behind it opens on its current setup (GET-873)'
 
 // ── Review findings (GET-858): what the card shows comes from the real steps ─────
 
-const people = { slackChannels: [{ id: 'C0TU', name: 'credit-check-cs-handoff' }, { id: 'C0OTHER', name: 'random' }], slackPeople: [{ id: 'U1', name: 'Dana Vp' }], mailboxes: [{ id: 'mbx-1', kind: 'gmail', email: 'cs@acme.example' }] };
+const people = { slackChannels: [{ id: 'C0TU', name: 'product-usage-cs-handoff' }, { id: 'C0OTHER', name: 'random' }], slackPeople: [{ id: 'U1', name: 'Dana Vp' }], mailboxes: [{ id: 'mbx-1', kind: 'gmail', email: 'cs@acme.example' }] };
 
 test('finding 2a: a display line whose tool does not match its step type is refused', () => {
   const p = dailyReport();
@@ -321,7 +321,7 @@ test('finding 2a: a display line whose tool does not match its step type is refu
   // The model labels the exfiltration step as a Slack post.
   const r = validateBuilderProposal(p, lookups);
   assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /Display line "Post to #credit-check-cs-handoff".*"slack".*webhook/);
+  assert.match(r.errors.join(' '), /Display line "Post to #product-usage-cs-handoff".*"slack".*webhook/);
   p.display[2].tool = 'webhook';
   assert.equal(validateBuilderProposal(p, lookups).ok, true);
   // agent steps may be labelled ai or agent; a step may not be shown twice.
@@ -346,13 +346,13 @@ test('finding 2b: facts are derived from the real steps, one per step', () => {
   assert.deepEqual(r.facts.map(f => [f.step_id, f.type]), [['read', 'hubspot'], ['summary', 'agent'], ['post', 'slack'], ['hook', 'webhook'], ['mail', 'gmail'], ['dm', 'slack'], ['upd', 'hubspot']]);
   const by = Object.fromEntries(r.facts.map(f => [f.step_id, f]));
   assert.equal(by.read.access, 'read');
-  assert.equal(by.read.object, '2-100000001');
-  assert.deepEqual(by.read.fields, ['credit_check_a', 'credit_check_b', 'credit_check_c', 'credit_check_d', 'credit_check_e']);
-  assert.match(by.read.target, /Read .*2-100000001.*credit_check_a/);
+  assert.equal(by.read.object, '2-9000001');
+  assert.deepEqual(by.read.fields, ['product_usage_a', 'product_usage_b', 'product_usage_c', 'product_usage_d', 'product_usage_e']);
+  assert.match(by.read.target, /Read .*2-9000001.*product_usage_a/);
   assert.equal(by.summary.model, 'claude-sonnet-5');
   assert.match(by.summary.target, /claude-sonnet-5/);
   // The channel name comes from the workspace's Slack, not from the model's config.
-  assert.equal(by.post.target, '#credit-check-cs-handoff (C0TU)');
+  assert.equal(by.post.target, '#product-usage-cs-handoff (C0TU)');
   assert.equal(by.post.external, false);
   assert.equal(by.hook.host, 'hooks.partner.example');
   assert.equal(by.hook.url, 'https://hooks.partner.example/in?x=1');
@@ -367,7 +367,7 @@ test('finding 2b: facts are derived from the real steps, one per step', () => {
   assert.deepEqual(by.upd.fields, ['dealstage']);
   // A Slack channel name the model wrote that is not the real one is not trusted.
   const lie = dailyReport(); lie.steps[2].config.channel = 'cs-handoff';
-  assert.equal(proposalFacts(lie, people).find(f => f.step_id === 'post').target, '#credit-check-cs-handoff (C0TU)');
+  assert.equal(proposalFacts(lie, people).find(f => f.step_id === 'post').target, '#product-usage-cs-handoff (C0TU)');
   assert.equal(proposalFacts(lie, {}).find(f => f.step_id === 'post').target, 'Slack channel C0TU (named "cs-handoff" by the builder, not checked)');
   // Failing proposals still carry facts for whatever steps there are.
   assert.ok(Array.isArray(validateBuilderProposal({ ...p, name: '' }, lookups).facts));
@@ -379,7 +379,7 @@ test('finding 10b: an explicit Slack post to a box destination is refused when t
   assert.equal(r.ok, false);
   assert.match(r.errors.join(' '), /"post".*already.*box.*(drop|remove).*uses_box_delivery/i);
   // Matched by the channel's real name as well (destinations are often "#name").
-  assert.equal(validateBuilderProposal(p, { ...lookups, ...people, boxDestinations: [{ kind: 'slack', target: '#credit-check-cs-handoff' }] }).ok, false);
+  assert.equal(validateBuilderProposal(p, { ...lookups, ...people, boxDestinations: [{ kind: 'slack', target: '#product-usage-cs-handoff' }] }).ok, false);
   // Fine without box delivery, or to another channel.
   assert.equal(validateBuilderProposal({ ...p, uses_box_delivery: false }, { ...lookups, boxDestinations: [{ kind: 'slack', target: 'C0TU' }] }).ok, true);
   assert.equal(validateBuilderProposal(p, { ...lookups, boxDestinations: [{ kind: 'slack', target: 'C0OTHER' }, { kind: 'webhook', target: 'https://x.example' }] }).ok, true);
@@ -448,7 +448,7 @@ test('approve stores the derived facts on the session proposal', async () => {
   const sb = database();
   const s = await createBuilderSession(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner' });
   await approveBuilderProposal(sb, { workspaceId: 'ws', revboxId: 'box', userId: 'owner', sessionId: s.id, proposal: dailyReport(), ...lookups, ...people });
-  assert.equal(sb.tables.revbox_builder_sessions[0].proposal.facts.find(f => f.step_id === 'post').target, '#credit-check-cs-handoff (C0TU)');
+  assert.equal(sb.tables.revbox_builder_sessions[0].proposal.facts.find(f => f.step_id === 'post').target, '#product-usage-cs-handoff (C0TU)');
 });
 
 test('builderRoutineColumns gives the box-delivery step an id no proposed step uses', () => {
@@ -470,7 +470,7 @@ test('the Slack layout the agent chose for box delivery lands on the revbox_deli
 
 // ── Run time ──────────────────────────────────────────────────────────────────
 
-const doc = { id: 'd1', title: 'Credit Check daily', headline: null, sections: [{ label: 'Summary', body: 'Dealer A pulled 12 (+3).' }] };
+const doc = { id: 'd1', title: 'Product Usage daily', headline: null, sections: [{ label: 'Summary', body: 'Dealer A pulled 12 (+3).' }] };
 const routine = (extra = {}) => ({ id: 'r1', name: 'TU daily', user_id: 'owner', revbox_id: 'box', steps: [
   { id: 'summary', type: 'agent', config: { mode: 'write', prompt: 'x' } },
   { id: 'box_delivery', type: 'revbox_delivery', config: {} },
@@ -478,14 +478,14 @@ const routine = (extra = {}) => ({ id: 'r1', name: 'TU daily', user_id: 'owner',
 
 test('revbox_delivery posts the latest AI output to every destination the box has now', async () => {
   const sb = database();
-  sb.tables.revboxes[0].delivery = [{ id: 'd-s', kind: 'slack', target: '#credit-check-cs-handoff' }, { id: 'd-w', kind: 'webhook', target: 'https://hooks.example/tu' }];
+  sb.tables.revboxes[0].delivery = [{ id: 'd-s', kind: 'slack', target: '#product-usage-cs-handoff' }, { id: 'd-w', kind: 'webhook', target: 'https://hooks.example/tu' }];
   const slack = []; const hooks = [];
   registerStepHandler('slack', async (a) => { slack.push(a); return { ok: true }; });
   registerStepHandler('safe_fetch', async (url, init) => { hooks.push({ url, init }); return { ok: true, status: 200 }; });
   const r = await runSteps(routine(), doc, { stage: 'scheduled', ctx: { supabase: sb, workspaceId: 'ws', runId: 'run-1' } });
   assert.equal(r.failed, undefined);
   assert.equal(r.delivered, 'revbox_delivery:2/2');
-  assert.equal(slack[0].channel, '#credit-check-cs-handoff');
+  assert.equal(slack[0].channel, '#product-usage-cs-handoff');
   assert.match(slack[0].text, /Dealer A pulled 12/);
   assert.equal(hooks[0].url, 'https://hooks.example/tu');
   assert.equal(hooks[0].init.headers['Idempotency-Key'], 'run-1:d-w');
@@ -533,7 +533,7 @@ test('every AI step gets the box context in front of its instructions, read at r
   registerStepHandler('revbox_visible_accounts', null);
   const r1 = routine();
   const text = await withBoxContext(sb, 'ws', r1, 'Write the VP summary.');
-  assert.match(text, /RevBox "Credit Check CS"/);
+  assert.match(text, /RevBox "Product Usage CS"/);
   assert.match(text, /Objective: Keep CS ahead/);
   assert.match(text, /## Tone\nPlain, numbers first\./);
   assert.match(text, /Escalate drops over 30%/);
@@ -596,7 +596,7 @@ test('revbox_delivery emails the output from OpenNous to every recipient: first 
     assert.match(sent[0].url, /resend/);
     assert.deepEqual(sent[0].body.to, ['vp@acme.example']);
     assert.deepEqual(sent[0].body.cc, ['cfo@acme.example']);
-    assert.equal(sent[0].body.subject, 'Credit Check daily');
+    assert.equal(sent[0].body.subject, 'Product Usage daily');
     assert.match(sent[0].body.text, /Dealer A pulled 12/);
     assert.deepEqual(r.log.find(l => l.type === 'revbox_delivery').deliveries.map(d => [d.id, d.kind, d.ok]), [['d-e', 'email', true]]);
   } finally { globalThis.fetch = realFetch; if (realKey === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = realKey; }
@@ -616,7 +616,7 @@ test('revbox_delivery to Gmail only ever creates a draft in the chosen mailbox, 
   assert.equal(drafts[0].connectionId, 'mbx-1');
   assert.equal(drafts[0].userId, 'owner');   // as the job's owner
   assert.equal(drafts[0].to, 'vp@acme.example, cfo@acme.example');
-  assert.equal(drafts[0].subject, 'Credit Check daily');
+  assert.equal(drafts[0].subject, 'Product Usage daily');
   assert.match(drafts[0].body, /Dealer A pulled 12/);
   // A mailbox that is gone fails that destination, and still nothing is sent.
   registerStepHandler('gmail_draft', async () => ({ status: 'no_gmail' }));
@@ -655,15 +655,15 @@ test('revbox_delivery with an explicit Cc (GET-868): every To on To, the Cc on C
 
 test('double posting counts a box email destination\'s Cc and a picked Slack channel\'s id and name', () => {
   const p = dailyReport();
-  assert.equal(validateBuilderProposal(p, { ...lookups, ...people, boxDestinations: [{ kind: 'slack', target: 'C0OTHER', channel: 'credit-check-cs-handoff' }] }).ok, false);
+  assert.equal(validateBuilderProposal(p, { ...lookups, ...people, boxDestinations: [{ kind: 'slack', target: 'C0OTHER', channel: 'product-usage-cs-handoff' }] }).ok, false);
   const g = dailyReport(); g.uses_box_delivery = true; g.steps.splice(2, 1); g.display.splice(2, 1);
   g.steps.push({ id: 'mail', type: 'email', config: { to: 'cfo@acme.example', body: '{{steps.summary.output}}' } }); g.display.push({ step_id: 'mail', tool: 'email', title: 'Email' });
   assert.match(validateBuilderProposal(g, { ...lookups, boxDestinations: [{ kind: 'email', target: 'vp@acme.example', to: 'vp@acme.example', cc: 'cfo@acme.example' }] }).errors.join(' '), /cfo@acme\.example.*twice/);
 });
 
-// The Credit Check job plus a CS handoff job that drafts in Gmail, emails and calls a webhook.
+// The Product Usage job plus a CS handoff job that drafts in Gmail, emails and calls a webhook.
 const boxJobs = () => [
-  { id: 'r1', name: 'Credit Check daily', steps: dailyReport().steps.concat({ id: 'box_delivery', type: 'revbox_delivery', config: {} }) },
+  { id: 'r1', name: 'Product Usage daily', steps: dailyReport().steps.concat({ id: 'box_delivery', type: 'revbox_delivery', config: {} }) },
   { id: 'r2', name: 'CS handoff', steps: [
     { id: 'w', type: 'agent', config: { prompt: 'x' } },
     { id: 'g', type: 'gmail', config: { mode: 'draft', to: 'dana@acme.example', body: 'x', send_from: { id: 'mbx-1', kind: 'gmail' } } },
@@ -677,7 +677,7 @@ const boxJobs = () => [
 test('job deliveries are derived from the jobs\' real steps, labelled with the job', () => {
   const out = revboxJobDeliveries(boxJobs(), { mailboxes: [{ id: 'mbx-1', email: 'cs-team@acme.example' }] });
   assert.deepEqual(out.map(d => [d.job_name, d.kind, d.label]), [
-    ['Credit Check daily', 'slack', '#credit-check-cs-handoff'],
+    ['Product Usage daily', 'slack', '#product-usage-cs-handoff'],
     ['CS handoff', 'gmail', 'Gmail draft · from cs-team@acme.example · to dana@acme.example'],
     ['CS handoff', 'email', 'Email · to cs@acme.example, vp@acme.example'],
     ['CS handoff', 'webhook', 'hooks.partner.example'],
@@ -749,7 +749,7 @@ test('review 1: Edit by the same person keeps their words, never a tool result b
   assert.ok(raw.includes('-> 08:00'));
   assert.ok(!msgs.some(m => Array.isArray(m.content) && m.content.some(b => b.type === 'thinking' || b.type === 'redacted_thinking')));
   assert.ok(resultBodies(msgs).every(b => b === RESULT_NOT_CARRIED || b === APPROVED_NOTE || b.startsWith('The user answered:')), resultBodies(msgs).join(' | '));
-  assert.ok(raw.includes('Creator-only remark.') && raw.includes('and keep it short') && raw.includes('Credit Check report every morning'));
+  assert.ok(raw.includes('Creator-only remark.') && raw.includes('and keep it short') && raw.includes('Product Usage report every morning'));
   // The history shows their own chat.
   assert.ok(opened.history.some(i => i.role === 'assistant' && i.text.includes('Creator-only remark.')));
   assert.equal(opened.history.at(-1).kind, 'proposal');
@@ -771,7 +771,7 @@ test('review 1: Edit by another editor gets the approved proposal only', async (
   const msgs = sb.tables.revbox_builder_sessions.find(r => r.id === opened.session.id).messages;
   assertValidTranscript(msgs);
   const raw = JSON.stringify(msgs);
-  for (const leak of [...LEAKS, 'Creator-only remark.', 'and keep it short', 'Credit Check report every morning', 'Let me look']) assert.ok(!raw.includes(leak), `transcript leaks ${leak}`);
+  for (const leak of [...LEAKS, 'Creator-only remark.', 'and keep it short', 'Product Usage report every morning', 'Let me look']) assert.ok(!raw.includes(leak), `transcript leaks ${leak}`);
   const use = msgs.flatMap(m => (Array.isArray(m.content) ? m.content : [])).find(b => b.type === 'tool_use' && b.name === 'propose_job');
   assert.equal(use.input.name, 'Morning report');
   assert.deepEqual(resultBodies(msgs), [APPROVED_NOTE]);

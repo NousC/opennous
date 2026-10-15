@@ -320,7 +320,7 @@ function riskReasons(a) {
 
   // AN OPEN TO-DO WE OWE THEM IS NOT A RISK, and used to be a tier-2 reason here.
   //
-  // "Turn on the appraisal feed", "send the credit-check setup steps": that is a customer who is
+  // "Turn on the usage export", "send the SSO setup steps": that is a customer who is
   // onboarding and talking to us, which is the opposite of one who is leaving. Each open item
   // also counted as its own "independent" reason, so two to-dos off one call met the two-reason
   // bar, so accounts qualified on to-dos alone. What we owe a customer now rides on the row as

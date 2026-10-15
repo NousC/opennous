@@ -1,5 +1,5 @@
 // A RevBox job's brief (GET-884): the one sentence the job card says in the agent's own voice
-// ("Every morning I read yesterday's Company Daily Stats in HubSpot, write the credit check report
+// ("Every morning I read yesterday's Account Daily Usage in HubSpot, write the product usage report
 // and post it to #ops-daily."), plus its Starts label and whether it asks before sending.
 //
 // Built HERE, from the job's facts only: the trigger's kind and config, each step's type and config,
@@ -37,7 +37,7 @@ function clockWhen(c) {
   }
 }
 
-/** "Every day 08:00 (Toronto)": the card's Starts row for a schedule. */
+/** "Every day 08:00 (New York)": the card's Starts row for a schedule. */
 function clockStarts(c, timezone) {
   const at = /^\d\d:\d\d$/.test(String(c.at ?? '')) ? ` ${c.at}` : '';
   const city = str(timezone) && timezone !== 'UTC' ? ` (${String(timezone).split('/').pop().replace(/_/g, ' ')})` : '';
@@ -136,7 +136,7 @@ const CADENCE = new Set(['daily', 'weekly', 'monthly', 'quarterly', 'nightly', '
 const FORMAT_ARTIFACT = { report: 'the report', digest: 'a digest', alert: 'an alert', handoff: 'the handoff', notification: 'a short update', approval: 'a message for approval', plain: 'an update' };
 
 /**
- * "Credit Check daily report" -> "the credit check report": the name, when it names a document, with
+ * "Product Usage daily report" -> "the product usage report": the name, when it names a document, with
  * its cadence dropped; words with capitals inside (VP, HubSpot, CS) keep their case. Else null.
  */
 export function artifactFromName(name) {
@@ -150,7 +150,7 @@ export function artifactFromName(name) {
 /** The first step after `i` that does something with what the AI step wrote. */
 const consumerOf = (steps, i) => steps.slice(i + 1).find(s => ['slack', 'gmail', 'email', 'webhook', 'dataset_append', 'revbox_delivery', 'hubspot'].includes(s.type));
 
-/** What one AI step does: "write the credit check report", "draft the follow-up email". */
+/** What one AI step does: "write the product usage report", "draft the follow-up email". */
 function agentClause(proposal, steps, i, kinds, single) {
   const c = isObj(steps[i].config) ? steps[i].config : {};
   if (c.mode === 'pick') return PICK[c.job]?.[0] ?? 'do its work';

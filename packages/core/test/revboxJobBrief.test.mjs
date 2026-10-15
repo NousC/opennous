@@ -6,33 +6,33 @@ import { jobBrief, briefTrigger, artifactFromName } from '../dist/db/revboxJobBr
 import { proposalFacts, validateBuilderProposal } from '../dist/db/revboxBuilder.mjs';
 import { proposalFromRoutine } from '../dist/db/revboxJobProposal.mjs';
 
-const clock = (config, timezone = 'America/Toronto') => ({ kind: 'clock', config, timezone, label: 'ignored' });
-const read = { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-241006863', object_label: 'Company Daily Stats', fields: ['pulls'], window: 'yesterday' } };
+const clock = (config, timezone = 'America/New_York') => ({ kind: 'clock', config, timezone, label: 'ignored' });
+const read = { id: 'read', type: 'hubspot', config: { action: 'read', object: '2-241006863', object_label: 'Account Daily Usage', fields: ['pulls'], window: 'yesterday' } };
 const write = (prompt = 'Write it.') => ({ id: 'summary', type: 'agent', config: { mode: 'write', model: 'opennous', prompt } });
 const post = (format = 'report') => ({ id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C0OPS', channel: 'ops-daily', text: '{{steps.summary.output}}', format } });
 const CHANNELS = { slackChannels: [{ id: 'C0OPS', name: 'ops-daily' }] };
 const brief = (p, lookups = CHANNELS) => jobBrief(p, proposalFacts(p, lookups));
 
 test('the reference: a daily HubSpot read, written up and posted to a checked channel', () => {
-  const b = brief({ name: 'Credit Check daily report', trigger: clock({ frequency: 'daily', at: '08:00' }), steps: [read, write(), post()] });
-  assert.equal(b.text, 'Every morning I read yesterday\'s Company Daily Stats in HubSpot, write the credit check report and post it to #ops-daily.');
-  assert.equal(b.starts, 'Every day 08:00 (Toronto)');
+  const b = brief({ name: 'Product Usage daily report', trigger: clock({ frequency: 'daily', at: '08:00' }), steps: [read, write(), post()] });
+  assert.equal(b.text, 'Every morning I read yesterday\'s Account Daily Usage in HubSpot, write the product usage report and post it to #ops-daily.');
+  assert.equal(b.starts, 'Every day 08:00 (New York)');
   assert.equal(b.asks_first, false);
 });
 
 test('clock triggers: daily, weekdays, weekly, monthly, quarterly; morning, afternoon, evening', () => {
   const when = (c, tz) => briefTrigger(clock(c, tz));
-  assert.deepEqual(when({ frequency: 'daily', at: '07:30' }), { when: 'Every morning', starts: 'Every day 07:30 (Toronto)', kinds: ['clock'] });
+  assert.deepEqual(when({ frequency: 'daily', at: '07:30' }), { when: 'Every morning', starts: 'Every day 07:30 (New York)', kinds: ['clock'] });
   assert.equal(when({ frequency: 'daily', at: '13:00', weekdays_only: true }).when, 'Every weekday afternoon');
-  assert.equal(when({ frequency: 'daily', at: '13:00', weekdays_only: true }).starts, 'Weekdays 13:00 (Toronto)');
+  assert.equal(when({ frequency: 'daily', at: '13:00', weekdays_only: true }).starts, 'Weekdays 13:00 (New York)');
   assert.equal(when({ frequency: 'daily', at: '18:00' }, 'UTC').starts, 'Every day 18:00');
   assert.equal(when({ frequency: 'daily', at: '18:00' }).when, 'Every evening');
   assert.equal(when({ frequency: 'weekly', at: '09:00' }).when, 'Every Monday morning');
-  assert.equal(when({ frequency: 'weekly', at: '09:00', day_of_week: 5 }).starts, 'Every Friday 09:00 (Toronto)');
+  assert.equal(when({ frequency: 'weekly', at: '09:00', day_of_week: 5 }).starts, 'Every Friday 09:00 (New York)');
   assert.equal(when({ frequency: 'monthly', at: '09:00' }).when, 'On the first of each month');
   assert.equal(when({ frequency: 'monthly', at: '09:00', day_of_month: 3 }).when, 'On the 3rd of each month');
   assert.equal(when({ frequency: 'quarterly', at: '09:00' }).when, 'At the start of each quarter');
-  assert.equal(when({ frequency: 'quarterly', at: '09:00' }).starts, 'At the start of each quarter 09:00 (Toronto)');
+  assert.equal(when({ frequency: 'quarterly', at: '09:00' }).starts, 'At the start of each quarter 09:00 (New York)');
   assert.equal(when({ frequency: 'daily', at: '08:00' }, 'America/New_York').starts, 'Every day 08:00 (New York)');
 });
 
@@ -151,7 +151,7 @@ test('what it writes, without a document name: from the format it posts in, or t
 });
 
 test('artifactFromName: cadence dropped, inner capitals kept, other names ignored', () => {
-  assert.equal(artifactFromName('Credit Check daily report'), 'the credit check report');
+  assert.equal(artifactFromName('Product Usage daily report'), 'the product usage report');
   assert.equal(artifactFromName('VP weekly summary'), 'the VP summary');
   assert.equal(artifactFromName('HubSpot pipeline digest'), 'the HubSpot pipeline digest');
   assert.equal(artifactFromName('Daily report'), 'the report');
@@ -162,19 +162,19 @@ test('artifactFromName: cadence dropped, inner capitals kept, other names ignore
 });
 
 test('a manual job and a job with nothing to say', () => {
-  assert.equal(brief({ name: 'Board pack', trigger: { kind: 'manual', config: {} }, steps: [read, write()] }).text, 'When you run me, I read yesterday\'s Company Daily Stats in HubSpot and write the board pack.');
+  assert.equal(brief({ name: 'Board pack', trigger: { kind: 'manual', config: {} }, steps: [read, write()] }).text, 'When you run me, I read yesterday\'s Account Daily Usage in HubSpot and write the board pack.');
   assert.equal(jobBrief({}).text, 'When you run me, I run its steps.');
   assert.equal(jobBrief(null).starts, 'Run by hand');
 });
 
 test('validateBuilderProposal hands back the brief with the facts; a routine opened in Edit has one too', () => {
-  const p = { name: 'Credit Check daily report', trigger: clock({ frequency: 'daily', at: '08:00' }),
+  const p = { name: 'Product Usage daily report', trigger: clock({ frequency: 'daily', at: '08:00' }),
     steps: [{ ...read, config: { ...read.config, fields: ['pulls'] } }, write('From {{steps.read.output}}'), post()],
     display: [{ step_id: 'read', title: 'r' }, { step_id: 'summary', title: 's' }, { step_id: 'post', title: 'p' }] };
   const v = validateBuilderProposal(p, { slackChannels: [{ id: 'C0OPS', name: 'ops-daily' }] });
   assert.deepEqual(v.errors, []);
-  assert.equal(v.brief.text, 'Every morning I read yesterday\'s Company Daily Stats in HubSpot, write the credit check report and post it to #ops-daily.');
-  const routine = { name: 'Credit Check daily report', trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', steps: [...p.steps, { id: 'box_delivery', type: 'revbox_delivery', config: {} }] };
+  assert.equal(v.brief.text, 'Every morning I read yesterday\'s Account Daily Usage in HubSpot, write the product usage report and post it to #ops-daily.');
+  const routine = { name: 'Product Usage daily report', trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', steps: [...p.steps, { id: 'box_delivery', type: 'revbox_delivery', config: {} }] };
   const fromRoutine = proposalFromRoutine(routine);
-  assert.equal(jobBrief(fromRoutine, proposalFacts(fromRoutine, CHANNELS)).text, 'Every morning I read yesterday\'s Company Daily Stats in HubSpot, write the credit check report, post it to #ops-daily and send it to this box\'s destinations.');
+  assert.equal(jobBrief(fromRoutine, proposalFacts(fromRoutine, CHANNELS)).text, 'Every morning I read yesterday\'s Account Daily Usage in HubSpot, write the product usage report, post it to #ops-daily and send it to this box\'s destinations.');
 });

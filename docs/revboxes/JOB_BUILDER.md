@@ -10,18 +10,18 @@ This file is the contract between the three parts being built in parallel. Chang
 
 ## Reference case
 
-> Set up a job that pulls Credit Check account summaries from HubSpot and creates a report every
-> morning for me into the Slack channel "Credit Check CS handoff".
+> Set up a job that pulls Product Usage account summaries from HubSpot and creates a report every
+> morning for me into the Slack channel "Product Usage CS handoff".
 
-The live equivalent is a pilot client's automation "Credit Check daily summary to Slack":
+The live equivalent is a typical automation "Product Usage daily summary to Slack":
 
-1. `hubspot` step, `action: "read"`, `object: "2-100000001"` (custom object "Company Daily Stats"),
-   `fields`: the five `credit_check_*` counts with `field_labels`, `group_by: "company_name"`,
+1. `hubspot` step, `action: "read"`, `object: "2-9000001"` (custom object "Account Daily Usage"),
+   `fields`: the five `product_usage_*` counts with `field_labels`, `group_by: "company_name"`,
    `date_property: "date"`, `window: "yesterday"`, `compare: true`.
 2. `agent` step, `mode: "write"`, `model: "opennous"`, a long report-format `prompt`.
 3. `slack` step, `action: "channel"`, `channel_id`, `channel`, `text: "{{steps.summary.output}}"`.
 
-Trigger `clock`, `trigger_config: { frequency: "daily", at: "08:00" }`, `timezone: "America/Toronto"`.
+Trigger `clock`, `trigger_config: { frequency: "daily", at: "08:00" }`, `timezone: "America/New_York"`.
 
 The builder must be able to arrive at that: find the custom object and its fields by searching
 HubSpot, preview a real read, resolve the Slack channel to an id (or ask), ask how the report should
@@ -149,7 +149,7 @@ All read-only except `ask` and `propose_job`, which end the turn.
 | `revbox_context` | Box name, objective, blocks, scope summary, delivery destinations, and the **text of context documents and uploaded references** (truncated per doc): the library files tagged to this box (CONTEXT_LIBRARY.md). |
 | `hubspot_objects` | Standard + custom objects (`hubspotObjects`). |
 | `hubspot_fields` | Fields of one object (`hubspotObjectFields`), searchable by a query string. |
-| `hubspot_find` | Searches objects and fields by keyword (e.g. "credit-check") and returns matches; the fast way to locate a custom object. |
+| `hubspot_find` | Searches objects and fields by keyword (e.g. "product-usage") and returns matches; the fast way to locate a custom object. |
 | `hubspot_access` | Which scopes the HubSpot connection was granted (HubSpot token-info endpoint) and what that means: can read companies, deals, custom objects, write notes/tasks. |
 | `hubspot_preview` | Dry-runs a `read` step config and returns the summarized table (`readHubspotRecords`), so the agent can confirm real data exists. |
 | `slack_channels` | Channels and people (`slackTargets`), searchable. |
@@ -221,8 +221,8 @@ feature=… status=… type=… <provider message, key-like strings removed>` pl
 
 ```
 { "type": "session", "session_id": "…" }                     first event of a new session
-{ "type": "status", "text": "Looking for Credit Check in HubSpot…" }   a short, human tool label
-{ "type": "tool", "name": "hubspot_find", "state": "start"|"done"|"error", "summary": "Found Company Daily Stats (5 Credit Check fields)" }
+{ "type": "status", "text": "Looking for Product Usage in HubSpot…" }   a short, human tool label
+{ "type": "tool", "name": "hubspot_find", "state": "start"|"done"|"error", "summary": "Found Account Daily Usage (5 Product Usage fields)" }
 { "type": "text", "text": "…" }                               streamed assistant prose (short)
 { "type": "ask", "questions": [Question] }                    turn ends, awaiting answers
 { "type": "proposal", "proposal": Proposal }                  turn ends, awaiting approval
@@ -373,11 +373,11 @@ readable claim it had was read.
 
 ```
 {
-  "name": "Credit Check daily summary",
-  "summary": "Every morning at 08:00 Toronto time: read yesterday's Credit Check numbers per dealer from HubSpot, write the VP summary, post it to #credit-check-cs-handoff.",
-  "trigger": { "kind": "clock", "config": { "frequency": "daily", "at": "08:00" }, "timezone": "America/Toronto", "label": "Every day at 08:00 (Toronto)" },
+  "name": "Product Usage daily summary",
+  "summary": "Every morning at 08:00 New York time: read yesterday's Product Usage numbers per account from HubSpot, write the VP summary, post it to #product-usage-cs-handoff.",
+  "trigger": { "kind": "clock", "config": { "frequency": "daily", "at": "08:00" }, "timezone": "America/New_York", "label": "Every day at 08:00 (New York)" },
   "steps": [ WorkflowStep ],                 // exactly the agent_routines.steps format above
-  "display": [ { "step_id": "read", "tool": "hubspot", "title": "Read Company Daily Stats", "detail": "5 Credit Check fields · per dealer · yesterday vs the day before" } ],
+  "display": [ { "step_id": "read", "tool": "hubspot", "title": "Read Account Daily Usage", "detail": "5 Product Usage fields · per account · yesterday vs the day before" } ],
   "uses_box_delivery": true,                 // also deliver to the box's destinations at run time
   "box_delivery_format": "report",           // with uses_box_delivery: the Slack layout the box's Slack destinations get (never "approval")
   "warnings": [ { "kind": "missing_access"|"missing_connection"|"unverified"|"cost", "message": "…", "fix": { "label": "Reconnect HubSpot", "href": "/company-sources?connect=hubspot" } } ],
@@ -399,9 +399,9 @@ builder's proposal, an approved card, a job's chat) is `WorkflowCard`. Since GET
 a thin border and little padding (light and dark):
 
 ```
-Credit Check daily report                                                       ● On
-Every morning I read yesterday's Company Daily Stats in HubSpot, write the credit check report and post it to #ops-daily.
-Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first        (asks first: only with an approval step)
+Product Usage daily report                                                       ● On
+Every morning I read yesterday's Account Daily Usage in HubSpot, write the product usage report and post it to #ops-daily.
+Every day 08:00 (New York) · [HubSpot][Slack] → #ops-daily · asks first        (asks first: only with an approval step)
                                        ~2 credits / run   [Make changes] [Approve]   (a live proposal only)
 [ Ask the agent to change something…  ↑ ]        (the composer, in a job's chat)
 ```
@@ -428,13 +428,13 @@ Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first      
   "send it to <host>"; "add a row to <table>"; "read last month's rows of <table>"; HubSpot note/task/update;
   box delivery "send it to this box's destinations". Approval steps set `asks_first` (the card's note).
 - The meta line (frontend `lib/jobCard.ts` `jobMeta` / `jobMetaText`, from steps, facts and the box's
-  destinations): when it starts, `brief.starts` ("Every day 08:00 (Toronto)", "Deal won or lost",
+  destinations): when it starts, `brief.starts` ("Every day 08:00 (New York)", "Deal won or lost",
   "Meeting done · Granola"); the logos of the recorder, the steps' tools and the box's destination kinds;
   "→" each target without its Slack layout: "#channel" (a channel the server did not find shows its id,
   flagged), "Gmail draft · to … · from …", "Email · to …", "Webhook to <host>", "A row in <table>",
   HubSpot writes ("(writes)"), the box's destinations; "In the app" when it sends nowhere; "· asks
   first" with an approval step. What leaves the workspace is never cut short. `jobMetaText` is its
-  screen-reader text ("Every day 08:00 (Toronto) · HubSpot, Slack → #ops-daily"). The approved state is
+  screen-reader text ("Every day 08:00 (New York) · HubSpot, Slack → #ops-daily"). The approved state is
   a small "● On"/"● Off" dot (a job's chat) or a quiet "Approved"; the cost per run sits beside a live
   proposal's actions.
 - Run logs (Results) keep step detail; the agent step's name is "Agent · Write-up" (core `stepName`).

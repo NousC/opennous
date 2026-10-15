@@ -11,7 +11,7 @@ import {
 const dailyReport = () => ({
   name: 'Morning report',
   summary: 'Reads HubSpot every morning and posts to Slack.',
-  trigger: { kind: 'clock', config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', label: 'Every day at 08:00' },
+  trigger: { kind: 'clock', config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', label: 'Every day at 08:00' },
   steps: [
     { id: 'read', type: 'hubspot', config: { action: 'read', object: 'deals', fields: ['amount'], window: 'yesterday' } },
     { id: 'write', type: 'agent', config: { mode: 'write', prompt: 'Summarise {{steps.read.output}}.' } },
@@ -93,7 +93,7 @@ async function builtJob(sb, userId = 'owner') {
   return { first: s, routine };
 }
 const handJob = () => ({ id: 'r-hand', workspace_id: 'ws', revbox_id: 'box', user_id: 'owner', name: 'Pipeline digest', enabled: true,
-  trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/Toronto', prompt: 'Summarise the pipeline.',
+  trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York', prompt: 'Summarise the pipeline.',
   steps: [{ id: 'write', type: 'agent', config: { mode: 'write', prompt: 'Summarise the pipeline.' } }] });
 
 test('reopening a job made in the builder returns the same session and the whole conversation', async () => {

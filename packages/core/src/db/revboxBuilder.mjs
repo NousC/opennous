@@ -116,7 +116,7 @@ function triggerProblems(t, { nested = false } = {}) {
   if (!BUILDER_TRIGGERS.has(t.kind)) out.push(`Trigger "${t.kind}" has no runner. Use one of: ${[...BUILDER_TRIGGERS].join(', ')}.`);
   if (t.config != null && !isObj(t.config)) out.push('The trigger config must be an object.');
   const c = isObj(t.config) ? t.config : {};
-  if (t.timezone != null && (typeof t.timezone !== 'string' || !validTimezone(t.timezone))) out.push(`"${t.timezone}" is not a timezone. Use an IANA name such as America/Toronto.`);
+  if (t.timezone != null && (typeof t.timezone !== 'string' || !validTimezone(t.timezone))) out.push(`"${t.timezone}" is not a timezone. Use an IANA name such as America/New_York.`);
   if (t.kind === 'clock') {
     if (!FREQUENCIES.has(c.frequency)) out.push('A schedule needs a frequency: daily, weekly, monthly or quarterly.');
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(c.at ?? ''))) out.push('A schedule needs a time as HH:MM.');
