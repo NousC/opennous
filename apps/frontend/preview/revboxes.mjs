@@ -1,12 +1,13 @@
 // Local-only fixture persistence. Never imported by production authentication or API.
 import { readFile, writeFile, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { COMPANIES, CONTACTS, DEALS, USERS, WS, GRAPH } from './world.mjs';
+import { COMPANIES, CONTACTS, DEALS, USERS, WS } from './world.mjs';
 import { proposeRevboxPlan, validateRevboxPlan, revboxMatchesAccount, revboxExecutionRequirements } from '../../../packages/core/src/services/revboxPlan.mjs';
 import { validateRevboxPatch, revboxAccess, REVBOX_BUILTIN_JOBS, builtinJobsOf } from '../../../packages/core/src/db/revboxes.mjs';
 import { normalizeDatasetColumns, datasetSlug, datasetRowsCsv, datasetValueText } from '../../../packages/core/src/services/datasetFormats.mjs';
 // The job card's brief (GET-884): the server's sentence, built from the proposal's steps and facts.
 import { jobBrief } from '../../../packages/core/src/db/revboxJobBrief.mjs';
+import { latestSignalView } from '../../../packages/core/src/services/signalTone.mjs';
 
 const storePath = process.env.REVBOX_PREVIEW_STATE ?? '/private/tmp/opennous-revboxes-preview.json';
 const stamp = () => new Date().toISOString();
@@ -335,10 +336,22 @@ async function signalsPreview(req, res, json, parts, payload, uid) {
   fail(404, 'Not found.');
 }
 
+// Each account's latest signal as account_signals holds it (GET-894): the API adds label, tone and
+// text with core's latestSignalView, so the Accounts table shows the same tinted tags here.
+const PREVIEW_SIGNALS = {
+  c1: { kind: 'competitor_evaluating', title: 'Gong pilot', content: 'Four weeks into a Gong pilot on the enterprise team; wants a side-by-side before renewal.', quote: "We're four weeks into a Gong pilot." },
+  c2: { kind: 'churn_risk', title: null, content: 'Switching to a cheaper provider after renewal unless reps stop updating the CRM by hand.', quote: 'we would have to displace it' },
+  c3: { kind: 'stakeholder_identified', title: 'New VP Sales', content: 'The new VP Sales signs off on tooling over 20 seats.', quote: null },
+  c4: { kind: 'expansion_signal', title: 'Trade', content: 'Asked to add the support team, about 40 more seats, next quarter.', quote: 'can we bring support on too' },
+  c5: { kind: 'budget_discussed', title: 'Monthly Cost Need', content: 'No line item until the January planning cycle; asked for monthly billing.', quote: null },
+  c6: { kind: 'objection_raised', title: 'Pricing pushback', content: 'The number works for next year, not this one.', quote: null },
+  c7: { kind: 'next_step', title: 'Send the security questionnaire', content: 'Send the security questionnaire by Friday.', quote: null },
+  c8: { kind: 'buying_signal', title: 'Wants setup', content: 'Wants to get set up before the quarter closes.', quote: 'I just want to get set up' },
+};
 export const previewRevboxAccounts = COMPANIES.map((c, i) => {
   const deals = DEALS.filter(d => d.company_id === c.id);
-  const pattern = GRAPH.nodes.find(n => n.i === c.id)?.pat?.[0];
-  return { ...c, people_count: CONTACTS.filter(p => p.company_id === c.id).length, deal_count: deals.length, won_deals: deals.filter(d => d.status === 'won').length, lost_deals: deals.filter(d => d.status === 'lost').length, last_activity_at: CONTACTS.filter(p => p.company_id === c.id).map(p => p.last_activity_at).filter(Boolean).sort().at(-1) ?? null, latest_signal: pattern ? { title: pattern.label, kind: pattern.cat, at: stamp() } : null };
+  const raw = PREVIEW_SIGNALS[c.id];
+  return { ...c, people_count: CONTACTS.filter(p => p.company_id === c.id).length, deal_count: deals.length, won_deals: deals.filter(d => d.status === 'won').length, lost_deals: deals.filter(d => d.status === 'lost').length, last_activity_at: CONTACTS.filter(p => p.company_id === c.id).map(p => p.last_activity_at).filter(Boolean).sort().at(-1) ?? null, latest_signal: raw ? latestSignalView({ ...raw, at: stamp() }) : null };
 });
 // Profile photos for the Owners rail (GET-872): inline SVGs, so the preview needs no network.
 const face = (a, b) => `data:image/svg+xml;utf8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="64" height="64" fill="url(#g)"/><circle cx="32" cy="25" r="11" fill="#fff" fill-opacity=".85"/><path d="M12 60c3-12 11-18 20-18s17 6 20 18" fill="#fff" fill-opacity=".85"/></svg>`)}`;

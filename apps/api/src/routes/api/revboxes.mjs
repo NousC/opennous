@@ -3,6 +3,7 @@ import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { requireAiCredits } from '../../lib/plans.mjs';
 import { computeCost } from '../../lib/llmUsage.mjs';
 import { Router } from 'express';
+import { latestSignalView } from '@nous/core';
 import {
   getSupabaseClient, listDocuments, getDocument,
   listRevboxes, createRevbox, patchRevbox, loadRevbox, revboxDetails,
@@ -141,8 +142,12 @@ accountOverviewRouter.post('/', route(async (req, res, sb) => {
   const ids = req.body?.ids;
   if (!Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose up to 200 account identifiers.');
   const visible = await allowed(sb, req);
-  res.json({ accounts: await revboxAccountOverview(sb, req.workspaceId, visible ? ids.filter(id => visible.has(id)) : ids) });
+  res.json({ accounts: accountOverviewRows(await revboxAccountOverview(sb, req.workspaceId, visible ? ids.filter(id => visible.has(id)) : ids)) });
 }));
+/** The Accounts table's rows (GET-894): the latest signal gains its kind's label, tone and the line that says what was said. */
+export function accountOverviewRows(accounts) {
+  return accounts.map(a => ({ ...a, latest_signal: latestSignalView(a.latest_signal) }));
+}
 
 revboxesRouter.get('/', route(async (req, res, sb) => res.json({ boxes: await listRevboxes(sb, req.workspaceId, req.internalUserId) })));
 revboxesRouter.post('/', route(async (req, res, sb) => res.status(201).json({ box: await createRevbox(sb, req.workspaceId, req.internalUserId) })));

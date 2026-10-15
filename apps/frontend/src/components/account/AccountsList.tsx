@@ -30,6 +30,7 @@ import {
 import { inPrimaryPipeline } from "@/components/deals/AccountDeals";
 import { buildStageChips, sameStageLabel, type WsStage as StripStage } from "@/lib/stageStrip";
 import { faviconUrl } from "@/lib/externalImages";
+import { signalTag, type LatestSignal } from "@/lib/signalTags";
 
 // A stage the workspace defined for itself — pulled from their CRM on connect, or agreed
 // with the agent in chat, and stored in workspace_stages.
@@ -349,7 +350,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
   });
   const rawCompanies = companiesPage?.companies ?? NO_COMPANIES;
-  const accountOverview = useQuery<{ accounts: { id: string; deal_count: number; latest_signal: { title: string | null; kind: string; at: string | null } | null }[] }>({
+  const accountOverview = useQuery<{ accounts: { id: string; deal_count: number; latest_signal: LatestSignal | null }[] }>({
     queryKey: ['account-overview', workspaceId, rawCompanies.map(c => c.id)],
     // Deals and the latest signal per account: the API plan's table, and the Workspace table since GET-864.
     enabled: !!token && rawCompanies.length > 0,
@@ -903,7 +904,16 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     const open = api ? 0 : (pipelineByCompany.get(c.id)?.count ?? 0);
     return total ? <span className="tabular-nums">{total}{open ? <span className="text-muted-foreground"> · {open} open</span> : null}</span> : dash;
   } };
-  const signalColumn: Column<AccountRow> = { key: 'signal', header: 'Latest signal', cell: c => { const signal = overviewById.get(c.id)?.latest_signal; return signal ? <span className="block max-w-[240px] truncate text-[12px] text-ink-2" title={signal.title ?? signal.kind}>{signal.title ?? signal.kind.replace(/_/g, ' ')}</span> : accountOverview.error ? <span className="text-[11px] text-risk">Unavailable</span> : accountOverview.isLoading ? '…' : dash; } };
+  // The latest signal (GET-894): a tinted pill for the kind, then what was said; the full line on hover.
+  const signalColumn: Column<AccountRow> = { key: 'signal', header: 'Latest signal', cell: c => {
+    const signal = overviewById.get(c.id)?.latest_signal;
+    if (!signal) return accountOverview.error ? <span className="text-[11px] text-risk">Unavailable</span> : accountOverview.isLoading ? '…' : dash;
+    const tag = signalTag(signal);
+    return <span className="flex max-w-[340px] items-center gap-1.5 text-[12px]" title={tag.tooltip}>
+      <span className={`shrink-0 whitespace-nowrap rounded-full px-1.5 py-px text-[11px] font-medium ${tag.className}`}>{tag.label}</span>
+      {tag.text && <span className="min-w-0 truncate text-ink-2">{tag.text}</span>}
+    </span>;
+  } };
   const accountColumns: Column<AccountRow>[] = api ? [
     col('company'), { ...col('people'), header: 'Contacts' }, dealsColumn, signalColumn,
     { ...col('activity'), header: 'Last activity' }, col('icp'),

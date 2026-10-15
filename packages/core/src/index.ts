@@ -257,3 +257,5 @@ export * from './db/customSignals.mjs';
 export * from './services/customSignalExtraction.mjs';
 // What can start a job (GET-862): built-in + workspace signals, each with its routine trigger.
 export * from './services/signalCatalog.mjs';
+// A signal's tag (GET-894): each account-signal kind's tone, label and the line the table shows.
+export * from './services/signalTone.mjs';
