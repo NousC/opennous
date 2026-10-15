@@ -34,7 +34,7 @@ DNS records (`app`, `api`, `mcp`) pointing at the server, and an Anthropic API k
 ```bash
 git clone https://github.com/NousC/opennous.git && cd opennous
 cp nous.env.example nous.env
-# edit nous.env: APP_DOMAIN, API_DOMAIN, MCP_DOMAIN, ANTHROPIC_API_KEY
+# edit nous.env: APP_DOMAIN, API_DOMAIN, MCP_DOMAIN, OPENROUTER_API_KEY (or ANTHROPIC_API_KEY)
 node scripts/selfhost-keys.mjs nous.env
 docker compose --env-file nous.env up -d --build
 ```
@@ -83,7 +83,7 @@ Optional, read by the compose file:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `DISABLE_SIGNUPS` | `true` | Read by the API. `false` opens the instance: anyone who signs up gets their own team, on your `ANTHROPIC_API_KEY`. |
+| `DISABLE_SIGNUPS` | `true` | Read by the API. `false` opens the instance: anyone who signs up gets their own team, on your AI keys. |
 | `GOTRUE_MAILER_AUTOCONFIRM` | `true` | New accounts are confirmed at once and sign-up returns a session. Also passed to the API (as `AUTH_EMAIL_AUTOCONFIRM`), which then never trusts an email address on its own. |
 | `GOTRUE_DISABLE_SIGNUP` | `false` | `true` closes sign-up at the auth server, which also stops the owner and invitees from creating their login. Leave it `false`; `DISABLE_SIGNUPS` is the gate. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | unset, `587` | Mail server GoTrue sends through. |
@@ -99,7 +99,7 @@ create their login there. What a login gets is decided by the API:
   so two people signing up at the same moment cannot both become owner.
 - With `DISABLE_SIGNUPS=true` (the default), any other login that does not hold an
   invitation gets no account: no team, no workspace, nothing that spends your
-  `ANTHROPIC_API_KEY`. The login page shows no "Create account" link.
+  AI keys. The login page shows no "Create account" link.
 - A teammate joins with a join token: Settings → Team → Create invite gives a
   `npx @opennous/cli join <token>` command (add `--url https://$API_DOMAIN`). They
   run it, the browser opens on the approval page, they create a login there (the
