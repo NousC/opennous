@@ -13,7 +13,11 @@ import { runStepsForTest as runSteps, registerStepHandler, decideAutomationRun, 
 import { approvalCardContent } from '../dist/services/slackFormats.mjs';
 import { registerAnthropicClient } from '../dist/llm/modelDoor.mjs';
 // Cloud's renderer is pure (no imports): render the posted content exactly as Slack would get it.
-import { renderSlackMessage } from '../../../apps/api/src/cloud/lib/slackBlocks.mjs';
+import { existsSync } from 'node:fs';
+// The renderer is the Workspace layer's (apps/api/src/cloud); the open-source export has none, so
+// the rendered-card checks run only where it exists (GET-906).
+const blocksModule = new URL('../../../apps/api/src/cloud/lib/slackBlocks.mjs', import.meta.url);
+const { renderSlackMessage } = existsSync(blocksModule) ? await import(blocksModule.href) : {};
 
 const RUN = '44444444-4444-4444-8444-444444444444';
 // A model told (by a prompt injection in its data) to make the card lie.
@@ -85,22 +89,24 @@ test('finding 2: the card posts when the run pauses, lists every pending action 
   assert.deepEqual(r.slack_card, { channel: 'C1', ts: '1700000000.000100', step_id: 'ask', index: 2, nonce: p.content.token.nonce });
   assert.deepEqual(runOutcomeForTest(r).state.slack_card, r.slack_card);
 
-  // Rendered: fixed buttons carrying the token, and the injected text only inside the summary.
-  const m = renderSlackMessage('approval', p.content, { text: p.text, runId: p.runId, stepId: p.stepId });
-  const buttons = m.blocks.find(b => b.type === 'actions').elements;
-  assert.deepEqual(buttons.map(b => b.text.text), ['Approve', 'Deny']);
-  assert.deepEqual(buttons.map(b => b.style), ['primary', 'danger']);
-  assert.equal(buttons[0].action_id, `revbox_approve:${RUN}:ask:2.${p.content.token.nonce}`);
-  assert.equal(m.blocks[0].text.text, 'Approval needed');
-  const at = m.blocks.findIndex(b => JSON.stringify(b).includes('Summary (AI-written)'));
-  assert.ok(at > 0, 'a labelled summary');
-  const summary = m.blocks[at + 1];
-  assert.equal(summary.text.type, 'plain_text', 'no mrkdwn: no @channel, no links from the model');
-  assert.match(summary.text.text, /Nothing will be sent/);
-  const elsewhere = JSON.stringify(m.blocks.filter((_, i) => i !== at + 1));
-  assert.doesNotMatch(elsewhere, /Nothing will be sent|just click/);
-  assert.doesNotMatch(m.text, /Nothing will be sent/);
-  for (const v of ['cfo@northwind.example', 'hooks.example.com', 'Update deal', 'dealstage']) assert.ok(elsewhere.includes(v), v);
+  if (renderSlackMessage) {
+    // Rendered: fixed buttons carrying the token, and the injected text only inside the summary.
+    const m = renderSlackMessage('approval', p.content, { text: p.text, runId: p.runId, stepId: p.stepId });
+    const buttons = m.blocks.find(b => b.type === 'actions').elements;
+    assert.deepEqual(buttons.map(b => b.text.text), ['Approve', 'Deny']);
+    assert.deepEqual(buttons.map(b => b.style), ['primary', 'danger']);
+    assert.equal(buttons[0].action_id, `revbox_approve:${RUN}:ask:2.${p.content.token.nonce}`);
+    assert.equal(m.blocks[0].text.text, 'Approval needed');
+    const at = m.blocks.findIndex(b => JSON.stringify(b).includes('Summary (AI-written)'));
+    assert.ok(at > 0, 'a labelled summary');
+    const summary = m.blocks[at + 1];
+    assert.equal(summary.text.type, 'plain_text', 'no mrkdwn: no @channel, no links from the model');
+    assert.match(summary.text.text, /Nothing will be sent/);
+    const elsewhere = JSON.stringify(m.blocks.filter((_, i) => i !== at + 1));
+    assert.doesNotMatch(elsewhere, /Nothing will be sent|just click/);
+    assert.doesNotMatch(m.text, /Nothing will be sent/);
+    for (const v of ['cfo@northwind.example', 'hooks.example.com', 'Update deal', 'dealstage']) assert.ok(elsewhere.includes(v), v);
+  }
 }));
 
 test('finding 2: nothing after the card needs approval: no card is posted, the run finishes', () => withModel(JSON.stringify(INJECTED), async ({ posts }) => {
