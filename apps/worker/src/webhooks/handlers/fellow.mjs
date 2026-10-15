@@ -308,23 +308,23 @@ export async function fetchFellowCallByNoteId(conn, noteId) {
 }
 
 /**
- * The account a call belongs to: the dealership the room actually works for.
+ * The account a call belongs to: the customer the room actually works for.
  *
- * A page filed on "Lena Quist" hides a call that belongs on Larkfield Toyota, and the
+ * A page filed on "Lena Quist" hides a call that belongs on Larkfield Systems, and the
  * Accounts list then reads as a list of people. A person is the subject only when we genuinely do
  * not know their company yet — which is honest, and fixes itself the moment we do.
  *
  * Taking the first buyer whose company we know misfiled some of one workspace's first calls (GET-296),
- * and dealer groups make that systematic rather than random: a graph can hold several "Harlow
- * Bay" rooftops, several "Cinder Ridge" and several "Ostwick", each its own company with its own
+ * and company groups make that systematic rather than random: a graph can hold several "Harlow
+ * Bay" subsidiaries, several "Cinder Ridge" and several "Ostwick", each its own company with its own
  * domain. In such a workspace a sizeable share of contacts sit on an employer whose domain is not
  * the one they send mail from. Two things then go wrong at once — a contact's CRM row points at a sibling
- * rooftop, and "first" is arbitrary, so one stale row outvotes two attendees who agree.
+ * subsidiary, and "first" is arbitrary, so one stale row outvotes two attendees who agree.
  *
  * The email domain sitting in the room is the better evidence, and it was right in both failures.
  * So: one vote per external attendee, per corporate domain that maps to a company, and the most
- * voted company wins. Free mail never votes — a dealer on gmail resolves through their contact
- * record, which is how "test.dealer.0003@gmail.com" keeps landing on Quillmoor RV.
+ * voted company wins. Free mail never votes — a customer on gmail resolves through their contact
+ * record, which is how "test.customer.0003@gmail.com" keeps landing on Quillmoor Logistics.
  *
  * Falls back to the CRM's employer when nothing resolves by domain, so a workspace whose companies
  * carry no domains behaves exactly as it did before.
@@ -355,16 +355,16 @@ export function pickAccountEntityId(externals, companyIdByDomain = new Map(), pa
     const [best] = [...votes.entries()].sort((a, b) => b[1].n - a[1].n || a[1].firstSeen - b[1].firstSeen);
     const byDomain = best[0];
 
-    // The group, or one of its rooftops? Both answers are true and one is more useful.
+    // The group, or one of its subsidiaries? Both answers are true and one is more useful.
     //
-    // Someone writing from brindlecrestautogroup.example whose CRM row says Brindlecrest Chevrolet (North
-    // Store) is not a misfiling — it is the group's domain on a rooftop's employee, and the rooftop is
+    // Someone writing from brindlecrestgroup.example whose CRM row says Brindlecrest (North
+    // Office) is not a misfiling — it is the group's domain on a subsidiary's employee, and the subsidiary is
     // where the deal lives. On the first workspace to hit this, close to half of the contacts this rule
     // moves are that shape, so choosing by domain alone would have filed them all one level too high.
     //
     // So when the CRM names a company in the SAME FAMILY as the domain's, the CRM's more specific
-    // answer wins. When it names a company from another family — Fallowmere Volkswagen on a call with
-    // three people from Harrowgate Motors — it is contradicting the room, and the room wins. That is
+    // answer wins. When it names a company from another family — Fallowmere Software on a call with
+    // three people from Harrowgate Systems — it is contradicting the room, and the room wins. That is
     // exactly the GET-296 failure, and it stays fixed.
     //
     // With no hierarchy loaded, mostSpecificInFamily only ever agrees with itself, so this is a
@@ -385,7 +385,7 @@ export function pickAccountEntityId(externals, companyIdByDomain = new Map(), pa
  * Returns `{ byDomain, read }` — `read` is 'ok' or 'failed'. A TIMEOUT IS NOT AN ANSWER: this used
  * to swallow any failure and return an empty map, which is indistinguishable from "none of these
  * domains is a company we hold", so a loaded database quietly became calls filed on the wrong
- * entity. Once, three attendees were on ashgrovemazda.example, Ashgrove Mazda was active in the
+ * entity. Once, three attendees were on ashgrovehealth.example, Ashgrove Health was active in the
  * graph under that exact domain, and the page landed on one of the workspace's own staff because
  * this returned nothing. So it retries, and when it still fails it says so, and the caller decides.
  */
@@ -454,7 +454,7 @@ export function callFromWebhook(p) {
  * Whose record one meeting's notes belong to.
  *
  * The ACCOUNT when we know it, for the same reason the call page uses it: notes filed on "Lena
- * Quist" hide a meeting that belongs to Larkfield Toyota. A person is the subject only when
+ * Quist" hide a meeting that belongs to Larkfield Systems. A person is the subject only when
  * we genuinely do not know their company, and an internal attendee only when nobody external was
  * there at all — an internal person must never become the subject of a customer's meeting.
  *
@@ -578,7 +578,7 @@ export async function reprocessFellow(supabase, workspaceId, body) {
   // OUR OWN PEOPLE ARE NOT THE CUSTOMER. `isEntityInternal` is a claim asserted from workspace
   // MEMBERS, and a client whose reps have no seats yet has none — so their own CS manager read as a
   // buyer, facts about her landed on her record, and the call page filed itself on the seller's own
-  // account instead of the dealership's.
+  // account instead of the customer's.
   //
   // The workspace's OWN DOMAINS are the answer, recorded once from seats and connected accounts
   // (GET-291) instead of re-derived here. The Fellow key's own domain stays as a fallback: it is
@@ -676,7 +676,7 @@ export async function reprocessFellow(supabase, workspaceId, body) {
   // existing row count as a participant.
   //
   // AND ONLY A CUSTOMER IS EVIDENCE. Matching on any shared contact let our own staff — who are on
-  // every call — prove that two calls were one. A CS manager running two dealership installations
+  // every call — prove that two calls were one. A CS manager running two customer installations
   // in an afternoon had them merged into a single record, with one page between them.
   const dupMeeting = force ? false : await sameMeetingAlreadyLogged(supabase, workspaceId, {
     contactIds: contacts.filter(c => !isOurs(c)).map(c => c.id),
@@ -806,13 +806,13 @@ export async function reprocessFellow(supabase, workspaceId, body) {
       participants: contacts.filter(c => internals.includes(c.id)).map(c => [c.first_name, c.last_name].filter(Boolean).join(' ')) }));
   }
 
-  // Which dealership this call belongs to, by the attendees' own email domains (GET-296).
+  // Which customer this call belongs to, by the attendees' own email domains (GET-296).
   // Resolved once, before scoring, so the page and the scorecard cannot disagree.
   const { byDomain, read: domainRead } = await companyIdsByAttendeeDomain(supabase, workspaceId, externals);
   const pickedAccountId = pickAccountEntityId(
     externals,
     byDomain,
-    // The groups those companies belong to, so a rooftop is not filed on its parent.
+    // The groups those companies belong to, so a subsidiary is not filed on its parent.
     await loadCompanyParents(supabase, workspaceId, [
       ...new Set([...byDomain.values(), ...externals.map(e => e?.companyId).filter(Boolean)]),
     ]),
@@ -829,7 +829,7 @@ export async function reprocessFellow(supabase, workspaceId, body) {
   //      remaining answer is the CRM's or a bare contact id — a guess wearing a confident face.
   //   2. The answer is one of OUR OWN people. pickAccountEntityId ends at `list[0].contactId` when
   //      nothing else resolves, and `externals` can still contain a colleague whose contact row we
-  //      could not tell apart from a buyer. That is how a dealership's installation call filed
+  //      could not tell apart from a buyer. That is how a customer's installation call filed
   //      itself on the customer's own employee.
   //
   // Either way the call, its people and its transcript are still filed — only the ACCOUNT is
@@ -867,7 +867,7 @@ export async function reprocessFellow(supabase, workspaceId, body) {
   //
   // Filed on the account rather than on whoever happened to be first in the room, for the same
   // reason the call page is: notes filed on "Lena Quist" hide a meeting that belongs to Larkfield
-  // Toyota. A person is only the subject when we genuinely do not know their company.
+  // Systems. A person is only the subject when we genuinely do not know their company.
   //
   // Archival meetings write none of it. The AI notes ARE the call summary, and an old call is worth
   // its claims and nothing else (GET-351) — that ruling covered the call page and missed this.
@@ -932,7 +932,7 @@ export async function reprocessFellow(supabase, workspaceId, body) {
       title,
       sourceUrl:        url || null,
       // The account, not the person who happened to be first on the call: a page filed on
-      // "Lena Quist" hides a call that belongs on Larkfield Toyota. A person is only the
+      // "Lena Quist" hides a call that belongs on Larkfield Systems. A person is only the
       // subject when we genuinely do not know their company yet.
       accountEntityId,
       mentionEntityIds: externals.map(e => e.contactId),

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { groupConversations } from '../src/routes/api/activityStats.mjs';
 
 const at = '2026-10-06T13:30:00Z';
-const meeting = (id, s = 'Monthly touch point with Brackenmoor Honda') => ({ id, property: 'interaction.meeting_held', source: 'fellow', observed_at: at, value: { summary: s } });
+const meeting = (id, s = 'Monthly touch point with Brackenmoor Labs') => ({ id, property: 'interaction.meeting_held', source: 'fellow', observed_at: at, value: { summary: s } });
 
 test('five attendee rows of one meeting are one row, standing on the copy that was read', () => {
   const rows = [meeting('a'), meeting('b'), meeting('c'), meeting('d'), meeting('e')];

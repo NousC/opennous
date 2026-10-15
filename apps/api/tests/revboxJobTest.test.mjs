@@ -22,18 +22,18 @@ test('a held Test run comes back as a Test, its output from the AI step, with wh
     state: { test: true, held: true, trigger: { kind: 'clock', label: 'Run now' } },
     step_log: [
       { step: 1, type: 'agent', name: 'AI', status: 'ok', detail: 'Wrote it', document_id: 'doc-1' },
-      { step: 2, type: 'slack', name: 'Slack', status: 'held', detail: 'Would post to #ops-daily', held: true, preview: [{ label: 'Channel', value: 'ops-daily' }, { label: 'Message', value: 'Dealer A up.' }] },
+      { step: 2, type: 'slack', name: 'Slack', status: 'held', detail: 'Would post to #ops-daily', held: true, preview: [{ label: 'Channel', value: 'ops-daily' }, { label: 'Message', value: 'Account A up.' }] },
       { step: 3, type: 'gmail', name: 'Gmail', status: 'held', detail: 'Would draft to lead@example.com', held: true, preview: [] },
     ] }];
-  const docs = [{ id: 'doc-1', workspace_id: 'ws', title: 'Daily usage', body_md: 'Dealer A up.', subject_entity_id: null, status: 'active' }];
+  const docs = [{ id: 'doc-1', workspace_id: 'ws', title: 'Daily usage', body_md: 'Account A up.', subject_entity_id: null, status: 'active' }];
   const [row] = await revboxRoutineRuns(fakeSb(runs, docs), 'ws', [{ id: 'r1', name: 'Usage daily' }]);
   assert.equal(row.test, true);
   assert.equal(row.held, true);
   assert.equal(row.state, 'completed');
-  assert.deepEqual(row.result, { title: 'Daily usage', body: 'Dealer A up.', kind: 'report' });
+  assert.deepEqual(row.result, { title: 'Daily usage', body: 'Account A up.', kind: 'report' });
   assert.equal(row.document_id, 'doc-1');
   assert.deepEqual(row.held_actions, [
-    { step: 'Slack', text: 'Would post to #ops-daily', rows: [{ label: 'Channel', value: 'ops-daily' }, { label: 'Message', value: 'Dealer A up.' }] },
+    { step: 'Slack', text: 'Would post to #ops-daily', rows: [{ label: 'Channel', value: 'ops-daily' }, { label: 'Message', value: 'Account A up.' }] },
     { step: 'Gmail', text: 'Would draft to lead@example.com', rows: [] },
   ]);
   assert.deepEqual(row.deliveries, []);

@@ -2,8 +2,8 @@
 //
 // They were promoted together because they are the two halves of what `general` was really
 // holding: in a sample of Harborline's `general` claims, a sizeable share were a standing attribute
-// of the business and a smaller share were a dated result. Splitting them is the whole point — "they move 90
-// cars a month" is what the business IS, "June was their best month" is how it WENT — so the risk
+// of the business and a smaller share were a dated result. Splitting them is the whole point — "they onboard 90
+// seats a month" is what the business IS, "June was their best month" is how it WENT — so the risk
 // is not that the taxonomy lacks a home, it is that the two homes blur into one.
 //
 // Run: node --test packages/core/test/firmographicVsPerformance.test.mjs
@@ -25,7 +25,7 @@ test('both exist and survive normalization', () => {
 });
 
 test('both are about the COMPANY, never the person who said it', () => {
-  // A rooftop count and a record month describe the business. `either` would be an invitation to
+  // A location count and a record month describe the business. `either` would be an invitation to
   // guess, and the guess lands the fact on one attendee's page where the account cannot see it —
   // the failure GET-223 and GET-366 both record.
   assert.equal(byKey('firmographic').about, 'company');
@@ -54,7 +54,7 @@ test('each description rules the other one out by name', () => {
 test('the examples are on the right side of the line', () => {
   // The prompt teaches by example at least as much as by description, so a mismatched example is
   // worse than none. A standing shape vs a dated result.
-  assert.match(byKey('firmographic').example, /high-volume|pre-owned|about \d+ cars a month/);
+  assert.match(byKey('firmographic').example, /high-volume|about \d+ \w+ a month|\d+ (employees|locations|seats|customers)/);
   assert.match(byKey('performance').example, /best sales month|this year/);
 });
 
@@ -76,17 +76,17 @@ test('the worked cases from the corpus land where they should', () => {
   // Invented content in the shape of what sat in the `general` pile, with the category each belongs in. This is
   // documentation as much as assertion: it is the boundary, in the words people actually used.
   const firmographic = [
-    'Ashcombe Motors moves about 55 cars a month, all pre-owned',
-    'Larkfield Toyota historically averaged 120-180 finance apps a month',
-    'Corvane Auto has two locations',
-    'Brackenfold Ford has roughly 25 cars on the lot',
-    'About 20% of Corvane Auto buyers drive in from out of town',
+    'Ashcombe Systems adds about 55 seats a month, all self-serve',
+    'Larkfield Health historically averaged 120-180 finance apps a month',
+    'Corvane Systems has two locations',
+    'Brackenfold Labs has roughly 25 people on the sales team',
+    'About 20% of Corvane Systems buyers drive in from out of town',
   ];
   const performance = [
-    'Service bookings in the first quarter beat their own target',
+    'Renewals in the first quarter beat their own target',
     'Web enquiries are up: about 300 month to date, against roughly 200 at this point last year',
-    'Wexcombe Nissan missed the manufacturer bonus in June',
-    'Both stores were busier in July than in June',
+    'Wexcombe Software missed the partner bonus in June',
+    'Both offices were busier in July than in June',
   ];
   // The routing itself is the model's judgement, graded by the Assay, not something a unit test
   // can assert. What it CAN pin is the property that separates the two sets: a performance claim

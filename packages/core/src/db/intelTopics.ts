@@ -2,7 +2,7 @@
 //
 // Extraction writes one claim per thing heard, and the same thing is heard on every call: on
 // one busy account (about a hundred facts) lead routing was six chips, "staff don't log in" about
-// six, and the showroom tablets eight chips across three categories. The page grouped by
+// six, and the kiosk setup eight chips across three categories. The page grouped by
 // category, so one topic was scattered and every restatement was another chip. On that account
 // roughly half of the facts restated another.
 //

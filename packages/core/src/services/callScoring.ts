@@ -38,7 +38,7 @@ export function buildCallTypePrompt(
 ): string {
   // WHO WAS IN THE ROOM IS EVIDENCE, NOT A GUESS. "internal — only people from the same company" is
   // a claim about the attendee list, and the model was being asked to infer it from a title and the
-  // first 1,500 characters. On "Quarry Ridge Motors | Product Review" — two of the customer's people and one of theirs —
+  // first 1,500 characters. On "Quarry Ridge Labs | Product Review" — two of the customer's people and one of theirs —
   // it answered `internal`, and the call was dropped: no health read, no page, no signals. The
   // attendee list settles it, so it goes in the prompt. Costs nothing: a handful of tokens on a
   // call that already runs.

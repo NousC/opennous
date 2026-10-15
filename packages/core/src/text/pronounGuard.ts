@@ -11,9 +11,9 @@
 // re-declared. See two-places-one-rule.
 //
 // GET-368: the previous lookbehind was (?<![-\w]), which excludes only hyphen and word
-// characters. `&` is neither — so the `I` in "F&I" read as a bare first-person pronoun
-// and every fact mentioning F&I was silently dropped. In an automotive workspace that
-// is most finance conversations. `R.O.I`, `AT&I` and `Q&I` died the same way, while the
+// characters. `&` is neither — so the `I` in "D&I" read as a bare first-person pronoun
+// and every fact mentioning D&I was silently dropped. In an HR-heavy workspace that
+// is most people-team conversations. `R.O.I`, `AT&I` and `Q&I` died the same way, while the
 // old comment claimed "R.O.I" was safe precisely because it is capitalised — it never
 // was: `I` IS the capital form, so the capitalisation argument only ever covered
 // `my`/`mine`.

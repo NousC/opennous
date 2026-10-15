@@ -24,7 +24,7 @@ import { buildActivitySignalsPrompt, buildMeetingSignalsPrompt } from '../src/si
 const text = r => (typeof r === 'string' ? r : r.prompt);
 
 const activity = () => text(buildActivitySignalsPrompt({
-  contactName: 'Rennick Aldous', company: 'Pellham Ford', type: 'meeting_held', summary: 'a call',
+  contactName: 'Rennick Aldous', company: 'Pellham Group', type: 'meeting_held', summary: 'a call',
 }));
 const meeting = () => text(buildMeetingSignalsPrompt({
   attendees: [{ name: 'Rennick Aldous', email: 'raldous@pellhamford.example' }],

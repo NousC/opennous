@@ -101,8 +101,8 @@ test('report-critical fields include what the reports and org chart read', () =>
 test('a conflict is two genuinely different values from two sources — anything less skips the round trip', async () => {
   const { isFieldConflict } = await import('../dist/db/conflicts.js');
   const c = (value, source) => ({ value, source, observed_at: null, effective: 0.5 });
-  assert.equal(isFieldConflict([c('Quillmere Hyundai', 'hubspot')]), false, 'one source, one value');
-  assert.equal(isFieldConflict([c('Quillmere Hyundai', 'hubspot'), c('Quillmere Hyundai', 'gmail')]), false, 'sources agree');
-  assert.equal(isFieldConflict([c('Quillmere Hyundai', 'hubspot'), c('Ashcombe Volkswagen', 'hubspot')]), false, 'one source changed its mind');
-  assert.equal(isFieldConflict([c('Quillmere Hyundai', 'hubspot'), c('Ashcombe Volkswagen', 'fellow')]), true, 'two sources disagree');
+  assert.equal(isFieldConflict([c('Quillmere Holdings', 'hubspot')]), false, 'one source, one value');
+  assert.equal(isFieldConflict([c('Quillmere Holdings', 'hubspot'), c('Quillmere Holdings', 'gmail')]), false, 'sources agree');
+  assert.equal(isFieldConflict([c('Quillmere Holdings', 'hubspot'), c('Ashcombe Health', 'hubspot')]), false, 'one source changed its mind');
+  assert.equal(isFieldConflict([c('Quillmere Holdings', 'hubspot'), c('Ashcombe Health', 'fellow')]), true, 'two sources disagree');
 });

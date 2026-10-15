@@ -70,7 +70,7 @@ export interface DerivedHealth {
  *
  * A risk nobody has repeated in four months is history, not a live problem — a CS lead who sees
  * January's churn scare on today's list stops trusting the list. An expansion ask goes stale faster:
- * "could we add the second rooftop" is a live opening for a quarter, not a year.
+ * "could we add the second location" is a live opening for a quarter, not a year.
  */
 export const HEALTH_WINDOW_DAYS: Record<HealthSignalKind, number> = {
   risk: 120,

@@ -67,7 +67,7 @@ export async function listRows(supabase, workspaceId, kind, { q = '', limit = 20
   //
   // The focus country also KEEPS rows with no country at all. A couple of hundred of one customer's
   // accounts have no location in the CRM — many on the focus market's own domain suffix, most active
-  // this year, together holding real won deals — and they are not foreign, they are unrecorded. Excluding them would delete a rooftop
+  // this year, together holding real won deals — and they are not foreign, they are unrecorded. Excluding them would delete a location
   // from the list because HubSpot is missing a city, which is the opposite of focusing a market.
   // Every other country is matched strictly.
   if (country) {

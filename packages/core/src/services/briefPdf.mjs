@@ -74,7 +74,7 @@ function blocks(body) {
  * @returns {Promise<Buffer>}
  */
 export function renderDocumentPdf(doc, { writtenAt = new Date() } = {}) {
-  // "Quarry Ridge Motors — closed won" → "Quarry Ridge Motors — Account Brief". The status is the first line
+  // "Quarry Ridge Labs — closed won" → "Quarry Ridge Labs — Account Brief". The status is the first line
   // of the Executive Summary; the title names the account and what this is.
   const account = String(doc.title ?? '').split(/\s+[—–]\s+/)[0].trim();
   const title = account ? `${account} — Account Brief` : 'Account Brief';

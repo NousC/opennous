@@ -1,5 +1,5 @@
 // A customer call is read, not graded (GET-288). The output a CS team acts on is "the sponsor went
-// quiet, adoption stalled in F&I, they asked about a second rooftop" — not 3.6/10.
+// quiet, adoption stalled in finance, they asked about a second location" — not 3.6/10.
 //
 // Run: pnpm --filter @nous/core build && node --test packages/core/test/accountHealth.test.mjs
 
@@ -11,13 +11,13 @@ import {
 import { callPageTitle } from '../dist/services/callPage.js';
 
 const FULL = JSON.stringify({
-  summary: 'A quarterly check-in with Corvane Auto: Rupert from our side, Osric and his partner from theirs, covering usage since July and the F&I rollout.',
-  what_changed: 'Corvane Auto moved deal-jacket sign-off into the F&I desk and stopped printing paper copies.',
-  adoption: 'Two salespeople use the tablet check-in daily; the F&I manager has not logged in since July.',
+  summary: 'A quarterly check-in with Corvane Systems: Rupert from our side, Osric and his partner from theirs, covering usage since July and the finance-team rollout.',
+  what_changed: 'Corvane Systems moved contract sign-off into the finance team and stopped printing paper copies.',
+  adoption: 'Two salespeople use the dashboard daily; the finance manager has not logged in since July.',
   standing: 'at_risk',
-  risks: [{ text: 'The sponsor who bought it has left the dealership.', quote: 'Yeah, Gideon moved on in June.' }],
-  expansion: [{ text: 'They asked whether a second rooftop could be added.', quote: 'Could we run this at the Westgate store too?' }],
-  commitments: [{ text: 'We send the F&I training link by Friday.', quote: "I'll get that over to you by Friday." }],
+  risks: [{ text: 'The sponsor who bought it has left the company.', quote: 'Yeah, Gideon moved on in June.' }],
+  expansion: [{ text: 'They asked whether a second location could be added.', quote: 'Could we run this at the Westgate office too?' }],
+  commitments: [{ text: 'We send the finance training link by Friday.', quote: "I'll get that over to you by Friday." }],
 });
 
 test('a full read keeps every part, with its evidence', () => {
@@ -25,7 +25,7 @@ test('a full read keeps every part, with its evidence', () => {
   assert.equal(h.standing, 'at_risk');
   assert.equal(h.risks[0].quote, 'Yeah, Gideon moved on in June.');
   assert.equal(h.expansion.length, 1);
-  assert.equal(h.commitments[0].text, 'We send the F&I training link by Friday.');
+  assert.equal(h.commitments[0].text, 'We send the finance training link by Friday.');
 });
 
 test('a quiet account is a valid answer, not a failure', () => {
@@ -76,26 +76,26 @@ test('the prompt refuses to grade the rep', () => {
 
 test('a CS call still gets a summary — the health read replaces the SCORE, not the summary', () => {
   const h = parseHealthReadJson(FULL);
-  assert.match(h.summary, /quarterly check-in with Corvane Auto/);
+  assert.match(h.summary, /quarterly check-in with Corvane Systems/);
   assert.equal(healthPageSections(h)[0].label, 'Summary');
 });
 
 test('the page names the kind of call, and keeps the meeting name and date', () => {
-  assert.equal(callPageTitle('Corvane Auto - Harborline', '2025-09-17T17:00:00Z', 'business_review'),
-    'Business review — Corvane Auto - Harborline — Sep 17, 2025');
-  assert.equal(callPageTitle('Wexcombe Car Sales | Portal Training', '2025-09-18T15:00:00Z', 'training'),
-    'Training — Wexcombe Car Sales | Portal Training — Sep 18, 2025');
-  assert.equal(callPageTitle('Brackenfold Ford', '2026-09-16T14:50:00Z', 'demo'),
-    'Demo — Brackenfold Ford — Sep 16, 2026');
+  assert.equal(callPageTitle('Corvane Systems - Harborline', '2025-09-17T17:00:00Z', 'business_review'),
+    'Business review — Corvane Systems - Harborline — Sep 17, 2025');
+  assert.equal(callPageTitle('Wexcombe Software | Portal Training', '2025-09-18T15:00:00Z', 'training'),
+    'Training — Wexcombe Software | Portal Training — Sep 18, 2025');
+  assert.equal(callPageTitle('Brackenfold Labs', '2026-09-16T14:50:00Z', 'demo'),
+    'Demo — Brackenfold Labs — Sep 16, 2026');
   // An unknown or missing type keeps the name every page had before types existed.
-  assert.equal(callPageTitle('Brackenfold Ford', '2026-09-16T14:50:00Z', null),
-    'Call summary — Brackenfold Ford — Sep 16, 2026');
+  assert.equal(callPageTitle('Brackenfold Labs', '2026-09-16T14:50:00Z', null),
+    'Call summary — Brackenfold Labs — Sep 16, 2026');
 });
 
 test('the account carries its standing, so "who is at risk" needs no transcript', () => {
   const state = healthStateFrom(parseHealthReadJson(FULL), { at: '2025-09-17T17:00:00Z', sourceRef: 'source://fellow/abc' });
   assert.equal(state.standing, 'at_risk');
-  assert.deepEqual(state.risks, ['The sponsor who bought it has left the dealership.']);
-  assert.deepEqual(state.expansion, ['They asked whether a second rooftop could be added.']);
+  assert.deepEqual(state.risks, ['The sponsor who bought it has left the company.']);
+  assert.deepEqual(state.expansion, ['They asked whether a second location could be added.']);
   assert.equal(state.source_ref, 'source://fellow/abc');
 });

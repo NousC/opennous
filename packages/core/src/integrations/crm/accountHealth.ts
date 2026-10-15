@@ -63,7 +63,7 @@ export const ACCOUNT_HEALTH_FACTS = [
   'cs.cancel_reason',
   'cs.goals',              // what they told us they want (string[])
   'cs.challenges',         // ...and what is in the way (string[])
-  'cs.group',              // the dealer group / parent org, by name
+  'cs.group',              // the company group / parent org, by name
   'cs.locations',
   // Not a company property: derived from the subscriptions the customer is billed on, after the
   // subscription pass (see renewalFromSubscriptions below). '' means "cleared".

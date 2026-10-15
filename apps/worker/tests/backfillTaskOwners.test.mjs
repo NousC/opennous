@@ -12,7 +12,7 @@ import { pickOurSender } from '../scripts/backfillTaskOwners.mjs';
 const OURS = (e) => e.endsWith('@harborline.example');
 
 test('one address on our side is the owner', () => {
-  const r = pickOurSender(['quinlan@harborline.example', 'jory.tamsin@stonebridgemotorhomes.example'], OURS);
+  const r = pickOurSender(['quinlan@harborline.example', 'jory.tamsin@stonebridgesoftware.example'], OURS);
   assert.equal(r.email, 'quinlan@harborline.example');
   assert.equal(r.why, null);
 });
@@ -20,25 +20,25 @@ test('one address on our side is the owner', () => {
 test('a display-name header still resolves', () => {
   // Mail headers arrive wrapped as often as bare, and a wrapped address that failed to match
   // would look identical to a thread with nobody on our side.
-  const r = pickOurSender(['Quinlan Marsh <QUINLAN@Harborline.example>', 'someone@dealer.example'], OURS);
+  const r = pickOurSender(['Quinlan Marsh <QUINLAN@Harborline.example>', 'someone@customer.example'], OURS);
   assert.equal(r.email, 'quinlan@harborline.example');
 });
 
 test('the same person writing five times is still one owner', () => {
-  const r = pickOurSender(Array(5).fill('quinlan@harborline.example').concat('them@dealer.example'), OURS);
+  const r = pickOurSender(Array(5).fill('quinlan@harborline.example').concat('them@customer.example'), OURS);
   assert.equal(r.email, 'quinlan@harborline.example');
 });
 
 test('TWO of our people means we refuse, rather than pick the loudest', () => {
   // A handoff or a group thread. Guessing here nags a rep for someone else's promise, which is
   // worse than the honest "unassigned" the list already shows.
-  const r = pickOurSender(['quinlan@harborline.example', 'perrin@harborline.example', 'them@dealer.example'], OURS);
+  const r = pickOurSender(['quinlan@harborline.example', 'perrin@harborline.example', 'them@customer.example'], OURS);
   assert.equal(r.email, null);
   assert.match(r.why, /2 our-side senders/);
 });
 
 test('a thread with nobody of ours says so, and attributes nothing', () => {
-  const r = pickOurSender(['them@dealer.example', 'other@dealer.example'], OURS);
+  const r = pickOurSender(['them@customer.example', 'other@customer.example'], OURS);
   assert.equal(r.email, null);
   assert.match(r.why, /no our-side sender/);
 });

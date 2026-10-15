@@ -113,7 +113,7 @@ test('nobody is sold to on their way out, or before they have onboarded', () => 
 test('an extracted goal is context marked as said, never an expansion row on its own', () => {
   // Undated (only when it was computed) and not necessarily about buying more from us.
   const accounts = [acct('talked', {
-    reasons: [{ tier: 2, kind: 'goal', text: 'Wants to grow used-car volume next quarter', detail: null }],
+    reasons: [{ tier: 2, kind: 'goal', text: 'Wants to grow seat count next quarter', detail: null }],
   })];
   const health = h({ talked: { status: 'client', mrr: 200 } });
   const { expansion, active } = classifyCustomers(accounts, health, { hasHealth: true });

@@ -119,7 +119,7 @@ export async function resolveCallTarget(
     occurredAt: string; contacts: CallContact[]; sides: CallSides | null; hostUserId: string | null;
     // WHO PROVES TWO RECORDINGS ARE ONE CALL. Only an EXTERNAL participant can: our own staff are on
     // every call, so matching on "any shared contact within three hours" merged two different
-    // dealerships' installations because one CS manager ran both that afternoon. Their pages, their
+    // customers' installations because one CS manager ran both that afternoon. Their pages, their
     // risks and their commitments became one record. Omit it and every contact matches, which is
     // the old behaviour — kept so callers that cannot tell the sides apart are unchanged.
     matchContactIds?: string[];
@@ -208,7 +208,7 @@ export async function storeCallReview(
       mentionEntityIds: sides ? buyers.map(b => b.id) : (input.mentionEntityIds ?? []),
       repUserId: target.hostUserId,
       sourceRef: input.sourceRef ?? null,
-      // The page names the kind of call in Pages: "Demo — Quarry Ridge Motors — Sep 17, 2025".
+      // The page names the kind of call in Pages: "Demo — Quarry Ridge Labs — Sep 17, 2025".
       callType: score.call_type,
     });
     if (page?.id) {

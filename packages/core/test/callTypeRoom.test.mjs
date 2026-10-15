@@ -1,6 +1,6 @@
 // The classifier's answer, checked against who was in the room.
 //
-// A real customer review ("Pendlebrook Dodge | Portal Review", two Harborline people and one dealer) was
+// A real customer review ("Pendlebrook Labs | Portal Review", two Harborline people and one customer) was
 // classified `internal` from the title and the first 1,500 characters. `internal` is neither graded
 // nor read, so the call produced no page, no account standing and no risks — it vanished. These
 // tests pin the two halves of the fix: the attendee list goes INTO the prompt, and the answer is
@@ -13,10 +13,10 @@ import assert from 'node:assert/strict';
 import { buildCallTypePrompt, callTypeAgainstRoom } from '../dist/services/callScoring.js';
 
 test('the prompt names the people from other companies', () => {
-  const p = buildCallTypePrompt('Pendlebrook Dodge | Portal Review', 'hello everyone', {
-    externals: ['ferdyp@pendlebrookdodge.example'],
+  const p = buildCallTypePrompt('Pendlebrook Labs | Portal Review', 'hello everyone', {
+    externals: ['ferdyp@pendlebrooklabs.example'],
   });
-  assert.match(p, /ferdyp@pendlebrookdodge\.example/);
+  assert.match(p, /ferdyp@pendlebrooklabs\.example/);
   assert.match(p, /This call is NOT internal/);
 });
 

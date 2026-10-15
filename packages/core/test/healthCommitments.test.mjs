@@ -39,7 +39,7 @@ test('theirs stays theirs', () => {
 test('an unstated owner defaults to US, and that direction is the safe one', () => {
   // A commitment wrongly on our list gets seen and dismissed. One wrongly on theirs disappears
   // silently — and the entire point is that nothing promised on a call goes missing.
-  const h = read([{ text: 'Follow up on the appraisal tool', quote: 'we should look at that' }]);
+  const h = read([{ text: 'Follow up on the reporting tool', quote: 'we should look at that' }]);
   assert.equal(h.commitments[0].owner, 'us');
 });
 

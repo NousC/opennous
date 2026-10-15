@@ -3,7 +3,7 @@
 // The extraction prompt has said so since GET-327, and both extractors still emit them. Measured
 // on one customer's corpus 2026-09-22: well over the bar of Gmail claims were `general`, and **about
 // half of those were a person's role and nothing else** — "Odette Marchbank is the General Sales
-// Manager at Quarry Ridge Motors", "Bram Hollister is the Finance Director at Ashcombe RV", and
+// Manager at Quarry Ridge Labs", "Bram Hollister is the Finance Director at Ashcombe Health", and
 // dozens more. The same shape the meeting audit found. This is GET-417's lesson again: when a
 // prompt forbids something and the model does it anyway, the check belongs in code.
 //
@@ -13,17 +13,17 @@
 // THE SHAPE IS MATCHED WHOLE, AND THAT IS THE WHOLE DESIGN. The first version asked "does this
 // sentence contain a role word and no verb of doing", which is an allowlist of verbs — unfinishable
 // by construction. Validated against every live claim it would have dropped hundreds, including
-// "Tamsin Orloff recently joined Fennick Honda as a sales manager" (joined), "the office
+// "Tamsin Orloff recently joined Fennick Software as a sales manager" (joined), "the office
 // clerk questioned which discount was applied" (questioned) and everything mentioning a sales *lead*
-// or a *GM* store, because `lead` and `gm` are role words in a list and General Motors in a
-// dealership corpus.
+// or a *GM* office, because `lead` and `gm` are role words in a list and, in this corpus, a sales
+// lead and part of a site name.
 //
 // So the sentence must match END TO END: "<Name> is [a|the] <title> [at <Company>]." Anything with
 // a second clause, a subordinate ("who", "because"), a quote, or any other verb fails to match and
 // is kept. A guard that can only fire on one exact shape cannot surprise you.
 
 /** Role nouns. Deliberately excludes `lead`, `gm`, `head`, `rep` and `buyer`: in this corpus they
- *  are a sales lead, General Motors, a head office, a report and a car buyer far more often. */
+ *  are a sales lead, part of a site name, a head office, a report and a purchasing contact far more often. */
 const ROLE_WORD =
   '(?:manager|managers|director|directors|president|vice[- ]president|owner|principal|officer|coordinator|consultant|specialist|associate|assistant|advisor|adviser|analyst|controller|executive|founder|co[- ]?founder|partner|chief|vp|svp|evp|ceo|cfo|coo|cto|cmo|gsm|salesperson|technician|administrator|supervisor|treasurer|secretary|broker|trainer|engineer|accountant|bookkeeper|receptionist|strategist|marketer|dealer principal)';
 
@@ -34,19 +34,19 @@ const ROLE_WORD =
  * The title segment forbids the punctuation and connectives that introduce a second clause.
  */
 // NOT case-insensitive, and that is load-bearing: with the `i` flag `[A-Z]` matches lowercase
-// too, so the company slot below accepted "is the decision maker in the store" as a company name
+// too, so the company slot below accepted "is the decision maker in the office" as a company name
 // and the guard swallowed a real authority fact. The role word is tested separately, where case
 // genuinely does not matter.
 const TITLE_ONLY_RE = new RegExp(
   // The subject is a NAME — capitalised words — not "anything up to a copula". A loose segment
   // backtracks over the first clause and matches on a LATER copula: "Cyrus is the owner and
-  // president of Velmont | and is | the decision maker in the store" parsed as name + "is" + title.
+  // president of Velmont | and is | the decision maker in the office" parsed as name + "is" + title.
   '^(?:[A-ZÀ-Þ][\\wÀ-ÿ.\'’-]*\\s+){0,4}[A-ZÀ-Þ][\\wÀ-ÿ.\'’-]*\\s(?:is|was|are|were)\\s(?:a|an|the)?\\s*' +
   // Title words, or a bare separator: "Executive Assistant - National Operations".
   '(?:(?:[A-Za-z][\\w&/.\'’-]*|[-/&])(?:\\s+|(?=\\.?$))){1,8}' +
   // "[at <Company>]" — and the company must look like a NAME: capitalised tokens plus the few
-  // connectors a dealership name carries. A loose `.{0,60}?` here let "Cyrus is the owner and
-  // president of Velmont and is the decision maker in the store" match, swallowing a real authority
+  // connectors a company name carries. A loose `.{0,60}?` here let "Cyrus is the owner and
+  // president of Velmont and is the decision maker in the office" match, swallowing a real authority
   // fact into the company slot.
   // `\\s*` not `\\s+`: the title phrase above already consumed the separating space.
   '(?:\\s*(?:at|of|for|with|@)\\s+[A-ZÀ-Þ][\\wÀ-ÿ&.\'’-]*(?:\\s+(?:[A-ZÀ-Þ][\\wÀ-ÿ&.\'’-]*|[a-z]{1,3}|&|-|\\d+))*)?' +

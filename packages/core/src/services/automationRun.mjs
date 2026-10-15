@@ -105,7 +105,7 @@ export const DEAL_PASS_LIMITS = Object.freeze({ perJob: 20, perWorkspace: 50 });
  * the whole bug. Those claims carry no usable date: valid_from is null on every one, and
  * computed_at is when we last RECOMPUTED, which the CRM sync moves every day. So a deal
  * closed on 2025-03-12 had a computed_at of this morning and was indistinguishable from one
- * closed this morning — which is how Quarry Ridge Motors, won well over a year ago and silent for
+ * closed this morning — which is how Quarry Ridge Labs, won well over a year ago and silent for
  * months, was written up as today's news.
  *
  * deal_outcomes.closed_at is the date the CRM actually recorded. Measured on one customer's
@@ -423,9 +423,9 @@ async function gatherAccount(supabase, workspaceId, entityId) {
     .filter(f => typeof f.content === 'string' && f.content.trim())
     .slice(0, 35);
 
-  // A `contacts` row is not always a person. One dealer group's two dozen include "Invoices
-  // Desk", a boardroom mailbox and "Ostrander Motors Ltd. Kettlebrook" — a dealer company resolved
-  // as staff, which is how the existing account summary came to open with "Ostrander Motors Ltd.
+  // A `contacts` row is not always a person. One parent company's two dozen include "Invoices
+  // Desk", a boardroom mailbox and "Ostrander Holdings Ltd. Kettlebrook" — a client company resolved
+  // as staff, which is how the existing account summary came to open with "Ostrander Holdings Ltd.
   // Kettlebrook is a company whose CEO, Gideon Tallow…". Two different organisations, merged into one
   // sentence that is simply false. Filtering here does not fix the resolution upstream; it
   // stops the handoff repeating its mistake.
@@ -457,13 +457,13 @@ async function gatherAccount(supabase, workspaceId, entityId) {
   // somebody inheriting an account wants to know.
   let history = null;
   // WHO "WE" ARE, as the record shows it: the reps who own the engagements. Without this the
-  // writer cannot tell our people from theirs — the Ashcombe Honda summary asked whether "Emeric
+  // writer cannot tell our people from theirs — the Ashcombe Health summary asked whether "Emeric
   // Solberg's company" was a competitor or a partner. It was us.
   const ourTeam = new Map();
   if (contacts.length) {
     const ids = contacts.map(c => c.id);
     // ONE ENGAGEMENT IS STORED ONCE PER CONTACT ON IT. hubspot_meetings_<id>_<contact> — a
-    // meeting with four dealer staff on the invite is four rows, and counted as rows it is
+    // meeting with four customer staff on the invite is four rows, and counted as rows it is
     // four meetings and four lines of "recent activity". The engagement is the ref without
     // its trailing contact id.
     const engagementOf = (ref) => String(ref ?? '').replace(/_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '');
@@ -509,7 +509,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
     const total = [...monthly.values()].reduce((a, b) => a + b, 0);
     const days = firstAt ? Math.round((Date.now() - new Date(firstAt).getTime()) / 86_400_000) : null;
     // FILL THE QUIET MONTHS WITH ZERO. Dropping a month with no activity closes the gap up
-    // and draws a busy account; the four months nobody touched Quarry Ridge Motors are the single most
+    // and draws a busy account; the four months nobody touched Quarry Ridge Labs are the single most
     // useful thing its chart has to say. A missing bar is a lie by omission.
     const seen = [...monthly.keys()].sort();
     const dense = [];
@@ -539,7 +539,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
 
     // source_ref COMES TOO, because an interaction is evidence. Every fact the writer was
     // allowed to cite came from a note.* claim, and an account can have none of those and
-    // still have a year of email: Saltmarsh Auto had no intel claims and a few dozen interactions, every
+    // still have a year of email: Saltmarsh Holdings had no intel claims and a few dozen interactions, every
     // one of them carrying a source_ref we simply never offered. That is why its handoff
     // cited nothing — not "no evidence", but evidence we held and did not hand over.
     const { data: acts } = await supabase.from('observations')
@@ -551,7 +551,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
     // WHAT IT WAS, THEN WHAT HAPPENED IN IT. A HubSpot meeting's title is its description and
     // its "summary" is the invite body, so reading the summary first titled every meeting
     // "Join link for Google Meet". And a call summary is the richest thing HubSpot holds about
-    // a dealer — 140 characters of it was the headline and none of the substance.
+    // a customer — 140 characters of it was the headline and none of the substance.
     const clean = (t) => String(t ?? '').replace(/\r/g, '').replace(/^Summary\s*/i, '').replace(/\s+/g, ' ').trim();
     const isInvite = (t) => /join (link|zoom|with google meet)|meet\.google\.com|zoom\.us\/j|teams\.microsoft/i.test(t);
     const byEngagement = new Map();
@@ -583,7 +583,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
         ref: o.source_ref ?? null,
       });
     }
-    // CONVERSATIONS FIRST, THEN MAIL. After a close, a nurture sequence sends a dealer an
+    // CONVERSATIONS FIRST, THEN MAIL. After a close, a nurture sequence sends a customer an
     // email every few days — an account's most recent rows can all be "Your weekly Lumen digest"
     // and its siblings, pushing the demo with their managers out of the window. Calls, meetings and notes keep their places; email fills what is left.
     const all = [...byEngagement.values()];
@@ -600,7 +600,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
   // in the intel is the next, and a title nobody has spoken to is last. The rest are not
   // dropped — they are counted, so the note says there are others without listing them.
   // Everyone on the engagement spoke, not only the contact the row happened to hang on —
-  // Ansel Brightwater sat in the Ashcombe Honda demo and fell out of the table because he was
+  // Ansel Brightwater sat in the Ashcombe Health demo and fell out of the table because he was
   // fourth on the invite.
   const spoke = new Set(activity.flatMap(a => a.with ?? []).filter(Boolean));
   const mentioned = new Set();
@@ -670,7 +670,7 @@ RECENT AND RELEVANT FIRST. The reader is starting onboarding this week. What hap
 Format, exactly — "## " headings, bullets start with "- ", in this order, and a section with nothing real in it is dropped:
 
 ## Executive Summary
-Two sentences of prose, no bullets. The first says the account just closed: "Brackenridge Motors just closed won on 2026-09-25, buying the Lumen Insights Suite for $5,000." — with the product, and the value and date when given. The second says what this business is and where things stand now.
+Two sentences of prose, no bullets. The first says the account just closed: "Brackenridge Systems just closed won on 2026-09-25, buying the Lumen Insights Suite for $5,000." — with the product, and the value and date when given. The second says what this business is and where things stand now.
 
 ## What to Know for Onboarding
 Three to five bullets, the most critical first: what the new owner must know or do in their first week. Recent, specific and cited — what is not set up yet, an open issue or unanswered question, a commitment coming due, who to contact first and why. Nothing here that is only background.
@@ -953,7 +953,7 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
     today: new Date().toISOString().slice(0, 10),
     seller: g.seller,
     // THE DEAL THIS IS ABOUT, AND THE REST AS BACKGROUND. Handed a flat list, the writer read
-    // Ashcombe Honda's lost August deal and two unpriced September wins as one muddle and made
+    // Ashcombe Health's lost August deal and two unpriced September wins as one muddle and made
     // "uncertainty about deal size" its lead bullet. The one that fired the automation goes
     // first; the sales cycle is measured from the first interaction we hold, because the CRM's
     // deal record is often opened days before it is marked won and read as the cycle it said
@@ -1339,7 +1339,7 @@ export async function composeAutomationEmail(automation, doc, { stage = null, at
   // and what somebody forwards. Unless the email step says to attach nothing (GET-566): the
   // AI output can ride in the body instead, through {{steps.<id>.output}}.
   const attach = step?.config?.attach !== 'none';
-  // "Corrigan Autos Account Brief.pdf" — the name as the PDF titles it, no stray spaces.
+  // "Corrigan Analytics Account Brief.pdf" — the name as the PDF titles it, no stray spaces.
   const filename = `${name.replace(/[^\w .&'-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70) || 'Account'} Account Brief.pdf`;
   return { to: to ?? null, cc, subject, text, html, attach, filename };
 }
@@ -2391,7 +2391,7 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
           stepData.push({ id: s.id ?? null, step: shownAt(at_) + 1, label: c.object_label ?? c.object, text: r.text });
           if (s.id) extraVars[`steps.${s.id}.output`] = r.text;
           done.push(`hubspot_read:${r.count}`);
-          // Grouped by a name (a company, a dealer): those names are accounts this job worked on.
+          // Grouped by a name (a company, a customer): those names are accounts this job worked on.
           if ((c.group_by || 'hs_object_id') !== 'hs_object_id') lastAccounts = await namedAccounts((r.rows ?? []).map(g => g.group).filter(g => !/\(no name\)$/.test(String(g))));
           break;
         }

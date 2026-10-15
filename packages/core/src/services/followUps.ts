@@ -277,7 +277,7 @@ export function dedupeSameMeeting<T extends { at: string; textLength: number }>(
 
 /**
  * The same meeting recorded by two tools, possibly filed on two different accounts (Fellow put
- * Oriane's call on "Ashcombe RV", HubSpot on "Quarry Ridge Campers", the company her address belongs to).
+ * Oriane's call on "Ashcombe Health", HubSpot on "Quarry Ridge Clinics", the company her address belongs to).
  * Two meetings within 90 minutes that share a CUSTOMER attendee's address are one meeting; the one
  * with the most text wins, and its account is the card's. Our own people are on every meeting, so
  * they never prove anything (callers pass customer addresses only).
@@ -332,7 +332,7 @@ export function buildFollowUpPrompt(input: FollowUpPromptInput): { system: strin
     `### Meeting ${i + 1}: ${m.kind}${m.title ? ` "${m.title}"` : ''} on ${m.at.slice(0, 10)}\n${m.text.slice(0, MAX_TEXT_PER_MEETING)}`).join('\n\n');
   const existing = input.existingTasks.length ? input.existingTasks.map((t) => `- ${t}`).join('\n') : '- (none)';
   const previous = input.previous
-    ? `\nAN EARLIER FOLLOW-UP FOR THIS ACCOUNT IS STILL UNREVIEWED. Its tasks (by id):\n${input.previous.tasks.map((t) => `- [${t.id}] ${t.text}`).join('\n') || '- (none)'}\nDecide for EACH earlier task whether it still applies after the newest meeting: keep it, or drop it with a short reason (e.g. "done on the call", "replaced by: send the 3-rooftop quote"). The email and summary must cover ALL the meetings.\n`
+    ? `\nAN EARLIER FOLLOW-UP FOR THIS ACCOUNT IS STILL UNREVIEWED. Its tasks (by id):\n${input.previous.tasks.map((t) => `- [${t.id}] ${t.text}`).join('\n') || '- (none)'}\nDecide for EACH earlier task whether it still applies after the newest meeting: keep it, or drop it with a short reason (e.g. "done on the call", "replaced by: send the 3-location quote"). The email and summary must cover ALL the meetings.\n`
     : '';
   const user = `We are ${input.ourCompany ?? 'the seller'}. The person following up is ${input.repName ?? 'the account owner'}.
 Account: ${input.account.name ?? 'Unknown'}${input.account.domain ? ` (${input.account.domain})` : ''} — ${input.account.isCustomer ? 'an existing CUSTOMER' : 'a PROSPECT'}.
@@ -449,7 +449,7 @@ export function parseFollowUpAnswer(
 /**
  * Who the follow-up goes to: the customer's own addresses (the account's domain) when there are
  * any, else everyone outside our company on the meeting; one address per person, at most four.
- * A dealer-group meeting copied five people across two companies; the email is for the account.
+ * A company-group meeting copied five people across two companies; the email is for the account.
  */
 export function pickRecipients(emails: string[], accountDomain: string | null | undefined, max = 4): string[] {
   const norm = [...new Set(emails.map((e) => String(e ?? '').trim().toLowerCase()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)))];

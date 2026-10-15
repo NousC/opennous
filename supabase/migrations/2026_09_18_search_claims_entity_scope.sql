@@ -1,7 +1,7 @@
 -- Dedup asks about ONE record, so search one record (GET-329).
 --
--- "Have we already said this?" is always about a subject. A note about Larkfield Toyota was never going to
--- be a duplicate of a note about a different dealership — but the search read every note in the
+-- "Have we already said this?" is always about a subject. A note about Larkfield Systems was never going to
+-- be a duplicate of a note about a different company — but the search read every note in the
 -- workspace to establish that: thousands of them on the largest, each carrying a 1536-dimension
 -- embedding. That is what put it over PostgREST's 8s statement_timeout often enough to lose ~11% of
 -- duplicate checks, silently, because a failed search and an empty one both return no rows.

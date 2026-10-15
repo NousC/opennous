@@ -35,7 +35,7 @@ function database(tables) {
 const acct = (id, name) => ({ workspace_id: 'ws', entity_id: id, kind: 'account', name, domain: `${id}.example`, company_id: null, icp_score: 60, last_activity_at: null, people_count: 1 });
 const world = () => ({
   workspace_members: [{ workspace_id: 'ws', user_id: 'owner' }],
-  revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Daily dealer report', revision: 1, scope: { mode: 'selected', account_ids: ['acct-sel'], min_icp: 70 } }],
+  revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Daily account report', revision: 1, scope: { mode: 'selected', account_ids: ['acct-sel'], min_icp: 70 } }],
   revbox_members: [],
   agent_routines: [{ id: 'job', workspace_id: 'ws', revbox_id: 'box' }],
   agent_routine_runs: [
@@ -43,11 +43,11 @@ const world = () => ({
     { id: 'r2', workspace_id: 'ws', routine_id: 'job', started_at: ago(1), entity_id: null, document_id: null, step_log: [{ type: 'hubspot', status: 'ok', accounts: ['acct-read'] }, { type: 'agent', status: 'ok', document_id: 'doc-1' }] },
   ],
   revbox_runs: [],
-  documents: [{ id: 'doc-1', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: 'Name | Pulls\nHarborline Motors Inc | 4\nNo Such Dealer | 1' }],
+  documents: [{ id: 'doc-1', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: 'Name | Pulls\nHarborline Labs Inc | 4\nNo Such Account | 1' }],
   document_links: [],
   revbox_datasets: [],
   entity_list_rows: [
-    acct('acct-sel', 'Selected Co'), acct('acct-read', 'Lakeshore Health'), acct('acct-harbor', 'Harborline Motors'), acct('acct-deal', 'Deal Holder'), acct('acct-other', 'Not Worked On'),
+    acct('acct-sel', 'Selected Co'), acct('acct-read', 'Lakeshore Health'), acct('acct-harbor', 'Harborline Labs'), acct('acct-deal', 'Deal Holder'), acct('acct-other', 'Not Worked On'),
     { workspace_id: 'ws', entity_id: 'deal-1', kind: 'deal', name: 'Renewal', company_id: 'acct-deal', stage: 'open' },
     { workspace_id: 'ws', entity_id: 'person-1', kind: 'person', name: 'Pat', company_id: 'acct-harbor' },
   ],
@@ -56,7 +56,7 @@ const UNION = ['acct-deal', 'acct-harbor', 'acct-read', 'acct-sel'];
 
 test('companies/list?revbox pages the union: selected plus worked on (a deal as its company, a named account)', async () => {
   const { box, page } = await revboxListPage(database(world()), 'ws', 'owner', 'box', null);
-  assert.equal(box.name, 'Daily dealer report');
+  assert.equal(box.name, 'Daily account report');
   assert.deepEqual([...page.ids].sort(), UNION);
   assert.equal(page.total, 4);
   const scope = await revboxListPage(database(world()), 'ws', 'owner', 'box', null, { selectedOnly: true });

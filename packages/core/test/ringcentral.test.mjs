@@ -74,13 +74,13 @@ test('RingSense insights become "Name: line" transcript lines, legs in order, pl
     speakerInfo: [{ speakerId: '1', name: 'Dana Rep' }, { speakerId: '2', name: 'John Smith' }],
     insights: {
       Transcript: [{ speakerId: '1', text: 'Thanks for picking up.' }, { speakerId: '2', text: 'Sure, go ahead.' }],
-      Summary: [{ value: 'Discussed the second rooftop.' }],
+      Summary: [{ value: 'Discussed the second location.' }],
     },
   };
   const t = transcriptFromInsights([later, earlier]);
   assert.equal(t.text, 'Dana Rep: Thanks for picking up.\nJohn Smith: Sure, go ahead.\nSpeaker 2: Send me the proposal by Friday.');
   assert.deepEqual(t.speakerNames.sort(), ['Dana Rep', 'John Smith'], 'a generic "Speaker 2" is not a name');
-  assert.match(t.recap, /## Summary\nDiscussed the second rooftop\./);
+  assert.match(t.recap, /## Summary\nDiscussed the second location\./);
   assert.match(t.recap, /## Next steps\n- Send proposal/);
 });
 

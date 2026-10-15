@@ -137,12 +137,12 @@ export function buildTagListPrompt(
   const size = existing.length ? 'at most 10 new tags; none if the list already covers them' : '25 to 60 tags';
   return `${whoWeAre(workspaceContext)}A head of product groups customer feedback by TAG. ${have}Below are ${statements.length} things customers said.
 
-A tag names a concrete THING a person would search for: a feature, module, integration, channel, competitor, buyer role, customer segment or workflow step. Good: "QR code", "SMS campaigns", "CRM integration", "Trade-in tool". Bad: lessons, sentiments or abstractions ("adoption", "friction", "value", "trust").
+A tag names a concrete THING a person would search for: a feature, module, integration, channel, competitor, buyer role, customer segment or workflow step. Good: "QR code", "SMS campaigns", "CRM integration", "Usage reports". Bad: lessons, sentiments or abstractions ("adoption", "friction", "value", "trust").
 
 Rules:
 - Propose ${size}.
-- A competitor, vendor, partner, tool or data provider that is NAMED gets its own tag, named exactly as it is called ("Ledgerwise", "Pricebook Pro", "Creditlane"). Never fold a named company into a theme ("Credit qualification") or into another company's tag: the board groups what was said about each one under its name.
-- A capability customers ask for gets a tag naming the capability itself ("QR code check-in"), not the area it sits in ("Showroom").
+- A competitor, vendor, partner, tool or data provider that is NAMED gets its own tag, named exactly as it is called ("Ledgerwise", "Pricebook Pro", "Signalpath"). Never fold a named company into a theme ("Lead qualification") or into another company's tag: the board groups what was said about each one under its name.
+- A capability customers ask for gets a tag naming the capability itself ("QR code check-in"), not the area it sits in ("Onboarding").
 - Named companies need at least 2 statements naming them; everything else at least 3.
 - Name: 1 to 3 words, in the words the business itself uses. Definition: one line. Aliases: other words customers use for it.
 - Split a tag only when the two halves would have different owners; merge near-duplicates.

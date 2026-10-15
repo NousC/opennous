@@ -32,7 +32,7 @@ test('a quote naming nothing falls back to the sentence, then to the model', () 
 });
 
 test('nothing in the catalogue matches → null, the caller drops the signal', () => {
-  assert.deepEqual(resolveExpansionProduct('Appraisal valuation engine', 'Can engines be added?', 'x', CAT).product, null);
+  assert.deepEqual(resolveExpansionProduct('Forecasting engine', 'Can engines be added?', 'x', CAT).product, null);
 });
 
 test('no catalogue → the model\'s word, as before', () => {

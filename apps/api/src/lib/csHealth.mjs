@@ -77,7 +77,7 @@ export const ROW_COLS = 'entity_id, name, domain, industry, people_count, last_a
  *   · rows that HAVE a health bag — whoever the CRM tracks as an account
  *   · rows with a won deal — whoever bought something
  * A few hundred accounts are marked a customer with no won deal recorded (bought before the CRM,
- * or the deal sits on a sibling rooftop); a handful have a won deal while still marked an
+ * or the deal sits on a sibling location); a handful have a won deal while still marked an
  * opportunity.
  *
  * Returns `null` when the `cs` column does not exist yet, so a deployment that is ahead of its
@@ -512,9 +512,9 @@ function expansionReasons(a) {
     }
   }
 
-  // 5. A sibling rooftop in the same dealer group already buys. Group-level, context.
+  // 5. A sibling location in the same company group already buys. Group-level, context.
   if (a.groupSiblingBuys) {
-    out.push({ tier: 3, kind: 'group', text: `Other rooftops in ${a.groupSiblingBuys.group} already buy`, detail: `${a.groupSiblingBuys.n} of them`, evidence: 'crm' });
+    out.push({ tier: 3, kind: 'group', text: `Other locations in ${a.groupSiblingBuys.group} already buy`, detail: `${a.groupSiblingBuys.n} of them`, evidence: 'crm' });
   }
 
   return out.sort((x, y) => x.tier - y.tier);

@@ -11,7 +11,7 @@
 //
 // The CTAs and the template steps are worth stating plainly: they come from MARKETING EMAIL — ours and other vendors'
 // — and a call-to-action in a mass send is not a promise anybody made. "Apply to join Corvelle Circle" was
-// filed as a task on a dealership's record because a vendor sent the customer a newsletter.
+// filed as a task on a customer's record because a vendor sent the customer a newsletter.
 //
 // FOUR OF THE FIVE ARE MECHANICAL AND ONE IS NOT, deliberately. A tracking URL, a numbered
 // template line and a machine's notification are all facts about the SOURCE and can be decided in

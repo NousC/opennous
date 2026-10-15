@@ -394,10 +394,10 @@ test('an AI step with no model answer passes the data on and says so; a switched
     { id: 'summary', type: 'agent', config: { prompt: 'Summarise it.', ...(off ? { inputs_off: ['r'] } : {}) } },
     { id: 's', type: 'slack', config: { channel_id: 'C1', channel: 'reports', text: '{{steps.summary.output}}' } },
   ]);
-  const ctx = () => ({ ...ctxOf(fakeDb()), writeAllInLoop: true, seedData: [{ id: 'r', step: 1, label: 'Stats', text: 'Acme Motors | 7' }] });
+  const ctx = () => ({ ...ctxOf(fakeDb()), writeAllInLoop: true, seedData: [{ id: 'r', step: 1, label: 'Stats', text: 'Acme Corp | 7' }] });
   // No model is reachable in tests, so the writer has no answer.
   const on = await runSteps(steps(false), null, { stage: 'scheduled', ctx: ctx() });
-  assert.equal(posts[0], 'Acme Motors | 7');
+  assert.equal(posts[0], 'Acme Corp | 7');
   assert.match(on.log.find(x => x.id === 'summary').detail, /No answer from the AI/);
   await runSteps(steps(true), null, { stage: 'scheduled', ctx: ctx() });
   assert.equal(posts[1], 'Nothing to report.');
@@ -407,7 +407,7 @@ test('what an AI step writes from data reaches the step after it, not the raw da
   const { registerAnthropicClient } = await import('../dist/llm/modelDoor.mjs');
   const before = process.env.WRITING_MODEL;
   process.env.WRITING_MODEL = 'claude-haiku-4-5-20251001';
-  registerAnthropicClient({ messages: { create: async () => ({ model: 'claude-haiku-4-5-20251001', stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: 'Acme Motors led with 7.' }] }) } }, { acceptsFeature: false });
+  registerAnthropicClient({ messages: { create: async () => ({ model: 'claude-haiku-4-5-20251001', stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: 'Acme Corp led with 7.' }] }) } }, { acceptsFeature: false });
   const posts = [];
   registerStepHandler('slack', async (a) => { posts.push(a.text); return { ok: true }; });
   try {
@@ -415,11 +415,11 @@ test('what an AI step writes from data reaches the step after it, not the raw da
     const r = await runSteps(auto([
       { id: 'summary', type: 'agent', config: { prompt: 'Summarise it.' } },
       { id: 's', type: 'slack', config: { channel_id: 'C1', channel: 'reports', text: '{{steps.summary.output}}' } },
-    ]), null, { stage: 'scheduled', ctx: { ...ctxOf(db), writeAllInLoop: true, seedData: [{ id: 'r', step: 1, label: 'Stats', text: 'Acme Motors | 7' }] } });
-    assert.equal(posts[0], 'Acme Motors led with 7.');
+    ]), null, { stage: 'scheduled', ctx: { ...ctxOf(db), writeAllInLoop: true, seedData: [{ id: 'r', step: 1, label: 'Stats', text: 'Acme Corp | 7' }] } });
+    assert.equal(posts[0], 'Acme Corp led with 7.');
     assert.match(r.log.find(x => x.id === 'summary').detail, /^Wrote/);
     // The saved document keeps the summary too (a section with no heading is dropped on save).
-    assert.deepEqual(db.inserted.find(x => x.table === 'documents').row.sections.map(x => x.body), ['Acme Motors led with 7.']);
+    assert.deepEqual(db.inserted.find(x => x.table === 'documents').row.sections.map(x => x.body), ['Acme Corp led with 7.']);
   } finally {
     if (before === undefined) delete process.env.WRITING_MODEL; else process.env.WRITING_MODEL = before;
     registerAnthropicClient(null);
@@ -445,11 +445,11 @@ test('an AI step reads only the context chosen for it, an earlier AI step includ
       { id: 'a1', type: 'agent', config: { prompt: 'First.' } },
       { id: 'a2', type: 'agent', config: { prompt: 'Second.', inputs: ['a1'] } },
       { id: 's', type: 'slack', config: { channel_id: 'C1', channel: 'reports', text: '{{steps.a2.output}}' } },
-    ]), null, { stage: 'scheduled', ctx: { ...ctxOf(fakeDb()), writeAllInLoop: true, seedData: [{ id: 'r', step: 1, label: 'Stats', text: 'Acme Motors | 7' }] } });
+    ]), null, { stage: 'scheduled', ctx: { ...ctxOf(fakeDb()), writeAllInLoop: true, seedData: [{ id: 'r', step: 1, label: 'Stats', text: 'Acme Corp | 7' }] } });
     const material = (a) => a.messages[0].content;
-    assert.match(material(asks[0]), /Acme Motors \| 7/);
+    assert.match(material(asks[0]), /Acme Corp \| 7/);
     assert.match(material(asks[1]), /Answer 1\./);
-    assert.doesNotMatch(material(asks[1]), /Acme Motors/, 'the Read data was not chosen for step 2');
+    assert.doesNotMatch(material(asks[1]), /Acme Corp/, 'the Read data was not chosen for step 2');
     const sys = (a) => (typeof a.system === 'string' ? a.system : JSON.stringify(a.system));
     assert.doesNotMatch(sys(asks[0]), /posted in Slack/);
     assert.match(sys(asks[1]), /posted in Slack/);

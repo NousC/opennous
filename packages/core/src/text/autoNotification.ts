@@ -3,8 +3,8 @@
 // Measured on one customer's Gmail corpus: a few percent of its tasks were "Attend the
 // <meeting>" — and most of those rest on a quote a person never wrote:
 //
-//   "Attend the Quarry Ridge Motors x Fernpoint meeting."  ←  "Odette Marchwood has accepted this invitation."
-//   "Attend Ashcombe RV | Harborline Training meeting."     ←  "Tobias Wrenfield has accepted this invitation."
+//   "Attend the Quarry Ridge Labs x Fernpoint meeting."  ←  "Odette Marchwood has accepted this invitation."
+//   "Attend Ashcombe Health | Harborline Training meeting."     ←  "Tobias Wrenfield has accepted this invitation."
 //
 // Google Calendar sends those. Accepting an invitation is not a promise to do a thing; it is the
 // calendar working. The task then sits in a rep's worklist, cannot be completed by any action, and

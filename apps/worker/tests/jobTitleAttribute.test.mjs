@@ -33,10 +33,10 @@ test('one title per contact, however many times it is mentioned', async () => {
 });
 
 test('a sentence is not a title — that is the model narrating', async () => {
-  // The failure this guards: "Gideon Harrowby is the General Manager at Pinecastle Nissan and handles
+  // The failure this guards: "Gideon Harrowby is the General Manager at Pinecastle Labs and handles
   // all tooling decisions" is a CLAIM the model has stuffed into the title field.
   assert.equal(await dry([{ contactId: 'c1',
-    job_title: 'the General Manager at Pinecastle Nissan who handles all tooling decisions' }]), 0);
+    job_title: 'the General Manager at Pinecastle Labs who handles all tooling decisions' }]), 0);
 });
 
 test('nothing to file when there is no title, no contact, or it is junk', async () => {

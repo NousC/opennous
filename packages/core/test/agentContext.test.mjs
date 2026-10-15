@@ -25,9 +25,9 @@ function db(tables, writes = []) {
 
 const tables = () => ({
   deal_outcomes: [{ entity_id: 'acc-1', deal_id: 'd1', closed_at: '2026-09-30T00:00:00Z', outcome: 'won' }],
-  entity_list_rows: [{ entity_id: 'acc-1', name: 'Northcape Motors' }],
-  companies: [{ id: 'acc-1', name: 'Northcape Motors', domain: 'northcape-motors.example' }],
-  workspaces: [{ name: 'Harborline', icp_text: '## What we sell\nDealer software' }],
+  entity_list_rows: [{ entity_id: 'acc-1', name: 'Northcape Labs' }],
+  companies: [{ id: 'acc-1', name: 'Northcape Labs', domain: 'northcape-labs.example' }],
+  workspaces: [{ name: 'Harborline', icp_text: '## What we sell\nRevenue software' }],
 });
 
 test('every part is in the material by default, and the account always is', async () => {

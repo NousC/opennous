@@ -3,8 +3,8 @@
 // The account rule (GET-296/GET-313) decides WHICH account a call belongs to, and withholds the
 // answer when it cannot be trusted. But the page writer then fell back to `primaryEntityId` — the
 // first "buyer" — and on a workspace whose reps hold no seats, that is one of our own staff. So a
-// dealership's installation call filed itself on an Harborline employee, twice, the second time
-// overwriting a page that had just been corrected to the right dealership.
+// customer's installation call filed itself on an Harborline employee, twice, the second time
+// overwriting a page that had just been corrected to the right customer.
 //
 // Deciding the account in one place and filing the page in another is how a fix passes its tests
 // and still lands wrong. This is the rule at the point of writing.
@@ -22,9 +22,9 @@ test('one of our own people is never a page subject', () => {
   assert.equal(pageSubject('sorrel', OURS), null);
 });
 
-test('the dealership, and the customer, are kept', () => {
-  assert.equal(pageSubject('ashgrove-mazda', OURS), 'ashgrove-mazda');
-  assert.equal(pageSubject('ysolde-at-the-dealership', OURS), 'ysolde-at-the-dealership');
+test('the customer company, and its contact, are kept', () => {
+  assert.equal(pageSubject('ashgrove-health', OURS), 'ashgrove-health');
+  assert.equal(pageSubject('ysolde-at-the-customer', OURS), 'ysolde-at-the-customer');
 });
 
 test('nothing in, nothing out — never a guess', () => {

@@ -73,7 +73,7 @@ test('routine runs come back in the Results Run shape: state, result, deliveries
     { id: 'run-live', routine_id: 'r1', workspace_id: 'ws', status: 'running', started_at: '2026-10-14T09:00:00Z' },
   ];
   const docs = [
-    { id: 'doc-ok', workspace_id: 'ws', title: 'Product Usage daily', body_md: 'All dealers up.', subject_entity_id: 'acct-a', status: 'active' },
+    { id: 'doc-ok', workspace_id: 'ws', title: 'Product Usage daily', body_md: 'All accounts up.', subject_entity_id: 'acct-a', status: 'active' },
     { id: 'doc-hidden', workspace_id: 'ws', title: 'Hidden', body_md: 'secret', subject_entity_id: 'acct-b', status: 'active' },
   ];
   const sb = { from(table) {
@@ -90,7 +90,7 @@ test('routine runs come back in the Results Run shape: state, result, deliveries
   const rows = await revboxRoutineRuns(sb, 'ws', [{ id: 'r1', name: 'TU daily' }], { allowed: new Set(['acct-a']) });
   const by = Object.fromEntries(rows.map(r => [r.id, r]));
   assert.equal(by['run-ok'].state, 'completed');
-  assert.deepEqual(by['run-ok'].result, { title: 'Product Usage daily', body: 'All dealers up.', kind: 'report' });
+  assert.deepEqual(by['run-ok'].result, { title: 'Product Usage daily', body: 'All accounts up.', kind: 'report' });
   assert.deepEqual(by['run-ok'].deliveries, [
     { id: 'dest1', state: 'sent', error: null, destination: { kind: 'slack', target: '#cs' } },
     { id: 'run-ok:1', state: 'failed', error: 'bounced', destination: { kind: 'email', target: 'vp@x.com' } },

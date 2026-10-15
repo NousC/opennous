@@ -145,7 +145,7 @@ test('a healthy deal is explained by what holds it up', () => {
     ],
     activity: [act('r1', 'email_received', 2), act('m1', 'meeting_held', 3), act('s1', 'email_sent', 4)],
     stakeholders: [
-      { id: 'p1', title: 'Dealer Principal', seniority: 'owner', signal_count: 2 },
+      { id: 'p1', title: 'Managing Director', seniority: 'owner', signal_count: 2 },
       { id: 'p2', title: 'General Manager', seniority: 'director', signal_count: 1 },
     ],
   });

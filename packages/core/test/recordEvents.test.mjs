@@ -47,9 +47,9 @@ const NOW = new Date().toISOString();
 const fixtures = () => ({
   trigger_subscriptions: [{ id: 'sub-1', created_at: '2026-01-01T00:00:00Z' }],
   entity_list_rows: [
-    { entity_id: ACC, kind: 'account', name: 'Corrigan Autos', domain: 'corrigan-autos.example', industry: 'Automotive', deal_health: 71, icp_score: 82, open_deals: 1, pipeline_value: '12000', people_count: 2 },
-    { entity_id: ANA, kind: 'person', company_id: ACC, name: 'Marisol Penhale', email: 'marisol@corrigan-autos.example', job_title: 'Controller' },
-    { entity_id: JIM, kind: 'person', company_id: ACC, name: 'Hobart Quayle', email: 'hobart@corrigan-autos.example', job_title: 'GM' },
+    { entity_id: ACC, kind: 'account', name: 'Corrigan Systems', domain: 'corrigan-systems.example', industry: 'Software', deal_health: 71, icp_score: 82, open_deals: 1, pipeline_value: '12000', people_count: 2 },
+    { entity_id: ANA, kind: 'person', company_id: ACC, name: 'Marisol Penhale', email: 'marisol@corrigan-systems.example', job_title: 'Controller' },
+    { entity_id: JIM, kind: 'person', company_id: ACC, name: 'Hobart Quayle', email: 'hobart@corrigan-systems.example', job_title: 'GM' },
   ],
   predictions: [{ predicted_value: { score: 82, tier: 'A' } }],
   relationships: [{ from_entity_id: OPEN }, { from_entity_id: WON }],
@@ -81,7 +81,7 @@ test('a fresh event with a listener queues one signed-ready delivery carrying th
   const p = row.payload;
   assert.equal(p.type, 'conversation.reply_received');
   assert.ok(p.id && p.api_version);
-  assert.equal(p.account.name, 'Corrigan Autos');
+  assert.equal(p.account.name, 'Corrigan Systems');
   assert.deepEqual(p.account.icp, { score: 82, tier: 'A' });
   assert.equal(p.people[0].name, 'Hobart Quayle', 'the person the event is about comes first');
   assert.equal(p.deal.name, 'Corrigan — Enterprise', 'the open deal, not the won pilot');

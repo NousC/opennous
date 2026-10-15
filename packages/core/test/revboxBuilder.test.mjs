@@ -470,7 +470,7 @@ test('the Slack layout the agent chose for box delivery lands on the revbox_deli
 
 // ── Run time ──────────────────────────────────────────────────────────────────
 
-const doc = { id: 'd1', title: 'Product Usage daily', headline: null, sections: [{ label: 'Summary', body: 'Dealer A pulled 12 (+3).' }] };
+const doc = { id: 'd1', title: 'Product Usage daily', headline: null, sections: [{ label: 'Summary', body: 'Account A pulled 12 (+3).' }] };
 const routine = (extra = {}) => ({ id: 'r1', name: 'TU daily', user_id: 'owner', revbox_id: 'box', steps: [
   { id: 'summary', type: 'agent', config: { mode: 'write', prompt: 'x' } },
   { id: 'box_delivery', type: 'revbox_delivery', config: {} },
@@ -486,7 +486,7 @@ test('revbox_delivery posts the latest AI output to every destination the box ha
   assert.equal(r.failed, undefined);
   assert.equal(r.delivered, 'revbox_delivery:2/2');
   assert.equal(slack[0].channel, '#product-usage-cs-handoff');
-  assert.match(slack[0].text, /Dealer A pulled 12/);
+  assert.match(slack[0].text, /Account A pulled 12/);
   assert.equal(hooks[0].url, 'https://hooks.example/tu');
   assert.equal(hooks[0].init.headers['Idempotency-Key'], 'run-1:d-w');
   assert.equal(JSON.parse(hooks[0].init.body).revbox_id, 'box');
@@ -597,7 +597,7 @@ test('revbox_delivery emails the output from OpenNous to every recipient: first 
     assert.deepEqual(sent[0].body.to, ['vp@acme.example']);
     assert.deepEqual(sent[0].body.cc, ['cfo@acme.example']);
     assert.equal(sent[0].body.subject, 'Product Usage daily');
-    assert.match(sent[0].body.text, /Dealer A pulled 12/);
+    assert.match(sent[0].body.text, /Account A pulled 12/);
     assert.deepEqual(r.log.find(l => l.type === 'revbox_delivery').deliveries.map(d => [d.id, d.kind, d.ok]), [['d-e', 'email', true]]);
   } finally { globalThis.fetch = realFetch; if (realKey === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = realKey; }
 });
@@ -617,7 +617,7 @@ test('revbox_delivery to Gmail only ever creates a draft in the chosen mailbox, 
   assert.equal(drafts[0].userId, 'owner');   // as the job's owner
   assert.equal(drafts[0].to, 'vp@acme.example, cfo@acme.example');
   assert.equal(drafts[0].subject, 'Product Usage daily');
-  assert.match(drafts[0].body, /Dealer A pulled 12/);
+  assert.match(drafts[0].body, /Account A pulled 12/);
   // A mailbox that is gone fails that destination, and still nothing is sent.
   registerStepHandler('gmail_draft', async () => ({ status: 'no_gmail' }));
   const gone = await runSteps(routine(), doc, { stage: 'scheduled', ctx: { supabase: sb, workspaceId: 'ws', runId: 'run-g2' } });

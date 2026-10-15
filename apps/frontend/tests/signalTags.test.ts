@@ -21,12 +21,12 @@ test("every tone core assigns has a pill, light and dark", () => {
 });
 
 test("the cell reads label, tone and text from the API", () => {
-  const t = signalTag({ kind: "churn_risk", title: null, label: "Churn risk", tone: "red", text: "Switching to a cheaper bureau after renewal." });
+  const t = signalTag({ kind: "churn_risk", title: null, label: "Churn risk", tone: "red", text: "Switching to a cheaper vendor after renewal." });
   assert.equal(t.label, "Churn risk");
   assert.equal(t.tone, "red");
   assert.match(t.className, /red/);
-  assert.equal(t.text, "Switching to a cheaper bureau after renewal.");
-  assert.equal(t.tooltip, "Churn risk · Switching to a cheaper bureau after renewal.");
+  assert.equal(t.text, "Switching to a cheaper vendor after renewal.");
+  assert.equal(t.tooltip, "Churn risk · Switching to a cheaper vendor after renewal.");
 });
 
 test("an older row or an unknown tone degrades quietly", () => {

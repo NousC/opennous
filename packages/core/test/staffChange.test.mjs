@@ -35,7 +35,7 @@ const claim = (category, change, content, at) => ({
 
 test('a departure puts the account at risk, and says why', async () => {
   const health = await getAccountHealth(
-    db([claim('staff_change', 'left', 'Torvald left the dealership; he was the digital inventory manager.', recently)]),
+    db([claim('staff_change', 'left', 'Torvald left the company; he was the revenue operations manager.', recently)]),
     'ws', 'acct', { now: AT },
   );
   assert.equal(health.standing, 'at_risk');
@@ -50,7 +50,7 @@ test('a new hire, a move, a reorg and a long absence are NOT risks', async () =>
   // somebody had a baby.
   for (const change of ['joined', 'moved', 'reorg', 'away']) {
     const health = await getAccountHealth(
-      db([claim('staff_change', change, `Somebody ${change} at the dealership.`, recently)]),
+      db([claim('staff_change', change, `Somebody ${change} at the company.`, recently)]),
       'ws', 'acct', { now: AT },
     );
     assert.equal(health.standing, 'neutral', `${change} must not read as risk`);

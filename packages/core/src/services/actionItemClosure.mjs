@@ -126,7 +126,7 @@ async function judgeCompletion(item, evidence) {
  * names somebody we hold, only that person's activity counts; when it names nobody, anyone at the
  * account will do — which is the right default, because most promises name no one.
  *
- * Ambiguity resolves to null, never to a guess: two Bastians at one dealership means we cannot tell
+ * Ambiguity resolves to null, never to a guess: two Bastians at one company means we cannot tell
  * who was meant, and widening to the account is a smaller error than closing on the wrong person.
  */
 export function personNamedIn(title, candidates = []) {
@@ -157,7 +157,7 @@ export function personNamedIn(title, candidates = []) {
  * This was `recorded_at ?? computed_at`: when we extracted it. For a task read out of a June call
  * in September, that put the promise in September, and every email and meeting between June and
  * September — the exact window the promise was kept in — fell before it and did not count.
- * One dealer's "send the SSO setup guide" (said in early June) was still open in late September
+ * One account's "send the SSO setup guide" (said in early June) was still open in late September
  * with the signup done and the service provisioned; so was August's posters task with the posters sent.
  *
  * `occurred_at` is when it was said (GET-400, stamped by every writer now). It wins. A task
@@ -228,7 +228,7 @@ export async function autoCloseActionItems(supabase, workspaceId, opts = {}) {
   // A COMMITMENT SITS ON THE ACCOUNT. AN EMAIL SITS ON A PERSON (GET-357).
   //
   // Both are right. A commitment filed on "Odessa Brightwater" hides one belonging to Larkfield
-  // Toyota, so meetings file on the account; an email has a recipient, not a company, so mail
+  // Software, so meetings file on the account; an email has a recipient, not a company, so mail
   // files on the person. Together they meant this engine's most common rule — you promised to
   // email them, and an email to them followed — could never fire on anything a meeting produced.
   //

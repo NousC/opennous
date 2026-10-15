@@ -68,7 +68,7 @@ export function dealSignals(deal, { now = Date.now(), quietDays = 45 } = {}) {
     // A passed close date means two completely different things depending on whether anyone is
     // still working the deal, and saying the wrong one destroys trust in the signal.
     //
-    // Found in a customer workspace's live pipeline: "Corvane Group" at Larkfield Toyota is 1,500 days
+    // Found in a customer workspace's live pipeline: "Corvane Group" at Larkfield Systems is 1,500 days
     // past its close date and was worked two days ago. That deal is not dead — its DATE is. Told
     // it looks dead, a rep learns the flag is noise; told the date needs moving, they fix it in
     // ten seconds and the forecast stops lying.

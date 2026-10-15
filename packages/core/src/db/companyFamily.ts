@@ -1,11 +1,11 @@
 // Which companies are the same customer.
 //
-// A dealer group is one customer with many front doors. A graph can hold several "Brackenford"
-// rooftops, a few "Tamberlane" and more under "Marlow Bay", each its own company, and HubSpot already records the
+// A company group is one customer with many front doors. A graph can hold several "Brackenford"
+// locations, a few "Tamberlane" and more under "Marlow Bay", each its own company, and HubSpot already records the
 // group each belongs to. The CRM sync mirrors that as `subsidiary_of` edges, child → parent.
 //
 // Readers want one question answered: are these two companies the same customer, and if so which
-// of them is the more specific? One level of parent covers a dealer group, a franchise network and
+// of them is the more specific? One level of parent covers a holding company, a franchise network and
 // almost every multi-site business; deeper nesting is rare enough that resolving to the immediate
 // parent is both cheaper and easier to reason about than walking a tree of unknown depth.
 
@@ -78,7 +78,7 @@ export function sameCompanyFamily(
 /**
  * The more specific of two companies in the same family: the child, not the group.
  *
- * A call with the Kestrel Point rooftop is about Kestrel Point, even when the person who took it writes from the
+ * A call with the Kestrel Point location is about Kestrel Point, even when the person who took it writes from the
  * group's domain. Returns null when they are not the same customer — the caller must then decide
  * between them on its own evidence rather than be handed a false winner.
  */

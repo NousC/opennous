@@ -191,8 +191,8 @@ begin
     create unique index on _deals (account_id);
     analyze _deals;
 
-    -- A dealer group holds no deals of its own; its rooftops do. Quillmere Autogroup
-    -- (quillmere-autogroup.example) has five, and about a third of one customer's group parents are in that
+    -- A company group holds no deals of its own; its locations do. Quillmere Holdings
+    -- (quillmere-holdings.example) has five, and about a third of one customer's group parents are in that
     -- shape. Without this the has-a-deal rule would hide exactly the record a rep needs in
     -- order to see the group at all.
     create temp table _childdeals on commit drop as

@@ -1,8 +1,8 @@
 -- The domains a workspace's own people use (GET-291).
 --
 -- Four separate bugs in one day came from code guessing at this fact: calls filed on a sibling
--- dealership, calls filed on the seller's own employee, a customer call dropped as "internal", and
--- two dealerships' calls merged because the only shared attendee was the CS manager who ran both.
+-- company, calls filed on the seller's own employee, a customer call dropped as "internal", and
+-- two companies' calls merged because the only shared attendee was the CS manager who ran both.
 -- Each place derived "is this person ours?" from whatever was nearby — a host's email, a seat
 -- lookup, a contact's company row — and no two agreed.
 --

@@ -58,10 +58,10 @@ if (!state.seeded.delivery_cc) {
   }
   state.seeded.delivery_cc = true;
 }
-// GET-872: a Product Usage-like reporting box with a daily report over many dealers, a second job with
+// GET-872: a Product Usage-like reporting box with a daily report over many accounts, a second job with
 // a failed run, a run waiting for review, one still running; built-in jobs; members with photos.
 if (!state.seeded.page_polish) {
-  const tu = base('Product Usage Reporting', 'Daily Product Usage reporting for the dealer network.', true, { mode: 'selected', account_ids: [], min_icp: 70 });
+  const tu = base('Product Usage Reporting', 'Daily Product Usage reporting for the customer base.', true, { mode: 'selected', account_ids: [], min_icp: 70 });
   tu.delivery = [{ id: randomUUID(), kind: 'slack', target: 'C07TU1HANDOFF', channel: 'product-usage-cs-handoff' }];
   tu.members = [{ user_id: 'u2', role: 'editor' }, { user_id: 'u3', role: 'viewer' }];
   tu.builtin_jobs = ['stale_deal'];
@@ -72,23 +72,23 @@ if (!state.seeded.page_polish) {
     { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C07TU1HANDOFF', channel: 'product-usage-cs-handoff', text: '{{steps.summary.output}}', format: 'report' } },
     { id: 'box_delivery', type: 'revbox_delivery', config: { format: 'report' } },
   ] };
-  const risk = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Dealer risk alert', enabled: true, trigger_kind: 'account_signal', trigger_config: {}, timezone: 'UTC', trigger_label: 'When an account signal fires', last_run_at: stamp(), version: 1, created_by: 'u1', steps: [
+  const risk = { id: randomUUID(), revbox_id: tu.id, source: 'routine', name: 'Account risk alert', enabled: true, trigger_kind: 'account_signal', trigger_config: {}, timezone: 'UTC', trigger_label: 'When an account signal fires', last_run_at: stamp(), version: 1, created_by: 'u1', steps: [
     { id: 'brief', type: 'agent', config: { mode: 'write', prompt: 'Say what changed and why it matters.' } },
     { id: 'approve', type: 'approval', config: {} },
     { id: 'alert', type: 'slack', config: { action: 'channel', channel_id: 'C07LEADERSHIP', channel: 'cs-leadership', text: '{{steps.brief.output}}', format: 'alert' } },
-    { id: 'mail', type: 'gmail', config: { mode: 'draft', to: 'dealer-success@product_usage.example', cc: '', body: '{{steps.brief.output}}', send_from: { id: 'mb-1', kind: 'gmail' } } },
+    { id: 'mail', type: 'gmail', config: { mode: 'draft', to: 'customer-success@product_usage.example', cc: '', body: '{{steps.brief.output}}', send_from: { id: 'mb-1', kind: 'gmail' } } },
     { id: 'hook', type: 'webhook', config: { url: 'https://hooks.product_usage.example/risk?key=preview' } },
   ] };
   state.routines.unshift(daily, risk);
   const H = 3_600_000, at = (h) => new Date(Date.now() - h * H).toISOString();
-  const dealers = COMPANIES.map(c => c.id);
-  const report = (n) => `## Product Usage daily · ${new Date(Date.now() - n * 24 * H).toDateString()}\n\n**1,284 pulls** yesterday across 41 dealers, up 6% on the day before.\n\n| Dealer | Pulls | Change |\n|---|---:|---:|\n| Meridian Analytics | 142 | +41 |\n| Northwind Logistics | 96 | -18 |\n| Cobalt Systems | 88 | +7 |\n\n- Northwind is down for the third day: worth a call.\n- Meridian's jump follows their new F&I hire.`;
+  const accounts = COMPANIES.map(c => c.id);
+  const report = (n) => `## Product Usage daily · ${new Date(Date.now() - n * 24 * H).toDateString()}\n\n**1,284 pulls** yesterday across 41 accounts, up 6% on the day before.\n\n| Account | Pulls | Change |\n|---|---:|---:|\n| Meridian Analytics | 142 | +41 |\n| Northwind Logistics | 96 | -18 |\n| Cobalt Systems | 88 | +7 |\n\n- Northwind is down for the third day: worth a call.\n- Meridian's jump follows their new RevOps hire.`;
   const runs = [
-    { job: daily, h: 2, state: 'completed', title: 'Product Usage daily · up 6%', body: report(0), accounts: dealers.slice(0, 14), credits: 1.8, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'sent' }] },
-    { job: risk, h: 5, state: 'needs_review', title: 'Northwind Logistics: pulls down 3 days running', body: 'Northwind Logistics pulled 96 reports yesterday, down 18%, the third drop in a row. Their F&I manager left last week.\n\n**Suggested:** a check-in from the account owner today.', accounts: ['c2'], credits: 0.6 },
+    { job: daily, h: 2, state: 'completed', title: 'Product Usage daily · up 6%', body: report(0), accounts: accounts.slice(0, 14), credits: 1.8, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'sent' }] },
+    { job: risk, h: 5, state: 'needs_review', title: 'Northwind Logistics: pulls down 3 days running', body: 'Northwind Logistics pulled 96 reports yesterday, down 18%, the third drop in a row. Their RevOps manager left last week.\n\n**Suggested:** a check-in from the account owner today.', accounts: ['c2'], credits: 0.6 },
     { job: risk, h: 9, state: 'failed', title: null, error: "Step 3 · Slack: Slack isn't connected", failure: { text: "Slack isn't connected", fix: { label: 'Connect Slack', href: '/integrations' } }, accounts: ['c3'], credits: 0.4 },
-    { job: daily, h: 26, state: 'completed', title: 'Product Usage daily · flat', body: report(1), accounts: dealers.slice(2, 16), credits: 1.7, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'sent' }] },
-    { job: daily, h: 50, state: 'completed', title: 'Product Usage daily · down 2%', body: report(2), accounts: dealers.slice(4, 20), credits: 1.9, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'failed', error: 'channel_not_found' }] },
+    { job: daily, h: 26, state: 'completed', title: 'Product Usage daily · flat', body: report(1), accounts: accounts.slice(2, 16), credits: 1.7, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'sent' }] },
+    { job: daily, h: 50, state: 'completed', title: 'Product Usage daily · down 2%', body: report(2), accounts: accounts.slice(4, 20), credits: 1.9, deliveries: [{ kind: 'slack', target: '#product-usage-cs-handoff', state: 'failed', error: 'channel_not_found' }] },
     { job: daily, h: 0.05, state: 'running', title: null, accounts: [], credits: 0 },
   ];
   for (const r of runs) state.results.push({ id: randomUUID(), revbox_id: tu.id, job_id: r.job.id, job_name: r.job.name, kind: 'routine', state: r.state, created_at: at(r.h), error: r.error ?? null, failure: r.failure ?? null, credits: r.credits, account_ids: r.accounts,
@@ -434,7 +434,7 @@ function previewRunAccounts(box) {
 /**
  * As core revboxWorkedAccounts (GET-891): what the box's Accounts card counts and its Accounts page
  * and Account graph open on: the selected scope plus the accounts its runs worked on in 30 days (a
- * report run's account_ids stand for the dealers its HubSpot read and its table named).
+ * report run's account_ids stand for the accounts its HubSpot read and its table named).
  */
 export function previewWorkedAccounts(box) {
   const worked = new Set([...previewRunAccounts(box).run_accounts.map(a => a.id), ...previewBuiltinAccounts(box)]);
@@ -747,8 +747,8 @@ const REPORT_QUESTIONS = [
     { label: 'DM me instead', description: 'Sent to you only' } ] },
   { id: 'content', header: 'Report', question: 'What should the report include?', multi: true, options: [
     { label: 'Change vs the day before (Recommended)', description: 'Per account, all five Product Usage counts' },
-    { label: 'Top 5 movers', description: 'The dealers whose pulls moved most' },
-    { label: 'Dealers with no data', description: 'Flags dealers that went quiet' } ] },
+    { label: 'Top 5 movers', description: 'The accounts whose pulls moved most' },
+    { label: 'Accounts with no data', description: 'Flags accounts that went quiet' } ] },
   { id: 'time', header: 'Time', question: 'When should it arrive?', multi: false, options: [
     { label: '08:00 New York (Recommended)', description: 'Every day, before the CS stand-up' },
     { label: '07:00 New York', description: 'Every day' },
@@ -1240,13 +1240,13 @@ async function builderPreview(req, res, json, box, parts, payload, uid) {
       s.askStart = !hinted && !SCHEDULE_WORDS.test(words);
       if (!s.askStart) await announceTrigger(hinted && !hinted.startsWith('meeting.done') && hinted !== 'deal.won' ? hinted : 'schedule');
       await tool('Looking for Product Usage in HubSpot…', 'hubspot_find', 'Found Account Daily Usage · 5 Product Usage fields');
-      await tool('Previewing yesterday’s numbers…', 'hubspot_preview', 'Yesterday: 42 dealers with Product Usage activity');
+      await tool('Previewing yesterday’s numbers…', 'hubspot_preview', 'Yesterday: 42 accounts with Product Usage activity');
       await settleIntegrations();
       // The time is asked only when the words did not give one.
       const at = timeIn(words);
       if (at) s.answers = { ...(s.answers ?? {}), time: `${at} New York${/weekday/i.test(words) ? ', weekdays only' : ''}` };
       const questions = [...(s.askStart ? [TRIGGER_QUESTION] : []), ...REPORT_QUESTIONS.filter(q => q.id !== 'time' || (!at && !s.askStart))];
-      await prose(`The numbers live in the HubSpot custom object Account Daily Usage, and yesterday has real data for 42 dealers. ${questions.length === 3 ? 'Three' : 'Two'} things I can’t work out on my own:`);
+      await prose(`The numbers live in the HubSpot custom object Account Daily Usage, and yesterday has real data for 42 accounts. ${questions.length === 3 ? 'Three' : 'Two'} things I can’t work out on my own:`);
       await ask(questions);
     } else {
       await tool('Checking connected tools…', 'workspace_connections', `HubSpot, Slack, Gmail and Granola are connected${attached}`);

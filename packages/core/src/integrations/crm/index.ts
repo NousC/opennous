@@ -353,10 +353,10 @@ export const hubspot = {
 
 // Company → PARENT company, for HubSpot.
 //
-// A dealer group is not one account. A customer's graph can hold several "Kestrel Bay" rooftops,
+// A company group is not one account. A customer's graph can hold several "Kestrel Bay" branches,
 // a few "Millbrook" and more "Thornfield", each a company of its own, and HubSpot already records
-// which group each belongs to — a group like Quarry Ridge Auto Group carries a dozen child companies.
-// Nous never read it, so the rooftops of one customer sat as unrelated rows and nothing could
+// which group each belongs to — a group like Quarry Ridge Holdings carries a dozen child companies.
+// Nous never read it, so the branches of one customer sat as unrelated rows and nothing could
 // answer "how much do we do with Quarry Ridge".
 //
 // VERIFIED against a customer's live portal on 2026-09-17:
@@ -2449,7 +2449,7 @@ export interface SyncRunResult {
    * pipelines; callers must then leave the stored value alone.
    */
   primaryPipelineRef: string | null;
-  /** Rooftops linked to a parent group this run (HubSpot company hierarchy). */
+  /** Locations linked to a parent group this run (HubSpot company hierarchy). */
   companyHierarchy: number;
 }
 
@@ -3023,7 +3023,7 @@ export async function syncCrmProvider(
     result.errors.push(`company-map: ${e?.message ?? e}`);
   }
 
-  // ── company hierarchy (the group a rooftop belongs to) ──
+  // ── company hierarchy (the group a location belongs to) ──
   //
   // Written as its own edge type so it is invisible to every existing reader until one asks for
   // it: they all filter on an exact type. Direction is child → parent, the way the CRM states it.
@@ -3054,7 +3054,7 @@ export async function syncCrmProvider(
         if (error) throw error;
       }
       result.companyHierarchy = edges.length;
-      if (edges.length) console.log(`[CRM_SYNC] company hierarchy: ${edges.length} rooftop(s) linked to a parent group`);
+      if (edges.length) console.log(`[CRM_SYNC] company hierarchy: ${edges.length} location(s) linked to a parent group`);
     } catch (e: any) {
       result.warnings.push(`company-hierarchy: ${e?.message ?? e}`);
     }

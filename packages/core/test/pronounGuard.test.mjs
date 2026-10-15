@@ -1,8 +1,8 @@
 // The pronoun guard, pinned.
 //
 // This guard shipped in two byte-identical copies with no test in either app, and spent
-// its whole life silently dropping every fact containing "F&I" — in an automotive
-// workspace, where that is most finance conversations. The drop is a console.warn and a
+// its whole life silently dropping every fact containing "D&I" — in an HR-heavy
+// workspace, where that is most people-team conversations. The drop is a console.warn and a
 // `continue`, so nothing downstream could notice: the write path reported success for a
 // batch it had refused part of.
 //
@@ -17,13 +17,13 @@ import { violatesPronounRule } from '../dist/text/pronounGuard.js';
 
 test('GET-368: an initialism ending in I is not a first-person pronoun', () => {
   // The exact content that vanished from a real record call, twice, deterministically.
-  assert.equal(violatesPronounRule('Dealership runs F&I products through Corbelline'), false);
-  assert.equal(violatesPronounRule('F&I manager handles the paperwork'), false);
+  assert.equal(violatesPronounRule('Company runs D&I training through Corbelline'), false);
+  assert.equal(violatesPronounRule('D&I manager handles the paperwork'), false);
   // Same shape, different separator — the reason the fix is "free-standing token"
   // rather than "also allow &".
   assert.equal(violatesPronounRule('Tracks R.O.I on every campaign'), false);
-  assert.equal(violatesPronounRule('Banks with AT&I for floorplan'), false);
-  assert.equal(violatesPronounRule('Uses I&K Lending for floorplan financing'), false);
+  assert.equal(violatesPronounRule('Banks with AT&I for payroll'), false);
+  assert.equal(violatesPronounRule('Uses I&K Lending for equipment financing'), false);
 });
 
 test('the real inversion still drops', () => {

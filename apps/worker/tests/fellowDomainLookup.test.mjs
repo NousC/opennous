@@ -2,8 +2,8 @@
 //
 // This lookup used to swallow every failure and return an empty map — indistinguishable from "none
 // of these domains belongs to a company we hold". One day the database was under load from a
-// claim-queue drain, the read timed out, and a call with three attendees on ashgrovemazda.example —
-// with Ashgrove Mazda active in the graph under exactly that domain — filed itself on one of
+// claim-queue drain, the read timed out, and a call with three attendees on ashgrovehealth.example —
+// with Ashgrove Health active in the graph under exactly that domain — filed itself on one of
 // Harborline's own employees. The page looked normal. Nothing said it was a guess.
 //
 // Run: node --test apps/worker/tests/fellowDomainLookup.test.mjs
@@ -33,21 +33,21 @@ function stub({ failTimes = 0, rows = [], error = 'canceling statement due to st
   return { client, state };
 }
 
-const externals = [{ email: 'ysolde@ashgrovemazda.example' }, { email: 'barnaby@ashgrovemazda.example' }];
-const ROW = { entity_id: 'ashgrove-mazda', value: 'ashgrovemazda.example' };
+const externals = [{ email: 'ysolde@ashgrovehealth.example' }, { email: 'barnaby@ashgrovehealth.example' }];
+const ROW = { entity_id: 'ashgrove-health', value: 'ashgrovehealth.example' };
 
 test('a clean read maps the domain to its company', async () => {
   const { client } = stub({ rows: [ROW] });
   const { byDomain, read } = await companyIdsByAttendeeDomain(client, 'ws', externals);
   assert.equal(read, 'ok');
-  assert.equal(byDomain.get('ashgrovemazda.example'), 'ashgrove-mazda');
+  assert.equal(byDomain.get('ashgrovehealth.example'), 'ashgrove-health');
 });
 
 test('a read that times out once is retried, and the answer still arrives', async () => {
   const { client, state } = stub({ failTimes: 1, rows: [ROW] });
   const { byDomain, read } = await companyIdsByAttendeeDomain(client, 'ws', externals);
   assert.equal(read, 'ok');
-  assert.equal(byDomain.get('ashgrovemazda.example'), 'ashgrove-mazda');
+  assert.equal(byDomain.get('ashgrovehealth.example'), 'ashgrove-health');
   assert.equal(state.calls, 2);
 });
 
@@ -82,7 +82,7 @@ test('nothing worth looking up never touches the database', async () => {
 });
 
 test('the first active holder of a domain wins, deterministically', async () => {
-  const { client } = stub({ rows: [ROW, { entity_id: 'someone-else', value: 'ashgrovemazda.example' }] });
+  const { client } = stub({ rows: [ROW, { entity_id: 'someone-else', value: 'ashgrovehealth.example' }] });
   const { byDomain } = await companyIdsByAttendeeDomain(client, 'ws', externals);
-  assert.equal(byDomain.get('ashgrovemazda.example'), 'ashgrove-mazda');
+  assert.equal(byDomain.get('ashgrovehealth.example'), 'ashgrove-health');
 });

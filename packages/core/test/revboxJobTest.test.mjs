@@ -36,7 +36,7 @@ function database(seed = {}) {
   return { tables, from: t => new Query(t) };
 }
 
-const doc = { id: 'd1', title: 'Daily usage', headline: null, sections: [{ label: 'Summary', body: 'Dealer A pulled 12 (+3).' }] };
+const doc = { id: 'd1', title: 'Daily usage', headline: null, sections: [{ label: 'Summary', body: 'Account A pulled 12 (+3).' }] };
 const handRoutine = () => ({
   id: 'r-hand', workspace_id: 'ws', revbox_id: 'box', user_id: 'owner', name: 'Usage daily', enabled: false,
   trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'America/New_York',
@@ -70,7 +70,7 @@ test('a held test runs nothing outward and records what each step would do', asy
   assert.equal(held[3].detail, 'Would add a note in HubSpot');
   assert.match(held[4].detail, /^Would deliver to .*#box-out.*cs@example\.com/);
   assert.ok(held.every(l => l.held === true && Array.isArray(l.preview)));
-  assert.ok(held[0].preview.some(x => x.label === 'Message' && /Dealer A pulled 12/.test(x.value)));
+  assert.ok(held[0].preview.some(x => x.label === 'Message' && /Account A pulled 12/.test(x.value)));
 });
 
 test('a held test never pauses for approval, and an ordinary run still does', async () => {

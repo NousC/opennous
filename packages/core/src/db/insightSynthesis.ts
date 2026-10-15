@@ -27,7 +27,7 @@ const keyOf = (k: TopicKey) => `${k.scope}\u0000${k.group}`;
 const clean = (v: string) => v.replace(/[\/\\]/g, '-').trim();
 export const synthesisPath = (k: TopicKey) => `${SYNTHESIS_PREFIX}${clean(k.scope)}/${clean(k.group)}`;
 
-/** Where hand-set client names live: `{ "Saltmarsh Dealer Group": "Harborline", "Rowan": "Harborline" }`. */
+/** Where hand-set client names live: `{ "Saltmarsh Holdings Group": "Harborline", "Rowan": "Harborline" }`. */
 export const CLIENT_ALIASES_PATH = `${SYNTHESIS_PREFIX}_client_aliases`;
 
 /**

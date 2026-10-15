@@ -4,8 +4,8 @@
 // read, the call page, and the coaching grade. Three of them are worthless on an old call, and one
 // of them is worthless in a measurable rather than an arguable way.
 //
-// THE CLAIMS ARE THE POINT. "They push every application through a lender portal and re-key the lead by hand",
-// "spend over $50k needs VP sign-off", "Corwin Haskett left the dealership" — none of that goes stale, and
+// THE CLAIMS ARE THE POINT. "They push every order through a partner portal and re-key the lead by hand",
+// "spend over $50k needs VP sign-off", "Corwin Haskett left the company" — none of that goes stale, and
 // it is the entire reason an account page is worth opening. Skipping extraction to save money
 // would save the money and delete the product.
 //

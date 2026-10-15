@@ -8,8 +8,8 @@
 // hold up. The misses had two shapes the miner prompt did not rule out firmly enough:
 //
 //   SUPPORT  a request for access, a login, a routing address, setup help for something they
-//            already have. "I can't tell whether my login still works" (Larkfield Toyota) and
-//            "where do I find the forwarding address" (Quillmere Motors) were filed as asks.
+//            already have. "I can't tell whether my login still works" (Larkfield Systems) and
+//            "where do I find the forwarding address" (Quillmere Holdings) were filed as asks.
 //   PITCH    our rep presenting a product, written up in a call summary, read back as the
 //            customer's interest. "Our rep walked them through the reporting module" was
 //            filed as an ask.

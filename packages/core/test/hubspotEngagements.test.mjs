@@ -95,7 +95,7 @@ test('no timestamp → null', () => {
 // means a claim about the customer may only quote the CUSTOMER's messages.
 test('emails: an HTML-only message still has a body', () => {
   const m = hubspotEngagementToActivity('emails', { id: '9', properties: {
-    hs_timestamp: T, hs_email_subject: 'Re: appraisal tool', hs_email_direction: 'INCOMING_EMAIL',
+    hs_timestamp: T, hs_email_subject: 'Re: reporting tool', hs_email_direction: 'INCOMING_EMAIL',
     hs_email_text: '',                       // HubSpot's text field, empty — the failure
     hs_email_html: '<div dir="ltr">We&#39;re on Motorlane CRM.<br>Can it pull status?</div>',
   } });

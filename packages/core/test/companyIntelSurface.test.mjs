@@ -1,6 +1,6 @@
 // A company's facts need somewhere to live, and a meeting needs one row.
 //
-// Two gaps a real account surfaced. Quarrendon Nissan held dozens of facts on the company record. The
+// Two gaps a real account surfaced. Quarrendon Labs held dozens of facts on the company record. The
 // page could show at most a handful of them — six deal fields in the sidebar, then three lists on
 // Overview capped at 8, 6 and 6 — and there was no screen anywhere that showed the rest. A PERSON
 // has had a category-grouped Intel tab since the beginning; a company never did.
@@ -68,15 +68,15 @@ test('one meeting is one row, across attendees and across sources', () => {
   assert.match(PARTS, /const key = meetingKey\(a\)/, 'the feed must use it before the id keys');
   const meetingKey = loadMeetingKey();
 
-  const fellow = { activity_type: 'meeting_held', occurred_at: '2026-09-16T17:00:00Z', subject: 'Meeting: Quarrendon Nissan | review with Harborline.example' };
-  const hubspot = { activity_type: 'meeting_held', occurred_at: '2026-09-16T17:02:00Z', subject: 'Quarrendon Nissan | review with Harborline.example' };
+  const fellow = { activity_type: 'meeting_held', occurred_at: '2026-09-16T17:00:00Z', subject: 'Meeting: Quarrendon Labs | review with Harborline.example' };
+  const hubspot = { activity_type: 'meeting_held', occurred_at: '2026-09-16T17:02:00Z', subject: 'Quarrendon Labs | review with Harborline.example' };
   assert.equal(meetingKey(fellow), meetingKey(hubspot),
     'the same call from two sources, two minutes apart, must collapse to one row');
 
   const other = { activity_type: 'meeting_held', occurred_at: '2026-09-16T17:00:00Z', subject: 'Tallowmere GM | Review' };
   assert.notEqual(meetingKey(fellow), meetingKey(other), 'different meetings at the same time stay separate');
 
-  const later = { activity_type: 'meeting_held', occurred_at: '2026-09-16T19:00:00Z', subject: 'Meeting: Quarrendon Nissan | review with Harborline.example' };
+  const later = { activity_type: 'meeting_held', occurred_at: '2026-09-16T19:00:00Z', subject: 'Meeting: Quarrendon Labs | review with Harborline.example' };
   assert.notEqual(meetingKey(fellow), meetingKey(later), 'a recurring meeting on the same day stays separate');
 });
 

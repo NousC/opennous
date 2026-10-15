@@ -66,7 +66,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     // company and grouped by tool. On one account 46 status_quo claims were mostly a tool list
     // (CRM, dialers, note-taker, analytics, AI agents) scattered across the person's record.
     description: 'How their team works today — the process and workflow: how a lead is handled, who does what, what is done by hand. NOT the tools they use (that is tech_stack), NOT how they use OUR product (that is adoption), NOT whether someone can use it (proficiency), and NOT their busy and quiet seasons (seasonality).',
-    example: 'Every lead is re-entered into the CRM by hand after the desking step, so reps lose an hour a day.',
+    example: 'Every lead is re-entered into the CRM by hand after the qualification call, so reps lose an hour a day.',
   },
   {
     key: 'goal',
@@ -134,7 +134,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     // genuine close motions, never generic interest.
     //
     // NARROWED 2026-09-21 (GET-401). On a customer account this was also holding "could we add
-    // the second rooftop" and "is there a cost for the add-on module" — an EXISTING customer asking for MORE.
+    // the second location" and "is there a cost for the add-on module" — an EXISTING customer asking for MORE.
     // That is expansion_signal now. The two look alike on the page and are opposite in what they
     // drive: this one advances a prospect's stage; that one opens a CS opportunity on an account
     // that already has a stage.
@@ -203,7 +203,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     domain: 'customer',
     about: 'person',
     description: 'How able this person is with the product or the domain: trained or not, an active user or a dormant one, expert or new to it. About capability and use, not about liking it (preference) or wanting it (goal).',
-    example: 'Corwin knows how to read a credit bureau report; Ysolde has never used the tool.',
+    example: 'Corwin knows how to read a cohort retention report; Ysolde has never used the tool.',
   },
   {
     // Promoted 2026-09-18 (GET-327). Cleared the bar on its own
@@ -226,14 +226,14 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     // Promoted 2026-09-18 (GET-327).
     //
     // It earns its place by preventing a specific false alarm. Without it, a December collapse in
-    // usage reads as churn risk; with it, it is the calendar. A dealership that shuts for three
+    // usage reads as churn risk; with it, it is the calendar. A company that shuts for three
     // weeks at year end is not disengaging.
     key: 'seasonality',
     label: 'Seasonality',
     domain: 'account',
     about: 'company',
     description: 'When this business is busy or quiet, and why: the season it gears up for, the months that dip, a shutdown, a demand cycle. About the rhythm of their year, not a one-off date (timeline).',
-    example: 'They run a fall clearance and shut down for three weeks at year end.',
+    example: 'They gear up for a Q4 renewal push and shut down for three weeks at year end.',
   },
   {
     // Promoted 2026-09-18 by the promotion rule (GET-327), on claims mined
@@ -254,9 +254,9 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     // parental leave with a return date landed in `general` (a handful of rows, 2026-09-22). That
     // is nowhere near the evidence that promoted firmographic or staff_change itself, so this is not
     // a new category — it is the exclusion, narrowed to what it meant.
-    // A rep needs "back March 3rd, 2027" for the same reason they need "left the dealership": the
+    // A rep needs "back March 3rd, 2027" for the same reason they need "left the company": the
     // person they are waiting on is not there.
-    example: 'Osric left the dealership last month; he was the digital inventory manager.',
+    example: 'Osric left the company last month; he was the operations manager.',
   },
   {
     // Promoted 2026-09-19 (GET-373) on the largest body of evidence any category here has had: a large
@@ -274,14 +274,14 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     label: 'Business Profile',
     domain: 'account',
     about: 'company',
-    description: 'A standing attribute of the business: how many locations or rooftops, headcount, the volume they do, inventory size or mix, the segment or customer base they serve, how long they have operated. The SHAPE of the business — not how it is performing right now (performance), and not the tools they run (status_quo).',
-    example: 'Ashcombe Motors is a high-volume, pre-owned-only dealership moving about 150 cars a month.',
+    description: 'A standing attribute of the business: how many locations or branches, headcount, the volume they do, the size or mix of what they sell, the segment or customer base they serve, how long they have operated. The SHAPE of the business — not how it is performing right now (performance), and not the tools they run (status_quo).',
+    example: 'Ashcombe Health is a fast-growing, self-serve-only software company adding about 150 seats a month.',
   },
   {
     // Promoted 2026-09-19 (GET-372). Found the way a sensor is supposed to work: two week-9
     // extraction agents, working independently on different accounts, each walked all sixteen
     // categories, rejected every one, and filed `general` with a note saying the taxonomy had no
-    // home for it — one dealer's record month, another's traffic collapse. Re-reading the corpus
+    // home for it — one customer's record month, another's traffic collapse. Re-reading the corpus
     // then turned up more of the same shape across the earlier runs.
     //
     // Why it is not one of its neighbours: `adoption` is what OUR product produced, `seasonality`
@@ -300,7 +300,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     domain: 'product',
     about: 'company',
     description: 'A stated figure or trend in THEIR business results: a record or a slump, leads or sales up or down, a target hit or missed, a conversion rate, one month or quarter against another. Dated by nature — a later number supersedes it. Not our product\'s results (adoption), not a recurring seasonal rhythm (seasonality), not a standing attribute of the business (firmographic).',
-    example: 'May was their best sales month this year, well ahead of their other two stores.',
+    example: 'May was their best sales month this year, well ahead of their other two regions.',
   },
   {
     // Promoted 2026-09-21 (GET-401). Not mined out of `general` like the others: it never reached
@@ -313,7 +313,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     //
     // Why it is not buying_signal: that category ADVANCES STAGE (stageDerivation reads it by name
     // and floors intent Hot). A customer asking about one more product must not move a pipeline
-    // it is not in. Why it is not goal: a goal is theirs ("wants to sell more used cars"); this is
+    // it is not in. Why it is not goal: a goal is theirs ("wants to win more enterprise deals"); this is
     // a request for OUR product, which a CS owner can answer with a deal.
     //
     // `stance` is load-bearing. "declined" is recorded, not dropped: it suppresses that product
@@ -324,8 +324,8 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     label: 'Expansion Signal',
     domain: 'customer',
     about: 'company',
-    description: 'An EXISTING customer asking for, considering, or turning down MORE of what we sell: a product they do not have, more seats or rooftops, an upgrade. Set "product" to the product family named, and "stance" to one of: "asked" (they requested it or asked what it costs), "considering" (they raised it without committing), "declined" (they said no to it, or cancelled a trial of it — record this, it matters as much as a yes). NOT a prospect moving to close (buying_signal), NOT general interest (goal), NOT a feature request about a product they already own (pain).',
-    example: 'Larkfield Toyota asked whether there is a cost to add Lumen Service Desk to their package.',
+    description: 'An EXISTING customer asking for, considering, or turning down MORE of what we sell: a product they do not have, more seats or locations, an upgrade. Set "product" to the product family named, and "stance" to one of: "asked" (they requested it or asked what it costs), "considering" (they raised it without committing), "declined" (they said no to it, or cancelled a trial of it — record this, it matters as much as a yes). NOT a prospect moving to close (buying_signal), NOT general interest (goal), NOT a feature request about a product they already own (pain).',
+    example: 'Larkfield Software asked whether there is a cost to add Lumen Service Desk to their package.',
   },
   {
     // Promoted 2026-09-21 (GET-401), on the same evidence as expansion_signal: the health reads
@@ -347,7 +347,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     domain: 'customer',
     about: 'company',
     description: 'An EXISTING customer signalling the relationship is in question. Set "severity" to one of: "stated_churn" (they cancelled, gave notice, or said they are leaving), "at_risk" (they are reviewing vendors, questioning the value, or escalating unresolved problems), "friction" (a billing, invoicing, support or service failure they raised with frustration but no threat to leave). NOT a product complaint on its own (pain), NOT a prospect\'s reason not to buy (objection), NOT usage going quiet (adoption).',
-    example: 'Pemberton Cycles said they are moving to another vendor when the contract renews.',
+    example: 'Pemberton Freight said they are moving to another vendor when the contract renews.',
   },
   // GET-776. The tools they run, on the COMPANY, one topic per tool. A fact ABOUT one of their
   // tools — who drives it, what it costs, what they think of it, a decision about it ("blocked the
@@ -425,7 +425,7 @@ export const ACCOUNT_ROLLUP_CATEGORIES: readonly string[] = [
   // voiced them: the CS lists read them off the COMPANY entity in one batched read, and a signal
   // filed on the person who sent the email would be invisible to every list that matters.
   'expansion_signal', 'risk_signal',
-  // Both describe the BUSINESS, never the individual who happened to say it — a rooftop count and
+  // Both describe the BUSINESS, never the individual who happened to say it — a location count and
   // a record month are account facts by definition. They are declared `about: 'company'` so the
   // extractor should route them anyway; this is the backstop for when it tags one `person`,
   // because the failure it prevents is the one GET-223 describes: the fact exists, on the wrong
@@ -605,7 +605,7 @@ export const CLAIM_FREE_TEXT: Record<string, readonly string[]> = {
 
 /**
  * Categories that describe the COMPANY by definition. The extractor's about-tag is a judgment; a
- * rooftop count or a tool list filed on the person who said it leaves the account reading empty
+ * location count or a tool list filed on the person who said it leaves the account reading empty
  * (GET-223, GET-776), so these are filed on the company whatever was tagged.
  */
 const COMPANY_CATEGORIES = new Set(['tech_stack', 'firmographic', 'performance', 'seasonality']);

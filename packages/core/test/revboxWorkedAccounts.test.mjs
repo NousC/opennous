@@ -44,7 +44,7 @@ function database(tables) {
 const acct = (id, name, extra = {}) => ({ workspace_id: 'ws', entity_id: id, kind: 'account', name, domain: null, company_id: null, icp_score: 50, last_activity_at: null, people_count: 1, ...extra });
 const world = () => ({
   workspace_members: [{ workspace_id: 'ws', user_id: 'owner' }],
-  revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Daily dealer report', revision: 1, scope: { mode: 'selected', account_ids: ['acct-sel', 'acct-a'], min_icp: 70 } }],
+  revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: false, name: 'Daily account report', revision: 1, scope: { mode: 'selected', account_ids: ['acct-sel', 'acct-a'], min_icp: 70 } }],
   revbox_members: [],
   agent_routines: [{ id: 'job', workspace_id: 'ws', revbox_id: 'box' }, { id: 'other-job', workspace_id: 'ws', revbox_id: 'other' }],
   agent_routine_runs: [
@@ -62,9 +62,9 @@ const world = () => ({
   ],
   revbox_runs: [],
   documents: [
-    { id: 'doc-new', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: '| Dealer | Scored |\n|---|---|\n| Not Resolved Again | 1 |' },
+    { id: 'doc-new', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: '| Account | Scored |\n|---|---|\n| Not Resolved Again | 1 |' },
     { id: 'doc-old', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report',
-      body_md: 'Records, 2026-10-13: 4 with activity.\nName | Pulls | Sold\nHarborline Motors Inc. | 12 (+2) | 1\nfernpoint auto, ltd | 3 | 0\nUnknown Dealer Group | 2 | 0\nTwin Name | 1 | 0\nRecord 77 (no name) | 1 | 0\nTotal | 19 | 1' },
+      body_md: 'Records, 2026-10-13: 4 with activity.\nName | Pulls | Sold\nHarborline Labs Inc. | 12 (+2) | 1\nfernpoint health, ltd | 3 | 0\nUnknown Company Group | 2 | 0\nTwin Name | 1 | 0\nRecord 77 (no name) | 1 | 0\nTotal | 19 | 1' },
   ],
   document_links: [],
   revbox_datasets: [{ id: 'ds', workspace_id: 'ws', revbox_id: 'box' }],
@@ -75,7 +75,7 @@ const world = () => ({
   ],
   entity_list_rows: [
     acct('acct-sel', 'Selected Co'), acct('acct-a', 'Northside Labs'), acct('acct-read', 'Lakeshore Health'),
-    acct('acct-harbor', 'Harborline Motors'), acct('acct-fern', 'Fernpoint Auto'), acct('acct-stale', 'Old Dealer'),
+    acct('acct-harbor', 'Harborline Labs'), acct('acct-fern', 'Fernpoint Health'), acct('acct-stale', 'Old Account'),
     acct('acct-deal', 'Deal Holder'), acct('acct-tab', 'Table Holder'), acct('acct-hidden', 'Hidden Co'),
     acct('twin-1', 'Twin Name'), acct('twin-2', 'Twin Name Inc'),
     { workspace_id: 'ws', entity_id: 'deal-1', kind: 'deal', name: 'Renewal', company_id: 'acct-deal' },
@@ -84,23 +84,23 @@ const world = () => ({
 });
 
 test('names normalize: case, punctuation and a trailing legal suffix set aside, nothing looser', () => {
-  assert.equal(normalizeAccountName('Harborline Motors, Inc.'), 'harborline motors');
-  assert.equal(normalizeAccountName("fernpoint AUTO ltd"), 'fernpoint auto');
+  assert.equal(normalizeAccountName('Harborline Labs, Inc.'), 'harborline labs');
+  assert.equal(normalizeAccountName("fernpoint HEALTH ltd"), 'fernpoint health');
   assert.equal(normalizeAccountName('Co'), 'co');                       // a name that is only a suffix stays
-  assert.notEqual(normalizeAccountName('Harborline'), normalizeAccountName('Harborline Motors'));
+  assert.notEqual(normalizeAccountName('Harborline'), normalizeAccountName('Harborline Labs'));
 });
 
 test('a report states names in its tables, in bold and in its title lead; headers, totals and unnamed rows are not names', () => {
-  const text = '## Summary\n**Lumen Freight** led the day.\n\n| Dealer | Scored |\n|---|---:|\n| Harborline Motors | 4 (+1) |\n| Total | 4 |\n\nName | Pulls\nFernpoint Auto | 3\nRecord 9 (no name) | 1';
-  assert.deepEqual(accountNamesInText(text, 'Cobalt Systems — closed lost').sort(), ['Cobalt Systems', 'Fernpoint Auto', 'Harborline Motors', 'Lumen Freight']);
-  assert.deepEqual(accountNamesInText('Plain prose naming Harborline Motors is not scanned.', 'Monthly report'), []);
+  const text = '## Summary\n**Lumen Freight** led the day.\n\n| Account | Scored |\n|---|---:|\n| Harborline Labs | 4 (+1) |\n| Total | 4 |\n\nName | Pulls\nFernpoint Health | 3\nRecord 9 (no name) | 1';
+  assert.deepEqual(accountNamesInText(text, 'Cobalt Systems — closed lost').sort(), ['Cobalt Systems', 'Fernpoint Health', 'Harborline Labs', 'Lumen Freight']);
+  assert.deepEqual(accountNamesInText('Plain prose naming Harborline Labs is not scanned.', 'Monthly report'), []);
 });
 
 test('names resolve by exact normalized match only: unmatched skipped and counted, a name two accounts carry is ambiguous', async () => {
   const sb = database(world());
-  const r = await resolveAccountNames(sb, 'ws', ['HARBORLINE MOTORS', 'Fernpoint Auto Ltd.', 'Harborline', 'Unknown Dealer Group', 'Twin Name']);
+  const r = await resolveAccountNames(sb, 'ws', ['HARBORLINE LABS', 'Fernpoint Health Ltd.', 'Harborline', 'Unknown Company Group', 'Twin Name']);
   assert.deepEqual(r.ids.sort(), ['acct-fern', 'acct-harbor']);
-  assert.deepEqual(r.unmatched, ['Harborline', 'Unknown Dealer Group']);   // "Harborline" is not "Harborline Motors"
+  assert.deepEqual(r.unmatched, ['Harborline', 'Unknown Company Group']);   // "Harborline" is not "Harborline Labs"
   assert.deepEqual(r.ambiguous, ['Twin Name']);
 });
 
@@ -143,8 +143,8 @@ test('a recorded run is not re-read: its document is parsed only when its step l
 test('at run time a box job\'s AI step logs the accounts its output names (resolved, unmatched counted)', async () => {
   const { runStepsForTest: runSteps } = await import('../dist/services/automationRun.mjs');
   const sb = database(world());
-  const brief = { id: 'doc-run', title: 'Harborline Motors — closed won', sections: [{ label: 'Accounts', body: '| Dealer | Pulls |\n|---|---|\n| Fernpoint Auto | 3 |\n| Nobody Known | 1 |' }] };
-  const automation = { id: 'job', name: 'Daily dealer report', user_id: 'owner', revbox_id: 'box', trigger_kind: 'clock', steps: [{ id: 'summary', type: 'agent', config: { mode: 'write', prompt: 'Write it.' } }] };
+  const brief = { id: 'doc-run', title: 'Harborline Labs — closed won', sections: [{ label: 'Accounts', body: '| Account | Pulls |\n|---|---|\n| Fernpoint Health | 3 |\n| Nobody Known | 1 |' }] };
+  const automation = { id: 'job', name: 'Daily account report', user_id: 'owner', revbox_id: 'box', trigger_kind: 'clock', steps: [{ id: 'summary', type: 'agent', config: { mode: 'write', prompt: 'Write it.' } }] };
   const r = await runSteps(automation, brief, { stage: 'scheduled', ctx: { supabase: sb, workspaceId: 'ws', runId: 'run-1' } });
   assert.equal(r.failed, undefined, r.message);
   const line = r.log.find(e => e.type === 'agent');
@@ -182,9 +182,9 @@ test('a new run is picked up on the next read; a run still going is worked out l
   const w = finished(world());
   const sb = database(w);
   await revboxWorkedAccounts(sb, 'ws', 'owner', 'box', null, { now: NOW });
-  w.entity_list_rows.push(acct('acct-new', 'Bayview Motors'), acct('acct-live', 'Live Dealer'));
-  w.documents.push({ id: 'doc-next', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: 'Name | Pulls\nBayview Motors | 2' },
-    { id: 'doc-live', workspace_id: 'ws', subject_entity_id: null, title: 'Live Dealer — today', body_md: '' });
+  w.entity_list_rows.push(acct('acct-new', 'Bayview Labs'), acct('acct-live', 'Live Account'));
+  w.documents.push({ id: 'doc-next', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: 'Name | Pulls\nBayview Labs | 2' },
+    { id: 'doc-live', workspace_id: 'ws', subject_entity_id: null, title: 'Live Account — today', body_md: '' });
   w.agent_routine_runs.push(
     { id: 'r5', workspace_id: 'ws', routine_id: 'job', status: 'ok', started_at: ago(0.1), entity_id: null, document_id: null, step_log: [{ step: 1, type: 'agent', status: 'ok', document_id: 'doc-next' }] },
     { id: 'r6', workspace_id: 'ws', routine_id: 'job', status: 'awaiting_approval', started_at: ago(0.05), entity_id: null, document_id: 'doc-live', step_log: [] });

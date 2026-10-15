@@ -53,7 +53,7 @@ test('an address on a known domain is ours', () => {
   const ours = new Set(['harborline.example']);
   assert.equal(isOwnEmail('lena@harborline.example', ours), true);
   assert.equal(isOwnEmail('LENA@Harborline.example', ours), true);
-  assert.equal(isOwnEmail('pim@thistlecombemazda.example', ours), false);
+  assert.equal(isOwnEmail('pim@thistlecombehealth.example', ours), false);
 });
 
 test('knowing no domains means claiming nobody, never claiming everybody', () => {

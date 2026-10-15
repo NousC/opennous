@@ -19,7 +19,7 @@ const sig = (kind, text, at, quote = '') => ({ kind, text, quote, at, sourceRef:
 test('one open risk decides the standing, whatever else is on the account', () => {
   const h = deriveAccountHealth([
     sig('risk', 'The sponsor who bought it has left.', daysAgo(10)),
-    sig('expansion', 'They asked about a second rooftop.', daysAgo(5)),
+    sig('expansion', 'They asked about a second location.', daysAgo(5)),
   ], NOW);
   // An account with a live churn signal is not "positive" because someone also asked to expand.
   assert.equal(h.standing, 'at_risk');
@@ -28,7 +28,7 @@ test('one open risk decides the standing, whatever else is on the account', () =
 });
 
 test('expansion lifts an account that has nothing against it', () => {
-  const h = deriveAccountHealth([sig('expansion', 'Asked about the Westgate store.', daysAgo(20))], NOW);
+  const h = deriveAccountHealth([sig('expansion', 'Asked about the Westgate office.', daysAgo(20))], NOW);
   assert.equal(h.standing, 'positive');
 });
 
@@ -48,7 +48,7 @@ test('a risk nobody has repeated goes quiet; the account stops being at risk', (
 test('an unrelated later call does not erase an open risk — the stamp bug', () => {
   const h = deriveAccountHealth([
     sig('risk', 'Sponsor left.', daysAgo(60)),
-    sig('adoption', 'Two salespeople use the tablet check-in daily.', daysAgo(2)),
+    sig('adoption', 'Two sales reps use the dashboard daily.', daysAgo(2)),
   ], NOW);
   assert.equal(h.standing, 'at_risk', 'a training call in June must not clear March');
   assert.equal(h.lastReadAt, daysAgo(2), 'but the account was still read more recently');
@@ -78,10 +78,10 @@ test('a quiet account is neutral with nothing to show, not an error', () => {
 
 test('a health read becomes ordinary claims, in categories that already exist', () => {
   const health = parseHealthReadJson(JSON.stringify({
-    summary: 'A check-in.', what_changed: 'They moved deal-jacket sign-off to F&I.',
-    adoption: 'Two salespeople daily; F&I has not logged in.', standing: 'at_risk',
+    summary: 'A check-in.', what_changed: 'They moved contract sign-off to Finance.',
+    adoption: 'Two sales reps daily; Finance has not logged in.', standing: 'at_risk',
     risks: [{ text: 'Sponsor left.', quote: 'Gideon moved on.' }],
-    expansion: [{ text: 'Second rooftop?', quote: 'Could we run this at the Westgate store?' }],
+    expansion: [{ text: 'Second location?', quote: 'Could we run this at the Westgate office?' }],
     commitments: [{ text: 'Send training link.', quote: "I'll send it Friday." }],
   }));
   const saved = healthSignalsToSave(health, { at: daysAgo(1) });

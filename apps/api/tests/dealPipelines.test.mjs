@@ -83,6 +83,6 @@ test('the page window is totally ordered, so a tied pair cannot straddle a page 
 
 test('withDealPipelines adds exactly the two fields and keeps everything else', async () => {
   const sb = fakeSupabase({ rows: [obs('d1', 'pipeline', 'Sales Pipeline'), obs('d1', 'pipeline_id', 'default')] });
-  const [deal] = await withDealPipelines(sb, WS, [{ id: 'd1', name: 'Brindlecombe Auto Group', value: 12000 }]);
-  assert.deepEqual(deal, { id: 'd1', name: 'Brindlecombe Auto Group', value: 12000, pipeline: 'Sales Pipeline', pipeline_id: 'default' });
+  const [deal] = await withDealPipelines(sb, WS, [{ id: 'd1', name: 'Brindlecombe Group', value: 12000 }]);
+  assert.deepEqual(deal, { id: 'd1', name: 'Brindlecombe Group', value: 12000, pipeline: 'Sales Pipeline', pipeline_id: 'default' });
 });

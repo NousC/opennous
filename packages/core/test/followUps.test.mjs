@@ -60,15 +60,15 @@ test('a calendar invite is not notes: the Teams invite cleans to nothing', () =>
 });
 
 test('real notes survive the invite being stripped', () => {
-  const notes = `${TEAMS_INVITE}<br><p>Hollis confirmed Q4 budget and wants pricing for all three rooftops.</p><p>Marit is worried the DMS integration needs IT time.</p>`;
+  const notes = `${TEAMS_INVITE}<br><p>Hollis confirmed Q4 budget and wants pricing for all three locations.</p><p>Marit is worried the ERP integration needs IT time.</p>`;
   const out = cleanMeetingText(notes);
   assert.match(out, /Hollis confirmed Q4 budget/);
-  assert.match(out, /DMS integration/);
+  assert.match(out, /ERP integration/);
   assert.doesNotMatch(out, /teams\.microsoft|Passcode|Meeting ID/i);
 });
 
 test('meeting kind from the title', () => {
-  assert.equal(meetingKind('Product Demo - Thistlecombe Mazda'), 'Demo');
+  assert.equal(meetingKind('Product Demo - Thistlecombe Software'), 'Demo');
   assert.equal(meetingKind('Quarterly business review'), 'Check-in');
   assert.equal(meetingKind('Kickoff and training'), 'Onboarding');
   assert.equal(meetingKind(null), 'Meeting');
@@ -110,20 +110,20 @@ test('the same meeting from Fellow and HubSpot is one meeting', () => {
 
 test('parse: tasks, updates, email to the attendees, attribution across two deals, no stage change unless clear', () => {
   const answer = `Here you go:\n${JSON.stringify({
-    summary: 'Strong demo; GM wants pricing for 3 rooftops.',
-    tasks: [{ text: 'Send pricing for 3 rooftops', due_phrase: 'Friday', quote: 'send me pricing by Friday', stated_by: 'them', owed_by: null },
+    summary: 'Strong demo; GM wants pricing for 3 locations.',
+    tasks: [{ text: 'Send pricing for 3 locations', due_phrase: 'Friday', quote: 'send me pricing by Friday', stated_by: 'them', owed_by: null },
             { text: 'Send the security one-pager', due_phrase: null, quote: null, stated_by: 'us' }],
     keep_previous: [], drop_previous: [],
     updates: [{ label: 'Budget', value: 'Q4 budget approved', quote: 'budget is approved', speaker: 'Hollis' }],
-    email: { subject: 'Pricing for your 3 rooftops', body: 'Hi Hollis, thanks for today...' },
+    email: { subject: 'Pricing for your 3 locations', body: 'Hi Hollis, thanks for today...' },
     stage_change: { should_move: false, reason: null },
     insights: [{ category: 'budget', text: 'Q4 budget approved', quote: 'budget is approved' }],
   })}`;
-  const deals = [{ id: 'd1', name: 'Growth', value: 12000, stage: 'Demo completed' }, { id: 'd2', name: 'Used desk', value: 5000, stage: 'Demo booked' }];
+  const deals = [{ id: 'd1', name: 'Growth', value: 12000, stage: 'Demo completed' }, { id: 'd2', name: 'Add-on seats', value: 5000, stage: 'Demo booked' }];
   const c = parseFollowUpAnswer(answer, { existingTasks: ['Send the security one-pager'], openDeals: deals, recipients: ['hollis@northvale.example'] });
   assert.ok(c);
   assert.equal(c.tasks.filter((t) => t.existing).length, 1, 'the filed task shows as existing');
-  assert.deepEqual(c.tasks.filter((t) => !t.existing).map((t) => t.text), ['Send pricing for 3 rooftops'], 'a task already on the list is not proposed again');
+  assert.deepEqual(c.tasks.filter((t) => !t.existing).map((t) => t.text), ['Send pricing for 3 locations'], 'a task already on the list is not proposed again');
   assert.equal(c.updates[0].label, 'Budget');
   assert.deepEqual(c.email.to, ['hollis@northvale.example']);
   assert.equal(c.attribution.options.length, 2);
@@ -133,18 +133,18 @@ test('parse: tasks, updates, email to the attendees, attribution across two deal
 });
 
 test('parse a merge: earlier tasks the new call made moot are kept, struck through, with the reason', () => {
-  const previous = { summary: 'Demo', tasks: [{ id: 't1', text: 'Send pricing for 1 rooftop', due: null, on: true }, { id: 't2', text: 'Book IT call', due: null, on: true }], updates: [], email: null, attribution: null, deal_change: null };
+  const previous = { summary: 'Demo', tasks: [{ id: 't1', text: 'Send pricing for 1 location', due: null, on: true }, { id: 't2', text: 'Book IT call', due: null, on: true }], updates: [], email: null, attribution: null, deal_change: null };
   const answer = JSON.stringify({
-    summary: 'Second call: they want 3 rooftops.', tasks: [{ text: 'Send pricing for 3 rooftops', stated_by: 'us' }],
-    keep_previous: ['t2'], drop_previous: [{ id: 't1', reason: 'replaced by: send the 3-rooftop quote' }],
+    summary: 'Second call: they want 3 locations.', tasks: [{ text: 'Send pricing for 3 locations', stated_by: 'us' }],
+    keep_previous: ['t2'], drop_previous: [{ id: 't1', reason: 'replaced by: send the 3-location quote' }],
     updates: [], email: { subject: 'Next steps', body: 'Hi Hollis...' }, stage_change: { should_move: true, reason: 'They asked for a proposal' }, insights: [],
   });
   const c = parseFollowUpAnswer(answer, { previous, openDeals: [{ id: 'd1', name: 'Growth', value: 12000, stage: 'Demo completed' }] });
   const byText = Object.fromEntries(c.tasks.map((t) => [t.text, t]));
-  assert.equal(byText['Send pricing for 1 rooftop'].dropped, 'replaced by: send the 3-rooftop quote');
-  assert.equal(byText['Send pricing for 1 rooftop'].on, false);
+  assert.equal(byText['Send pricing for 1 location'].dropped, 'replaced by: send the 3-location quote');
+  assert.equal(byText['Send pricing for 1 location'].on, false);
   assert.equal(byText['Book IT call'].dropped, null);
-  assert.equal(byText['Send pricing for 3 rooftops'].on, true);
+  assert.equal(byText['Send pricing for 3 locations'].on, true);
   assert.equal(new Set(c.tasks.map((t) => t.id)).size, c.tasks.length, 'ids stay unique across a merge');
   assert.deepEqual(c.deal_change, { reason: 'They asked for a proposal', deal_id: 'd1' }, 'a flag on the one open deal, never an action');
 });
@@ -162,8 +162,8 @@ test('the model can say there is nothing to follow up on, and the card is droppe
 
 test('recipients: the account’s own people first, one address per person, at most four', () => {
   assert.deepEqual(
-    pickRecipients(['piers@harrow-ag.example', 'fin1@osterfieldmitsu.example', 'GSM@osterfieldmitsu.example', 'spmgr2@osterfieldmitsu.test', 'gm@osterfieldmitsu.example', 'fin1@osterfieldmitsu.test'], 'osterfieldmitsu.example'),
-    ['fin1@osterfieldmitsu.example', 'gsm@osterfieldmitsu.example', 'spmgr2@osterfieldmitsu.test', 'gm@osterfieldmitsu.example'],
+    pickRecipients(['piers@harrow-ag.example', 'fin1@osterfieldsoft.example', 'OPS@osterfieldsoft.example', 'spmgr2@osterfieldsoft.test', 'gm@osterfieldsoft.example', 'fin1@osterfieldsoft.test'], 'osterfieldsoft.example'),
+    ['fin1@osterfieldsoft.example', 'ops@osterfieldsoft.example', 'spmgr2@osterfieldsoft.test', 'gm@osterfieldsoft.example'],
   );
   assert.deepEqual(pickRecipients(['guy@rock.example', 'guy@rock.test'], 'rockinsurancebrokers.example'), ['guy@rock.example'], 'no domain match: everyone outside, one per person');
 });
@@ -183,8 +183,8 @@ test('a meeting is over by its END time; no-shows and cancellations get no card'
 
 test('one meeting recorded by Fellow and HubSpot under two accounts is one meeting (shared customer, 90 minutes)', () => {
   const kept = dedupeAcrossSources([
-    { id: 'hubspot-pemberly', at: '2026-09-30T17:00:00Z', textLength: 900, attendeeEmails: ['imelda.b@pemberly-rv.example'] },
-    { id: 'fellow-fallowmere', at: '2026-09-30T17:10:00Z', textLength: 41000, attendeeEmails: ['imelda@fallowmere.example', 'imelda.b@pemberly-rv.example'] },
+    { id: 'hubspot-pemberly', at: '2026-09-30T17:00:00Z', textLength: 900, attendeeEmails: ['imelda.b@pemberly-hq.example'] },
+    { id: 'fellow-fallowmere', at: '2026-09-30T17:10:00Z', textLength: 41000, attendeeEmails: ['imelda@fallowmere.example', 'imelda.b@pemberly-hq.example'] },
     { id: 'other-meeting', at: '2026-09-30T17:05:00Z', textLength: 2000, attendeeEmails: ['someone@else.example'] },
   ]);
   assert.deepEqual(kept.map((k) => k.id).sort(), ['fellow-fallowmere', 'other-meeting']);
@@ -203,7 +203,7 @@ test('a HubSpot meeting still "scheduled" with only the invitation in it gets no
 
 test('the same host starting within 20 minutes is the same meeting, whatever contacts each tool used', () => {
   const kept = dedupeAcrossSources([
-    { id: 'hubspot', at: '2026-09-30T17:01:32Z', textLength: 900, attendeeEmails: ['imelda.b@pemberly-rv.example'], hostEmail: 'tamsin@harborline.example' },
+    { id: 'hubspot', at: '2026-09-30T17:01:32Z', textLength: 900, attendeeEmails: ['imelda.b@pemberly-hq.example'], hostEmail: 'tamsin@harborline.example' },
     { id: 'fellow', at: '2026-09-30T17:00:00Z', textLength: 41000, attendeeEmails: ['imelda@fallowmere.example'], hostEmail: 'TAMSIN@harborline.example' },
     { id: 'tamsin-later', at: '2026-09-30T18:00:00Z', textLength: 3000, attendeeEmails: ['otto@quarrybank.example'], hostEmail: 'tamsin@harborline.example' },
   ]);
@@ -212,7 +212,7 @@ test('the same host starting within 20 minutes is the same meeting, whatever con
 
 test('the brief carries the deals, the tasks already filed and the earlier card', () => {
   const { user } = buildFollowUpPrompt({
-    ourCompany: 'Harborline', repName: 'Ansel Okafor', account: { name: 'Northvale Hyundai', domain: 'northvale.example', isCustomer: false },
+    ourCompany: 'Harborline', repName: 'Ansel Okafor', account: { name: 'Northvale Logistics', domain: 'northvale.example', isCustomer: false },
     deals: [{ id: 'd1', name: 'Growth', stage: 'Demo completed', value: 12000, close_date: '2026-10-24' }],
     meetings: [{ kind: 'Demo', title: 'Demo', at: '2026-10-01T15:00:00Z', text: 'notes' }],
     existingTasks: ['Send the deck'], previous: { tasks: [{ id: 't1', text: 'Book IT call' }], summary: 'x' },

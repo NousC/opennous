@@ -11,7 +11,7 @@ import { registerAnthropicClient } from '../dist/llm/modelDoor.mjs';
 
 const REPORT = {
   title: 'Daily usage', period: '13 Oct 2026', source: 'HubSpot', summary: 'Pulls up 8% on the day.',
-  sections: [{ heading: 'Movers', body: '• Northwind +5' }], table: { columns: ['Dealer', 'Pulls'], rows: [['Northwind', '12'], ['Globex', '7']] },
+  sections: [{ heading: 'Movers', body: '• Northwind +5' }], table: { columns: ['Account', 'Pulls'], rows: [['Northwind', '12'], ['Globex', '7']] },
   flags: [{ level: 'red', text: 'Globex went quiet' }, { level: 'green', text: 'Northwind best day' }], extra: 'dropped',
 };
 

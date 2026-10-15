@@ -248,7 +248,7 @@ export function sourceName(task: TaskRecord): string | null {
 }
 
 /**
- * "From Demo with Larkfield Toyota · Oct 1": the conversation's own name and the day it was said. A
+ * "From Demo with Larkfield Systems · Oct 1": the conversation's own name and the day it was said. A
  * row written before provenance existed has neither, so it says the tool and the day we filed it.
  */
 export function sourceLine(task: TaskRecord): string {

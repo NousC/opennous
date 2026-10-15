@@ -41,7 +41,7 @@ import {
 import { recordCallReviewFromAgent } from './callReviewFromAgent.mjs';
 
 // The pronoun guard is one implementation in @nous/core, shared with the worker's
-// persistFacts. It used to be a copy here, which is exactly how GET-368 hid: "F&I" read
+// persistFacts. It used to be a copy here, which is exactly how GET-368 hid: "D&I" read
 // as a first-person pronoun and both writers dropped the fact without saying so.
 
 /**
@@ -344,7 +344,7 @@ export async function recordObservations(supabase, workspaceId, body = {}, opts 
         const targetEntityId = (cat !== 'buying_signal' && about === 'company' && companyEntityId)
           ? companyEntityId : entityId;
         // Who said it, kept on the claim once it has moved off their record — so the company page
-        // can show "from Ysolde on the Larkfield Toyota call" without duplicating the fact. The worker
+        // can show "from Ysolde on the Larkfield Systems call" without duplicating the fact. The worker
         // stamps this; without it a routed claim arrives at the company anonymous.
         if (targetEntityId !== entityId) metadata.voiced_by_contact_id = entityId;
 

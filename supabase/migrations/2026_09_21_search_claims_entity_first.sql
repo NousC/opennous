@@ -1,7 +1,7 @@
 -- The entity-scoped search fetches the entity's rows FIRST, then ranks them (GET-411).
 --
 -- 2026_09_18_search_claims_entity_scope added `p_entity_id` and measured 0.6–94 ms. Measured again
--- on prod today, on the same shape (Larkfield Toyota, 'note.' prefix, entity given):
+-- on prod today, on the same shape (Larkfield Systems, 'note.' prefix, entity given):
 --
 --   call 1  23,395 ms  statement timeout
 --   call 2   5,373 ms

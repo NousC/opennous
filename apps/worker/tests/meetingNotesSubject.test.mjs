@@ -14,7 +14,7 @@ const ext = (id) => ({ contactId: id });
 
 test('the account wins whenever we know it', () => {
   // The same rule the call page follows. Notes filed on the person who happened to be first in the
-  // room hide a meeting that belongs to the dealership.
+  // room hide a meeting that belongs to the customer.
   assert.equal(
     meetingNotesSubject({ accountEntityId: 'co1', externals: [ext('p1'), ext('p2')], internals: ['u1'] }),
     'co1',

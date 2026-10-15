@@ -33,7 +33,7 @@ test('a promise naming nobody stays open to the whole account', () => {
 });
 
 test('two people of the same name resolve to nobody, never to a guess', () => {
-  // Two people called Osric at one dealership: we cannot tell who was meant, and widening to the account is a
+  // Two people called Osric at one customer: we cannot tell who was meant, and widening to the account is a
   // smaller error than closing against the wrong person.
   assert.equal(personNamedIn('Send Osric the deck', [OSRIC_P, OSRIC_H]), null);
   // Full name disambiguates.
@@ -162,7 +162,7 @@ test('a task with no occurred_at still dates at recording, then at computation',
 test('the June promise closes on the July email, not on nothing', async () => {
   // Extracted today (computed_at), said 110 days ago (occurred_at), emailed 100 days ago.
   const closed = await autoCloseActionItems(db({
-    claims: [{ ...COMMITMENT, computed_at: at(0), value: { ...COMMITMENT.value, title: 'Send the credit-bureau sign-up information', occurred_at: at(110), recorded_at: at(0) } }],
+    claims: [{ ...COMMITMENT, computed_at: at(0), value: { ...COMMITMENT.value, title: 'Send the data-warehouse sign-up information', occurred_at: at(110), recorded_at: at(0) } }],
     contacts: [{ id: 'p-rufus', company_id: 'acct1', first_name: 'Rufus', last_name: 'Penhallow' }],
     observations: [{ entity_id: 'p-rufus', property: 'interaction.email_sent', observed_at: at(100), source: 'hubspot' }],
   }), 'ws');

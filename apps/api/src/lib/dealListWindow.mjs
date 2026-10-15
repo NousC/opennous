@@ -32,7 +32,7 @@ export const DEAL_WINDOW_MONTHS = 12;
 // How recently an account must have ANSWERED to earn its place without a deal.
 //
 // The deal rules below describe a CRM's record of what was sold. They miss what is being sold
-// right now: a rep works a dealership for weeks before anyone opens a deal for it, and until they
+// right now: a rep works a company for weeks before anyone opens a deal for it, and until they
 // do, that account holds no deal in any state. Measured on a customer workspace the day this shipped, the
 // deal rules alone hid thousands of accounts — and hundreds of those had been touched in the
 // previous SEVEN DAYS, nearly all of them carrying real two-way contact (meetings held, calls made
@@ -87,8 +87,8 @@ export function dealWindowFilter(now = new Date()) {
  * The same window, asked of an ACCOUNT rather than a deal: show it when it holds a deal the
  * lists would show.
  *
- * `child_deals` is the dealer-group exception. A group holds no deals of its own — Brackwater
- * Autogroup has five rooftops and nothing on the parent — and about a third of one customer's group
+ * `child_deals` is the company-group exception. A group holds no deals of its own — Brackwater
+ * Holdings has five branches and nothing on the parent — and about a third of one customer's group
  * parents are in that shape. Without it the rule would hide the one record a rep needs in order to see
  * the group at all.
  *

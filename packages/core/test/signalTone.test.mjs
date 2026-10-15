@@ -42,8 +42,8 @@ test('a custom signal gets a stable colour of its own; an unknown kind is neutra
 });
 
 test('the text is what was said: content, then the quote, then the title', () => {
-  assert.equal(signalText({ title: 'Trade', content: 'They will switch to a cheaper bureau after renewal.', quote: 'we are moving' }), 'They will switch to a cheaper bureau after renewal.');
-  assert.equal(signalText({ title: 'Trade', content: '  ', quote: '  we are moving  ' }), 'we are moving');
+  assert.equal(signalText({ title: 'Reporting', content: 'They will switch to a cheaper vendor after renewal.', quote: 'we are moving' }), 'They will switch to a cheaper vendor after renewal.');
+  assert.equal(signalText({ title: 'Reporting', content: '  ', quote: '  we are moving  ' }), 'we are moving');
   assert.equal(signalText({ title: 'Monthly Cost Need' }), 'Monthly Cost Need');
   assert.equal(signalText({ content: 'Line one\n\n  line   two' }), 'Line one line two');
   assert.equal(signalText({}), null);
@@ -59,9 +59,9 @@ test('the latest-signal row carries label, tone and text', () => {
   assert.ok(CUSTOM_TONES.includes(custom.tone));
   assert.equal(latestSignalView({ kind: 'custom_d1', title: 'Security review needed', content: null }).text, null);
   // A row from before the migration (title only) still reads: the title is the text.
-  const old = latestSignalView({ kind: 'expansion_signal', title: 'Trade', at: null });
+  const old = latestSignalView({ kind: 'expansion_signal', title: 'Reporting', at: null });
   assert.equal(old.label, 'Expansion signal');
-  assert.equal(old.text, 'Trade');
+  assert.equal(old.text, 'Reporting');
   // An unknown kind reads as a sentence, never snake_case.
   assert.equal(latestSignalView({ kind: 'odd_kind', title: null }).label, 'Odd kind');
   assert.equal(latestSignalView(null), null);

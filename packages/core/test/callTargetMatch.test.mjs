@@ -1,10 +1,10 @@
 // Only a customer proves that two recordings are one call.
 //
 // The match was "any shared contact within three hours". Our own staff are on every call, so on
-// one afternoon two different dealerships' installation calls were merged: Thistlecombe Mazda (pim,
-// orla, tobin) and Ashcombe Ford (quill, marrc, tobyh), sharing nobody except lena@harborline.example,
+// one afternoon two different customers' installation calls were merged: Thistlecombe Health (pim,
+// orla, tobin) and Ashcombe Systems (quill, marrc, tobyh), sharing nobody except lena@harborline.example,
 // the CS manager who ran both that afternoon. They became one record with one page, and the page
-// alternated between the two dealerships on every re-run.
+// alternated between the two customers on every re-run.
 //
 // Run: node --test packages/core/test/callTargetMatch.test.mjs
 
@@ -28,8 +28,8 @@ const CALL = {
   sides: null, hostUserId: null,
   contacts: [
     { id: 'lena', email: 'lena@harborline.example' },      // ours — on every call
-    { id: 'quill',  email: 'quill@ashcombeford.example' },
-    { id: 'marrc',  email: 'marrc@ashcombeford.example' },
+    { id: 'quill',  email: 'quill@ashcombesystems.example' },
+    { id: 'marrc',  email: 'marrc@ashcombesystems.example' },
   ],
 };
 

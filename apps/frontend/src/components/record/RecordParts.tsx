@@ -625,8 +625,8 @@ export function ActivityRow({ a }: { a: any }) {
 // No id dedupes it. The per-attendee rows are genuinely distinct observations, and the two sources
 // have unrelated id spaces. What identifies a meeting across both is WHEN it happened and WHAT it
 // was called. Times round to five minutes because a calendar entry and a recording rarely agree to
-// the second; the title is stripped to letters and digits so "Larkfield Toyota | review with
-// Harborline" matches "Meeting: Larkfield Toyota | review with Harborline".
+// the second; the title is stripped to letters and digits so "Larkfield Systems | review with
+// Harborline" matches "Meeting: Larkfield Systems | review with Harborline".
 //
 // A meeting with no parseable time keeps its row — losing a real conversation to tidy a feed is
 // the wrong trade.

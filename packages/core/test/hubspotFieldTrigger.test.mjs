@@ -25,12 +25,12 @@ test('changes to or from a value keep only those; a re-save of the same value is
 });
 
 test('the change in words, the way {{signal.text}} reads it', () => {
-  assert.equal(changeText({ property: 'onboarding_status', property_label: 'Onboarding Status' }, { name: 'Acme Motors', old: 'Pending', new: 'Active' }),
-    'Acme Motors: Onboarding Status changed from "Pending" to "Active".');
+  assert.equal(changeText({ property: 'onboarding_status', property_label: 'Onboarding Status' }, { name: 'Acme Corp', old: 'Pending', new: 'Active' }),
+    'Acme Corp: Onboarding Status changed from "Pending" to "Active".');
   assert.equal(changeText({ property: 'x' }, { name: null, old: null, new: 'Yes' }), 'x changed from (empty) to "Yes".');
 });
 
 test('a date field reads as a date, not a timestamp', () => {
-  assert.equal(changeText({ property: 'last_login_date', property_label: 'Last Login Date' }, { name: 'Globex Auto', old: '1790985600000', new: '1791331200000' }),
-    'Globex Auto: Last Login Date changed from "2026-10-03" to "2026-10-07".');
+  assert.equal(changeText({ property: 'last_login_date', property_label: 'Last Login Date' }, { name: 'Globex', old: '1790985600000', new: '1791331200000' }),
+    'Globex: Last Login Date changed from "2026-10-03" to "2026-10-07".');
 });

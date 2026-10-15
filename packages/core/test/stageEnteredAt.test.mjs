@@ -6,7 +6,7 @@ import { stageEnteredAt } from '../dist/integrations/crm/index.js';
 
 const obs = (value, observed_at, stage_id) => ({ value, observed_at, raw: stage_id ? { stage_id } : null });
 
-test('re-writes of the same stage do not reset the clock (a dealership deal)', () => {
+test('re-writes of the same stage do not reset the clock (a customer deal)', () => {
   const rows = [
     obs(' First Call', '2026-06-10T15:00:00Z'),
     obs('Walkthrough Set', '2026-09-15T14:00:00Z'),

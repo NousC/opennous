@@ -57,7 +57,7 @@ const world = () => ({
   entity_list_rows: [
     { workspace_id: 'ws', entity_id: 'acct-a', kind: 'account', name: 'Northside Labs', domain: 'northside.example', company_id: null },
     { workspace_id: 'ws', entity_id: 'acct-b', kind: 'account', name: 'Lakeshore Health', domain: null, company_id: null },
-    { workspace_id: 'ws', entity_id: 'acct-c', kind: 'account', name: 'Old Dealer', domain: null, company_id: null },
+    { workspace_id: 'ws', entity_id: 'acct-c', kind: 'account', name: 'Old Account', domain: null, company_id: null },
     { workspace_id: 'ws', entity_id: 'acct-hidden', kind: 'account', name: 'Hidden Co', domain: null, company_id: null },
     { workspace_id: 'ws', entity_id: 'person-b', kind: 'person', name: 'Pat', domain: null, company_id: 'acct-b' },
   ],

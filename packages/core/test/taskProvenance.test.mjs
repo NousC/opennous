@@ -12,7 +12,7 @@ import { matchPersonByName, pickOnlyOpenDeal, provenanceFromModel, emptyTaskProv
 import { parseHealthReadJson } from '../dist/services/accountHealth.js';
 
 const roster = [
-  { id: 'e-barnaby', first_name: 'Barnaby', last_name: 'Fenwick', email: 'barnaby@quarrendonnissan.example' },
+  { id: 'e-barnaby', first_name: 'Barnaby', last_name: 'Fenwick', email: 'barnaby@quarrendonlabs.example' },
   { id: 'e-ottoline', first_name: 'Ottoline', last_name: 'Brisk' },
   { id: 'e-jasper-v', first_name: 'Jasper', last_name: 'Vantongeren' },
   { id: 'e-jasper', first_name: 'Jasper', last_name: null },

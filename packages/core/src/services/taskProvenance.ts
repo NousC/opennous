@@ -1,6 +1,6 @@
 // Where a task came from, who it is for, and which deal it belongs to — stamped ON WRITE.
 //
-// A task row used to be a bare instruction: "Sabine to send credit-bureau sign-up information."
+// A task row used to be a bare instruction: "Sabine to send data-warehouse sign-up information."
 // Everything a reader needs to act on it was in the extractor's hands at the moment it was
 // written — the call's title and date, the link back to the note-taker, the person who asked,
 // the person waiting on it, the account's open deal — and only the source ID survived.

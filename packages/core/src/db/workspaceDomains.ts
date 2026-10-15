@@ -1,8 +1,8 @@
 // WHOSE SIDE IS THIS PERSON ON — answered once, for the whole system (GET-291).
 //
 // Four bugs in one day came from this question being answered locally, four different ways: calls
-// filed on a sibling dealership, calls filed on the seller's own employee, a customer call dropped
-// as "internal", and two dealerships' calls merged because the only attendee they shared was the CS
+// filed on a sibling company, calls filed on the seller's own employee, a customer call dropped
+// as "internal", and two customers' calls merged because the only attendee they shared was the CS
 // manager who ran both. Each site derived "ours?" from whatever was nearby — the host's email
 // domain, a seat lookup, a contact's company row. Each fix passed its tests and the next symptom
 // appeared somewhere else.

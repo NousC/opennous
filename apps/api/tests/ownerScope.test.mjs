@@ -56,8 +56,8 @@ test('an account earns its place by holding a deal the lists show, or by being w
   );
 });
 
-test('the dealer-group exception is part of that rule, not an afterthought', () => {
-  // Quillmere Autogroup holds no deals; its rooftops do. Many of Harborline's group parents
+test('the company-group exception is part of that rule, not an afterthought', () => {
+  // Quillmere Holdings holds no deals; its branches do. Many of Harborline's group parents
   // are in that shape, and without child_deals the rule hides the record a rep assigns at.
   assert.ok(accountWindowFilter(NOW).includes('child_deals.gt.0'));
 });

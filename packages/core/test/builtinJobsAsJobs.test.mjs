@@ -72,7 +72,7 @@ const accountsWorld = () => ({
     { workspace_id: WS, category: 'automation', rec_key: 'automation.expansion_signal', target_type: 'account', target_id: U(5), updated_at: ago(1) },   // Customer Growth's, not in this box
     { workspace_id: WS, category: 'automation', rec_key: 'automation.stale_deal', target_type: 'deal', target_id: 'not-an-id', updated_at: ago(1) },
   ],
-  entity_list_rows: [acct(U(1), 'Harborline Motors'), acct(U(2), 'Fernpoint Auto'), acct(U(3), 'Old Co'), acct(U(4), 'Lumen Freight'), acct(U(5), 'Cobalt Systems'), acct(U(6), 'Deal Holder'),
+  entity_list_rows: [acct(U(1), 'Harborline Labs'), acct(U(2), 'Fernpoint Health'), acct(U(3), 'Old Co'), acct(U(4), 'Lumen Freight'), acct(U(5), 'Cobalt Systems'), acct(U(6), 'Deal Holder'),
     { workspace_id: WS, entity_id: U(20), kind: 'deal', name: 'Renewal', company_id: U(6) }],
 });
 
@@ -156,7 +156,7 @@ test('builtinEmailVoices: each email-drafting built-in\'s voice from its box\'s 
 });
 
 test('the follow-up prompt writes the email in the voice when there is one, and reads exactly as before without', () => {
-  const input = { ourCompany: 'Lumen', repName: 'Theo', account: { name: 'Harborline Motors', domain: null, isCustomer: true }, deals: [], meetings: [{ kind: 'call', title: 'Kickoff', at: '2026-10-14T10:00:00Z', text: 'We agreed on a pilot.' }], existingTasks: [], previous: null };
+  const input = { ourCompany: 'Lumen', repName: 'Theo', account: { name: 'Harborline Labs', domain: null, isCustomer: true }, deals: [], meetings: [{ kind: 'call', title: 'Kickoff', at: '2026-10-14T10:00:00Z', text: 'We agreed on a pilot.' }], existingTasks: [], previous: null };
   const plain = buildFollowUpPrompt(input);
   assert.match(plain.user, /under 150 words, warm and specific/);
   assert.doesNotMatch(plain.user, /EMAIL VOICE/);

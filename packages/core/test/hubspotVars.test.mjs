@@ -49,7 +49,7 @@ test('reads only the named properties, live, and prints dates as dates', async (
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init.body);
     calls.push({ url, body, auth: init.headers.Authorization });
-    const props = url.includes('/deals/') ? { dealname: 'Corrigan — Enterprise', closedate: '2026-09-28T14:00:00Z', onboarding_owner: 'Odile' } : { industry: 'AUTOMOTIVE;RETAIL' };
+    const props = url.includes('/deals/') ? { dealname: 'Corrigan — Enterprise', closedate: '2026-09-28T14:00:00Z', onboarding_owner: 'Odile' } : { industry: 'SOFTWARE;RETAIL' };
     return new Response(JSON.stringify({ results: [{ id: body.inputs[0].id, properties: props }] }), { status: 200 });
   };
   try {
@@ -60,7 +60,7 @@ test('reads only the named properties, live, and prints dates as dates', async (
     assert.equal(vars['hubspot.deal.dealname'], 'Corrigan — Enterprise');
     assert.equal(vars['hubspot.deal.closedate'], 'September 28, 2026');
     assert.equal(vars['hubspot.deal.onboarding_owner'], 'Odile');
-    assert.equal(vars['hubspot.company.industry'], 'AUTOMOTIVE, RETAIL');
+    assert.equal(vars['hubspot.company.industry'], 'SOFTWARE, RETAIL');
     const deal = calls.find(c => c.url.includes('/deals/'));
     assert.deepEqual(deal.body.inputs, [{ id: '9001' }]);
     assert.deepEqual(deal.body.properties.sort(), ['closedate', 'dealname', 'onboarding_owner']);

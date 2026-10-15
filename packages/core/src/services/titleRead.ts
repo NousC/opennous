@@ -1,7 +1,7 @@
 // What a job title says about someone's place in a buying decision (GET-276).
 //
 // A title is not evidence of how someone feels about us, but it is good evidence of where they
-// sit: a dealership's General Manager signs, its Controller holds the budget, a Sales Associate
+// sit: a company's General Manager signs, its Controller holds the budget, a Sales Associate
 // uses the product. Before this, one regex decided "decision maker or not" in two places
 // (committee.ts and the account API), it missed "General Manager", and nothing ranked people at
 // all, so the org chart laid every contact out in one flat row.

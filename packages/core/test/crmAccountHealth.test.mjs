@@ -35,7 +35,7 @@ test('a prospect yields nothing, so the sync does not write junk against every c
   // What a non-customer company actually looks like on the wire: the properties are requested,
   // the portal returns them empty. Most of a typical portal's companies are this.
   const empty = readAccountHealth('hubspot', {
-    name: 'Some Dealership', account_status: '', mrr: '', customer_tier: null,
+    name: 'Some Company', account_status: '', mrr: '', customer_tier: null,
     active_users_30d: '', upgrade_products: '',
   });
   assert.deepEqual(empty, {});

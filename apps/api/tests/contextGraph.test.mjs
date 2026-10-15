@@ -6,7 +6,7 @@ import { contextGraph, neighbourhood } from '../src/lib/contextGraph.mjs';
 
 const net = {
   nodes: [
-    { i: 'acme', t: 1, l: 'Acme Motors', s: 88, a: 3, pc: 2, d: 'acme.com' },
+    { i: 'acme', t: 1, l: 'Acme Corp', s: 88, a: 3, pc: 2, d: 'acme.com' },
     { i: 'globex', t: 1, l: 'Globex', s: 40, a: 120, pc: 1 },
     { i: 'ann', t: 0, l: 'Ann Lee', jt: 'VP Sales', a: 3, co: 'acme', dm: true },
     { i: 'bo', t: 0, l: 'Bo Chan', a: 10, co: 'acme' },

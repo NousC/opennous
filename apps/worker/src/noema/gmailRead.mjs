@@ -329,7 +329,7 @@ export async function extractThreadCommitments({
     // Close to half of one corpus's email tasks were the customer's homework: "Sign and return the
     // Tidewell Starter Agreement", "Provide the Lumen Verify account ID". Nobody here can tick those off, and
     // dropping them loses the part a CS rep is actually paid for. So they are not dropped and not
-    // filed as theirs — they are turned round: the row becomes ours ("Follow up with Larkfield Toyota on
+    // filed as theirs — they are turned round: the row becomes ours ("Follow up with Larkfield Systems on
     // the signed agreement"), flagged `awaiting_them` with their name, so the account page can say
     // who we are waiting on without putting a row in their name in our list.
     const theirs = owner === 'prospect';
