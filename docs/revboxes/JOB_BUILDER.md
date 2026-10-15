@@ -510,6 +510,16 @@ Every day 08:00 (Toronto) · [HubSpot][Slack] → #ops-daily · asks first      
   and counted, a name two accounts share is ambiguous and skipped, nothing fuzzier. Runs from before
   GET-891 recorded nothing: on read, the newest 30 output documents in the window that have no entity
   links and whose step logged no accounts are parsed the same way.
+  **Worked out once per run** (GET-896). The first read after a run has finished (status ok, error,
+  skipped or rejected) keeps what it touched on the run, `agent_routine_runs.state.accounts_resolved =
+  { v: 1, at, entities: [entity ids], names: { matched, unmatched, ambiguous: [normalized names] } }`,
+  and every later read takes it from there: no document reads, no name lookups. A run still going is
+  worked out live on each read and kept once it finishes. A run is kept only when complete (none of its
+  documents waited behind the 30-document cap), so a box with more than 30 such documents counts the
+  older ones over its next reads. Entity ids are kept, not accounts: a person or deal still counts for
+  its current company, a deleted entity drops out, and the viewer filter is applied on every read.
+  The reads that need only the box id go out together with its access check (`loadRevbox` reads
+  membership, box and members at once); nothing is read from documents or kept unless it passes.
   `?scope=selected` returns the scope alone. The card's two links open on the same set:
   `/accounts?revbox=<id>` (`GET /api/companies/list?revbox=<id>`, `&revbox_scope=selected` for the
   scope alone; returns `revbox: { id, name }` for the "RevBox: <name> ×" chip) and `/graph?revbox=<id>`

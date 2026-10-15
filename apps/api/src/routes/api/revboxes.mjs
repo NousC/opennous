@@ -300,7 +300,7 @@ export async function revboxCardGraph(sb, ws, uid, boxId, visible, opts = {}) {
 const selectedOnly = (req) => req.query.scope === 'selected';
 // The rail's Accounts card (GET-891): "Accounts · N", N = selected ∪ worked on. ?scope=selected: the scope alone.
 revboxesRouter.get('/:id/accounts', route(async (req, res, sb) => {
-  const { box, accounts, breakdown, days, names } = await revboxCardAccounts(sb, req.workspaceId, req.internalUserId, req.params.id, await allowed(sb, req), { selectedOnly: selectedOnly(req) });
+  const { box, accounts, breakdown, days, names } = await revboxCardAccounts(sb, req.workspaceId, req.internalUserId, req.params.id, allowed(sb, req), { selectedOnly: selectedOnly(req) });   // the visibility read goes out with the box's own (GET-896)
   res.json({ accounts, count: accounts.length, accounts_count: accounts.length, accounts_breakdown: breakdown, days, names, box: { id: box.id, name: box.name, scope: box.scope } });
 }));
 revboxesRouter.get('/:id/graph', route(async (req, res, sb) => {

@@ -21,10 +21,18 @@ export async function revboxMembership(sb, ws, uid) {
 }
 
 export async function loadRevbox(sb, ws, uid, id, edit = false) {
-  await revboxMembership(sb, ws, uid);
-  const box = await one(sb.from('revboxes').select('*').eq('workspace_id', ws).eq('id', id).maybeSingle());
+  // The three reads go out together (GET-896); they are judged in order, membership first.
+  const [member, found, roles] = await Promise.allSettled([
+    revboxMembership(sb, ws, uid),
+    one(sb.from('revboxes').select('*').eq('workspace_id', ws).eq('id', id).maybeSingle()),
+    rows(sb.from('revbox_members').select('user_id, role').eq('workspace_id', ws).eq('revbox_id', id)),
+  ]);
+  if (member.status === 'rejected') throw member.reason;
+  if (found.status === 'rejected') throw found.reason;
+  const box = found.value;
   if (!box) fail(404, 'RevBox not found.');
-  const members = await rows(sb.from('revbox_members').select('user_id, role').eq('workspace_id', ws).eq('revbox_id', id));
+  if (roles.status === 'rejected') throw roles.reason;
+  const members = roles.value;
   const access = revboxAccess(box, uid, members);
   if (!access) fail(404, 'RevBox not found.');
   if (edit && access === 'viewer') fail(403, 'Only an owner or editor can change this RevBox.');
@@ -154,85 +162,166 @@ export async function revboxPeople(sb, box) {
  *
  * Runs from before GET-891 recorded no names. For them, the newest `pastDocs` (30) output documents with
  * no entity links are read and the account names they state in a table, in bold or in the title
- * are resolved now (accountNamesInText + resolveAccountNames: exact normalized names only).
- * Only accounts in `allowed` (null = unrestricted) are returned.
+ * are resolved (accountNamesInText + resolveAccountNames: exact normalized names only).
+ *
+ * Worked out once per run (GET-896): the first read after a run has finished keeps what it touched
+ * on the run (`state.accounts_resolved`: its entity ids and the names it resolved), and every later
+ * read takes it from there, with no document reads and no name lookups. A run still going is
+ * worked out live on each read. Only accounts in `allowed` (null = unrestricted) are returned; that
+ * filter is applied at read time, per viewer, never kept.
  * -> { accounts: [{ id, name, domain, runs }], runs: runs in the window, linked: any run named an
- *      account, names: { matched, unmatched, ambiguous } (counts, from names resolved on this read) }
+ *      account, names: { matched, unmatched, ambiguous } (counts of distinct names across the runs) }
  */
 export async function revboxRunAccounts(sb, ws, { revboxId, routineIds = [], allowed = null, days = 30, now: at = Date.now(), pastDocs = 30 } = {}) {
-  const since = new Date(at - days * 86_400_000).toISOString();
-  const runs = [];   // [{ id, entities: Set, docIds: Set, unrecorded: Set(doc ids whose step logged no accounts), at }]
-  for (let i = 0; i < routineIds.length; i += 100) {
-    const page = await rows(sb.from('agent_routine_runs').select('id, entity_id, document_id, step_log, started_at').eq('workspace_id', ws)
-      .in('routine_id', routineIds.slice(i, i + 100)).gte('started_at', since).limit(2000));
-    for (const r of page) {
-      const run = { id: r.id, entities: new Set([r.entity_id].filter(Boolean)), docIds: new Set([r.document_id].filter(Boolean)), unrecorded: new Set(), at: String(r.started_at ?? '') };
-      for (const e of Array.isArray(r.step_log) ? r.step_log : []) {
-        if (Array.isArray(e?.accounts)) for (const id of e.accounts) if (typeof id === 'string' && id) run.entities.add(id);
-        if (e?.document_id) { run.docIds.add(e.document_id); if (!Array.isArray(e.accounts)) run.unrecorded.add(e.document_id); }
-      }
-      if (r.document_id && !(Array.isArray(r.step_log) && r.step_log.some(e => Array.isArray(e?.accounts)))) run.unrecorded.add(r.document_id);
-      runs.push(run);
-    }
-  }
-  if (revboxId) {
-    try {
-      const legacy = await rows(sb.from('revbox_runs').select('id, account_ids').eq('workspace_id', ws).eq('revbox_id', revboxId).gte('created_at', since).limit(2000));
-      for (const r of legacy) runs.push({ id: r.id, entities: new Set((r.account_ids ?? []).filter(Boolean)), docIds: new Set(), unrecorded: new Set(), at: '' });
-    } catch (e) { if (!['42P01', 'PGRST205'].includes(e.code)) throw e; }
-  }
-  const docIds = [...new Set(runs.flatMap(r => [...r.docIds]))];
-  const docEntities = new Map();   // doc id -> entity ids
-  const add = (doc, entity) => { if (!doc || !entity) return; if (!docEntities.has(doc)) docEntities.set(doc, new Set()); docEntities.get(doc).add(entity); };
-  for (let i = 0; i < docIds.length; i += 200) {
-    const chunk = docIds.slice(i, i + 200);
-    const [docs, links] = await Promise.all([
-      rows(sb.from('documents').select('id, subject_entity_id').eq('workspace_id', ws).in('id', chunk)),
-      rows(sb.from('document_links').select('document_id, target_entity_id, kind').eq('workspace_id', ws).in('document_id', chunk).in('kind', ['about', 'mentions'])),
-    ]);
-    for (const d of docs) add(d.id, d.subject_entity_id);
-    for (const l of links) add(l.document_id, l.target_entity_id);
-  }
-  // The past (GET-891): the newest output documents that name no entity and whose step logged no
-  // accounts, read for the account names they state.
-  const names = { matched: 0, unmatched: 0, ambiguous: 0 };
-  const past = [...new Set(runs.slice().sort((a, b) => b.at.localeCompare(a.at)).flatMap(r => [...r.unrecorded]).filter(d => !docEntities.has(d)))].slice(0, pastDocs);
-  if (past.length) {
-    const docs = await rows(sb.from('documents').select('id, title, body_md').eq('workspace_id', ws).in('id', past));
-    const named = new Map(docs.map(d => [d.id, accountNamesInText(d.body_md, d.title)]));
-    const all = [...new Set([...named.values()].flat())];
-    if (all.length) {
-      const resolved = await resolveAccountNames(sb, ws, all);
-      Object.assign(names, { matched: resolved.matched.length, unmatched: resolved.unmatched.length, ambiguous: resolved.ambiguous.length });
-      const idOf = new Map(resolved.matched.map(m => [normalizeAccountName(m.name), m.id]));
-      for (const [doc, list] of named) for (const n of list) add(doc, idOf.get(normalizeAccountName(n)));
-    }
-  }
-  for (const r of runs) for (const d of r.docIds) for (const e of docEntities.get(d) ?? []) r.entities.add(e);
-  const entityIds = [...new Set(runs.flatMap(r => [...r.entities]))];
-  // Each entity as its account: an account is itself, a person or deal is its company.
-  const entities = await entityRows(sb, ws, entityIds);
-  const companyOf = new Map();
-  for (const e of entities) { const c = e.kind === 'account' ? e.entity_id : e.company_id; if (c) companyOf.set(e.entity_id, c); }
-  const accountIds = [...new Set(companyOf.values())];
-  const known = new Map(entities.filter(e => e.kind === 'account').map(e => [e.entity_id, e]));
-  const missing = accountIds.filter(id => !known.has(id));
-  for (const e of await entityRows(sb, ws, missing)) if (e.kind === 'account') known.set(e.entity_id, e);
+  const ran = await revboxRunEntities(sb, ws, { revboxId, routineIds, days, now: at, pastDocs });
+  const { companyOf, known } = await accountsOfEntities(sb, ws, ran.runs.flatMap(r => [...r.entities]));
+  await ran.kept;
   const counts = new Map();
   let linked = false;
-  for (const r of runs) {
+  for (const r of ran.runs) {
     const touched = new Set([...r.entities].map(e => companyOf.get(e)).filter(id => id && known.has(id)));
     if (touched.size) linked = true;
     for (const id of touched) if (!allowed || allowed.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   const accounts = [...counts].map(([id, n]) => ({ id, name: known.get(id)?.name ?? 'Account', domain: known.get(id)?.domain ?? null, runs: n }))
     .sort((a, b) => b.runs - a.runs || String(a.name).localeCompare(String(b.name)));
-  return { accounts, runs: runs.length, linked, names };
+  return { accounts, runs: ran.runs.length, linked, names: ran.names };
 }
+
+/** Run statuses that are final: nothing writes the run's documents or step log again. */
+const RUN_DONE = ['ok', 'error', 'skipped', 'rejected'];
+const KEPT_VERSION = 1;
+const keptOf = (v) => v && typeof v === 'object' && v.v === KEPT_VERSION && Array.isArray(v.entities) ? v : null;
+
+/**
+ * Every run of these routines in the window (and the box's legacy runs) with the entity ids it
+ * touched, before any visibility filter. A finished run worked out on an earlier read is taken
+ * from `state.accounts_resolved`; the others are worked out now, and the finished ones among them
+ * are kept (`kept`: a promise, settled once written; a failed write only means the next read
+ * works it out again). `ready`: writes wait for it (the caller's access check).
+ * -> { runs: [{ id, entities: Set }], names: { matched, unmatched, ambiguous }, kept: Promise }
+ */
+async function revboxRunEntities(sb, ws, { revboxId, routineIds = [], days = 30, now: at = Date.now(), pastDocs = 30, ready = null }) {
+  const since = new Date(at - days * 86_400_000).toISOString();
+  const runs = [];   // [{ id, entities: Set, docIds: Set, unrecorded: Set(doc ids whose step logged no accounts), at, done, kept }]
+  const pages = [];
+  for (let i = 0; i < routineIds.length; i += 100) {
+    pages.push(rows(sb.from('agent_routine_runs').select('id, entity_id, document_id, step_log, started_at, status, resolved:state->accounts_resolved').eq('workspace_id', ws)
+      .in('routine_id', routineIds.slice(i, i + 100)).gte('started_at', since).limit(2000)));
+  }
+  const legacy = revboxId
+    ? rows(sb.from('revbox_runs').select('id, account_ids').eq('workspace_id', ws).eq('revbox_id', revboxId).gte('created_at', since).limit(2000))
+      .catch(e => { if (['42P01', 'PGRST205'].includes(e.code)) return []; throw e; })
+    : Promise.resolve([]);
+  const [routinePages, legacyRows] = await Promise.all([Promise.all(pages), legacy]);
+  for (const r of routinePages.flat()) {
+    const kept = keptOf(r.resolved);
+    if (kept) { runs.push({ id: r.id, entities: new Set(kept.entities.filter(id => typeof id === 'string' && id)), docIds: new Set(), unrecorded: new Set(), at: String(r.started_at ?? ''), kept }); continue; }
+    const run = { id: r.id, entities: new Set([r.entity_id].filter(Boolean)), docIds: new Set([r.document_id].filter(Boolean)), unrecorded: new Set(), at: String(r.started_at ?? ''), done: RUN_DONE.includes(r.status) };
+    for (const e of Array.isArray(r.step_log) ? r.step_log : []) {
+      if (Array.isArray(e?.accounts)) for (const id of e.accounts) if (typeof id === 'string' && id) run.entities.add(id);
+      if (e?.document_id) { run.docIds.add(e.document_id); if (!Array.isArray(e.accounts)) run.unrecorded.add(e.document_id); }
+    }
+    if (r.document_id && !(Array.isArray(r.step_log) && r.step_log.some(e => Array.isArray(e?.accounts)))) run.unrecorded.add(r.document_id);
+    runs.push(run);
+  }
+  for (const r of legacyRows) runs.push({ id: r.id, entities: new Set((r.account_ids ?? []).filter(Boolean)), docIds: new Set(), unrecorded: new Set(), at: '', legacy: true });
+
+  // The runs not yet worked out: their documents' subjects and links (read once the caller's access check has passed).
+  const live = runs.filter(r => !r.kept && !r.legacy);
+  if (live.length) await ready;
+  const docIds = [...new Set(live.flatMap(r => [...r.docIds]))];
+  const docEntities = new Map();   // doc id -> entity ids
+  const add = (doc, entity) => { if (!doc || !entity) return; if (!docEntities.has(doc)) docEntities.set(doc, new Set()); docEntities.get(doc).add(entity); };
+  const chunks = [];
+  for (let i = 0; i < docIds.length; i += 200) chunks.push(docIds.slice(i, i + 200));
+  for (const [docs, links] of await Promise.all(chunks.map(chunk => Promise.all([
+    rows(sb.from('documents').select('id, subject_entity_id').eq('workspace_id', ws).in('id', chunk)),
+    rows(sb.from('document_links').select('document_id, target_entity_id, kind').eq('workspace_id', ws).in('document_id', chunk).in('kind', ['about', 'mentions'])),
+  ])))) {
+    for (const d of docs) add(d.id, d.subject_entity_id);
+    for (const l of links) add(l.document_id, l.target_entity_id);
+  }
+  // The past (GET-891): the newest output documents that name no entity and whose step logged no
+  // accounts, read for the account names they state.
+  const docNames = new Map();   // doc id -> normalized names it states
+  const verdict = new Map();    // normalized name -> 'matched' | 'unmatched' | 'ambiguous'
+  const pending = [...new Set(live.slice().sort((a, b) => b.at.localeCompare(a.at)).flatMap(r => [...r.unrecorded]).filter(d => !docEntities.has(d)))];
+  const past = pending.slice(0, pastDocs);
+  if (past.length) {
+    const docs = await rows(sb.from('documents').select('id, title, body_md').eq('workspace_id', ws).in('id', past));
+    const named = new Map(docs.map(d => [d.id, accountNamesInText(d.body_md, d.title)]));
+    const all = [...new Set([...named.values()].flat())];
+    for (const [doc, list] of named) docNames.set(doc, [...new Set(list.map(normalizeAccountName).filter(Boolean))]);
+    if (all.length) {
+      const resolved = await resolveAccountNames(sb, ws, all);
+      const idOf = new Map(resolved.matched.map(m => [normalizeAccountName(m.name), m.id]));
+      for (const m of resolved.matched) verdict.set(normalizeAccountName(m.name), 'matched');
+      for (const n of resolved.unmatched) verdict.set(normalizeAccountName(n), 'unmatched');
+      for (const n of resolved.ambiguous) verdict.set(normalizeAccountName(n), 'ambiguous');
+      for (const [doc, list] of named) for (const n of list) add(doc, idOf.get(normalizeAccountName(n)));
+    }
+  }
+  const skipped = new Set(pending.slice(pastDocs));
+  const names = { matched: new Set(), unmatched: new Set(), ambiguous: new Set() };
+  const keep = [];
+  for (const r of runs) {
+    if (r.kept) { for (const k of Object.keys(names)) for (const n of r.kept.names?.[k] ?? []) names[k].add(n); continue; }
+    if (r.legacy) continue;
+    const own = { matched: [], unmatched: [], ambiguous: [] };
+    for (const d of r.docIds) {
+      for (const e of docEntities.get(d) ?? []) r.entities.add(e);
+      for (const n of docNames.get(d) ?? []) { const v = verdict.get(n); if (v && !own[v].includes(n)) own[v].push(n); }
+    }
+    for (const k of Object.keys(names)) for (const n of own[k]) names[k].add(n);
+    // Kept only when finished and complete: none of its documents waited behind the `pastDocs` cap.
+    if (r.done && ![...r.unrecorded].some(d => skipped.has(d))) keep.push({ id: r.id, kept: { v: KEPT_VERSION, at: new Date(at).toISOString(), entities: [...r.entities], names: own } });
+  }
+  const kept = keep.length ? keepRunEntities(sb, ws, keep, ready) : Promise.resolve();
+  return { runs, names: { matched: names.matched.size, unmatched: names.unmatched.size, ambiguous: names.ambiguous.size }, kept };
+}
+
+/** Write each worked-out run's result onto it (state.accounts_resolved), merged into its state, finished runs only. Never throws. */
+async function keepRunEntities(sb, ws, keep, ready) {
+  try {
+    await ready;
+    const states = new Map();
+    for (let i = 0; i < keep.length; i += 200) {
+      for (const r of await rows(sb.from('agent_routine_runs').select('id, state').eq('workspace_id', ws).in('id', keep.slice(i, i + 200).map(k => k.id)))) states.set(r.id, r.state);
+    }
+    for (let i = 0; i < keep.length; i += 10) {
+      await Promise.all(keep.slice(i, i + 10).filter(k => states.has(k.id)).map(async k => {
+        const state = states.get(k.id);
+        const { error } = await sb.from('agent_routine_runs').update({ state: { ...(state && typeof state === 'object' ? state : {}), accounts_resolved: k.kept } })
+          .eq('workspace_id', ws).eq('id', k.id).in('status', RUN_DONE);
+        if (error) throw error;
+      }));
+    }
+  } catch (e) {
+    if (e?.status) return;   // the access check failed: nothing is kept for this caller
+    console.warn('[revboxes] could not keep run accounts', e?.message ?? e);
+  }
+}
+
+/**
+ * Each entity as its account: an account is itself, a person or deal is its company. Reads the
+ * list columns too, so the accounts come back ready to show.
+ * -> { companyOf: Map(entity id -> account id), known: Map(account id -> list row) }
+ */
+async function accountsOfEntities(sb, ws, ids) {
+  const entities = await entityRows(sb, ws, [...new Set(ids)]);
+  const companyOf = new Map();
+  for (const e of entities) { const c = e.kind === 'account' ? e.entity_id : e.company_id; if (c) companyOf.set(e.entity_id, c); }
+  const known = new Map(entities.filter(e => e.kind === 'account').map(e => [e.entity_id, e]));
+  const missing = [...new Set(companyOf.values())].filter(id => !known.has(id));
+  for (const e of await entityRows(sb, ws, missing)) if (e.kind === 'account') known.set(e.entity_id, e);
+  return { companyOf, known };
+}
+const ENTITY_COLUMNS = 'entity_id, kind, name, domain, company_id, icp_score, last_activity_at, people_count';
 async function entityRows(sb, ws, ids) {
-  const out = [];
-  for (let i = 0; i < ids.length; i += 200) out.push(...await rows(sb.from('entity_list_rows').select('entity_id, kind, name, domain, company_id').eq('workspace_id', ws).in('entity_id', ids.slice(i, i + 200))));
-  return out;
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+  return (await Promise.all(chunks.map(chunk => rows(sb.from('entity_list_rows').select(ENTITY_COLUMNS).eq('workspace_id', ws).in('entity_id', chunk))))).flat();
 }
 
 /**
@@ -378,22 +467,21 @@ export async function revboxAccountCatalog(sb, ws, allowed = null) {
  */
 export async function revboxScopedAccounts(sb, ws, uid, boxId, allowed = null) {
   const box = await loadRevbox(sb, ws, uid, boxId);
+  return { box, accounts: await scopeAccounts(sb, ws, box, allowed) };
+}
+async function scopeAccounts(sb, ws, box, allowed) {
   // Picked accounts (GET-891): read just those, not the whole workspace catalog.
   if (box.scope?.mode === 'selected') {
     const ids = [...new Set((box.scope.account_ids ?? []).filter(id => typeof id === 'string' && (!allowed || allowed.has(id))))];
-    return { box, accounts: await accountListRows(sb, ws, ids) };
+    return accountListRows(sb, ws, ids);
   }
   const accounts = await revboxAccountCatalog(sb, ws, allowed);
-  return { box, accounts: accounts.filter(a => revboxMatchesAccount(box.scope, a)) };
+  return accounts.filter(a => revboxMatchesAccount(box.scope, a));
 }
 /** These accounts' list rows (id, name, domain, icp_score, last_activity_at, people_count), in no order. */
+const listRow = ({ kind: _k, company_id: _c, ...a }) => ({ ...a, id: a.entity_id });
 async function accountListRows(sb, ws, ids) {
-  const out = [];
-  for (let i = 0; i < ids.length; i += 200) {
-    const page = await rows(sb.from('entity_list_rows').select('entity_id, kind, name, domain, icp_score, last_activity_at, people_count').eq('workspace_id', ws).in('entity_id', ids.slice(i, i + 200)));
-    out.push(...page.filter(a => (a.kind ?? 'account') === 'account').map(({ kind: _, ...a }) => ({ ...a, id: a.entity_id })));
-  }
-  return out;
+  return (await entityRows(sb, ws, ids)).filter(a => (a.kind ?? 'account') === 'account').map(listRow);
 }
 
 /**
@@ -401,43 +489,61 @@ async function accountListRows(sb, ws, ids) {
  * and the Account graph open on: the union of
  *   - its selected scope (revboxScopedAccounts),
  *   - the accounts its jobs worked on in the last `days` (revboxRunAccounts: run entities, accounts
- *     a step resolved from names, its output documents' links and named accounts),
+ *     a step resolved from names, its output documents' links and named accounts; worked out once
+ *     per finished run and kept on it, GET-896),
  *   - the accounts on its tables' rows added in that window (revbox_dataset_rows.entity_id; a deal
  *     or person counts for its company).
- * Only accounts the viewer may see (`allowed`, null = unrestricted); the box's own view check.
+ * Only accounts the viewer may see (`allowed`, null = unrestricted; a promise of it is awaited, so a
+ * caller can start that read alongside this one); the box's own view check.
+ * The reads that need only the box id start with the access check rather than after it (GET-896);
+ * nothing is returned or kept unless it passes.
  * `selectedOnly` returns the scope alone, as before GET-891.
  * -> { box, accounts: [{ id, name, domain, icp_score, last_activity_at, people_count, selected, worked_on }],
  *      breakdown: { selected, worked_on }, days, names: { matched, unmatched, ambiguous } }
  */
 export async function revboxWorkedAccounts(sb, ws, uid, boxId, allowed = null, { days = 30, now: at = Date.now(), selectedOnly = false } = {}) {
-  const { box, accounts: scoped } = await revboxScopedAccounts(sb, ws, uid, boxId, allowed);
+  const access = loadRevbox(sb, ws, uid, boxId);
+  const visibleP = Promise.resolve(allowed);
+  const scopedP = Promise.all([access, visibleP]).then(([box, visible]) => scopeAccounts(sb, ws, box, visible));
+  const noNames = { matched: 0, unmatched: 0, ambiguous: 0 };
+  const workedP = selectedOnly ? Promise.resolve(null) : (async () => {
+    const since = new Date(at - days * 86_400_000).toISOString();
+    const [ran, tableIds] = await Promise.all([
+      rows(sb.from('agent_routines').select('id').eq('workspace_id', ws).eq('revbox_id', boxId))
+        .then(routines => revboxRunEntities(sb, ws, { revboxId: boxId, routineIds: routines.map(r => r.id), days, now: at, ready: access })),
+      revboxDatasetEntityIds(sb, ws, boxId, { since }),
+    ]);
+    const resolved = await accountsOfEntities(sb, ws, [...ran.runs.flatMap(r => [...r.entities]), ...tableIds]);
+    await ran.kept;
+    return { ran, tableIds, ...resolved };
+  })();
+  const [box, visible, scoped, w] = await Promise.all([access, visibleP, scopedP, workedP]);
+  const ok = (id) => !visible || visible.has(id);
   const selected = new Set(scoped.map(a => a.id));
   const worked = new Set();
-  let names = { matched: 0, unmatched: 0, ambiguous: 0 };
-  if (!selectedOnly) {
-    const routines = await rows(sb.from('agent_routines').select('id').eq('workspace_id', ws).eq('revbox_id', box.id));
-    const ran = await revboxRunAccounts(sb, ws, { revboxId: box.id, routineIds: routines.map(r => r.id), allowed, days, now: at });
-    names = ran.names;
-    for (const a of ran.accounts) worked.add(a.id);
-    for (const id of await revboxDatasetAccounts(sb, ws, box.id, { since: new Date(at - days * 86_400_000).toISOString() })) if (!allowed || allowed.has(id)) worked.add(id);
+  if (w) {
+    // A run's accounts (revboxRunAccounts' rule: an entity counts through its company, only a known account).
+    for (const r of w.ran.runs) for (const e of r.entities) { const c = w.companyOf.get(e); if (c && w.known.has(c) && ok(c)) worked.add(c); }
+    // A table row's account (its company, as the entity row says).
+    for (const e of w.tableIds) { const c = w.companyOf.get(e); if (c && ok(c)) worked.add(c); }
   }
   const byId = new Map(scoped.map(a => [a.id, a]));
-  for (const a of await accountListRows(sb, ws, [...worked].filter(id => !byId.has(id)))) byId.set(a.id, a);
+  const unseen = [...worked].filter(id => !byId.has(id));
+  for (const id of unseen) if (w.known.has(id)) byId.set(id, listRow(w.known.get(id)));
+  for (const a of await accountListRows(sb, ws, unseen.filter(id => !byId.has(id)))) byId.set(a.id, a);
   const accounts = [...byId.values()].filter(a => selected.has(a.id) || worked.has(a.id))
     .map(a => ({ id: a.id, name: a.name ?? 'Account', domain: a.domain ?? null, icp_score: a.icp_score ?? null, last_activity_at: a.last_activity_at ?? null, people_count: a.people_count ?? 0, selected: selected.has(a.id), worked_on: worked.has(a.id) }));
-  return { box, accounts, breakdown: { selected: accounts.filter(a => a.selected).length, worked_on: accounts.filter(a => a.worked_on).length }, days, names };
+  return { box, accounts, breakdown: { selected: accounts.filter(a => a.selected).length, worked_on: accounts.filter(a => a.worked_on).length }, days, names: w ? w.ran.names : noNames };
 }
-/** The accounts on a box's table rows added since `since`: an account row as itself, a deal or person row as its company. */
-async function revboxDatasetAccounts(sb, ws, boxId, { since }) {
+/** The entities on a box's table rows added since `since` (each counts as its company). */
+async function revboxDatasetEntityIds(sb, ws, boxId, { since }) {
   let sets;
   try { sets = await rows(sb.from('revbox_datasets').select('id').eq('workspace_id', ws).eq('revbox_id', boxId)); }
   catch (e) { if (['42P01', 'PGRST205'].includes(e.code)) return []; throw e; }
   if (!sets.length) return [];
   const ids = new Set();
   for (const r of await rows(sb.from('revbox_dataset_rows').select('entity_id, created_at').eq('workspace_id', ws).in('dataset_id', sets.map(d => d.id)).gte('created_at', since).limit(5000))) if (r.entity_id) ids.add(r.entity_id);
-  const out = new Set();
-  for (const e of await entityRows(sb, ws, [...ids])) { const c = e.kind === 'account' ? e.entity_id : e.company_id; if (c) out.add(c); }
-  return [...out];
+  return [...ids];
 }
 
 export async function revboxScopedGraph(sb, ws, scope, accounts) {

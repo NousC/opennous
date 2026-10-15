@@ -11,28 +11,34 @@ const ago = (days) => new Date(NOW - days * 86_400_000).toISOString();
 
 /** An in-memory stand-in for the supabase-js query builder: eq, in, gte, or(name.ilike.*a*b*), range. */
 function database(tables) {
-  const reads = [];
+  const reads = [], writes = [], resolves = [];
   class Query {
     constructor(table) { this.table = table; this.filters = []; reads.push(table); }
     select(cols) { this.cols = cols; return this; } order() { return this; } limit() { return this; }
+    update(patch) { this.patch = patch; writes.push({ table: this.table, patch }); return this; }
     range(a, b) { this.window = [a, b]; return this; }
     eq(k, v) { this.filters.push(r => r[k] === v); return this; }
     in(k, vs) { this.filters.push(r => vs.includes(r[k])); return this; }
     gte(k, v) { this.filters.push(r => String(r[k] ?? '') >= v); return this; }
     or(expr) {
+      resolves.push(expr);
       const pats = expr.split(',').map(p => { const m = p.match(/^(\w+)\.ilike\.(.*)$/); return { col: m[1], re: new RegExp(`^${m[2].split('*').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 'i') }; });
       this.filters.push(r => pats.some(p => p.re.test(String(r[p.col] ?? ''))));
       return this;
     }
     result(single) {
       let values = (tables[this.table] ?? []).filter(r => this.filters.every(f => f(r)));
+      if (this.patch) { for (const r of values) Object.assign(r, structuredClone(this.patch)); return { data: null, error: null }; }
       if (this.window) values = values.slice(this.window[0], this.window[1] + 1);
+      // A JSON path column (`alias:col->key`), as PostgREST selects it.
+      const paths = [...String(this.cols ?? '').matchAll(/(\w+):(\w+)->(\w+)/g)];
+      if (paths.length) values = values.map(r => Object.assign({ ...r }, ...paths.map(([, as, col, key]) => ({ [as]: r[col]?.[key] ?? null }))));
       return { data: structuredClone(single ? values[0] ?? null : values), error: null };
     }
     maybeSingle() { return Promise.resolve(this.result(true)); } single() { return this.maybeSingle(); }
     then(ok, ko) { return Promise.resolve(this.result(false)).then(ok, ko); }
   }
-  return { tables, reads, from: t => new Query(t) };
+  return { tables, reads, writes, resolves, from: t => new Query(t) };
 }
 
 const acct = (id, name, extra = {}) => ({ workspace_id: 'ws', entity_id: id, kind: 'account', name, domain: null, company_id: null, icp_score: 50, last_activity_at: null, people_count: 1, ...extra });
@@ -148,4 +154,54 @@ test('at run time a box job\'s AI step logs the accounts its output names (resol
   // Outside a RevBox nothing is looked up or logged.
   const plain = await runSteps({ ...automation, revbox_id: null }, brief, { stage: 'scheduled', ctx: { supabase: database(world()), workspaceId: 'ws', runId: 'run-2' } });
   assert.equal(plain.log.find(e => e.type === 'agent').accounts, undefined);
+});
+
+// GET-896: a run's accounts are worked out once. The first read after a run has finished resolves
+// its output's names and reads its documents, then keeps the result on the run (state.accounts_resolved);
+// every later read takes it from there: no documents, no name lookups, the same accounts.
+const finished = (w) => { for (const r of w.agent_routine_runs) r.status = 'ok'; return w; };
+test('the second read of a box resolves no names and reads no documents, and returns the same accounts', async () => {
+  const sb = database(finished(world()));
+  const first = await revboxWorkedAccounts(sb, 'ws', 'owner', 'box', null, { now: NOW });
+  assert.ok(sb.reads.includes('documents') && sb.resolves.length, 'the first read works the past runs out');
+  assert.ok(sb.writes.some(w => w.table === 'agent_routine_runs' && w.patch.state?.accounts_resolved), 'and keeps the result on the run');
+  sb.reads.length = 0; sb.resolves.length = 0; sb.writes.length = 0;
+  const second = await revboxWorkedAccounts(sb, 'ws', 'owner', 'box', null, { now: NOW });
+  assert.deepEqual(second.accounts, first.accounts);
+  assert.deepEqual(second.breakdown, first.breakdown);
+  assert.deepEqual(second.names, first.names);
+  assert.equal(sb.resolves.length, 0, 'no name resolution');
+  assert.ok(!sb.reads.includes('documents') && !sb.reads.includes('document_links'), `no document reads: ${sb.reads}`);
+  assert.equal(sb.writes.length, 0, 'nothing rewritten');
+  // Visibility is still per viewer, on the kept result.
+  const narrow = await revboxWorkedAccounts(sb, 'ws', 'owner', 'box', new Set(['acct-a', 'acct-harbor', 'acct-tab']), { now: NOW });
+  assert.deepEqual(narrow.accounts.map(a => a.id).sort(), ['acct-a', 'acct-harbor', 'acct-tab']);
+});
+
+test('a new run is picked up on the next read; a run still going is worked out live and not kept', async () => {
+  const w = finished(world());
+  const sb = database(w);
+  await revboxWorkedAccounts(sb, 'ws', 'owner', 'box', null, { now: NOW });
+  w.entity_list_rows.push(acct('acct-new', 'Bayview Motors'), acct('acct-live', 'Live Dealer'));
+  w.documents.push({ id: 'doc-next', workspace_id: 'ws', subject_entity_id: null, title: 'Daily report', body_md: 'Name | Pulls\nBayview Motors | 2' },
+    { id: 'doc-live', workspace_id: 'ws', subject_entity_id: null, title: 'Live Dealer — today', body_md: '' });
+  w.agent_routine_runs.push(
+    { id: 'r5', workspace_id: 'ws', routine_id: 'job', status: 'ok', started_at: ago(0.1), entity_id: null, document_id: null, step_log: [{ step: 1, type: 'agent', status: 'ok', document_id: 'doc-next' }] },
+    { id: 'r6', workspace_id: 'ws', routine_id: 'job', status: 'awaiting_approval', started_at: ago(0.05), entity_id: null, document_id: 'doc-live', step_log: [] });
+  sb.writes.length = 0;
+  const out = await revboxWorkedAccounts(sb, 'ws', 'owner', 'box', null, { now: NOW });
+  const ids = out.accounts.map(a => a.id);
+  assert.ok(ids.includes('acct-new') && ids.includes('acct-live'), 'both new runs count');
+  assert.deepEqual(sb.writes.map(x => x.patch.state?.accounts_resolved ? 'kept' : '?'), ['kept'], 'only the finished run is kept');
+  assert.ok(w.agent_routine_runs.find(r => r.id === 'r5').state.accounts_resolved.entities.includes('acct-new'));
+  assert.equal(w.agent_routine_runs.find(r => r.id === 'r6').state, undefined);
+});
+
+test('a caller who may not see the box gets the access error, and nothing is read from its documents or kept', async () => {
+  const sb = database(finished(world()));
+  await assert.rejects(revboxWorkedAccounts(sb, 'ws', 'stranger', 'box', null, { now: NOW }), e => e.status === 403);
+  await new Promise(r => setTimeout(r, 20));
+  assert.ok(!sb.reads.includes('documents'), `no document reads: ${sb.reads}`);
+  assert.equal(sb.resolves.length, 0);
+  assert.equal(sb.writes.length, 0);
 });
