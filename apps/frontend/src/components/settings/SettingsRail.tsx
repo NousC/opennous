@@ -1,6 +1,6 @@
 import {
   ChevronLeft, LogOut, User, Bell, Shield, Plug, Users, Webhook, KeyRound, FolderGit2, Slack,
-  Brain, Sparkles, CalendarClock, Building2, Cpu, History, PieChart, Activity, CreditCard, Tags, Wrench, Zap,
+  Brain, Sparkles, CalendarClock, Building2, Cpu, History, PieChart, Activity, CreditCard, Tags, Wrench, Zap, ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,7 @@ const ICONS: Record<string, LucideIcon> = {
   profile: User, notifications: Bell, security: Shield,
   integrations: Plug, "company-sources": Users, webhooks: Webhook, "api-keys": KeyRound, repo: FolderGit2, config: Slack,
   memory: Brain, skills: Sparkles, sequences: CalendarClock,
-  context: Brain, signals: Zap, general: Building2, members: Users, models: Cpu, changes: History, spend: PieChart, adoption: Activity, billing: CreditCard,
+  context: Brain, signals: Zap, general: Building2, members: Users, "activity-log": ScrollText, models: Cpu, changes: History, spend: PieChart, adoption: Activity, billing: CreditCard,
   categories: Tags, admin: Wrench,
 };
 

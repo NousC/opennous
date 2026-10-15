@@ -7,6 +7,7 @@ import { vendorOfModelId, labelOfModelId } from '../../lib/model.mjs';
 import { isSelfHosted, periodStartFor, RETRIEVAL_EVENT_TYPES, backfillWindowsFor } from '../../lib/plans.mjs';
 import { loadTeamUsage } from '../../lib/usageSummary.mjs';
 import { usageByKeyHandler } from './apiKeyUsage.mjs';
+import { activityHandler, activityCallsHandler } from './apiActivity.mjs';
 
 export const usageRouter = Router();
 
@@ -169,6 +170,10 @@ const AGENT_TURN_FEATURES = new Set(['home-agent-turn', 'home-agent-close', 'pla
 // up to the number above them. /credits below stays the model-spend view for Usage.
 // GET /api/usage/by-key?days=30 — calls and credits per API key (GET-623). See apiKeyUsage.mjs.
 usageRouter.get('/by-key', verifySupabaseAuth, usageByKeyHandler);
+// GET /api/usage/activity(?window=) and /activity/calls: Settings > API & MCP activity, admins only
+// (GET-898). See routes/api/apiActivity.mjs.
+usageRouter.get('/activity', verifySupabaseAuth, activityHandler);
+usageRouter.get('/activity/calls', verifySupabaseAuth, activityCallsHandler);
 
 usageRouter.get('/conversations', verifySupabaseAuth, async (req, res) => {
   try {

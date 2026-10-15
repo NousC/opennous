@@ -27,6 +27,11 @@ Grouped by area. Each group has a **start-here** doc; the rest are deep-dives.
   conversations: the controlled GTM taxonomy, the extraction pipeline, what is
   stored per claim, and how claims roll up into patterns across accounts.
 
+- [API & MCP activity](./api-mcp-activity.md) — the Settings page that shows when,
+  how often and about what the workspace's API and MCP were called: what each number
+  means, the endpoints and the SQL aggregate behind it, and what the request log does
+  and does not count.
+
 ## Lifecycle & commercial
 - **[Onboarding, Enrichment & Billing](./onboarding-enrichment-billing.md)** — the
   workspace lifecycle end to end: the single `init` entry point, drafting the ICP

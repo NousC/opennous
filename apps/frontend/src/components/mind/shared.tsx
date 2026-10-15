@@ -114,7 +114,7 @@ export function eventTime(iso: string | null, type?: string): string {
 // aliases so old deep-links (e.g. /settings?section=usage) still resolve.
 export type SettingsTab = "context" | "signals"
   | "profile" | "agent" | "skills" | "appearance" | "preferences" | "sequences" | "memory" | "notifications" | "security" | "privacy"
-  | "general" | "members" | "instance" | "governance" | "data" | "vault-sync" | "categories" | "icp" | "insights" | "adoption" | "reporting" | "agents" | "runs" | "integrations" | "company-sources" | "webhooks" | "repo" | "config" | "api-keys" | "billing"
+  | "general" | "members" | "activity-log" | "instance" | "governance" | "data" | "vault-sync" | "categories" | "icp" | "insights" | "adoption" | "reporting" | "agents" | "runs" | "integrations" | "company-sources" | "webhooks" | "repo" | "config" | "api-keys" | "billing"
   | "agora" | "admin" | "market" | "models" | "changes" | "spend" | "brains"
   // legacy aliases
   | "team" | "usage" | "access-log";

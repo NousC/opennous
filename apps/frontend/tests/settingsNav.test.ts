@@ -15,7 +15,7 @@ test("API plan admin: the board's three groups, billing goes to /usage, no Repo 
   assert.deepEqual(ids(nav), [
     "profile", "notifications", "security",
     "integrations", "company-sources", "webhooks", "api-keys",
-    "general", "members", "billing",
+    "general", "members", "activity-log", "billing",
   ]);
   const billing = nav.find((i) => i.id === "billing")!;
   assert.equal(billing.label, "Usage and billing");
@@ -23,7 +23,7 @@ test("API plan admin: the board's three groups, billing goes to /usage, no Repo 
   // The sidebar holds Personal, Shared, Webhooks and API keys on API, so the rail does not repeat
   // them (GET-857); they stay routable, so /settings?section=integrations still lands on the page.
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
-  assert.deepEqual(rail, ["profile", "notifications", "security", "general", "members", "billing"]);
+  assert.deepEqual(rail, ["profile", "notifications", "security", "general", "members", "activity-log", "billing"]);
   assert.equal(resolveSection("repo", nav), "profile");
   assert.equal(resolveSection("integrations", nav), "integrations");
 });
@@ -119,4 +119,23 @@ test("RevBoxes on: Context and Signals in their own section, after Connections, 
   const off = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
   assert.ok(!ids(off).includes("context") && !ids(off).includes("signals"));
   assert.equal(resolveSection("signals", off), "profile");
+});
+
+test("API & MCP activity: Workspace group, admins on both plans, not self-host; access-log lands there (GET-898)", () => {
+  for (const tier of ["api", "custom"] as const) {
+    const nav = settingsNav({ tier, isWorkspaceAdmin: true, isOwner: false });
+    const row = nav.find((i) => i.id === "activity-log")!;
+    assert.equal(row.label, "API & MCP activity", tier);
+    assert.equal(row.group, "Workspace", tier);
+    assert.ok(!("href" in row), "a Settings page, not a link out");
+    const ws = groupNav(nav).find((g) => g.group === "Workspace")!;
+    assert.ok(ids(ws.items).indexOf("activity-log") === ids(ws.items).indexOf("members") + 1, `${tier}: after Members`);
+    assert.equal(resolveSection("activity-log", nav), "activity-log");
+    assert.equal(resolveSection("access-log", nav), "activity-log", "the old deep link");
+    const member = settingsNav({ tier, isWorkspaceAdmin: false, isOwner: false });
+    assert.ok(!ids(member).includes("activity-log"), `${tier}: members do not see it`);
+    assert.equal(resolveSection("access-log", member), "profile");
+  }
+  const selfHost = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false, selfHosted: true });
+  assert.ok(!ids(selfHost).includes("activity-log"));
 });

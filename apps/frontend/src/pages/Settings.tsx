@@ -26,6 +26,7 @@ import { RepositoriesPane } from "@/components/settings/RepoPane";
 import MarketFocus from "@/pages/MarketFocus";
 import { ContextLibrary } from "@/components/settings/ContextLibrary";
 import { SignalsSettings } from "@/components/settings/SignalsSettings";
+import { ApiActivity } from "@/components/settings/ApiActivity";
 import { activeTeam } from "@/lib/activeTeam";
 import { cloud } from "@/lib/cloud";
 import { cn } from "@/lib/utils";
@@ -1408,6 +1409,8 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {/* Full width, like the other connection pages (GET-668). */}
           {section === "context" && <SectionShell title="Context"><ContextLibrary /></SectionShell>}
           {section === "signals" && <SectionShell title="Signals"><SignalsSettings /></SectionShell>}
+          {/* API & MCP activity (GET-898): when, how often and about what the API and MCP were called. */}
+          {section === "activity-log" && <SectionShell title="API & MCP activity" wide><ApiActivity /></SectionShell>}
           {section === "repo"         && <RepositoriesPane token={token ?? ""} workspaceId={workspaceId} />}
           {/* The Workspace layer's sections (memory, skills, config, models, changes, spend,
               adoption, reporting, insights, categories, agents, runs), each with its own shell. */}

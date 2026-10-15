@@ -83,6 +83,9 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "instance",        label: "Instance setup",        group: "Workspace", show: !!input.selfHosted && isWorkspaceAdmin },
     { id: "general",         label: "General",               group: "Workspace", show: isWorkspaceAdmin },
     { id: "members",         label: "Members",               group: "Workspace", show: isWorkspaceAdmin },
+    // When, how often and about what the workspace's API and MCP were called (GET-898). Admins, both
+    // plans; not self-host, whose Settings keeps only what lives nowhere else (GET-839).
+    { id: "activity-log",    label: "API & MCP activity",    group: "Workspace", show: isWorkspaceAdmin && !selfHosted },
     // Billing IS the Usage page on every plan (GET-660), so the row says so and goes there.
     { id: "billing",         label: "Usage and billing",     group: "Workspace", href: "/usage", show: isWorkspaceAdmin && !selfHosted },
     // Support — the operator's Admin row is the Workspace layer's (cloud/settings/navRows, GET-761).
@@ -100,7 +103,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
 
 /** Old deep links → where the content lives now. */
 export const SECTION_ALIASES: Record<string, string> = {
-  team: "general", usage: "billing", "access-log": "governance",
+  team: "general", usage: "billing", "access-log": "activity-log",
   privacy: "profile", brains: "general", market: "general",
 };
 
