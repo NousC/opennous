@@ -433,3 +433,21 @@ test('a cursor is checked: a time with a comment or quote, or an id that is not 
   assert.throws(() => decodeDatasetCursor(enc({ t: '2026-10-01T00:00:00Z', i: '-'.repeat(36) })), e => e.status === 400);
   assert.throws(() => decodeDatasetCursor(enc({ t: 'nope', i: id })), e => e.status === 400);
 });
+
+// GET-883: a Read table step hands the next AI step a whole quarter of a busy win/loss table
+// (~320 rows of 10 columns), and the table still fits the AI step's material limit.
+test('Read table fits a quarter of a ten-column win/loss table, within the material limit', async () => {
+  const { DATASET_READ_CHARS } = await import('../dist/services/datasetFormats.mjs');
+  const { MATERIAL_CHARS } = await import('../dist/services/automationRun.mjs');
+  const ds = { name: 'Win/loss deals', columns: normalizeDatasetColumns([
+    { label: 'Deal' }, { label: 'Account' }, { label: 'Outcome', type: 'enum', options: ['Won', 'Lost'] }, { label: 'Value (USD)', type: 'number' },
+    { label: 'Close date', type: 'date' }, { label: 'Sales cycle days', type: 'number' }, { label: 'ICP fit', type: 'enum', options: ['Strong', 'Partial', 'Weak'] },
+    { label: 'Reason category' }, { label: 'Primary reason' }, { label: 'Competitor' },
+  ]).columns };
+  const rows = Array.from({ length: 380 }, (_, i) => ({ created_at: '2026-08-15T12:00:00Z', data: {
+    deal: `Brackenridge Motor Group ${i} - Credit Platform`, account: `Brackenridge Motor Group ${i}`, outcome: i % 4 ? 'Lost' : 'Won', value_usd: 11988,
+    close_date: '2026-08-14', sales_cycle_days: 64, icp_fit: 'Partial', reason_category: 'Product fit', primary_reason: 'Needed an integration we do not offer yet', competitor: 'Rivalsoft' } }));
+  const text = datasetRowsTable(ds, rows, { window: 'last_quarter', total: 380 });
+  assert.doesNotMatch(text, /more rows not shown/, `${text.length} characters`);
+  assert.ok(DATASET_READ_CHARS < MATERIAL_CHARS, 'leaves room in the AI step material for the box context');
+});

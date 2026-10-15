@@ -401,6 +401,9 @@ were already `<deal id>:<stage>`.
   (`revbox_visible_accounts`; without it rows about accounts are left out), as a compact table in the step
   data (the next AI step reads it; also `{{steps.<id>.output}}`). It is a Read step: the AI step after it
   writes in the run.
+  The table text is capped at `DATASET_READ_CHARS` (85,000 characters, GET-883: about 410 rows of a
+  ten-column win/loss table, a busy quarter), under the AI step's 100,000-character material limit; past
+  it the table ends with "N more rows not shown".
 - Both stop with words when the routine is not a box job, the key is unset, or the box has no such dataset.
 
 ### API (box access as above; key = the dataset key)

@@ -197,7 +197,12 @@ const WINDOW_WORDS = { last_7_days: 'the last 7 days', last_30_days: 'the last 3
  * a heading line with the count and period, then a pipe table, oldest first so a report reads in
  * order. Capped at `maxChars`; the cut is said, never silent. Pure.
  */
-export function datasetRowsTable(dataset, rows, { window = 'all', range = null, total = null, maxChars = 60_000 } = {}) {
+// How much of a table a Read table step hands the next AI step (GET-883): a quarter of a busy
+// ten-column win/loss table (~410 rows), and still under the AI step's material limit
+// (automationRun MATERIAL_CHARS, 100k) with room for the box context.
+export const DATASET_READ_CHARS = 85_000;
+
+export function datasetRowsTable(dataset, rows, { window = 'all', range = null, total = null, maxChars = DATASET_READ_CHARS } = {}) {
   const cols = dataset?.columns ?? [];
   const cell = (t) => String(t ?? '').replace(/\s*\n\s*/g, ' ').replace(/\|/g, '/').trim();
   const period = range ? `${range.from.slice(0, 10)} to ${new Date(Date.parse(range.to) - 1).toISOString().slice(0, 10)}` : WINDOW_WORDS[window] ?? 'all time';
