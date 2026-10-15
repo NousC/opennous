@@ -6,7 +6,7 @@ import { Router } from 'express';
 import {
   getSupabaseClient, listDocuments, getDocument,
   listRevboxes, createRevbox, patchRevbox, loadRevbox, revboxDetails,
-  listContextLibrary, loadContextFile, createContextFile, updateContextFile, deleteContextFile,
+  listContextLibrary, loadContextFile, createContextFile, updateContextFile, deleteContextFile, validateContextFile,
   setRevboxMember, addRevboxContext, removeRevboxContext, saveRevboxJob,
   revboxWorkspaceMembers, revboxAccountCatalog, revboxScopedGraph, revboxAccountOverview,
   reprocessCustomSignal, loadRevboxRunForEdit, revboxRunCosts, REQUESTED_USD_PER_CREDIT, setRevboxWebhookKey, listCustomSignals, saveCustomSignal, approveRevboxRun, enableRevboxJob, revboxNextRunAt, loadRevboxJob, queueRevboxRun, listRevboxRuns, revboxDeliveries,
@@ -24,7 +24,7 @@ import { planName } from '../../lib/plans.mjs';
 import { automationLimitHit } from './automations.mjs';
 import { FLOW_TRIGGERS, checkFlow } from '../../lib/flows.mjs';
 import { creditsForRuns } from '../../lib/automationCredits.mjs';
-import { icpScoringFromFile, mirrorIcpFile } from '../../lib/icpContextFile.mjs';
+import { markIcpFile, mirrorIcpFile } from '../../lib/icpContextFile.mjs';
 
 // A RevBox job on the workflow engine (GET-868) reads its box's references as its owner, and posts to
 // the box's webhooks through the SSRF guard. The engine lives in core, so the API hands it both.
@@ -118,7 +118,7 @@ function route(fn) {
     } catch (e) {
       if (e.code === '42P01' || e.code === 'PGRST205' || /revbox.*schema cache/i.test(e.message ?? '') || ((e.code === '42703' || e.code === 'PGRST204') && /revbox_id|builtin_jobs/.test(e.message ?? ''))) return res.status(409).json({ error: 'The RevBox database migration has not been applied.' });
       if (!e.status) console.error('[revboxes]', e);
-      res.status(e.status ?? 500).json({ error: e.status ? e.message : 'Could not save or load the RevBox.' });
+      res.status(e.status ?? 500).json({ error: e.status ? e.message : 'Could not save or load the RevBox.', ...(e.status && e.reply ? e.reply : {}) });
     }
   };
 }
@@ -178,26 +178,37 @@ revboxesRouter.get('/context-library', route(async (req, res, sb) => {
   res.json({ ...library, files: await withDocumentBodies(sb, req, library.files), icp_file_id: icp?.id ?? null });
 }));
 revboxesRouter.post('/context-files', route(async (req, res, sb) => {
-  let body = req.body ?? {};
+  const { confirm_scorer_switch: confirm, ...input } = req.body ?? {};
+  let body = input;
   if (Array.isArray(body.revbox_ids) && body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
   if (body.document_id) { const doc = await accessibleDocument(sb, req, body.document_id); body = { ...body, document_id: doc.id, title: body.title || doc.title, body: '' }; }
-  const file = await createContextFile(sb, req.workspaceId, req.internalUserId, body);
-  // Marked ICP on creation: build the first scorecard if there is none (never a silent re-score).
-  // The workspace ICP (foundation, ICP note) follows the file, then scoring is built if there is none.
-  const icp = file.kind === 'icp' ? { ...(await icpScoringFromFile(sb, req.workspaceId)), foundation: (await mirrorIcpFile(sb, req.workspaceId)).status } : null;
-  res.status(201).json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), ...(icp ? { icp } : {}) });
+  const create = () => createContextFile(sb, req.workspaceId, req.internalUserId, body);
+  if (body.kind !== 'icp') return res.status(201).json({ file: await readableContextFile(await create(), id => accessibleDocument(sb, req, id)) });
+  // Marked ICP on creation (GET-878): on an 'external' workspace this is confirmed first (409, nothing
+  // written), then Nous scores from the file. Otherwise the first scorecard if there is none.
+  const error = validateContextFile(body); if (error) invalid(error);
+  const { result: file, icp } = await markIcpFile(sb, req.workspaceId, { confirm: confirm === true, admin: !req.workspaceRole || ['owner', 'admin'].includes(req.workspaceRole) }, create);
+  res.status(201).json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), icp });
 }));
+/** Does this PATCH mark the file ICP (it was not)? Unmarking or editing never switches the scorer. */
+export const icpMarking = (body, before) => body?.kind === 'icp' && before?.kind !== 'icp';
 revboxesRouter.patch('/context-files/:fileId', route(async (req, res, sb) => {
-  if (Array.isArray(req.body?.revbox_ids) && req.body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
+  const { confirm_scorer_switch: confirm, ...body } = req.body ?? {};
+  if (Array.isArray(body.revbox_ids) && body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
   const before = await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId);
   await contextFileDocumentGate(before.file, id => accessibleDocument(sb, req, id));
-  const file = await updateContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId, req.body ?? {});
-  // Marked now, or the ICP file's text changed: the workspace ICP follows it (unmarking leaves the
-  // last text). Only a fresh mark builds scoring when the workspace has none; never a re-score.
+  const update = () => updateContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId, body);
+  if (icpMarking(body, before.file)) {
+    // Marked now (GET-878): confirmed first on an 'external' workspace, then Nous scores from it.
+    const error = validateContextFile(body, { partial: true }); if (error) invalid(error);
+    const { result: file, icp } = await markIcpFile(sb, req.workspaceId, { confirm: confirm === true, admin: ['owner', 'admin'].includes(before.role) }, update);
+    return res.json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), icp });
+  }
+  const file = await update();
+  // The ICP file's text changed: the workspace ICP follows it, never a re-score. Unmarking leaves
+  // the last text and the scorer setting as they are.
   const foundation = file.kind === 'icp' ? (await mirrorIcpFile(sb, req.workspaceId)).status : null;
-  const icp = file.kind === 'icp' && before.file.kind !== 'icp' ? { ...(await icpScoringFromFile(sb, req.workspaceId)), foundation }
-    : foundation ? { status: 'saved', foundation } : null;
-  res.json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), ...(icp ? { icp } : {}) });
+  res.json({ file: await readableContextFile(file, id => accessibleDocument(sb, req, id)), ...(foundation ? { icp: { status: 'saved', foundation } } : {}) });
 }));
 revboxesRouter.delete('/context-files/:fileId', route(async (req, res, sb) => {
   await contextFileDocumentGate((await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId)).file, id => accessibleDocument(sb, req, id));
@@ -209,8 +220,9 @@ revboxesRouter.post('/context-files/:fileId/icp-rebuild', route(async (req, res,
   await contextFileDocumentGate(file, id => accessibleDocument(sb, req, id));
   if (!['owner', 'admin'].includes(role)) invalid('Only a workspace owner or admin can rebuild ICP scoring.', 403);
   if (file.kind !== 'icp') invalid('Mark this file as the ICP first.');
-  const foundation = (await mirrorIcpFile(sb, req.workspaceId)).status;
-  res.json({ icp: { ...(await icpScoringFromFile(sb, req.workspaceId, { rebuild: true })), foundation } });
+  // On an 'external' workspace this never answers external_scorer: confirm, switch, rebuild (GET-878).
+  const { icp } = await markIcpFile(sb, req.workspaceId, { rebuild: true, confirm: req.body?.confirm_scorer_switch === true });
+  res.json({ icp });
 }));
 revboxesRouter.get('/signals',route(async(req,res,sb)=>res.json({signals:await listCustomSignals(sb,req.workspaceId,req.internalUserId)})));
 revboxesRouter.post('/signals',route(async(req,res,sb)=>res.status(201).json({signal:await saveCustomSignal(sb,req.workspaceId,req.internalUserId,req.body)})));

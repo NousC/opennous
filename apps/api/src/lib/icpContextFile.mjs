@@ -9,7 +9,15 @@
 //     from the file (force: true). New accounts score against it at once; existing open scores move
 //     when their account changes, or on the nightly scorecard loop for workspaces it runs for.
 // On an open-source build there is no learned model; the file is kept and the answer says so.
-import { workspaceIcpContext } from '@nous/core';
+//
+// Who scores (GET-878, decided 2026-10-14): a workspace with a marked ICP file is scored by Nous from
+// it (workspaces.icp_scorer = 'nous'); External applies only when there is no ICP file. Marking a
+// file (or rebuilding from it) on a workspace whose scorer is 'external' is confirmed first
+// (markIcpFile: 409 icp_scorer_switch_required, nothing written), then switches the workspace to
+// 'nous' and builds the scorecard from the file (force: the old scorecard was not in use). Scores
+// already posted from outside (ext:) stay until they resolve. Unmarking never switches back; going
+// to External is the separate PUT /v2/icp/scorer. An open-source build never switches.
+import { workspaceIcpContext, getIcpScorer, setIcpScorer } from '@nous/core';
 import { learnedIcpModel } from './icpScorer.mjs';
 import { writeIcp } from './icp.mjs';
 
@@ -44,7 +52,7 @@ export async function mirrorIcpFile(sb, ws, { icp = workspaceIcpContext, write =
  */
 export async function icpScoringFromFile(sb, ws, { rebuild = false, model = undefined } = {}) {
   const m = model === undefined ? await learnedIcpModel() : model;
-  if (!m?.seedScorecardFromMemory) return { status: 'not_available' };
+  if (!m?.seedScorecardFromMemory) return { status: 'not_available', message: ICP_NOT_AVAILABLE_MESSAGE };
   try {
     const out = await m.seedScorecardFromMemory(sb, ws, { force: !!rebuild });
     return { status: out?.status ?? 'build_failed', signals: Array.isArray(out?.signals) ? out.signals.length : 0 };
@@ -52,4 +60,33 @@ export async function icpScoringFromFile(sb, ws, { rebuild = false, model = unde
     console.error('[icp-context-file] scorecard build failed:', e?.message || e);
     return { status: 'build_failed' };
   }
+}
+
+export const ICP_SCORER_SWITCH_CODE = 'icp_scorer_switch_required';
+export const ICP_SCORER_SWITCH_MESSAGE = "Nous will score this workspace's accounts from this file from now on. Scores already posted from outside stay until they resolve.";
+export const ICP_NOT_AVAILABLE_MESSAGE = "The file is saved. Nous's learned ICP scorer is available on Nous Cloud only, so this workspace scores its own accounts: post them to POST /v2/scores.";
+
+/**
+ * Mark a file ICP, or rebuild scoring from the ICP file, with the scorer switch (GET-878).
+ * `write` does the marking (createContextFile / updateContextFile; a no-op for a rebuild) and runs
+ * only after the confirmation check, so a refused request writes nothing. `admin`: the caller is a
+ * workspace owner/admin; anyone else is not asked to confirm and `write` refuses them.
+ *   - scorer 'external' (with a learned scorer) and no `confirm`: 409 { code: icp_scorer_switch_required }.
+ *   - 'external' with `confirm`: write, setIcpScorer('nous'), mirror, scorecard from the file (force).
+ *   - 'nous': write, mirror, scorecard (force only for a rebuild): today's behaviour.
+ *   - no learned scorer (open-source): write, mirror, { status: 'not_available', message }; no switch.
+ * -> { result: <write's result>, icp: { status, signals?, message?, foundation, scorer_switched? } }
+ */
+export async function markIcpFile(sb, ws, { confirm = false, rebuild = false, admin = true } = {}, write = async () => null, deps = {}) {
+  const model = deps.model === undefined ? await learnedIcpModel() : deps.model;
+  const { scorer = getIcpScorer, setScorer = setIcpScorer, mirror = mirrorIcpFile } = deps;
+  const switching = admin && !!model?.seedScorecardFromMemory && (await scorer(sb, ws)) === 'external';
+  if (switching && !confirm) {
+    throw Object.assign(new Error(ICP_SCORER_SWITCH_MESSAGE), { status: 409, reply: { code: ICP_SCORER_SWITCH_CODE, scorer: 'external' } });
+  }
+  const result = await write();
+  if (switching) await setScorer(sb, ws, 'nous');
+  const foundation = (await mirror(sb, ws)).status;
+  const scoring = await icpScoringFromFile(sb, ws, { rebuild: rebuild || switching, model });
+  return { result, icp: { ...scoring, foundation, ...(switching ? { scorer: 'nous', scorer_switched: true } : {}) } };
 }

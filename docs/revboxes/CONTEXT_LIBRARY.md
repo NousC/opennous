@@ -75,7 +75,22 @@ ICP scoring for a `nous` workspace is the learned scorecard (`scorecard_signals`
   - Nothing re-scores the whole workspace the moment you click.
 - **Editing the text of the ICP file** changes what the *next* build reads. It does not rebuild by itself.
 
-On an open-source build there is no learned scorer. The file is kept, and the answer is `not_available`.
+On an open-source build there is no learned scorer. The file is kept, and the answer is `not_available` with a `message` that says so. It never switches the scorer.
+
+### An ICP file means Nous scores (GET-878)
+
+Rule (2026-10-14): when a workspace has an ICP file marked in Settings > Context, Nous scores its accounts from it (`workspaces.icp_scorer = 'nous'`). External scoring applies only when there is no ICP file.
+
+`markIcpFile` (`apps/api/src/lib/icpContextFile.mjs`) runs marking (POST with `kind: 'icp'`, PATCH to `kind: 'icp'`) and the rebuild:
+
+- **Workspace scorer is `external`** (`getIcpScorer`, so a plan default counts too) and the caller is an owner or admin:
+  - Without `confirm_scorer_switch: true` the API answers **409** `{ error, code: 'icp_scorer_switch_required', scorer: 'external' }` with the message "Nous will score this workspace's accounts from this file from now on. Scores already posted from outside stay until they resolve." Nothing is written: no file is created or marked, nothing is mirrored and nothing is built.
+  - With it: the file is marked, `setIcpScorer(sb, ws, 'nous')`, `mirrorIcpFile`, then the scorecard is built from the file with `force: true` (the old scorecard was not in use). The answer's `icp` carries `scorer: 'nous', scorer_switched: true`.
+  - The rebuild never silently answers `external_scorer` any more: it takes the same confirm, switch and rebuild.
+- **Already `nous`:** unchanged. A mark builds with `force: false`, a rebuild with `force: true`.
+- **A member who is not an owner or admin** is not asked to confirm. The write refuses them with 403, as before.
+- **Unmarking does not switch back.** Going to External stays the separate `PUT /v2/icp/scorer`.
+- Scores already posted from outside (`ext:` model versions) stay until they resolve. Re-scoring is unchanged.
 
 ### The workspace ICP follows the file
 
@@ -110,10 +125,12 @@ All routes live under `/api/revboxes` (`apps/api/src/routes/api/revboxes.mjs`).
 | Route | What it does |
 |---|---|
 | `GET /context-library` | Returns `{ files, boxes, is_admin, icp_file_id }`. `files` are the files the viewer can see, each with its `boxes` chips, `hidden_boxes` and `can_edit`. |
-| `POST /context-files` | Takes `{ title, body \| document_id, kind?, visibility?, revbox_ids? }`. |
-| `PATCH /context-files/:id` | Takes any of `{ title, body, kind, visibility, revbox_ids }`. `revbox_ids` is the full tag set among the boxes the viewer can see. |
+| `POST /context-files` | Takes `{ title, body \| document_id, kind?, visibility?, revbox_ids?, confirm_scorer_switch? }`. |
+| `PATCH /context-files/:id` | Takes any of `{ title, body, kind, visibility, revbox_ids, confirm_scorer_switch }`. `revbox_ids` is the full tag set among the boxes the viewer can see. |
 | `DELETE /context-files/:id` | Deletes the file. |
-| `POST /context-files/:id/icp-rebuild` | The explicit rebuild described above. |
+| `POST /context-files/:id/icp-rebuild` | The explicit rebuild described above. Takes `{ confirm_scorer_switch? }`. |
+
+Marking or rebuilding on an `external` workspace without `confirm_scorer_switch: true` answers 409 `icp_scorer_switch_required` (see GET-878 above).
 | `POST /:boxId/context` | `{ title, body }` or `{ document_id }` creates a library file tagged to the box. `{ file_id }` tags an existing file. |
 | `DELETE /:boxId/context/:fileId` | Untags the file from the box. The file stays in the library. |
 
@@ -123,5 +140,6 @@ All routes live under `/api/revboxes` (`apps/api/src/routes/api/revboxes.mjs`).
   - One "Library" card with Upload and Add knowledge.
   - Each file shows its title, a kind badge (ICP, Instructions or Reference), its box chips and who can see it.
   - Expanding a file shows its text plus Edit (title, text, kind, sharing, tags), Mark as ICP, Rebuild ICP scoring and Delete.
+  - When the API answers `icp_scorer_switch_required`, a small dialog shows its message with "Use this file for scoring" and "Cancel". Confirming sends the same request again with `confirm_scorer_switch: true`. The outcome is shown plainly after, e.g. "Scoring rebuilt from this file: 20 signals".
 - **The box page** (`RevBoxes.tsx`): "Add from your library" lists library files not yet tagged to the box. It sits above the documents list. Upload still creates a library file tagged to the box.
-- **Preview** (`apps/frontend/preview/revboxes.mjs`): seeds the ICP file tagged to two boxes ("Closed won/lost analysis" and "Customer onboarding") and a workspace "Email voice" instructions file.
+- **Preview** (`apps/frontend/preview/revboxes.mjs`): seeds the ICP file tagged to two boxes ("Closed won/lost analysis" and "Customer onboarding") and a workspace "Email voice" instructions file. The preview workspace starts on the `external` scorer (`icp_scorer` in the store), so Mark as ICP and Rebuild ask first; confirming switches it to `nous`.

@@ -3,6 +3,9 @@
 // One file can be the workspace's ICP: ICP scoring builds its scorecard from it. Built from the
 // settings kit like General and Members; Settings.tsx wraps it in SectionShell. Below the library,
 // each box's own instruction blocks, as before (they are edited on the box).
+// Marking a file ICP (or rebuilding from it) on a workspace that scores its own accounts asks first
+// (GET-878): the API answers icp_scorer_switch_required, a small dialog confirms, and the request is
+// sent again with confirm_scorer_switch; Nous then scores the workspace from the file.
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -16,16 +19,28 @@ import { revboxesRequest, CONTEXT_KIND_LABEL, type ContextLibraryData, type Libr
 
 type Draft = { id: string | null; title: string; body: string; kind: 'reference' | 'instructions'; icp: boolean; shared: boolean; boxes: string[]; document: boolean };
 const empty: Draft = { id: null, title: '', body: '', kind: 'reference', icp: false, shared: false, boxes: [], document: false };
+type IcpOutcome = { status: string; signals?: number; message?: string; scorer_switched?: boolean };
+type IcpReply = { icp?: IcpOutcome };
+const ICP_SWITCH = 'icp_scorer_switch_required';
 const ICP_NOTE: Record<string, string> = {
   created: 'ICP scoring was built from this file.',
   exists: 'Saved as the workspace ICP. Current scores stay until you rebuild ICP scoring from this file.',
   saved: 'Saved. The workspace ICP now reads this text; rebuild ICP scoring to score with it.',
   no_icp_memory: 'Saved. Add text to this file to score from it.',
-  not_available: 'Saved. ICP scoring is not available on this plan.',
+  not_available: 'Saved. ICP scoring is not available on this build.',
   external_scorer: 'Saved. This workspace scores accounts with its own model.',
   translation_failed: 'Saved, but the scoring rules could not be built from this text. Try clearer criteria.',
   build_failed: 'Saved, but rebuilding ICP scoring failed. Try again.',
 };
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** The plain outcome of marking or rebuilding, e.g. "Scoring rebuilt from this file: 20 signals". */
+function icpOutcome(icp: IcpOutcome, rebuilt: boolean): string {
+  if (icp.status === 'created') {
+    const built = `${rebuilt || icp.scorer_switched ? 'Scoring rebuilt' : 'ICP scoring built'} from this file: ${plural(icp.signals ?? 0, 'signal')}.`;
+    return icp.scorer_switched ? `Nous now scores this workspace's accounts from this file. ${built}` : built;
+  }
+  return icp.message ?? ICP_NOTE[icp.status] ?? 'Saved.';
+}
 
 export function ContextLibrary() {
   const { session, userData } = useAuth();
@@ -36,28 +51,39 @@ export function ContextLibrary() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
+  const [switchAsk, setSwitchAsk] = useState<{ text: string; confirm: () => void } | null>(null);
   const uploader = useRef<HTMLInputElement>(null);
   const key = ['revbox-context-library', ws];
   const query = useQuery({ queryKey: key, enabled: !!ws && !!token, queryFn: () => revboxesRequest<ContextLibraryData>(ws, token, '/context-library') });
   const data = query.data;
   const taggable = (data?.boxes ?? []).filter(b => b.access !== 'viewer');
 
-  async function call<T>(path: string, method: string, body?: unknown): Promise<T | null> {
+  async function call<T>(path: string, method: string, body?: unknown, onSwitch?: (text: string) => void): Promise<T | null> {
     setBusy(true); setNote(null);
     try {
       const out = await revboxesRequest<T>(ws, token, path, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
       await Promise.all([cache.invalidateQueries({ queryKey: key }), cache.invalidateQueries({ queryKey: ['revbox', ws] })]);
       return out;
-    } catch (e) { setNote({ text: (e as Error).message, error: true }); return null; } finally { setBusy(false); }
+    } catch (e) {
+      if (onSwitch && (e as { code?: string }).code === ICP_SWITCH) onSwitch((e as Error).message);
+      else setNote({ text: (e as Error).message, error: true });
+      return null;
+    } finally { setBusy(false); }
   }
-  const icpNote = (out: { icp?: { status: string } } | null) => { if (out?.icp) setNote({ text: ICP_NOTE[out.icp.status] ?? 'Saved.' }); };
+  /** Mark or rebuild: asks before Nous takes over scoring from an external scorer, then retries confirmed. */
+  async function icpCall<T extends IcpReply>(path: string, method: string, body: Record<string, unknown> | undefined, opts: { rebuilt?: boolean; done?: (out: T) => void } = {}, confirmed = false): Promise<void> {
+    const out = await call<T>(path, method, confirmed ? { ...(body ?? {}), confirm_scorer_switch: true } : body,
+      confirmed ? undefined : text => setSwitchAsk({ text, confirm: () => void icpCall(path, method, body, opts, true) }));
+    if (!out) return;
+    opts.done?.(out);
+    if (out.icp) setNote({ text: icpOutcome(out.icp, !!opts.rebuilt) });
+  }
 
   async function save() {
     if (!draft) return;
     const payload = { title: draft.title, ...(draft.document ? {} : { body: draft.body }), kind: draft.icp ? 'icp' : draft.kind, ...(draft.icp ? {} : { visibility: draft.shared ? 'workspace' : 'boxes' }), revbox_ids: draft.boxes };
-    const out = draft.id ? await call<{ file: LibraryFile; icp?: { status: string } }>(`/context-files/${draft.id}`, 'PATCH', payload)
-      : await call<{ file: LibraryFile; icp?: { status: string } }>('/context-files', 'POST', payload);
-    if (out) { setDraft(null); setOpen(out.file.id); icpNote(out); }
+    await icpCall<{ file: LibraryFile } & IcpReply>(draft.id ? `/context-files/${draft.id}` : '/context-files', draft.id ? 'PATCH' : 'POST', payload,
+      { done: out => { setDraft(null); setOpen(out.file.id); } });
   }
   async function upload(file: File | undefined) {
     if (!file) return;
@@ -96,9 +122,9 @@ export function ContextLibrary() {
           <p className="max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-ink-2">{f.body || 'No content added yet.'}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {f.can_edit && <Button size="sm" variant="outline" disabled={busy} onClick={() => edit(f)}>Edit</Button>}
-            {data.is_admin && f.kind !== 'icp' && <Button size="sm" variant="outline" disabled={busy || (!!data.icp_file_id && data.icp_file_id !== f.id)} title={data.icp_file_id ? 'Unmark the current ICP file first.' : undefined} onClick={() => void call<{ icp?: { status: string } }>(`/context-files/${f.id}`, 'PATCH', { kind: 'icp' }).then(icpNote)}>Mark as ICP</Button>}
+            {data.is_admin && f.kind !== 'icp' && <Button size="sm" variant="outline" disabled={busy || (!!data.icp_file_id && data.icp_file_id !== f.id)} title={data.icp_file_id ? 'Unmark the current ICP file first.' : undefined} onClick={() => void icpCall<IcpReply>(`/context-files/${f.id}`, 'PATCH', { kind: 'icp' })}>Mark as ICP</Button>}
             {data.is_admin && f.kind === 'icp' && <>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void call<{ icp: { status: string } }>(`/context-files/${f.id}/icp-rebuild`, 'POST').then(icpNote)}>Rebuild ICP scoring from this file</Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => void icpCall<IcpReply>(`/context-files/${f.id}/icp-rebuild`, 'POST', undefined, { rebuilt: true })}>Rebuild ICP scoring from this file</Button>
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => void call(`/context-files/${f.id}`, 'PATCH', { kind: 'reference' })}>Unmark ICP</Button>
             </>}
             {f.can_edit && <Button size="sm" variant="ghost" className="text-risk" disabled={busy} onClick={() => { if (window.confirm(`Delete "${f.title}" from every RevBox?`)) void call(`/context-files/${f.id}`, 'DELETE'); }}>Delete</Button>}
@@ -138,6 +164,15 @@ export function ContextLibrary() {
           </fieldset>
           <div className="flex justify-end gap-2 pt-1"><Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{draft.id ? 'Save' : 'Add'}</Button></div>
         </div>}
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={!!switchAsk} onOpenChange={o => { if (!o) setSwitchAsk(null); }}>
+      <DialogContent className="gap-0 sm:max-w-[420px]">
+        <DialogHeader><DialogTitle className="text-[16px] font-medium">Score accounts from this file?</DialogTitle>
+          <DialogDescription className="mt-1 text-[12.5px] leading-relaxed">{switchAsk?.text}</DialogDescription></DialogHeader>
+        <div className="flex justify-end gap-2 pt-5"><Button variant="ghost" onClick={() => setSwitchAsk(null)}>Cancel</Button>
+          <Button disabled={busy} onClick={() => { const go = switchAsk?.confirm; setSwitchAsk(null); go?.(); }}>Use this file for scoring</Button></div>
       </DialogContent>
     </Dialog>
   </>;

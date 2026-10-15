@@ -97,7 +97,8 @@ export async function revboxesRequest<T>(workspaceId: string, token: string, pat
     ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await freshAccessToken() ?? token}`, ...(PREVIEW ? { 'X-Preview-User': localStorage.getItem('nous.preview.role') === 'member' ? 'u2' : 'u1' } : {}), ...init.headers },
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status}).`);
+  // status and code ride along so a caller can act on a specific refusal (GET-878: icp_scorer_switch_required).
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `Request failed (${res.status}).`), { status: res.status, code: typeof body.code === 'string' ? body.code : undefined });
   return body;
 }
 

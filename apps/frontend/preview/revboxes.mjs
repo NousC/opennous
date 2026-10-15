@@ -161,6 +161,10 @@ if (!state.seeded.context_library) {
   state.files.push({ id: randomUUID(), title: 'Email voice', kind: 'instructions', body: 'Plain, short sentences. One ask per email. No exclamation marks.', document_id: null, visibility: 'workspace', created_by: 'u1', created_at: stamp(), updated_at: stamp(), icp_marked_at: null });
   state.seeded.context_library = true;
 }
+// Who scores the preview workspace (GET-878): it starts on 'external' (its own model), so Mark as
+// ICP and Rebuild ask first; confirming switches it to 'nous'. `icp_scorer` in the store resets it.
+state.icp_scorer ??= 'external';
+const ICP_SWITCH_MESSAGE = "Nous will score this workspace's accounts from this file from now on. Scores already posted from outside stay until they resolve.";
 const boxFiles = (boxId) => state.links.filter(l => l.revbox_id === boxId).map(l => state.files.find(f => f.id === l.file_id)).filter(Boolean)
   .map(f => ({ id: f.id, title: f.title, body: f.body, document_id: f.document_id, kind: f.kind, visibility: f.visibility }));
 /** Settings > Context and its edits, as the API's library routes (core contextLibrary.mjs). */
@@ -181,6 +185,17 @@ async function libraryPreview(req, json, parts, payload, uid) {
     if (on && state.files.some(x => x.kind === 'icp' && x.id !== f.id)) fail(409, 'This workspace already has an ICP file. Unmark it first.');
     Object.assign(f, on ? { kind: 'icp', visibility_before_icp: f.visibility, visibility: 'workspace', icp_marked_at: stamp() } : { kind: 'reference', visibility: f.visibility_before_icp ?? f.visibility, visibility_before_icp: null, icp_marked_at: null });
   };
+  // As markIcpFile (api lib/icpContextFile.mjs): on 'external', confirm first (409, nothing written),
+  // then switch to 'nous' and build from the file (force).
+  const scorerGate = () => {
+    if (!admin || state.icp_scorer !== 'external') return false;
+    if (payload.confirm_scorer_switch !== true) throw Object.assign(new Error(ICP_SWITCH_MESSAGE), { status: 409, code: 'icp_scorer_switch_required' });
+    return true;
+  };
+  const scoring = (switching, rebuild) => {
+    if (switching) state.icp_scorer = 'nous';
+    return switching || rebuild ? { status: 'created', signals: 20, foundation: 'mirrored', ...(switching ? { scorer: 'nous', scorer_switched: true } : {}) } : { status: 'exists', signals: 6, foundation: 'mirrored' };
+  };
   if (parts[0] === 'context-library') {
     const files = state.files.filter(visible).sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).map(out);
     return json({ files, icp_file_id: files.find(f => f.kind === 'icp')?.id ?? null, is_admin: admin, boxes: state.boxes.filter(b => access.has(b.id)).map(b => ({ id: b.id, name: b.name, shared: b.shared, access: access.get(b.id), blocks: b.blocks })) });
@@ -189,14 +204,17 @@ async function libraryPreview(req, json, parts, payload, uid) {
   if (parts[1] && !file) fail(404, 'Context file not found.');
   if (req.method === 'POST' && !parts[1]) {
     if (!payload.title?.trim()) fail(400, 'Give the file a title of up to 200 characters.');
+    const switching = payload.kind === 'icp' ? scorerGate() : false;
     const f = { id: randomUUID(), title: payload.title.trim(), kind: payload.kind === 'instructions' ? 'instructions' : 'reference', body: payload.body ?? '', document_id: null, visibility: payload.visibility === 'workspace' ? 'workspace' : 'boxes', created_by: uid, created_at: stamp(), updated_at: stamp(), icp_marked_at: null };
     state.files.push(f); retag(f, payload.revbox_ids ?? []);
     if (payload.kind === 'icp') markIcp(f, true);
-    await persist(); return json({ file: out(f), ...(f.kind === 'icp' ? { icp: { status: 'exists', signals: 6 } } : {}) }, 201);
+    const icp = f.kind === 'icp' ? scoring(switching, false) : null;
+    await persist(); return json({ file: out(f), ...(icp ? { icp } : {}) }, 201);
   }
-  if (req.method === 'POST' && parts[2] === 'icp-rebuild') { if (!admin) fail(403, 'Only a workspace owner or admin can rebuild ICP scoring.'); if (file.kind !== 'icp') fail(400, 'Mark this file as the ICP first.'); return json({ icp: { status: 'created', signals: 7 } }); }
+  if (req.method === 'POST' && parts[2] === 'icp-rebuild') { if (!admin) fail(403, 'Only a workspace owner or admin can rebuild ICP scoring.'); if (file.kind !== 'icp') fail(400, 'Mark this file as the ICP first.'); const icp = scoring(scorerGate(), true); await persist(); return json({ icp }); }
   if (req.method === 'PATCH') {
     const wasIcp = file.kind === 'icp';
+    const switching = payload.kind === 'icp' && !wasIcp ? scorerGate() : false;
     if (['title', 'body', 'visibility'].some(k => k in payload) && !editable(file)) fail(403, 'You cannot change this file.');
     if ('kind' in payload && (payload.kind === 'icp') !== wasIcp) markIcp(file, payload.kind === 'icp');
     if ('kind' in payload && payload.kind !== 'icp') file.kind = payload.kind;
@@ -205,7 +223,7 @@ async function libraryPreview(req, json, parts, payload, uid) {
     if ('visibility' in payload && file.kind !== 'icp') file.visibility = payload.visibility;
     if (Array.isArray(payload.revbox_ids)) retag(file, payload.revbox_ids);
     file.updated_at = stamp(); await persist();
-    return json({ file: out(file), ...(!wasIcp && file.kind === 'icp' ? { icp: { status: 'exists', signals: 6 } } : {}) });
+    return json({ file: out(file), ...(!wasIcp && file.kind === 'icp' ? { icp: scoring(switching, false) } : {}) });
   }
   if (req.method === 'DELETE') {
     if (file.kind === 'icp' ? !admin : (file.created_by !== uid && !admin)) fail(403, 'Only the person who added this file or a workspace admin can delete it.');
@@ -507,7 +525,7 @@ export async function handleRevboxPreview(req, res, url, json) {
     } else fail(404, 'Not found.');
     if (req.method !== 'GET' && parts[1] !== 'plan') { box.updated_at = stamp(); await persist(); }
     json(res, output);
-  } catch (e) { json(res, { error: e.message }, e.status ?? 500); }
+  } catch (e) { json(res, { error: e.message, ...(e.code ? { code: e.code } : {}) }, e.status ?? 500); }
   return true;
 }
 
