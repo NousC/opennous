@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { slackMessage } from '../services/eventText.mjs';
 
 // Webhook delivery log (GET-624). One row per HTTP attempt Nous makes against a customer's
 // outbound webhook (a trigger_subscriptions row), retries included, so the Webhooks page can
@@ -229,6 +230,53 @@ export async function sendGithubDispatch(p: GithubSendParams): Promise<SendResul
   }
 }
 
+// ── The Slack send (GET-941) ────────────────────────────────────────────────
+//
+// A webhook can post to a Slack channel through an incoming webhook: the event as a short message
+// (what happened, on which account, the quote, the deal) instead of the JSON. Same outbox, retries
+// and delivery log as a URL. Slack answers 200 "ok", or 4xx for a webhook that is gone.
+
+export interface SlackSendParams {
+  url: string;
+  eventType: string;
+  payload: Record<string, unknown> | null | undefined;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+/** POST one message to a Slack incoming webhook. Never throws; the same result shape as a URL send. */
+export async function sendSlackMessage(p: SlackSendParams): Promise<SendResult> {
+  const doFetch = p.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), p.timeoutMs ?? DELIVERY_TIMEOUT_MS);
+  const started = Date.now();
+  try {
+    const res = await doFetch(p.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'Nous-Triggers/1.0' },
+      body: JSON.stringify(slackMessage(p.eventType, p.payload)),
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    const duration_ms = Date.now() - started;
+    discardBody(res);
+    if (res.status >= 200 && res.status < 300) return { ok: true, status_code: res.status, error: null, duration_ms, permanent: false };
+    // 403/404/410: the webhook was revoked or the channel archived. 429: Slack's rate limit, retried.
+    const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+    const hint = res.status === 404 || res.status === 410 ? ' (Slack webhook removed)' : res.status === 403 ? ' (Slack refused: channel archived or app removed)' : '';
+    return { ok: false, status_code: res.status, error: (statusReason(res.status, res.statusText) + hint).slice(0, DELIVERY_REASON_MAX), duration_ms, permanent };
+  } catch (err) {
+    const e = err as { name?: string; message?: string };
+    return {
+      ok: false, status_code: null,
+      error: e?.name === 'AbortError' ? 'timeout' : String(e?.message ?? 'network_error').slice(0, DELIVERY_ERROR_MAX),
+      duration_ms: Date.now() - started, permanent: false,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── One send for every path ─────────────────────────────────────────────────
 
 /** The subscription columns a send needs. github_token_enc is read here and nowhere else. */
@@ -266,6 +314,9 @@ export async function deliverToSubscription(
     });
   }
   if (!sub.url) return { ok: false, status_code: null, error: 'webhook has no URL', duration_ms: 0, permanent: true };
+  if (sub.destination_type === 'slack') {
+    return sendSlackMessage({ url: sub.url, eventType: p.eventType, payload: p.payload, timeoutMs: p.timeoutMs, fetchImpl: p.fetchImpl });
+  }
   return sendSignedDelivery({
     url: sub.url, secret: sub.signing_secret, eventType: p.eventType, eventId: p.eventId, payload: p.payload,
     timeoutMs: p.timeoutMs, fetchImpl: p.fetchImpl,

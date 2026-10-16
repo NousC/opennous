@@ -1,8 +1,8 @@
 // The "add an outbound webhook" dialog (a trigger_subscriptions row via POST /api/triggers).
 // Shared by the Webhooks page (GET-632, "Add endpoint") and the headless Triggers page.
 import { useEffect, useMemo, useState } from "react";
-import { Briefcase, Calendar, Check, Gauge, Github, Link2, Mail, MessageSquare, Phone, UserPlus, Webhook } from "lucide-react";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Briefcase, Calendar, Check, ExternalLink, Gauge, Github, Link2, Mail, MessageSquare, Phone, Radio, Search, UserPlus, Webhook } from "lucide-react";
+import { TONE_DOT, eventTone } from "@/lib/events";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +52,35 @@ export interface EventDef {
 // to an icon. An event the API lists that is not here still shows, under Other (see `eventGroups`).
 export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
   {
+    group: "Signals",
+    items: [
+      { id: "signal.stakeholder_left", label: "Stakeholder left", description: "Someone left the account's team.", icon: Radio, logo: null },
+      { id: "signal.churn_risk", label: "Churn risk", description: "A churn risk: stated churn, at risk, or friction.", icon: Radio, logo: null },
+      { id: "signal.competitor_evaluating", label: "Evaluating a competitor", description: "A competitor is being actively evaluated.", icon: Radio, logo: null },
+      { id: "signal.objection_raised", label: "Objection raised", description: "A buyer pushed back on a call or in email, in their words.", icon: Radio, logo: null },
+      { id: "signal.expansion_signal", label: "Expansion signal", description: "They asked about, or are considering, more: a product, seats, a team.", icon: Radio, logo: null },
+      { id: "signal.buying_signal", label: "Buying signal", description: "Intent to buy, a request for pricing or a proposal.", icon: Radio, logo: null },
+      { id: "signal.next_step", label: "Next step agreed", description: "A next step was agreed: what, for whom, and when.", icon: Radio, logo: null },
+      { id: "signal.stakeholder_identified", label: "Stakeholder identified", description: "A buying role was named: champion, economic buyer, decision maker or blocker.", icon: Radio, logo: null },
+      { id: "signal.stakeholder_joined", label: "Stakeholder joined", description: "Someone new joined the account's team.", icon: Radio, logo: null },
+      { id: "signal.competitor_mentioned", label: "Competitor mentioned", description: "A competitor came up, and in what stance.", icon: Radio, logo: null },
+      { id: "signal.budget_discussed", label: "Budget discussed", description: "Budget, procurement or a commercial constraint came up.", icon: Radio, logo: null },
+      { id: "signal.objection_resolved", label: "Objection resolved", description: "An open objection was answered.", icon: Radio, logo: null },
+      { id: "signal.expansion_declined", label: "Expansion declined", description: "They declined more of a product.", icon: Radio, logo: null },
+    ],
+  },
+  {
+    group: "Calls and replies",
+    items: [
+      { id: "conversation.call_ended", label: "Call ended",
+        description: "A customer call was recorded and reviewed. Carries the call, its score and the account record.",
+        icon: Phone, logo: null },
+      { id: "conversation.reply_received", label: "Reply received",
+        description: "Someone replied to an email you sent. Carries the message and the account record.",
+        icon: MessageSquare, logo: null },
+    ],
+  },
+  {
     group: "Deals",
     items: [
       { id: "deal.stage_changed", label: "Stage changed",
@@ -63,17 +92,6 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
       { id: "deal.lost", label: "Deal lost",
         description: "A deal closed lost. Same timing as deal.won.",
         icon: Briefcase, logo: null },
-    ],
-  },
-  {
-    group: "Conversations",
-    items: [
-      { id: "conversation.call_ended", label: "Call ended",
-        description: "A customer call was recorded and reviewed. Carries the call, its score and the account record.",
-        icon: Phone, logo: null },
-      { id: "conversation.reply_received", label: "Reply received",
-        description: "Someone replied to an email you sent. Carries the message and the account record.",
-        icon: MessageSquare, logo: null },
     ],
   },
   {
@@ -90,13 +108,13 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
   {
     group: "People",
     items: [
-      { id: "people.added", label: "Person created",
+      { id: "people.added", label: "People added",
         description: "New people landed. At most once an hour, with up to 100 of them, so a scorer can score them.",
         icon: UserPlus, logo: null },
     ],
   },
   {
-    group: "Email",
+    group: "Email (outreach tools)",
     items: [
       { id: "interaction.email_received", label: "Email received",
         description: "An email arrived from a contact (sequencing tools). Person snapshot only.",
@@ -107,7 +125,7 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
     ],
   },
   {
-    group: "LinkedIn",
+    group: "LinkedIn (outreach tools)",
     items: [
       { id: "interaction.linkedin_connection_accepted", label: "Connection accepted",
         description: "A LinkedIn connection request was accepted. Person snapshot only.",
@@ -118,7 +136,7 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
     ],
   },
   {
-    group: "Meetings",
+    group: "Meetings (booking tools)",
     items: [
       { id: "interaction.meeting_scheduled", label: "Meeting scheduled",
         description: "A meeting was booked. Person snapshot only.",
@@ -148,9 +166,32 @@ export type EditableEndpoint = {
   id: string;
   name: string;
   url: string | null;
-  destination?: { type: "url"; url: string } | { type: "github"; repo: string };
+  destination?: { type: "url"; url: string } | { type: "github"; repo: string } | { type: "slack"; hint?: string };
   events: string[];
 };
+
+/** A Slack incoming webhook: the only URL a Slack destination takes (core: SLACK_WEBHOOK_RE). */
+export const SLACK_WEBHOOK = /^https:\/\/hooks\.slack\.com\/(services|workflows|triggers)\/[A-Za-z0-9_\-/]+$/;
+const SLACK_HELP = "https://api.slack.com/messaging/webhooks";
+// The groups shown open; the outreach-tool events (a person snapshot only) sit behind "More events".
+const MAIN_GROUPS = new Set(["Signals", "Calls and replies", "Deals", "ICP", "People"]);
+
+function DestinationCard({ on, onClick, title, sub, tile }: { on: boolean; onClick: () => void; title: string; sub: string; tile: React.ReactNode }) {
+  return (
+    <button type="button" role="radio" aria-checked={on} onClick={onClick}
+      className={cn("flex items-start gap-3 rounded-xl border p-3 text-left transition-colors duration-fast",
+        on ? "border-foreground/25 bg-hover" : "border-border/70 hover:bg-hover/60")}>
+      <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-card shadow-[inset_0_0_0_1px_hsl(var(--border)/0.6)]">{tile}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] text-foreground">{title}</span>
+        <span className="block text-[12px] leading-snug text-muted-foreground/80">{sub}</span>
+      </span>
+      <span className={cn("mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border", on ? "border-foreground bg-foreground" : "border-input")}>
+        {on && <span className="h-1.5 w-1.5 rounded-full bg-background" />}
+      </span>
+    </button>
+  );
+}
 
 export function NewEndpointDialog({
   open, onOpenChange, token, workspaceId, availableEvents, onCreated, editing = null,
@@ -166,58 +207,40 @@ export function NewEndpointDialog({
   onCreated: (created?: { id: string; signing_secret?: string }) => void;
   title?: string;
   submitLabel?: string;
-  /** Edit this endpoint instead of creating one: name, URL and events. A GitHub repo stays as it
-   *  is (its token is never sent back), so only its name and events change here. */
+  /** Edit this endpoint instead of creating one. A GitHub repo stays as it is (its token is never
+   *  sent back); a Slack webhook is replaced only when a new one is pasted. */
   editing?: EditableEndpoint | null;
 }) {
+  // Where events go: a URL (n8n, Make, Zapier, your server) or a Slack channel (GET-941). GitHub
+  // repos are no longer offered for new endpoints; existing ones keep working and can be edited.
+  const [kind, setKind] = useState<"url" | "slack">("url");
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
-  // Where events go (GET-670): a URL, or a GitHub repo whose Actions run on each event.
-  const [kind, setKind] = useState<"url" | "github">("url");
-  const [repo, setRepo] = useState("");
-  const [ghToken, setGhToken] = useState("");
-  // The repos already connected in Settings (GET-674): pick one and its stored token is used.
-  // "other" is the paste-a-repo-and-token fallback.
-  const [connected, setConnected] = useState<{ source: "personal" | "company"; repo: string; usable: boolean }[]>([]);
-  const [pick, setPick] = useState<"personal" | "company" | "other">("other");
-
-  useEffect(() => {
-    if (!open || !workspaceId) return;
-    let alive = true;
-    fetch(`${apiUrl}/api/triggers/github-repos?workspace_id=${encodeURIComponent(workspaceId)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => (r.ok ? r.json() : { repos: [] }))
-      .then(d => {
-        if (!alive) return;
-        const repos = (d?.repos ?? []).filter((r: { usable: boolean }) => r.usable);
-        setConnected(repos);
-        setPick(repos[0]?.source ?? "other");
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [open, workspaceId, token]);
+  const [slackUrl, setSlackUrl] = useState("");
   const [newEvents, setNewEvents] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const editGithub = editing?.destination?.type === "github";
+  const editKind = editing?.destination?.type ?? (editing ? "url" : null);
+  const editGithub = editKind === "github";
   useEffect(() => {
     if (!open || !editing) return;
     setNewName(editing.name);
     setNewUrl(editing.destination?.type === "url" ? editing.destination.url : (editing.url ?? ""));
-    setKind(editGithub ? "github" : "url");
-    setRepo(editing.destination?.type === "github" ? editing.destination.repo : "");
+    setKind(editKind === "slack" ? "slack" : "url");
+    setSlackUrl("");
     setNewEvents(editing.events);
     setCreateError(null);
-  }, [open, editing, editGithub]);
+  }, [open, editing, editKind]);
 
   const toggleEvent = (id: string) =>
     setNewEvents(curr => curr.includes(id) ? curr.filter(x => x !== id) : [...curr, id]);
 
   const resetForm = () => {
-    setNewName(""); setNewUrl(""); setNewEvents([]); setCreateError(null); setSubmitting(false);
-    setKind("url"); setRepo(""); setGhToken(""); setPick(connected[0]?.source ?? "other");
+    setNewName(""); setNewUrl(""); setSlackUrl(""); setNewEvents([]); setCreateError(null); setSubmitting(false);
+    setKind("url"); setQuery(""); setMoreOpen(false);
   };
 
   const validUrl = useMemo(() => {
@@ -225,57 +248,43 @@ export function NewEndpointDialog({
     try { const u = new URL(newUrl.trim()); return u.protocol === "https:" || u.protocol === "http:"; }
     catch { return false; }
   }, [newUrl]);
+  const validSlack = SLACK_WEBHOOK.test(slackUrl.trim());
 
-  const validRepo = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(repo.trim().replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, ""));
-  const validDestination = editing ? (editGithub || validUrl)
+  const validDestination = editGithub ? true
     : kind === "url" ? validUrl
-    : pick !== "other" ? true
-    : validRepo && ghToken.trim().length > 0;
+    : editKind === "slack" ? (!slackUrl.trim() || validSlack)
+    : validSlack;
   const canCreate = newName.trim().length > 0 && validDestination && newEvents.length > 0 && !!workspaceId;
+
+  const destinationBody = () => {
+    if (editGithub) return {};
+    if (kind === "url") return { url: newUrl.trim() };
+    if (editKind === "slack" && !slackUrl.trim()) return {};
+    return { destination: { type: "slack", url: slackUrl.trim() } };
+  };
 
   const create = async () => {
     if (!canCreate) return;
     setCreateError(null); setSubmitting(true);
-    if (editing) {
-      try {
-        const res = await fetch(`${apiUrl}/api/triggers/${editing.id}?workspace_id=${encodeURIComponent(workspaceId)}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            workspace_id: workspaceId, name: newName.trim(), events: newEvents,
-            ...(editGithub ? {} : { url: newUrl.trim() }),
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) { setCreateError(data.detail ?? data.error ?? "update_failed"); return; }
-        onOpenChange(false);
-        resetForm();
-        onCreated({ id: editing.id });
-      } catch {
-        setCreateError("network_error");
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
     try {
-      const res = await fetch(`${apiUrl}/api/triggers?workspace_id=${encodeURIComponent(workspaceId)}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspace_id: workspaceId, name: newName.trim(), events: newEvents,
-          ...(kind === "url"
-            ? { url: newUrl.trim() }
-            : pick !== "other"
-              ? { destination: { type: "github", connected_repo: pick } }
-              : { destination: { type: "github", repo: repo.trim(), token: ghToken.trim() } }),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setCreateError(data.error ?? "create_failed"); return; }
+      const res = await fetch(
+        editing ? `${apiUrl}/api/triggers/${editing.id}?workspace_id=${encodeURIComponent(workspaceId)}` : `${apiUrl}/api/triggers?workspace_id=${encodeURIComponent(workspaceId)}`,
+        {
+          method: editing ? "PATCH" : "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ workspace_id: workspaceId, name: newName.trim(), events: newEvents, ...destinationBody() }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCreateError(data.error === "invalid_slack_webhook" ? "That is not a Slack incoming webhook URL. It starts with https://hooks.slack.com/."
+          : data.detail ?? data.error ?? (editing ? "update_failed" : "create_failed"));
+        return;
+      }
       onOpenChange(false);
       resetForm();
-      onCreated(data?.trigger?.id ? { id: data.trigger.id, signing_secret: data.signing_secret } : undefined);
+      if (editing) onCreated({ id: editing.id });
+      else onCreated(data?.trigger?.id ? { id: data.trigger.id, signing_secret: data.signing_secret } : undefined);
     } catch {
       setCreateError("network_error");
     } finally {
@@ -283,138 +292,161 @@ export function NewEndpointDialog({
     }
   };
 
-  const groups = eventGroups(availableEvents);
   const isAvail = (id: string) => availableEvents.size === 0 || availableEvents.has(id);
-  const toggleGroup = (ids: string[]) => {
-    const on = ids.every((id) => newEvents.includes(id));
-    setNewEvents((curr) => on ? curr.filter((x) => !ids.includes(x)) : [...new Set([...curr, ...ids])]);
-  };
+  const q = query.trim().toLowerCase();
+  const groups = eventGroups(availableEvents)
+    .map((g) => ({ ...g, items: g.items.filter((ev) => !q || ev.label.toLowerCase().includes(q) || ev.id.includes(q)) }))
+    .filter((g) => g.items.length > 0);
+  const shown = groups.filter((g) => q || moreOpen || MAIN_GROUPS.has(g.group));
+  const hiddenCount = q ? 0 : groups.filter((g) => !MAIN_GROUPS.has(g.group)).reduce((n, g) => n + g.items.length, 0);
+  const setMany = (ids: string[], on: boolean) =>
+    setNewEvents((curr) => on ? [...new Set([...curr, ...ids])] : curr.filter((x) => !ids.includes(x)));
+  const signalIds = (EVENT_CATALOG.find((g) => g.group === "Signals")?.items ?? []).map((i) => i.id).filter(isAvail);
+  const presets: [string, string[]][] = [
+    ["All signals", signalIds],
+    ["Risks", signalIds.filter((id) => ["risk", "warning"].includes(eventTone(id)))],
+    ["Wins", [...signalIds.filter((id) => eventTone(id) === "positive"), "deal.won"].filter(isAvail)],
+    ["Deals", ["deal.won", "deal.lost", "deal.stage_changed"].filter(isAvail)],
+  ];
   const field = "h-9 rounded-lg bg-card font-mono text-[12.5px] focus-visible:border-foreground/30";
   const label = "mb-1.5 block text-[12px] font-medium text-ink-2";
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) resetForm(); onOpenChange(o); }}>
-      {/* GET-676: destination first as two quiet choices, then the fields it needs, then the events
-          as a compact grid of toggle tiles (no descriptions), the count in the footer. */}
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[600px]">
+      {/* GET-941: where it goes (a URL or a Slack channel), then the events: presets, a search, and
+          the groups as compact rows with each event's tone dot. The count is in the footer. */}
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[640px]">
         <DialogHeader className="border-b border-hairline px-5 py-3.5 text-left">
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className="sr-only">Subscribe a URL or a GitHub repo to one or more events. A URL gets a payload signed with HMAC-SHA256; a repo gets a repository_dispatch.</DialogDescription>
+          <DialogDescription className="sr-only">Send events to a URL, signed with HMAC-SHA256, or to a Slack channel as messages.</DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[70vh] space-y-5 overflow-y-auto px-5 py-4">
-          {!editing && (
-            <div role="radiogroup" aria-label="Destination" className="grid grid-cols-2 gap-2">
-              {([["url", "URL", Link2], ["github", "GitHub repo", Github]] as const).map(([k, text, Icon]) => {
-                const on = kind === k;
-                return (
-                  <button key={k} type="button" role="radio" aria-checked={on} onClick={() => setKind(k)}
-                    className={cn("flex h-11 items-center gap-2.5 rounded-xl border px-3 text-left text-[13px] transition-colors duration-fast",
-                      on ? "border-foreground/20 bg-hover text-foreground" : "border-border/70 text-ink-2 hover:bg-hover/60 hover:text-foreground")}>
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-card shadow-[inset_0_0_0_1px_hsl(var(--border)/0.6)]">
-                      <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    </span>
-                    <span className="flex-1">{text}</span>
-                    {on && <Check className="h-3.5 w-3.5 text-foreground/70" strokeWidth={2} />}
-                  </button>
-                );
-              })}
+        <div className="max-h-[72vh] space-y-5 overflow-y-auto px-5 py-4">
+          {editGithub ? (
+            <div>
+              <span className={label}>Sends to</span>
+              <div className="flex h-9 items-center gap-2 rounded-lg bg-hover px-2.5 font-mono text-[12.5px] text-foreground">
+                <Github className="h-3.5 w-3.5" />{editing?.destination?.type === "github" ? editing.destination.repo : ""}
+              </div>
+            </div>
+          ) : (
+            <div role="radiogroup" aria-label="Send events to" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <DestinationCard on={kind === "url"} onClick={() => setKind("url")} title="Webhook URL"
+                sub="n8n, Make, Zapier or your own server. Signed JSON." tile={<Link2 className="h-3.5 w-3.5 text-foreground" strokeWidth={1.75} />} />
+              <DestinationCard on={kind === "slack"} onClick={() => setKind("slack")} title="Slack channel"
+                sub="Each event posted as a short message." tile={<img src="/provider-logos/slack.svg" alt="" className="h-3.5 w-3.5" />} />
             </div>
           )}
 
           <div className="space-y-3">
-            {kind === "url" ? (
+            {!editGithub && kind === "url" && (
               <div>
                 <label htmlFor="endpoint-url" className={label}>URL</label>
                 <Input id="endpoint-url" autoFocus={!editing} value={newUrl} onChange={e => setNewUrl(e.target.value)}
                   placeholder="https://your-receiver.example.com/hook" className={field} />
                 {newUrl && !validUrl && <p className="mt-1.5 text-[11.5px] text-warning">Include https:// (http works for local dev).</p>}
               </div>
-            ) : !editing && connected.length > 0 ? (
+            )}
+            {!editGithub && kind === "slack" && (
               <div>
-                <label className={label}>Repo</label>
-                <Select value={pick} onValueChange={(v) => setPick(v as typeof pick)}>
-                  <SelectTrigger className="h-9 rounded-lg bg-card font-mono text-[12.5px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {connected.map(r => (
-                      <SelectItem key={r.source} value={r.source} className="font-mono text-[12.5px]">
-                        {r.repo}{r.source === "company" ? " · workspace" : ""}
-                      </SelectItem>
-                    ))}
-                    <SelectItem value="other">Other repo…</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div>
-                <label htmlFor="endpoint-repo" className={label}>Repo</label>
-                <Input id="endpoint-repo" value={repo} onChange={e => setRepo(e.target.value)} readOnly={editGithub}
-                  placeholder="owner/repo" className={field} />
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label htmlFor="endpoint-slack" className="text-[12px] font-medium text-ink-2">Slack incoming webhook</label>
+                  <a href={SLACK_HELP} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground hover:text-foreground">
+                    Get one from Slack <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+                <Input id="endpoint-slack" type="password" autoComplete="off" autoFocus={!editing} value={slackUrl} onChange={e => setSlackUrl(e.target.value)}
+                  placeholder={editKind === "slack" ? `Keep ${editing?.destination?.type === "slack" ? editing.destination.hint ?? "the current webhook" : "the current webhook"}, or paste a new one` : "https://hooks.slack.com/services/…"}
+                  className={field} />
+                {slackUrl && !validSlack
+                  ? <p className="mt-1.5 text-[11.5px] text-warning">A Slack incoming webhook starts with https://hooks.slack.com/.</p>
+                  : <p className="mt-1.5 text-[11.5px] text-muted-foreground/70">Create it in Slack for the channel you want. We only ever show its start.</p>}
               </div>
             )}
-
-            {kind === "github" && !editing && pick === "other" && connected.length > 0 && (
-              <div>
-                <label htmlFor="endpoint-other-repo" className={label}>Repo</label>
-                <Input id="endpoint-other-repo" value={repo} onChange={e => setRepo(e.target.value)} placeholder="owner/repo" className={field} />
-              </div>
-            )}
-
-            {kind === "github" && !editing && pick === "other" && (
-              <div>
-                <label htmlFor="endpoint-token" className={label}>Token</label>
-                <Input id="endpoint-token" type="password" autoComplete="off" value={ghToken} onChange={e => setGhToken(e.target.value)}
-                  placeholder="github_pat_…" className={field} />
-                <p className="mt-1.5 text-[11.5px] text-muted-foreground/70">Fine-grained, this repo only, Contents: read and write.</p>
-              </div>
-            )}
-
             <div>
               <label htmlFor="endpoint-name" className={label}>Name</label>
               <Input id="endpoint-name" autoFocus={!!editing} value={newName} onChange={e => setNewName(e.target.value)}
-                placeholder="e.g. n8n follow-ups" className="h-9 rounded-lg bg-card text-[13px] focus-visible:border-foreground/30" />
+                placeholder={kind === "slack" ? "e.g. #deal-risks" : "e.g. n8n follow-ups"} className="h-9 rounded-lg bg-card text-[13px] focus-visible:border-foreground/30" />
             </div>
           </div>
 
           <div className="space-y-3">
-            <span className={label}>Events</span>
-            {groups.map(group => {
-              const ids = group.items.filter((ev) => isAvail(ev.id)).map((ev) => ev.id);
-              const all = ids.length > 0 && ids.every((id) => newEvents.includes(id));
-              return (
-                <div key={group.group}>
-                  <div className="flex items-center justify-between px-0.5 pb-1.5">
-                    <span className="text-[11px] font-medium text-muted-foreground/60">{group.group}</span>
-                    {ids.length > 1 && (
-                      <button type="button" onClick={() => toggleGroup(ids)}
-                        className="text-[11px] text-muted-foreground/70 transition-colors duration-fast hover:text-foreground">
-                        {all ? "None" : "All"}
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                    {group.items.map(ev => {
-                      const on = newEvents.includes(ev.id);
-                      const avail = isAvail(ev.id);
-                      return (
-                        <button key={ev.id} type="button" role="checkbox" aria-checked={on} disabled={!avail} title={ev.id}
-                          onClick={() => avail && toggleEvent(ev.id)}
-                          className={cn("flex h-10 items-center gap-2.5 rounded-lg border px-2.5 text-left text-[13px] transition-colors duration-fast",
-                            on ? "border-foreground/20 bg-hover text-foreground" : "border-border/70 text-ink-2 hover:bg-hover/60 hover:text-foreground",
-                            !avail && "cursor-not-allowed opacity-40")}>
-                          <EventLogo logo={ev.logo} fallback={ev.icon} size="md" />
-                          <span className="min-w-0 flex-1 truncate">{ev.label}</span>
-                          <span className={cn("flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px] border transition-colors duration-fast",
-                            on ? "border-foreground bg-foreground text-background" : "border-input")}>
-                            {on && <Check className="h-3 w-3" strokeWidth={2.5} />}
-                          </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[12px] font-medium text-ink-2">Events</span>
+              <span className="flex-1" />
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find an event" aria-label="Find an event"
+                  className="h-8 w-[180px] rounded-md bg-hover pl-7 pr-2 text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/70" />
+              </div>
+            </div>
+            {!q && (
+              <div className="flex flex-wrap gap-1.5">
+                {presets.map(([name, ids]) => {
+                  const on = ids.length > 0 && ids.every((id) => newEvents.includes(id));
+                  return (
+                    <button key={name} type="button" aria-pressed={on} onClick={() => setMany(ids, !on)} disabled={!ids.length}
+                      className={cn("h-7 rounded-full border px-2.5 text-[12px] transition-colors duration-fast disabled:opacity-40",
+                        on ? "border-foreground/25 bg-hover text-foreground" : "border-border/70 text-ink-2 hover:bg-hover hover:text-foreground")}>
+                      {on && <Check className="-ml-0.5 mr-1 inline h-3 w-3" strokeWidth={2.5} />}{name}
+                    </button>
+                  );
+                })}
+                {newEvents.length > 0 && (
+                  <button type="button" onClick={() => setNewEvents([])} className="h-7 px-1.5 text-[12px] text-muted-foreground hover:text-foreground">Clear</button>
+                )}
+              </div>
+            )}
+
+            <div className="rounded-xl border border-border/70 p-1">
+              {shown.map((group, gi) => {
+                const ids = group.items.filter((ev) => isAvail(ev.id)).map((ev) => ev.id);
+                const picked = ids.filter((id) => newEvents.includes(id)).length;
+                const all = ids.length > 0 && picked === ids.length;
+                return (
+                  <div key={group.group} className={cn(gi > 0 && "mt-1 border-t border-hairline pt-1")}>
+                    <div className="flex items-center gap-2 px-2 pb-0.5 pt-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground/70">{group.group}</span>
+                      {picked > 0 && <span className="text-[11px] tabular-nums text-muted-foreground/60">{picked}/{ids.length}</span>}
+                      <span className="flex-1" />
+                      {ids.length > 1 && (
+                        <button type="button" onClick={() => setMany(ids, !all)}
+                          className="text-[11px] text-muted-foreground/70 transition-colors duration-fast hover:text-foreground">
+                          {all ? "None" : "All"}
                         </button>
-                      );
-                    })}
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2">
+                      {group.items.map(ev => {
+                        const on = newEvents.includes(ev.id);
+                        const avail = isAvail(ev.id);
+                        const tone = eventTone(ev.id);
+                        return (
+                          <button key={ev.id} type="button" role="checkbox" aria-checked={on} disabled={!avail} title={ev.description || ev.id}
+                            onClick={() => avail && toggleEvent(ev.id)}
+                            className={cn("flex h-9 items-center gap-2.5 rounded-lg px-2 text-left text-[13px] transition-colors duration-fast hover:bg-hover",
+                              on ? "text-foreground" : "text-ink-2", !avail && "cursor-not-allowed opacity-40")}>
+                            <span className={cn("flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px] border transition-colors duration-fast",
+                              on ? "border-foreground bg-foreground text-background" : "border-input bg-card")}>
+                              {on && <Check className="h-3 w-3" strokeWidth={2.5} />}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{ev.label}</span>
+                            {tone !== "neutral" && <span aria-hidden className={cn("h-1.5 w-1.5 flex-shrink-0 rounded-full", TONE_DOT[tone])} />}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+              {shown.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground/70">No event matches.</p>}
+              {!q && !moreOpen && hiddenCount > 0 && (
+                <button type="button" onClick={() => setMoreOpen(true)}
+                  className="mt-1 w-full rounded-lg border-t border-hairline px-2 py-2 text-left text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground">
+                  More events from outreach and booking tools ({hiddenCount})
+                </button>
+              )}
+            </div>
           </div>
 
           {createError && <p className="rounded-lg bg-risk/10 px-3 py-2 text-[12px] text-risk">{createError}</p>}
@@ -422,7 +454,7 @@ export function NewEndpointDialog({
 
         <DialogFooter className="flex items-center gap-2 border-t border-hairline px-5 py-3 sm:justify-between">
           <span className="text-[12px] tabular-nums text-muted-foreground/70">
-            {newEvents.length === 0 ? "No events yet" : `${newEvents.length} event${newEvents.length === 1 ? "" : "s"}`}
+            {newEvents.length === 0 ? "Pick at least one event" : `${newEvents.length} event${newEvents.length === 1 ? "" : "s"} selected`}
           </span>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>

@@ -37,7 +37,7 @@ type Endpoint = {
   name: string;
   url: string | null;
   /** GET-670: a URL, or a GitHub repo whose Actions run on each event. Absent on older API builds. */
-  destination?: { type: "url"; url: string } | { type: "github"; repo: string };
+  destination?: { type: "url"; url: string } | { type: "github"; repo: string } | { type: "slack"; hint?: string };
   /** "after_call" when the Settings → Automations toggle owns it (GET-672). */
   managed_by?: string | null;
   events: string[];
@@ -107,6 +107,9 @@ const HOST_LOGOS: [needle: string, logo: string][] = [
 
 function EndpointTile({ ep }: { ep: Endpoint }) {
   const [broken, setBroken] = useState(false);
+  if (ep.destination?.type === "slack") {
+    return <ListTile><img src="/provider-logos/slack.svg" alt="" className="h-3.5 w-3.5 object-contain" /></ListTile>;
+  }
   if (ep.destination?.type === "github") {
     return <ListTile className="text-foreground"><Github className="h-3.5 w-3.5" strokeWidth={1.8} /></ListTile>;
   }
@@ -141,7 +144,11 @@ function EndpointRow({
   const isGithub = ep.destination?.type === "github";
   // Owned by the "After every call" toggle: switched on and off in Settings → Automations.
   const managed = !!ep.managed_by;
-  const target = ep.destination?.type === "github" ? ep.destination.repo : (ep.url ?? "");
+  const isSlack = ep.destination?.type === "slack";
+  // A Slack incoming webhook is never sent back whole (GET-941): the row shows its start.
+  const target = ep.destination?.type === "github" ? ep.destination.repo
+    : ep.destination?.type === "slack" ? (ep.destination.hint ?? "Slack")
+    : (ep.url ?? "");
   const qs = `workspace_id=${encodeURIComponent(workspaceId)}`;
   const onFailingRef = useRef(onFailing);
   onFailingRef.current = onFailing;
@@ -234,7 +241,7 @@ function EndpointRow({
           <ListText
             titleClassName="sm:flex-shrink-0 sm:max-w-[60%]"
             title={ep.name}
-            sub={<span className="max-sm:hidden">{managed ? "From Automations · " : ""}{isGithub ? target : shortUrl(target)}</span>}
+            sub={<span className="max-sm:hidden">{managed ? "From Automations · " : ""}{isGithub || isSlack ? (isSlack ? `Slack · ${target}` : target) : shortUrl(target)}</span>}
           />
         </button>
         {health && (
@@ -276,9 +283,9 @@ function EndpointRow({
       {open && (
         <div id={panelId} className="space-y-4 pb-3 pl-2 pr-2 pt-1 sm:pl-[42px]">
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))]">
-            <CopyField id={`wh-url-${ep.id}`} label={isGithub ? "GitHub repo" : "Endpoint URL"} value={target}
+            <CopyField id={`wh-url-${ep.id}`} label={isGithub ? "GitHub repo" : isSlack ? "Slack webhook (shown shortened)" : "Endpoint URL"} value={target}
               copied={copied === "url"} onCopy={() => copy(target, "url")} copyLabel={isGithub ? "Copy repo" : "Copy endpoint URL"} />
-            {secret && (
+            {secret && !isSlack && (
               <CopyField id={`wh-sec-${ep.id}`} label="Signing secret · shown once" value={secret}
                 copied={copied === "secret"} onCopy={() => copy(secret, "secret")} copyLabel="Copy signing secret">
                 <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[12px]" onClick={onSecretDone}>Done</Button>
@@ -330,13 +337,18 @@ function EndpointRow({
 }
 
 export function ApiWebhooks({
-  token, workspaceId, inbound, onRefreshInbound,
+  token, workspaceId, inbound, onRefreshInbound, only = null, bare = false,
 }: {
   token: string; workspaceId: string; inbound: ReactNode; onRefreshInbound: () => void;
+  /** One side only, without the tabs: "out" on the Events page's Endpoints tab, "in" on Webhooks. */
+  only?: "out" | "in" | null;
+  /** Inside another page: no page frame, and the page keeps the top bar's refresh. */
+  bare?: boolean;
 }) {
   const [endpoints, setEndpoints] = useState<Endpoint[] | null>(null);
   // Two directions, one tab each: what we send out (Endpoints) and what your tools send in (Incoming).
-  const [side, setSide] = useState<"out" | "in">("out");
+  const [tabSide, setSide] = useState<"out" | "in">("out");
+  const side = only ?? tabSide;
   const [availableEvents, setAvailableEvents] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -382,7 +394,7 @@ export function ApiWebhooks({
     setRefreshKey((k) => k + 1);
     onRefreshInbound();
   }, [load, onRefreshInbound]);
-  useApiTopBar({ onRefresh: refresh, refreshing: loading });
+  useApiTopBar({ onRefresh: refresh, refreshing: loading, enabled: !bare });
 
   const patch = async (id: string, body: Record<string, unknown>) => {
     const r = await fetch(`${apiUrl}/api/triggers/${id}?${qs}`, {
@@ -454,9 +466,9 @@ export function ApiWebhooks({
   }, [failingList]);
 
   return (
-    <div className="h-full min-w-0 overflow-y-auto bg-background">
-      <div className="flex w-full min-w-0 flex-col gap-4 p-4 sm:p-5">
-        <div role="tablist" aria-label="Webhook direction" className="flex items-center gap-1">
+    <div className={bare ? "min-w-0" : "h-full min-w-0 overflow-y-auto bg-background"}>
+      <div className={cn("flex w-full min-w-0 flex-col gap-4", !bare && "p-4 sm:p-5")}>
+        {!only && <div role="tablist" aria-label="Webhook direction" className="flex items-center gap-1">
           {([["out", "Endpoints", "Where OpenNous sends your events"], ["in", "Incoming", "Your tools sending data into OpenNous"]] as const).map(([id, label, hint]) => (
             <button key={id} type="button" role="tab" aria-selected={side === id} title={hint} onClick={() => setSide(id)}
               className={cn("h-7 rounded-md px-2.5 text-[13px] transition-colors duration-fast",
@@ -464,7 +476,7 @@ export function ApiWebhooks({
               {label}
             </button>
           ))}
-        </div>
+        </div>}
         {side === "out" && <ListCard>
           <ListHeader
             title="Endpoints"

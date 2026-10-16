@@ -153,7 +153,7 @@ export function EventFeed({ type = null, accountId = null, showAccount = true, r
     return (
       <ListEmpty>
         {failed ? "Events could not be loaded. Try again in a moment."
-          : needsSubscription(type) ? `${filterLabel(type)} are computed once a webhook subscribes to them. Add one under Webhooks.`
+          : needsSubscription(type) ? `${filterLabel(type)} are computed once a webhook subscribes to them. Add one under Endpoints, top right.`
           : type ? "No events of this kind yet."
           : accountId ? "No events on this account yet. Signals from its calls and email appear here as they are read."
           : "No events yet. Signals from your calls and email appear here as they are read."}

@@ -107,7 +107,7 @@ export function triggerEventForActivity(activityType: string): TriggerEvent | nu
 
 // ── Subscription CRUD ───────────────────────────────────────────────────────
 
-export type DestinationType = 'url' | 'github';
+export type DestinationType = 'url' | 'github' | 'slack';
 
 export interface TriggerSubscription {
   id: string;
@@ -115,7 +115,7 @@ export interface TriggerSubscription {
   name: string;
   /** Set for a URL webhook; null for a GitHub one. */
   url: string | null;
-  /** Where events go (GET-670): POST to `url`, or a repository_dispatch to `github_repo`. */
+  /** Where events go (GET-670, GET-941): POST to `url`, a repository_dispatch to `github_repo`, or a Slack message to the incoming webhook in `url`. */
   destination_type: DestinationType;
   github_repo: string | null;
   /** 'after_call' when the Settings → Automations toggle owns this webhook (GET-672); null if made by hand. */
@@ -159,6 +159,9 @@ function isStaticInternalHost(host: string): boolean {
   return false;
 }
 
+/** A Slack incoming webhook URL, and nothing else: the only host a Slack destination may post to. */
+export const SLACK_WEBHOOK_RE = /^https:\/\/hooks\.slack\.com\/(services|workflows|triggers)\/[A-Za-z0-9_\-/]+$/;
+
 function validateUrl(url: string): void {
   let u: URL;
   try { u = new URL(url); } catch { throw new Error('invalid_url'); }
@@ -184,7 +187,9 @@ function validateEvents(events: unknown): TriggerEvent[] {
  */
 export type TriggerDestination =
   | { type: 'url'; url: string }
-  | { type: 'github'; repo: string; tokenEnc: string };
+  | { type: 'github'; repo: string; tokenEnc: string }
+  // A Slack incoming webhook (GET-941): each event posted to the channel it was made for.
+  | { type: 'slack'; url: string };
 
 export interface CreateTriggerParams {
   name: string;
@@ -201,6 +206,11 @@ function destinationColumns(d: TriggerDestination): Record<string, unknown> {
     if (!GITHUB_REPO_RE.test(repo)) throw new Error('invalid_github_repo');
     if (!d.tokenEnc) throw new Error('github_token_required');
     return { destination_type: 'github', github_repo: repo, github_token_enc: d.tokenEnc, url: null };
+  }
+  if (d.type === 'slack') {
+    const url = String(d.url ?? '').trim();
+    if (!SLACK_WEBHOOK_RE.test(url)) throw new Error('invalid_slack_webhook');
+    return { destination_type: 'slack', url, github_repo: null, github_token_enc: null };
   }
   validateUrl(d.url);
   return { destination_type: 'url', url: d.url, github_repo: null, github_token_enc: null };

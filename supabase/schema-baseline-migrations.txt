@@ -258,6 +258,7 @@
 2026_10_15_account_overview.sql
 2026_10_15_api_request_log_activity.sql
 2026_10_16_event_log.sql
+2026_10_16_webhook_slack_destination.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql

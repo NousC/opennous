@@ -768,9 +768,12 @@ export default function Webhooks({ embedded = false }: { embedded?: boolean } = 
 
   if (apiPage) {
     return (
+      // Endpoints (where events go) live on the Events page (GET-941); this page is the
+      // webhooks your tools send in.
       <ApiWebhooks
         token={token}
         workspaceId={workspaceId}
+        only="in"
         onRefreshInbound={load}
         inbound={
           <>

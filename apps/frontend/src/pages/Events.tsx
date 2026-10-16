@@ -8,6 +8,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { ListCard, ListHeader } from "@/components/ui/list";
 import { EventFeed } from "@/components/events/EventFeed";
+import { ApiWebhooks } from "@/components/webhooks/ApiWebhooks";
+import { useAuth } from "@/contexts/AuthContext";
 import { EVENT_FILTER_GROUPS, TONE_DOT, eventLabel, eventTone, filterLabel } from "@/lib/events";
 
 function Opt({ on, onClick, children, dot }: { on: boolean; onClick: () => void; children: React.ReactNode; dot?: string }) {
@@ -23,6 +25,9 @@ function Opt({ on, onClick, children, dot }: { on: boolean; onClick: () => void;
 }
 
 export default function Events() {
+  const { session, userData } = useAuth();
+  // Events: what happened. Endpoints: where it is sent (GET-941), the same list the Webhooks page had.
+  const [view, setView] = useState<"events" | "endpoints">("events");
   const [type, setType] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -61,6 +66,21 @@ export default function Events() {
   return (
     <div className="h-full min-w-0 overflow-y-auto bg-background">
       <div className="flex w-full min-w-0 flex-col gap-4 p-4 sm:p-5">
+        <div className="flex">
+          <div role="tablist" aria-label="Events or endpoints" className="inline-flex items-center gap-0.5 rounded-lg border border-border/70 bg-card p-0.5">
+            {([["events", "Events"], ["endpoints", "Endpoints"]] as const).map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}
+                className={cn("h-7 rounded-md px-3 text-[12.5px] transition-colors duration-fast",
+                  view === id ? "bg-hover text-foreground" : "text-ink-2 hover:text-foreground")}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {view === "endpoints" ? (
+          <ApiWebhooks token={session?.access_token ?? ""} workspaceId={userData?.workspace?.id ?? ""}
+            only="out" bare inbound={null} onRefreshInbound={() => {}} />
+        ) : (
         <ListCard>
           {/* The filter sits in the card it filters (top right), one choice at a time. */}
           <ListHeader title={filterLabel(type)} className="items-center"
@@ -85,6 +105,7 @@ export default function Events() {
             } />
           <EventFeed type={type} refreshKey={refreshKey} onLoading={setLoading} />
         </ListCard>
+        )}
       </div>
     </div>
   );

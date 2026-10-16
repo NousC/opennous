@@ -2,6 +2,7 @@
 //
 //   { "url": "https://…" }                                              a URL, as before
 //   { "destination": { "type": "url", "url": "https://…" } }            the same, spelled out
+//   { "destination": { "type": "slack", "url": "https://hooks.slack.com/services/…" } }  a Slack channel (GET-941)
 //   { "destination": { "type": "github", "repo": "owner/name", "token": "github_pat_…" } }
 //   { "destination": { "type": "github", "connected_repo": true } }    the caller's repo from Settings →
 //       Repo, with the token already stored there: nothing secret travels in the request (GET-672)
@@ -24,6 +25,10 @@ export async function destinationFromBody(body, req) {
   if (d.type === 'url') {
     if (!d.url) throw new Error('url_required');
     return { type: 'url', url: String(d.url) };
+  }
+  if (d.type === 'slack') {
+    if (!d.url) throw new Error('slack_webhook_required');
+    return { type: 'slack', url: String(d.url).trim() };
   }
   if (d.type === 'github' && d.connected_repo != null && d.connected_repo !== false) {
     const source = d.connected_repo === 'company' ? 'company' : 'personal';
@@ -57,10 +62,21 @@ export function webhookOut(sub) {
   if (!sub) return null;
   // eslint-disable-next-line no-unused-vars
   const { signing_secret, github_token_enc, workspace_id, ...rest } = sub;
+  // A Slack incoming webhook is a credential: anyone with it can post to the channel. It is shown
+  // only as its host and the start of its path.
+  if (rest.destination_type === 'slack') {
+    return { ...rest, url: null, destination: { type: 'slack', hint: slackHint(rest.url) } };
+  }
   const destination = rest.destination_type === 'github'
     ? { type: 'github', repo: rest.github_repo }
     : { type: 'url', url: rest.url };
   return { ...rest, destination };
+}
+
+/** "hooks.slack.com/services/T0ABC…": enough to tell two Slack webhooks apart, not enough to post. */
+export function slackHint(url) {
+  const m = /^https:\/\/hooks\.slack\.com\/(\w+)\/([A-Za-z0-9]{0,6})/.exec(String(url ?? ''));
+  return m ? `hooks.slack.com/${m[1]}/${m[2]}…` : 'Slack';
 }
 
 /** A webhook the Settings → Automations toggle owns is changed there, not here. */
