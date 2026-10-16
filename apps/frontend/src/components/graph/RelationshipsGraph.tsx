@@ -23,7 +23,7 @@ const VIEWS: { id: View; label: string; param: string }[] = [
 // The Claims tab became Insights; an old link still lands somewhere.
 const ALIASES: Record<string, string> = { claims: "insights" };
 
-/** `source` narrows the graph to one RevBox's accounts (GET-858); Insights stays workspace-wide. */
+/** `source` narrows the graph to one object's accounts (GET-858); Insights stays workspace-wide. */
 export function RelationshipsGraph({ source, banner }: { source?: GraphSource; banner?: React.ReactNode } = {}) {
   const [params, setParams] = useSearchParams();
   // Self-host reads insights through the API and MCP (get_insights), with no page (GET-887).

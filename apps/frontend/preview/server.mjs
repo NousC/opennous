@@ -11,7 +11,6 @@
 // of silently blanking a page.
 import http from "node:http";
 import { existsSync } from "node:fs";
-import { handleRevboxPreview, PREVIEW_SLACK, previewWorkedAccounts, previewRevboxById } from "./revboxes.mjs";
 import {
   WS, USERS, COMPANIES, CONTACTS, FLAGS, TASKS, PORTFOLIO, GRAPH, CAMPAIGNS,
   companyDetail, personRecord, icpRecord,
@@ -168,10 +167,10 @@ const apiDataRoutes = !API_DATA ? [] : [
   ...(await import("./fixtures/api-plan-p1.mjs")).routes,
 ];
 
-// Fixtures for Cloud-only surfaces (the revenue forecast, GET-843) live in preview/cloud/, which the
-// open-source export leaves out; loaded only when the folder is here.
-const cloudPreviewRoutes = existsSync(new URL("./cloud/index.mjs", import.meta.url))
-  ? (await import("./cloud/index.mjs")).routes : [];
+// Fixtures for Cloud-only surfaces (the revenue forecast and others, GET-843, GET-910) live in
+// preview/cloud/, which the open-source export leaves out; loaded only when the folder is here.
+const cloudPreview = existsSync(new URL("./cloud/index.mjs", import.meta.url)) ? await import("./cloud/index.mjs") : null;
+const cloudPreviewRoutes = cloudPreview?.routes ?? [];
 // The Slack layouts page (GET-858): /preview/slack-blocks, Cloud's renderer.
 const slackBlocksPreview = existsSync(new URL("./cloud/slackBlocks.mjs", import.meta.url))
   ? (await import("./cloud/slackBlocks.mjs")).handleSlackBlocksPreview : null;
@@ -256,13 +255,8 @@ const routes = [
   // scope=mine|team: the redesign's My book / Team toggle. The preview viewer (Avery) is a CRM
   // owner, so "mine" always has rows; the CS page scopes by the CS owner, never the AE.
   ["GET", /^\/api\/companies\/list$/, (_m, q) => {
-    // ?revbox=<id> (GET-873, GET-891): the accounts that box's Accounts card counts.
-    const box = q.get("revbox") ? previewRevboxById(q.get("revbox")) : null;
-    if (!box) return companiesList(readScope(q.get("scope")));
-    const ids = new Set(previewWorkedAccounts(box).accounts.filter((a) => q.get("revbox_scope") !== "selected" || a.selected).map((a) => a.id));
-    const all = companiesList(null);
-    const companies = all.companies.filter((c) => ids.has(c.id));
-    return { ...all, companies, total: companies.length, countries: [], revbox: { id: box.id, name: box.name } };
+    // A Cloud account scope (the API's registerAccountScope), when the query names one.
+    return cloudPreview?.accountScope?.(q, () => companiesList(null)) ?? companiesList(readScope(q.get("scope")));
   }],
   ["GET", /^\/api\/companies\/deals$/, (_m, q) => dealsPayload(readScope(q.get("scope")), q.get("status") ?? "all")],
   ["GET", /^\/api\/crm-pipelines$/, () => crmPipelines()],
@@ -390,8 +384,6 @@ const routes = [
     { id: "mb-1", kind: "gmail", email: "avery@opennous.example" },
     { id: "mb-2", kind: "gmail", email: "test.user.0001@gmail.com" },
   ], default_id: "mb-1" })],
-  // The connected Slack's channels (GET-771 shape), for the Slack step and the RevBox Delivery picker.
-  ["GET", /^\/api\/slack\/targets$/, () => PREVIEW_SLACK],
   // The simple editor's email preview (GET-664), by the live route's shape: the email a run
   // would send for a recent trigger, notice + PDF or the AI's words, as the step says.
   ["POST", /^\/api\/automations\/email-preview$/, async (_m, _q, req) => previewEmail(await readBody(req))],
@@ -854,7 +846,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
-  if (await handleRevboxPreview(req, res, url, json)) return;
+  if (cloudPreview?.handle && (await cloudPreview.handle(req, res, url, json))) return;
   if (slackBlocksPreview && (await slackBlocksPreview(req, res, url))) return;
 
   if (req.method === "POST" && path === "/api/playground/chat/stream") return chatStream(req, res);

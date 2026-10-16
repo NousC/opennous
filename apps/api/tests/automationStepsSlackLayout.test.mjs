@@ -29,11 +29,13 @@ test('a layout is forwarded to the poster; a plain post is unchanged', async () 
   const seen = [];
   registerAutomationSlack(async (a) => { const { supabase: _s, ...rest } = a; seen.push(rest); return { ok: true }; });
   const run = '33333333-3333-4333-8333-333333333333';
-  assert.deepEqual(await post({ workspaceId: 'ws', channelId: 'C1', text: 'Daily usage', format: 'report', content: { title: 'Daily usage' }, runId: run, stepId: 'post', revboxId: 'box' }), { ok: true });
+  assert.deepEqual(await post({ workspaceId: 'ws', channelId: 'C1', text: 'Daily usage', format: 'report', content: { title: 'Daily usage' }, runId: run, stepId: 'post', scopeId: 'box' }), { ok: true });
   assert.equal(seen[0].format, 'report');
   assert.deepEqual(seen[0].content, { title: 'Daily usage' });
   assert.equal(seen[0].runId, run);
   assert.equal(seen[0].stepId, 'post');
+  // A reference an engine extension adds (GET-910) is passed on as it came.
+  assert.equal(seen[0].scopeId, 'box');
   await post({ workspaceId: 'ws', channelId: 'C1', text: 'hi' });
   assert.deepEqual(seen[1], { workspaceId: 'ws', channel: '', channelId: 'C1', userId: null, text: 'hi' });
   // Content that is not an object is not a layout.

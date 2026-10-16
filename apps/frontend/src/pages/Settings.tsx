@@ -24,8 +24,6 @@ import Webhooks from "@/pages/Webhooks";
 import { AutomationsPanel } from "@/components/AutomationsPanel";
 import { RepositoriesPane } from "@/components/settings/RepoPane";
 import MarketFocus from "@/pages/MarketFocus";
-import { ContextLibrary } from "@/components/settings/ContextLibrary";
-import { SignalsSettings } from "@/components/settings/SignalsSettings";
 import { ApiActivity } from "@/components/settings/ApiActivity";
 import { activeTeam } from "@/lib/activeTeam";
 import { cloud } from "@/lib/cloud";
@@ -206,13 +204,11 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
   // Core = the API plan (CORE_PLAN_IDS). It is where Repo shows, and where Billing is the
   // Usage page.
   const { planId: __planIdForNav, selfHosted, can: canForNav } = usePlan();
-  // Context and Signals follow the revboxes feature: API and Workspace plans alike (GET-864).
-  const revboxesOn = canForNav("revboxes");
   const core = isCorePlan(__planIdForNav);
   const tier = planTier(__planIdForNav);
   const SECTIONS = useMemo(
-    () => settingsNav({ tier, isWorkspaceAdmin, isOwner, selfHosted, revboxes: revboxesOn }, cloud.settings?.navRows),
-    [tier, isWorkspaceAdmin, isOwner, selfHosted, revboxesOn],
+    () => settingsNav({ tier, isWorkspaceAdmin, isOwner, selfHosted, can: canForNav }, cloud.settings?.navRows),
+    [tier, isWorkspaceAdmin, isOwner, selfHosted, canForNav],
   );
 
   // Two surfaces, one component. `/connect` shows the PERSONAL groups; `/settings` shows
@@ -249,7 +245,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
   const forwardSource = (side: "personal" | "company", slug: string) =>
     navigate(`${basePath}?section=${side === "company" ? "company-sources" : "integrations"}&connect=${encodeURIComponent(slug)}`, { replace: true });
 
-  // (ICP model moved to the RevBox — components/IcpModel.tsx — its single home.)
+  // (ICP model moved to the company surface — components/IcpModel.tsx — its single home.)
 
   // Profile
   const [name, setName] = useState(userData?.user?.name ?? "");
@@ -1402,13 +1398,11 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
             </SectionShell>
           )}
 
-          {/* Insights config (watch-topic categories) moved to the RevBox → Categories tab. */}
+          {/* Insights config (watch-topic categories) moved to the company surface → Categories tab. */}
           {section === "integrations" && <SectionShell wide><Integrations embedded scope="personal" onWrongScope={forwardSource} /></SectionShell>}
           {section === "company-sources" && <SectionShell wide><Integrations embedded scope="company" onWrongScope={forwardSource} /></SectionShell>}
           {section === "webhooks"     && <SectionShell wide><Webhooks embedded /></SectionShell>}
           {/* Full width, like the other connection pages (GET-668). */}
-          {section === "context" && <SectionShell title="Context"><ContextLibrary /></SectionShell>}
-          {section === "signals" && <SectionShell title="Signals"><SignalsSettings /></SectionShell>}
           {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}
           {section === "activity-log" && <SectionShell title="Agent activity" wide><ApiActivity /></SectionShell>}
           {section === "repo"         && <RepositoriesPane token={token ?? ""} workspaceId={workspaceId} />}

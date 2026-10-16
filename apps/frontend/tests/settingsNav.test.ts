@@ -102,23 +102,10 @@ test("Custom plan keeps the Connections rows in the rail: its sidebar has no Int
   for (const id of ["integrations", "company-sources", "webhooks", "api-keys"]) assert.ok(rail.includes(id), id);
 });
 
-test("RevBoxes on: Context and Signals in their own section, after Connections, on API and Workspace plans (GET-882)", () => {
-  for (const tier of ["api", "custom"] as const) {
-    for (const isWorkspaceAdmin of [true, false]) {
-      const nav = settingsNav({ tier, isWorkspaceAdmin, isOwner: false, revboxes: true });
-      const groups = groupNav(nav);
-      const own = groups.find((g) => g.group === "Context & signals")!;
-      assert.deepEqual(ids(own.items), ["context", "signals"], `${tier} admin=${isWorkspaceAdmin}: Context then Signals`);
-      assert.ok(!groups.some((g) => g.group === "Workspace" && ids(g.items).includes("context")), "not under Workspace");
-      const order = groups.map((g) => g.group);
-      assert.ok(order.indexOf("Context & signals") < (order.includes("Workspace") ? order.indexOf("Workspace") : Infinity), `${tier}: before Workspace`);
-      assert.equal(resolveSection("context", nav), "context");
-      assert.equal(resolveSection("signals", nav), "signals");
-    }
-  }
-  const off = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
-  assert.ok(!ids(off).includes("context") && !ids(off).includes("signals"));
-  assert.equal(resolveSection("signals", off), "profile");
+test("no Context or Signals rows of its own: they are the Workspace layer's (GET-910)", () => {
+  const nav = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false, can: () => true });
+  assert.ok(!ids(nav).includes("context") && !ids(nav).includes("signals"));
+  assert.equal(resolveSection("signals", nav), "profile");
 });
 
 test("Agent activity (was API & MCP activity, GET-900): Workspace group, admins on both plans, not self-host; access-log lands there (GET-898)", () => {

@@ -31,6 +31,7 @@ import { inPrimaryPipeline } from "@/components/deals/AccountDeals";
 import { buildStageChips, sameStageLabel, type WsStage as StripStage } from "@/lib/stageStrip";
 import { faviconUrl } from "@/lib/externalImages";
 import { signalTag, type LatestSignal } from "@/lib/signalTags";
+import { cloud } from "@/lib/cloud";
 
 // A stage the workspace defined for itself — pulled from their CRM on connect, or agreed
 // with the agent in chat, and stored in workspace_stages.
@@ -325,19 +326,20 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const mineOnly = owners.length === 1 && owners[0] === meId;
   const setOwners = (ids: string[]) => { setOwnersState(ids); setPages(1); };
 
-  // ?revbox=<id> (GET-873): only that RevBox's accounts, resolved by the server: its scope plus the
-  // accounts its jobs worked on, the set its Accounts card counts (GET-891). A chip in the toolbar names the box and clears it; the market and owner
-  // filters do not apply on top of a box's scope.
-  const revboxId = params.get("revbox") ?? "";
-  const clearRevbox = () => { const next = new URLSearchParams(params); next.delete("revbox"); setParams(next, { replace: true }); setPages(1); };
-  const { data: companiesPage, isPending: loadingCo } = useQuery<{ companies: any[]; total: number; applied: string | null; countries: { country: string; accounts: number }[]; revbox: { id: string; name: string } | null }>({
-    queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all", revboxId],
+  // A Workspace-layer scope (cloud.accounts.scope, GET-873): only the accounts of the object the URL
+  // names, resolved by the server. A chip in the toolbar names it and clears it; the market and owner
+  // filters do not apply on top of it.
+  const accountScope = cloud.accounts?.scope;
+  const scopeId = accountScope ? params.get(accountScope.param) ?? "" : "";
+  const clearScope = () => { if (!accountScope) return; const next = new URLSearchParams(params); next.delete(accountScope.param); setParams(next, { replace: true }); setPages(1); };
+  const { data: companiesPage, isPending: loadingCo } = useQuery<{ companies: any[]; total: number; applied: string | null; countries: { country: string; accounts: number }[]; scope: { id: string; name: string } | null }>({
+    queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all", scopeId],
     enabled: !!token && !!workspaceId,
     placeholderData: (prev) => prev,
     queryFn: async () => {
       const url = `${apiUrl}/api/companies/list?workspaceId=${workspaceId}&limit=${PAGE * pages}`
         + (debouncedQ ? `&q=${encodeURIComponent(debouncedQ)}` : "")
-        + (revboxId ? `&revbox=${encodeURIComponent(revboxId)}` : (mineOnly ? "&scope=mine" : "") + (country ? `&country=${encodeURIComponent(country)}` : ""));
+        + (scopeId && accountScope ? `&${accountScope.param}=${encodeURIComponent(scopeId)}` : (mineOnly ? "&scope=mine" : "") + (country ? `&country=${encodeURIComponent(country)}` : ""));
       const r = await fetch(url, { headers: auth });
       const d = r.ok ? await r.json() : {};
       return {
@@ -345,7 +347,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         total: Number(d.total) || 0,
         applied: (d.country ?? null) as string | null,
         countries: (Array.isArray(d.countries) ? d.countries : []) as { country: string; accounts: number }[],
-        revbox: d.revbox && typeof d.revbox === "object" ? d.revbox as { id: string; name: string } : null,
+        scope: accountScope && d[accountScope.field] && typeof d[accountScope.field] === "object" ? d[accountScope.field] as { id: string; name: string } : null,
       };
     },
   });
@@ -942,7 +944,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {inShell && !revboxId && countryOptions.length > 0 && (
+      {inShell && !scopeId && countryOptions.length > 0 && (
         <ApiTopBarFilter active={appliedCountry ? 1 : 0}>
           <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>
           {[{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map((o) => ({ ...o, label: o.country }))].map((o) => {
@@ -971,10 +973,10 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         {!api && view === "accounts" && hasCustomerStatus && (
           <ViewTabs<Segment> aria-label="Account type" value={segment} onChange={setSegment} options={segmentOptions} />
         )}
-        {revboxId && (
+        {scopeId && accountScope && (
           <span className="inline-flex h-7 max-w-[260px] items-center gap-1 rounded-lg border border-border bg-card pl-2.5 pr-1 text-[12px] text-foreground">
-            <span className="truncate" title="Selected in this RevBox, or worked on by its agents in the last 30 days">RevBox: {companiesPage?.revbox?.name ?? "…"}</span>
-            <button type="button" onClick={clearRevbox} aria-label="Clear RevBox filter" className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground">
+            <span className="truncate" title={accountScope.title}>{accountScope.chip(companiesPage?.scope?.name ?? "…")}</span>
+            <button type="button" onClick={clearScope} aria-label={accountScope.clearLabel} className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:bg-hover hover:text-foreground">
               <X className="size-3.5" />
             </button>
           </span>
@@ -992,14 +994,14 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
             </button>
           )}
         </label>
-        {view === "accounts" && !revboxId && (
+        {view === "accounts" && !scopeId && (
           <OwnerFilter people={ownerPeople} meId={meId} value={owners} onChange={setOwners}
             unassignedCount={ownerCounts.unassigned || undefined} />
         )}
         {/* Which market. Accounts, the pipeline tabs and the counts all follow it, and it
             survives a reload. The focus country also keeps accounts whose country the CRM never
             recorded — they are unrecorded, not foreign. */}
-        {!inShell && !revboxId && <LocationFilter quiet applied={appliedCountry} options={countryOptions} onChange={chooseCountry} />}
+        {!inShell && !scopeId && <LocationFilter quiet applied={appliedCountry} options={countryOptions} onChange={chooseCountry} />}
       </PageToolbar>
 
       {hasStrip && (

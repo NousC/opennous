@@ -159,8 +159,8 @@ export function buildItems(data: InboxRead | null | undefined, now: Date = new D
 }
 
 /**
- * The RevBox built-in job behind an item (GET-897), for its box chip: a meeting's wrap-up is the
- * after-call follow-up's; a draft says so in its origin (a detector's). Null for anything else.
+ * The built-in job behind an item (GET-897), for its chip: a meeting's wrap-up is the after-call
+ * follow-up's; a draft says so in its origin (a detector's). Null for anything else.
  */
 export function builtinOf(item: InboxItem): string | null {
   if (item.kind === "meeting") return "sales_follow_up";

@@ -7,14 +7,14 @@
 // POST /v2/approvals/:runId/reject         → ends the run as rejected
 import { Router } from 'express';
 import { getSupabaseClient, listAutomationApprovals, decideAutomationRun } from '@nous/core';
-import { boxJobAccess, canSeeRoutineRuns, boxRunGuard } from '../../lib/boxJobAccess.mjs';
+import { routineAccess, canSeeRoutineRuns, routineRunGuard } from '../../lib/routineAccess.mjs';
 
 export const approvalsV2Router = Router();
 
-// A RevBox job's runs (GET-868) only for a key whose member may see the box; deciding one needs its
-// owner or an editor. Ordinary automations' approvals are unchanged.
+// An owned routine's runs (GET-868, lib/routineAccess.mjs) only for a key whose member may see it;
+// deciding one needs what its surface allows. Ordinary automations' approvals are unchanged.
 const keyUser = (req) => req.memberUserId ?? req.internalUserId ?? null;
-approvalsV2Router.param('runId', boxRunGuard(keyUser));
+approvalsV2Router.param('runId', routineRunGuard(keyUser));
 
 approvalsV2Router.get('/', async (req, res) => {
   try {
@@ -22,7 +22,7 @@ approvalsV2Router.get('/', async (req, res) => {
     const supabase = getSupabaseClient();
     const [approvals, access] = await Promise.all([
       listAutomationApprovals(supabase, req.workspaceId, { limit }),
-      boxJobAccess(supabase, req.workspaceId, keyUser(req)),
+      routineAccess(supabase, req.workspaceId, keyUser(req)),
     ]);
     return res.json({ approvals: approvals.filter(a => canSeeRoutineRuns(access, a.automation?.id)) });
   } catch (err) {

@@ -1,8 +1,8 @@
 // A model provider failure, told to the person in words they can act on and to ops once per
 // incident (GET-885).
 //
-// On 2026-10-15 the Job Builder's model account ran out of credit. The user saw "The job builder
-// hit an error. Try again." (trying again could not help) and nobody on our side was told. Now:
+// On 2026-10-15 a model account ran out of credit. The user saw "hit an error. Try again." (trying
+// again could not help) and nobody on our side was told. Now:
 //
 //   billing / auth   "<subject> isn't available right now. We've been alerted and are fixing it."
 //                    + an error-level ops alert

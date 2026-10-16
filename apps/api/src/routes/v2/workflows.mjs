@@ -27,7 +27,7 @@ import {
   LIVE_TRIGGERS, NEEDS_MIGRATION, RUN_STATUSES,
 } from '../api/automations.mjs';
 import { isMissingFlowColumn } from '../../lib/flows.mjs';
-import { isBoxJob, missingBoxColumn } from '../../lib/boxJobAccess.mjs';
+import { isOwnedRoutine, ownerColumnMissing, onlyOrdinaryRoutines } from '../../lib/routineAccess.mjs';
 
 // Run-now on an agent workflow runs the in-app agent, which is Cloud's (cloud/lib/routineRunner.mjs).
 // Cloud registers the runner at boot (GET-754); without it run-now answers 403 cloud_only_feature,
@@ -228,7 +228,7 @@ function triggerIn(trigger) {
  * makes a flow invalid is 400 invalid_workflow with the checker's reasons.
  */
 function buildColumns(res, body, plan) {
-  // A RevBox's delivery step belongs to RevBox jobs (GET-868); a public workflow has no box to deliver to.
+  // Steps only the system writes (an extension's, GET-868) are never accepted from the API.
   const internal = (Array.isArray(body?.steps) ? body.steps : []).find(s => INTERNAL_STEP_TYPES.has(s?.type));
   if (internal) { invalid(res, [{ code: 'unknown_step', step: internal.type, message: `Step type ${internal.type} is not available on the API.` }]); return null; }
   const built = flowColumns(body, plan);
@@ -250,14 +250,14 @@ function unknownFields(body, allowed) {
 const isMemberKey = (req) => req.viewerScope !== 'admin';
 
 /**
- * The workflow this key may touch, or null (→ 404). A RevBox job (GET-868, a row with revbox_id) is
- * never one: it is managed only through the box, which checks the caller's access to it.
+ * The workflow this key may touch, or null (→ 404). A routine another surface owns (GET-868,
+ * lib/routineAccess.mjs) is never one: it is managed only there, which checks the caller's access.
  */
 async function loadOwned(supabase, req) {
   const { data } = await supabase.from('agent_routines')
     .select('*').eq('id', req.params.id).eq('workspace_id', req.workspaceId).maybeSingle();
   if (!data) return null;
-  if (isBoxJob(data)) return null;
+  if (isOwnedRoutine(data)) return null;
   if (isMemberKey(req) && data.user_id !== req.memberUserId) return null;
   return data;
 }
@@ -293,18 +293,18 @@ workflowsV2Router.get('/', allowQueryParams(['enabled', 'limit', 'offset']), wra
   const { enabled } = req.query;
   if (enabled != null && !['true', 'false'].includes(String(enabled))) return res.status(400).json({ error: 'invalid_enabled', supported: ['true', 'false'] });
 
-  const list = (boxColumn) => {
+  const list = (narrow) => {
     let q = supabase.from('agent_routines').select('*').eq('workspace_id', req.workspaceId);
-    // RevBox jobs are the box's, never listed here (GET-868).
-    if (boxColumn) q = q.is('revbox_id', null);
+    // Routines another surface owns are its own, never listed here (GET-868).
+    if (narrow) q = onlyOrdinaryRoutines(q);
     if (isMemberKey(req)) q = q.eq('user_id', req.memberUserId ?? '00000000-0000-0000-0000-000000000000');
     if (enabled != null) q = q.eq('enabled', String(enabled) === 'true');
     return q.order('created_at', { ascending: true }).order('id', { ascending: true })
       .range(page.offset, page.offset + page.limit);
   };
   let { data, error } = await list(true);
-  // Before the RevBox migration there is no revbox_id column, and so no box jobs.
-  if (error && missingBoxColumn(error)) ({ data, error } = await list(false));
+  // Before the owner's migration its column is not there, and so nothing is owned.
+  if (error && ownerColumnMissing(error)) ({ data, error } = await list(false));
   if (error) throw error;
   const rows = data ?? [];
   const has_more = rows.length > page.limit;

@@ -3,7 +3,7 @@ import { getSupabaseClient, syncAfterCallWebhook, runAutomationsForWorkspace, pr
 import { buildOutcomeLedger } from '../../lib/outcomeLedger.mjs';
 import { automationLimit, canMakeArtifact, planName } from '../../lib/plans.mjs';
 import { creditsForRuns, creditsByAutomation } from '../../lib/automationCredits.mjs';
-import { isBoxJob, missingBoxColumn, boxJobAccess, canSeeRoutineRuns, hiddenBoxJobs, boxRunGuard, foldPrivateBoxJobs } from '../../lib/boxJobAccess.mjs';
+import { isOwnedRoutine, ownsRoutine, routineAccess, canSeeRoutineRuns, hiddenRoutines, routineRunGuard, foldHiddenRoutines } from '../../lib/routineAccess.mjs';
 
 /** Every From a review picked is one of the reviewer's own mailboxes (GET-745). */
 export async function ownMailboxesOnly(req, decisions) {
@@ -31,26 +31,20 @@ automationsRouter.use((req, res, next) => {
   next();
 });
 
-// A RevBox job (GET-868) is an agent_routines row with revbox_id. It is managed only through
-// /api/revboxes, which checks the caller's access to the box: here it is neither listed nor
-// reachable by id, or any workspace member could read its prompt, run it (reading the box as its
-// owner), edit it or delete it. Every /:id route answers 404 for one, as for a row that is not there.
-// Its runs follow the box's access (lib/boxJobAccess.mjs): seen by whoever may open the box, acted
-// on only by its owner or an editor.
+// A routine another surface owns (GET-868, lib/routineAccess.mjs) is managed only there, which checks
+// the caller's access to it: here it is neither listed nor reachable by id, or any workspace member
+// could read its prompt, run it, edit it or delete it. Every /:id route answers 404 for one, as for a
+// row that is not there. Its runs follow that surface's access: seen and acted on only as it allows.
 automationsRouter.param('id', async (req, res, next, id) => {
   try {
-    const { data, error } = await getSupabaseClient().from('agent_routines').select('revbox_id')
-      .eq('id', id).eq('workspace_id', req.workspaceId).maybeSingle();
-    // No revbox_id column yet: there are no box jobs. A malformed id: the route answers as before.
-    if (error && !missingBoxColumn(error) && error.code !== '22P02') throw error;
-    if (isBoxJob(data)) return res.status(404).json({ error: 'not_found' });
+    if (await ownsRoutine(getSupabaseClient(), req.workspaceId, id)) return res.status(404).json({ error: 'not_found' });
     return next();
   } catch (err) {
-    console.error('[/api/automations/:id box-job check]', err);
+    console.error('[/api/automations/:id owner check]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
-automationsRouter.param('runId', boxRunGuard((req) => req.internalUserId ?? null));
+automationsRouter.param('runId', routineRunGuard((req) => req.internalUserId ?? null));
 
 const AFTER_CALL_EVENT = 'interaction.meeting_held';
 
@@ -337,8 +331,8 @@ automationsRouter.get('/', async (req, res) => {
     return res.json({
       plan: planName(plan.id),
       limit,                                   // null = unlimited
-      used: rows.length,                       // the limit counts every automation, on or off, box jobs too
-      automations: rows.filter(r => !isBoxJob(r)).map(rowOut),   // a RevBox job is the box's, not listed here
+      used: rows.length,                       // the limit counts every automation, on or off, owned ones too
+      automations: rows.filter(r => !isOwnedRoutine(r)).map(rowOut),   // an owned routine is its surface's, not listed here
       // The catalogue is returned whole, with each entry saying whether THIS plan may pick it.
       // A locked card that names the plan it needs sells better than a card that is missing.
       catalogue: ARTIFACT_RECIPES.map(r => ({
@@ -755,7 +749,7 @@ export async function listAutomationRuns(supabase, workspaceId, { days = null, r
     q = q.eq('workspace_id', workspaceId);
     if (since) q = q.gte('started_at', since);
     if (routines.length) q = q.in('routine_id', routines);
-    // Box jobs the caller may not see (GET-868): left out of the list and of the stats.
+    // Owned routines the caller may not see (GET-868): left out of the list and of the stats.
     if (excludeRoutines.length) q = q.or(`routine_id.is.null,routine_id.not.in.(${excludeRoutines.join(',')})`);
     return q;
   };
@@ -823,7 +817,7 @@ automationsRouter.get('/runs', async (req, res) => {
     const routines = String(req.query.routines ?? '').split(',').map(x => x.trim()).filter(Boolean);
     const statuses = String(req.query.status ?? '').split(',').map(x => x.trim()).filter(x => RUN_STATUSES.has(x));
     const supabase = getSupabaseClient();
-    const excludeRoutines = hiddenBoxJobs(await boxJobAccess(supabase, req.workspaceId, req.internalUserId ?? null));
+    const excludeRoutines = hiddenRoutines(await routineAccess(supabase, req.workspaceId, req.internalUserId ?? null));
     return res.json(await listAutomationRuns(supabase, req.workspaceId, { days, routines, statuses, excludeRoutines }));
   } catch (err) {
     console.error('[GET /api/automations/runs]', err);
@@ -855,10 +849,10 @@ automationsRouter.get('/credits', async (req, res) => {
     const supabase = getSupabaseClient();
     const [rows, access] = await Promise.all([
       creditsByAutomation(supabase, req.workspaceId, { days }),
-      boxJobAccess(supabase, req.workspaceId, req.internalUserId ?? null),
+      routineAccess(supabase, req.workspaceId, req.internalUserId ?? null),
     ]);
-    // A box job the caller may not see is one "Private RevBox jobs" line: its credits, no name (GET-868).
-    return res.json({ days, automations: foldPrivateBoxJobs(rows, access) });
+    // Owned routines the caller may not see fold into one line: their credits, no name (GET-868).
+    return res.json({ days, automations: foldHiddenRoutines(rows, access) });
   } catch (err) {
     console.error('[GET /api/automations/credits]', err);
     return res.status(500).json({ error: 'internal_error' });
@@ -873,7 +867,7 @@ automationsRouter.get('/approvals', async (req, res) => {
     const supabase = getSupabaseClient();
     const [approvals, access] = await Promise.all([
       listAutomationApprovals(supabase, req.workspaceId),
-      boxJobAccess(supabase, req.workspaceId, req.internalUserId ?? null),
+      routineAccess(supabase, req.workspaceId, req.internalUserId ?? null),
     ]);
     return res.json({ approvals: approvals.filter(a => canSeeRoutineRuns(access, a.automation?.id)) });
   } catch (err) {

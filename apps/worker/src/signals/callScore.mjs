@@ -15,35 +15,7 @@
 // names its speakers and the first one's did not.
 
 import {
-  writesTasks,
-  getCoachingRubric,
-  buildCallScorePrompt,
-  buildCallTypePrompt,
-  parseCallType,
-  callTypeAgainstRoom,
-  parseCallScoreJson,
-  isGradedCallType,
-  buildHealthReadPrompt,
-  parseHealthReadJson,
-  buildCommitmentsPrompt, parseCommitmentsJson,
-  writeHealthPage,
-  healthSignalsToSave,
-  HEALTH_SIGNAL,
-  saveNote,
-  recordObservation,
-  resolveDuePhrase, dueDateAgreeingWith,
-  getWorkspaceTimezone,
-  enqueueGithubDispatches,
-  callScoreFromStored,
-  saveDocument,
-  talkShareFromTranscript,
-  sidesOfCall,
-  resolveCallTarget,
-  storeCallReview,
-  emptyTaskProvenance, provenanceFromModel, matchPersonByName, dealForTask, companyOfContact,
-  isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment,
-  previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMeetingNotes, repeatsFiledTask,
-  emitEvent, runCallEndedAutomations,
+  writesTasks, getCoachingRubric, buildCallScorePrompt, buildCallTypePrompt, parseCallType, callTypeAgainstRoom, parseCallScoreJson, isGradedCallType, buildHealthReadPrompt, parseHealthReadJson, buildCommitmentsPrompt, parseCommitmentsJson, writeHealthPage, healthSignalsToSave, HEALTH_SIGNAL, saveNote, recordObservation, resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, enqueueGithubDispatches, callScoreFromStored, saveDocument, talkShareFromTranscript, sidesOfCall, resolveCallTarget, storeCallReview, emptyTaskProvenance, provenanceFromModel, matchPersonByName, dealForTask, companyOfContact, isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMeetingNotes, repeatsFiledTask, emitEvent, runCallEndedAutomations,
 } from '@nous/core';
 import { createMessage, pipelineModel } from '../lib/llm.mjs';
 import { spokenByOurSide } from '../noema/grounding.mjs';
@@ -427,7 +399,8 @@ export async function scoreCall({
           workspaceId, type: 'conversation.call_ended',
           accountId: account || null, personId: primary || null, occurredAt: at,
           dedupeKey: target.meetingId,
-          revboxData:{owner_user_id:recorder?.userId??repUserId??null,transcript:transcript.slice(0,60000),attendees:(Array.isArray(contacts)?contacts:[]).filter(c=>c?.email&&!ourEntityIds.has(c.id)).map(c=>({name:c.name??null,email:c.email}))},
+          // For the engine extension only (GET-910), never in a webhook: who recorded it, the words, who was on it.
+          internalData:{owner_user_id:recorder?.userId??repUserId??null,transcript:transcript.slice(0,60000),attendees:(Array.isArray(contacts)?contacts:[]).filter(c=>c?.email&&!ourEntityIds.has(c.id)).map(c=>({name:c.name??null,email:c.email}))},
           data: { meeting_id: target.meetingId, title: title ?? null, source: target.source ?? source ?? null, source_ref: sourceRef ?? null, url: sourceUrl ?? null, call_type: callType, ...data },
         }).catch(() => 0)
       : Promise.resolve(0));

@@ -38,13 +38,17 @@ export const FLOW_TRIGGER_KEYS = new Set(FLOW_TRIGGERS.map(t => t.key));
 
 export const STEP_TYPES = new Set([
   'agent', 'hubspot', 'gmail', 'slack', 'email', 'webhook', 'only_if', 'wait', 'approval',
-  // A RevBox job's last step (GET-868): the box's destinations at run time. Added by the Job Builder.
-  'revbox_delivery',
-  // A RevBox job's tables (GET-874): add the AI step's row to a box dataset, read a window of rows back.
-  'dataset_append', 'dataset_read',
 ]);
 /** Steps only the system writes: never offered on the public API, never accepted from it. */
-export const INTERNAL_STEP_TYPES = new Set(['revbox_delivery', 'dataset_append', 'dataset_read']);
+export const INTERNAL_STEP_TYPES = new Set();
+
+/**
+ * Step types the engine's extension adds (GET-868, GET-874, GET-910): a flow may hold them, and they
+ * are internal: only the system writes them. Cloud registers its own at boot (cloud/index.mjs).
+ */
+export function registerInternalStepTypes(types) {
+  for (const t of types) { STEP_TYPES.add(t); INTERNAL_STEP_TYPES.add(t); }
+}
 
 const MAX_STEPS = 20;
 const MAX_FLOW_BYTES = 60_000;

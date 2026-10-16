@@ -40,7 +40,7 @@
 
 import { getSupabaseClient, getAccountRecord, mirrorDraftAsDecision, loadDealCandidates, getRelationshipOwners,
   effectiveOwnerUserId, getInternalEntityIds, bindingConstraints, filterDerivedForViewer, filterByCitedClaimsForViewer,
-  TEAM_VIEWER, builtinEmailVoices, emailVoiceBlock } from '@nous/core';
+  TEAM_VIEWER, emailVoiceBlock } from '@nous/core';
 import { pickRecipientEmail } from './recipientEmail.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft, DEFAULT_SUBJECT } from './emailDraft.mjs';
 
@@ -865,8 +865,11 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
 export const CORE_DEPS = {
   getAccountRecord, mirrorDraftAsDecision, loadDealCandidates, getRelationshipOwners,
   getInternalEntityIds, bindingConstraints, pickRecipientEmail, filterDerivedForViewer, filterByCitedClaimsForViewer,
-  emailVoices: builtinEmailVoices,
+  // The team's email voice per built-in (GET-902): Cloud's (registerEmailVoices), none without it.
+  emailVoices: null,
 };
+/** Where the built-in drafters' email voices come from (GET-910): (supabase, workspaceId) -> Map(key -> { text }). */
+export function registerEmailVoices(fn) { CORE_DEPS.emailVoices = fn ?? null; }
 async function apiDeps() {
   const [{ createMessage, messageText }, { trackLlmUsage }, { requireAiCredits }, { loadMemberProfile, buildMemberBlock }] = await Promise.all([
     import('./llm.mjs'), import('./llmUsage.mjs'), import('./plans.mjs'), import('./agentDirectives.mjs'),

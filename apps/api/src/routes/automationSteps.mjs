@@ -18,12 +18,14 @@ automationStepsInternalRouter.use((req, res, next) => {
 });
 
 automationStepsInternalRouter.post('/slack', async (req, res) => {
-  const { workspaceId, channel, channelId, userId, text, format, content, runId, stepId, revboxId, accountId } = req.body ?? {};
+  const { workspaceId, channel, channelId, userId, text, format, content, ...rest } = req.body ?? {};
   if (typeof workspaceId !== 'string' || !workspaceId) return res.status(400).json({ ok: false, reason: 'workspace_required' });
   // A Slack layout (GET-858): the step's format and the AI's content; the poster renders the blocks.
+  // Its references (runId, stepId, accountId, and any an engine extension adds, GET-910) are short ids.
   const id = (v) => (typeof v === 'string' && v.length <= 80 ? v : null);
+  const refs = Object.fromEntries(['runId', 'stepId', 'accountId', ...Object.keys(rest).filter(k => /^[a-z][A-Za-z]{0,30}Id$/.test(k))].map(k => [k, id(rest[k])]));
   const layout = typeof format === 'string' && content && typeof content === 'object' && !Array.isArray(content)
-    ? { format: format.slice(0, 20), content, runId: id(runId), stepId: id(stepId), revboxId: id(revboxId), accountId: id(accountId) } : {};
+    ? { format: format.slice(0, 20), content, ...refs } : {};
   try {
     return res.json(await postAutomationSlack({ supabase: getSupabaseClient(), workspaceId, channel: String(channel ?? ''), channelId: channelId ?? null, userId: userId ?? null, text, ...layout }));
   } catch (err) {

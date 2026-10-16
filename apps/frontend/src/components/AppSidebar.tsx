@@ -3,8 +3,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { VersionWidget } from "@/components/VersionWidget";
 import {
   Home as HomeIcon,
-  Boxes,
-  Plus,
   Search,
   PanelLeft,
   Network,
@@ -21,8 +19,6 @@ import {
   ArrowUpRight,
   Users,
 } from "lucide-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { revboxesRequest, type RevBox } from "@/lib/revboxes";
 import { usePref } from "@/hooks/usePref";
 import { usePlan } from "@/hooks/usePlan";
 import { BackfillPill } from "@/components/BackfillPill";
@@ -80,10 +76,10 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 }
 
 // The footer's power-user surfaces on the Workspace plan. There is no Workspace group any more and
-// no Automations row on either plan: jobs live in RevBoxes now (GET-864). /automations still opens
+// no Automations row on either plan (GET-864). /automations still opens
 // for old links.
 // Workspace plan (GET-872): Activity sits in the footer; Graph, Reporting, Forecast and Insights in a
-// collapsible Workspace group under RevBoxes.
+// collapsible Workspace group under the Workspace layer's groups.
 const footerNavItemsWorkspace: NavItem[] = [
   { title: "Activity", url: "/activity", icon: Activity },
 ];
@@ -98,7 +94,7 @@ const workspaceGroupItems: NavItem[] = [
 // API plan — the operator brings their own agent, so the app is not where the work
 // happens: it is where you see what we connected to and what we read (GET-482). Home is
 // the activity ledger, Accounts is the record, and your sources are the two rows that
-// change what either of them contains. No inbox, no RevBoxes, no tasks — those are the app
+// change what either of them contains. No inbox, no tasks — those are the app
 // doing the work for you, which is the Workspace plan (GET-908).
 const workNavItemsApi: NavItem[] = [
   { title: "Home",     url: "/",         icon: HomeIcon, end: true },
@@ -160,30 +156,10 @@ export function AppSidebar() {
 
   // Custom (teams) plan gets the full in-app nav; everyone else is on the Core (plugin)
   // plan — Install + Workflows instead of Home + Chat, and no in-app agent.
-  const { plan, selfHosted, can } = usePlan();
+  const { plan, selfHosted } = usePlan();
   // Three plans now (GET-480): the API rail is its own shape, Workspace and Custom share
   // the full one.
   const api = isApiTier(plan);
-  // RevBoxes (GET-858): the Workspace plan's projects, listed in the rail with a create action that
-  // opens the new, empty box straight away. A product-shape gate, so it reads the plan's own flag
-  // rather than can() (a pass-through while the paywall is off): the API plan and self-host have
-  // no RevBoxes (GET-908).
-  const hasRevboxes = !!plan.features.revboxes && can('revboxes');
-  const revboxWorkspaceId = userData?.workspace?.id ?? '';
-  const revboxToken = session?.access_token ?? '';
-  const queryClient = useQueryClient();
-  const [creatingRevbox, setCreatingRevbox] = useState(false);
-  const [revboxError, setRevboxError] = useState('');
-  const revboxes = useQuery({ queryKey: ['revboxes', revboxWorkspaceId], enabled: hasRevboxes && !!revboxWorkspaceId && !!revboxToken, queryFn: () => revboxesRequest<{ boxes: RevBox[] }>(revboxWorkspaceId, revboxToken) });
-  async function createRevbox() {
-    setCreatingRevbox(true); setRevboxError('');
-    try {
-      const { box } = await revboxesRequest<{ box: RevBox }>(revboxWorkspaceId, revboxToken, '', { method: 'POST', body: '{}' });
-      await queryClient.invalidateQueries({ queryKey: ['revboxes', revboxWorkspaceId] });
-      navigate(`/revboxes/${box.id}?new=1`);
-    } catch (e) { setRevboxError(e instanceof Error ? e.message : 'Could not create RevBox.'); }
-    finally { setCreatingRevbox(false); }
-  }
   // Brains (GET-431) are Cloud's, drawn by its BrainsNav (GET-839). Recents are the in-app agent's thread list, so they follow the agent: Custom is the plan
   // where it runs in the app.
   const tier = planTier(plan);
@@ -206,7 +182,6 @@ export function AppSidebar() {
   const [viewsOpen, setViewsOpen] = usePref<boolean>("sidebar.views.open", true, (v): v is boolean => typeof v === "boolean");
   const [integrationsOpen, setIntegrationsOpen] = usePref<boolean>("sidebar.integrations.open", true, (v): v is boolean => typeof v === "boolean");
   const [workspaceOpen, setWorkspaceOpen] = usePref<boolean>("sidebar.workspace.open", true, (v): v is boolean => typeof v === "boolean");
-  const [revboxesOpen, setRevboxesOpen] = usePref<boolean>("sidebar.revboxes.open", true, (v): v is boolean => typeof v === "boolean");
   // API plan: the credits card in the foot, from the same payload the Usage page reads.
   const credits = useCredits(api);
 
@@ -347,15 +322,6 @@ export function AppSidebar() {
   const userName = userData?.user?.name || userData?.user?.email?.split("@")[0] || "Account";
   const userEmail = userData?.user?.email || "";
 
-  // RevBoxes (GET-858, GET-864): Workspace only; the API plan and self-host have none (GET-908).
-  const revboxSection = hasRevboxes && (
-    <>
-      {sectionLabel("RevBoxes", { open: revboxesOpen || collapsed, toggle: () => setRevboxesOpen((o) => !o) }, <button aria-label="Create RevBox" title="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Plus className="h-3.5 w-3.5" /></button>)}
-      {collapsed && withTip(<button aria-label="Create RevBox" onClick={() => void createRevbox()} disabled={creatingRevbox} className="mx-auto flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted"><Plus className="h-4 w-4" /></button>, "Create RevBox")}
-      {(revboxesOpen || collapsed) && <ul className="flex flex-col gap-px">{revboxes.data?.boxes.map(box => renderOpenItem({ title: box.name, url: `/revboxes/${box.id}`, icon: Boxes }))}</ul>}
-      {!collapsed && (revboxError || revboxes.error) && <p role="alert" className="px-2 py-1 text-[11px] text-risk">{revboxError || "Could not load RevBoxes."}</p>}
-    </>
-  );
 
   return (
     <aside
@@ -443,10 +409,13 @@ export function AppSidebar() {
           <ul className="flex flex-col gap-px">{integrationNavItemsApi.map((i) => renderOpenItem(i))}</ul>
         )}
 
-        {/* RevBoxes on Workspace (GET-864), after the views. The API plan has none (GET-908). */}
-        {revboxSection}
+        {/* The Workspace layer's groups after the views (cloud.nav.groups); the API plan has none. */}
+        {!api && cloud.nav?.groups?.map((Group, i) => (
+          <Group key={i} tier={tier} collapsed={collapsed} sectionLabel={sectionLabel} withTip={withTip}
+            renderItem={(item) => renderOpenItem(item)} />
+        ))}
 
-        {/* WORKSPACE (GET-872): Graph, Reporting, Forecast, Insights, collapsible, under RevBoxes. */}
+        {/* WORKSPACE (GET-872): Graph, Reporting, Forecast, Insights, collapsible, under the groups above. */}
         {!api && workspaceItems.length > 0 && sectionLabel("Workspace", { open: workspaceOpen || collapsed, toggle: () => setWorkspaceOpen((o) => !o) })}
         {!api && workspaceItems.length > 0 && (workspaceOpen || collapsed) && (
           <ul className="flex flex-col gap-px">{workspaceItems.map((i) => renderOpenItem(i))}</ul>

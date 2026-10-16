@@ -29,8 +29,8 @@ test('legal suffixes drop out', () => {
 });
 
 test('punctuation and spacing are not identity', () => {
-  assert.equal(companyNameKey('Rev-Box'), companyNameKey('Rev Box'));
-  assert.equal(companyNameKey('rev_box'), companyNameKey('RevBox'));
+  assert.equal(companyNameKey('Acme-Box'), companyNameKey('Acme Box'));
+  assert.equal(companyNameKey('acme_box'), companyNameKey('AcmeBox'));
 });
 
 test('different companies keep different keys', () => {

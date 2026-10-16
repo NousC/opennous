@@ -1,4 +1,3 @@
-import { enqueueRevboxEvent } from '../db/revboxRuns.mjs';
 // Record events (GET-559) — something happened on an account, pushed to the workspace's own
 // stack (n8n, Clay, their agent) with the record attached.
 //
@@ -15,6 +14,7 @@ import crypto from 'node:crypto';
 import { getAccountRecord } from '../db/claims.js';
 import { teamReadContext } from '../db/readContext.js';
 import { subscribersFor } from '../db/triggers.js';
+import { loadAutomationExtension } from './automationExtension.mjs';
 
 /** Bump when the envelope changes shape. Receivers can branch on it. */
 export const EVENT_API_VERSION = '2026-10-01';
@@ -198,7 +198,7 @@ export function eventEnvelope({ type, workspaceId, occurredAt, record, data = {}
  */
 export async function emitEvent(supabase, {
   workspaceId, type, accountId = null, personId = null, dealId = null,
-  occurredAt = null, data = {}, revboxData = null, dedupeKey, maxAgeHours = DEFAULT_MAX_AGE_HOURS,
+  occurredAt = null, data = {}, internalData = null, dedupeKey, maxAgeHours = DEFAULT_MAX_AGE_HOURS,
 }) {
   try {
     if (!workspaceId || !type || !dedupeKey) return 0;
@@ -206,7 +206,10 @@ export async function emitEvent(supabase, {
     if (Number.isNaN(at.getTime())) return 0;
     if (Date.now() - at.getTime() > maxAgeHours * 3_600_000) return 0;
 
-    await enqueueRevboxEvent(supabase,{workspaceId,type,accountId,occurredAt:at.toISOString(),data:{...data,...(revboxData??{})},dedupeKey}).catch(err=>console.warn('[revbox-events]',err.message));
+    // The automation engine's extension hears every event first (GET-910): `internalData` rides along
+    // for it only, never in a webhook's payload.
+    const ext = await loadAutomationExtension();
+    if (ext?.onEvent) await Promise.resolve(ext.onEvent(supabase,{workspaceId,type,accountId,occurredAt:at.toISOString(),data:{...data,...(internalData??{})},dedupeKey})).catch(err=>console.warn('[events] extension',err.message));
     const externalId = `${type}:${dedupeKey}`;
     let subs = (await subscribersFor(supabase, workspaceId, type))
       .filter(s => at.getTime() >= new Date(s.created_at).getTime() - SUBSCRIBE_GRACE_MS);

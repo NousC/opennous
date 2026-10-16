@@ -1,6 +1,7 @@
 // A job on several signals (GET-873): trigger_kind is the primary, trigger_config.also the extra
 // triggers, trigger_config.signal_keys the catalog keys. Every event runner matches `also`, one
-// event runs a job once, and a schedule never combines with signals.
+// event runs a job once. The signal catalog and the checks on a proposed job are Cloud's (GET-910):
+// test/cloud/multiSignalBuilder.test.mjs.
 //
 // Run: pnpm --filter @nous/core build && node --test packages/core/test/multiSignalTriggers.test.mjs
 
@@ -9,8 +10,6 @@ import assert from 'node:assert/strict';
 import {
   routineTriggers, triggerConfigsFor, routineListensTo, listensToFilter, accountSignalKinds, callRecorders, beforeMeetingOffset, primaryTriggerConfig,
 } from '../dist/services/routineTriggers.mjs';
-import { signalCatalog, triggersForSignals, signalKeysProblem, signalsLabel } from '../dist/services/signalCatalog.mjs';
-import { validateBuilderProposal, builderRoutineColumns } from '../dist/db/revboxBuilder.mjs';
 import { runAutomationsForWorkspace, processHubspotFieldChanges } from '../dist/services/automationRun.mjs';
 
 const WON_OR_LOST = { trigger_kind: 'deal_closed_won', trigger_config: { signal_keys: ['deal.won', 'deal.lost'], also: [{ kind: 'deal_closed_lost', config: {} }] } };
@@ -43,55 +42,6 @@ test('merged filters: account signals, recorders, before-meeting offsets', () =>
   assert.equal(beforeMeetingOffset({ trigger_kind: 'before_meeting', offset_minutes: 30, trigger_config: {} }), 30);
   assert.equal(beforeMeetingOffset({ trigger_kind: 'call_ended', trigger_config: { also: [{ kind: 'before_meeting', config: { offset: 90 } }] } }), 90);
   assert.equal(beforeMeetingOffset({ trigger_kind: 'clock', trigger_config: { also: [{ kind: 'before_meeting', config: {} }] } }), null);
-});
-
-test('triggersForSignals: primary + also, same kinds merged, schedule refused with signals', () => {
-  const cat = signalCatalog();
-  assert.deepEqual(triggersForSignals(['deal.won', 'deal.lost'], cat), { trigger_kind: 'deal_closed_won', trigger_config: { signal_keys: ['deal.won', 'deal.lost'], also: [{ kind: 'deal_closed_lost', config: {} }] } });
-  assert.deepEqual(triggersForSignals(['signal.churn_risk', 'signal.buying_signal'], cat), { trigger_kind: 'account_signal', trigger_config: { signals: ['churn_risk', 'buying_signal'], signal_keys: ['signal.churn_risk', 'signal.buying_signal'] } });
-  assert.deepEqual(triggersForSignals(['meeting.done:granola', 'meeting.done:fireflies'], cat).trigger_config, { tools: ['granola', 'fireflies'], signal_keys: ['meeting.done:granola', 'meeting.done:fireflies'] });
-  assert.deepEqual(triggersForSignals(['meeting.done:granola', 'meeting.done'], cat).trigger_config, { signal_keys: ['meeting.done:granola', 'meeting.done'] });
-  assert.deepEqual(triggersForSignals([], cat), { trigger_kind: 'clock', trigger_config: {} });
-  assert.equal(triggersForSignals(['schedule', 'deal.won'], cat), null);
-  assert.match(signalKeysProblem(['schedule', 'deal.won'], cat), /schedule cannot be combined/);
-  assert.match(signalKeysProblem(['deal.nope'], cat), /"deal\.nope" is not in the signal catalog/);
-  assert.equal(triggersForSignals(['deal.nope', 'deal.won'], cat), null);
-});
-
-test('labels: one signal is its label, several read as a sentence', () => {
-  const cat = signalCatalog();
-  assert.equal(signalsLabel(['deal.won'], cat), 'Deal won');
-  assert.equal(signalsLabel(['deal.won', 'deal.lost'], cat), 'When a deal is won or lost');
-  assert.equal(signalsLabel(['meeting.done:granola', 'signal.churn_risk', 'signal.buying_signal'], cat), 'When a Granola meeting ends or an account shows churn risk or buying signal');
-  assert.equal(signalsLabel([], cat), 'On a schedule');
-});
-
-const proposal = (trigger) => ({
-  name: 'Deal closed write-up', summary: 'x', trigger,
-  steps: [{ id: 'w', type: 'agent', config: { mode: 'write', model: 'opennous', prompt: 'Write it up.' } }],
-  display: [{ step_id: 'w', tool: 'ai', title: 'Write it up' }],
-});
-
-test('validation accepts a multi-signal proposal and saves signal_keys beside also', () => {
-  const t = { signal_key: 'deal.won', signal_keys: ['deal.won', 'deal.lost'], kind: 'deal_closed_won', config: { also: [{ kind: 'deal_closed_lost', config: {} }] }, label: 'When a deal is won or lost' };
-  const v = validateBuilderProposal(proposal(t));
-  assert.equal(v.ok, true, v.errors?.join(' '));
-  const cols = builderRoutineColumns(proposal(t), v);
-  assert.equal(cols.trigger_kind, 'deal_closed_won');
-  assert.deepEqual(cols.trigger_config, { also: [{ kind: 'deal_closed_lost', config: {} }], signal_keys: ['deal.won', 'deal.lost'] });
-});
-
-test('validation refuses a schedule with signals, a bad extra trigger and a malformed also', () => {
-  const clock = validateBuilderProposal(proposal({ kind: 'clock', config: { frequency: 'daily', at: '08:00', also: [{ kind: 'deal_closed_won', config: {} }] } }));
-  assert.equal(clock.ok, false);
-  assert.ok(clock.errors.some(e => /schedule cannot be combined/.test(e)));
-  const solo = validateBuilderProposal(proposal({ kind: 'deal_closed_won', config: { also: [{ kind: 'clock', config: {} }] } }));
-  assert.ok(solo.errors.some(e => /"clock" cannot be combined/.test(e)));
-  const hs = validateBuilderProposal(proposal({ kind: 'deal_closed_won', config: { also: [{ kind: 'hubspot_field_changed', config: {} }, { kind: 'nope', config: {} }] } }));
-  assert.ok(hs.errors.some(e => /Extra trigger "hubspot_field_changed": .*object and the property/.test(e)));
-  assert.ok(hs.errors.some(e => /Extra trigger "nope": .*has no runner/.test(e)));
-  assert.equal(validateBuilderProposal(proposal({ kind: 'deal_closed_won', config: { also: 'x' } })).ok, false);
-  assert.ok(validateBuilderProposal(proposal({ kind: 'deal_closed_won', signal_keys: ['schedule', 'deal.won'], config: {} })).errors.some(e => /schedule cannot be combined/.test(e)));
 });
 
 // A Supabase stand-in: tables filtered by eq/in, every insert recorded; inserts into

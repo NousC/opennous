@@ -114,7 +114,6 @@ function ChatRoute() {
 const Settings        = lazyWithErrorBoundary(() => import("@/pages/Settings"));
 const Shared          = lazyWithErrorBoundary(() => import("@/pages/Shared"));
 const Activity        = lazyWithErrorBoundary(() => import("@/pages/Activity"));
-const RevBoxes = lazyWithErrorBoundary(() => import("@/pages/RevBoxes"));
 const Workflows       = lazyWithErrorBoundary(() => import("@/pages/Workflows"));
 const AutomationEditor = lazyWithErrorBoundary(() => import("@/pages/AutomationEditor"));
 const DocPage         = lazyWithErrorBoundary(() => import("@/pages/DocPage"));
@@ -293,7 +292,7 @@ export function AppRoutes() {
             <Route path="/company/members"  element={<WorkspaceToSettings tab="members" />} />
             <Route path="/company/billing"  element={<WorkspaceToSettings tab="billing" />} />
             {/* Personal workspace — the member's private vault (settings + folders),
-                in the app shell like RevBox. The sidebar item shows the first name. */}
+                in the app shell. The sidebar item shows the first name. */}
             {/* The personal workspace surface is retired — its config panes moved into
                 Settings (Connections group). Send any old /connect link there. */}
             <Route path="/connect"       element={<Navigate to="/settings" replace />} />
@@ -313,8 +312,6 @@ export function AppRoutes() {
             <Route path="/skills"     element={<Navigate to="/accounts" replace />} />
             {/* Automations — trigger, artifact, destination. /workflows was its address while
                 it was an agent-only surface; it keeps resolving so nothing in the wild 404s. */}
-            <Route path="/revboxes" element={<Navigate to="/" replace />} />
-            <Route path="/revboxes/:id" element={<RequiresFeature feature="revboxes"><Suspense fallback={<MinimalLoader />}><RevBoxes /></Suspense></RequiresFeature>} />
             <Route path="/automations" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><Workflows /></Suspense></RequiresFeature>} />
             {/* One automation, drawn as its flow (GET-523). "new" is the unsaved one. */}
             <Route path="/automations/:id" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><AutomationEditor /></Suspense></RequiresFeature>} />

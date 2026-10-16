@@ -502,11 +502,11 @@ test('workflows: triggers and step types', async () => {
   assert.ok(r.body.step_types.every(s => s.description.length > 10));
 });
 
-test('workflows: the RevBox delivery step is internal, never offered or accepted (GET-868)', async () => {
-  const r = await call('POST', '/v2/workflows', { name: 'Box delivery', trigger: { type: 'manual' }, steps: [{ type: 'revbox_delivery' }] });
+test('workflows: a step type the API does not offer is refused, with the step named (GET-868)', async () => {
+  const r = await call('POST', '/v2/workflows', { name: 'Unknown', trigger: { type: 'manual' }, steps: [{ type: 'not_a_step' }] });
   assert.equal(r.status, 400);
   assert.equal(r.body.error, 'invalid_workflow');
-  assert.equal(r.body.reasons[0].step, 'revbox_delivery');
+  assert.equal(r.body.reasons[0].step, 'not_a_step');
 });
 
 test('workflows: create through the app checker, read it back', async () => {

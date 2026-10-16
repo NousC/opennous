@@ -150,11 +150,11 @@ export {
   runAutomationDailyPoll, runAutomationsForWorkspace, makeArtifactForTest, resendAutomationDocument,
   emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, icpChanges, previewAutomationVars, composeAutomationEmail, automationEmailPreview, automationContextPreview, searchAutomationAccounts, CONTEXT_PARTS,
   processAccountSignals, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, reasonWords, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, saveApprovalChoices, testTriggers,
-  // RevBox jobs on the engine (GET-868): the box context an AI step reads.
-  revboxContextText, revboxRoutineContext, REVBOX_CONTEXT_CHARS,
+  // What an extension's steps reach (GET-910).
+  stepHandler,
 } from './services/automationRun.mjs';
 // Slack layouts for automation output (GET-858): the formats, the AI's JSON shape, parse and text.
-export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, boxSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
+export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
 // Record events (GET-559): every detector emits through one door; the trigger worker delivers.
 export { emitEvent, buildEventRecord, eventEnvelope, EVENT_API_VERSION } from './services/events.mjs';
 // HubSpot fields as automation variables (GET-567): listed from the stored schema, read live.
@@ -166,9 +166,7 @@ export {
 } from './llm/modelDoor.mjs';
 // Model provider failures sorted for people and ops, and where Claude calls go (GET-885).
 export { classifyProviderError, providerErrorSummary } from './llm/providerError.mjs';
-// Slack trouble named on the job card, the Delivery rail and Results, and alerted once (GET-901).
-export { classifySlackFailure, slackOutcomes, slackStatus, slackConnectionStatus, slackHealthView, runSlackStatus, jobUsesSlack, SLACK_CONNECTION_ERRORS, SLACK_RECONNECT_HREF, SLACK_INVITE_COMMAND } from './services/slackHealth.mjs';
-export { slackConnectionState } from './db/slackConnection.mjs';
+// Slack trouble named and alerted once (GET-901) is Cloud's, with Slack: '@nous/core/cloud' (GET-910).
 export { OPENROUTER_MESSAGES_BASE, openRouterClaudeId, claudeIdFromOpenRouter, claudeProvider, claudeClientOptions, routeClaudeClient } from './llm/claudeRoute.mjs';
 // Deal health — the contextual account score + its signals, shared by the API (account page,
 // /v2/deals) and the worker (nightly refresh). Plain JS, carried into dist by allowJs.
@@ -236,32 +234,17 @@ export { closeTasksBySentEmail, emailCandidatesFor, settleVerdict, parseEmailVer
 export { hubspotObjects, hubspotObjectFields, readHubspotRecords, summarizeRecords, periodsFor } from './services/hubspotRead.mjs';
 export { hubspotFieldChanges, changesFromHistory, changeText } from './services/hubspotFieldTrigger.mjs';
 
-// RevBox configuration and reviewable job proposals (API-first).
-export * from "./db/revboxes.mjs";
-export * from './db/accountNames.mjs';
-export * from "./db/contextLibrary.mjs";
-// The built-in drafters' editable email voice (GET-902).
-export * from "./db/emailVoice.mjs";
-export * from "./services/revboxPlan.mjs";
-
-export * from './services/revboxCompiler.mjs';
-export * from './db/revboxUsage.mjs';
-
-export * from './db/revboxRuns.mjs';
-// The Job Builder's sessions and approve -> workflow-engine routine (GET-868).
-export * from './db/revboxBuilder.mjs';
-// RevBox datasets (GET-874): tables a box's jobs keep, the rows they add and read back.
-export * from './db/revboxDatasets.mjs';
-export * from './services/datasetFormats.mjs';
-export * from './services/revboxExecution.mjs';
+// Cloud-only surfaces built on the automation engine are in '@nous/core/cloud' (GET-910); the
+// engine reaches them through services/automationExtension.mjs.
+// The built-in drafters' email voice block (GET-902); the voice files themselves are Cloud's.
+export { emailVoiceBlock } from './services/emailVoiceBlock.mjs';
+// The Accounts table's per-account overview (GET-894): deal count and latest signal.
+export { accountOverview, requireWorkspaceMember } from './db/accountOverview.mjs';
+export { registerAutomationExtension, loadAutomationExtension, automationExtension } from './services/automationExtension.mjs';
 
 export * from './services/routineSchedule.mjs';
 // A job on several signals (GET-873): trigger_kind + trigger_config.also, matched by every runner.
 export * from './services/routineTriggers.mjs';
 
-export * from './db/customSignals.mjs';
-export * from './services/customSignalExtraction.mjs';
-// What can start a job (GET-862): built-in + workspace signals, each with its routine trigger.
-export * from './services/signalCatalog.mjs';
 // A signal's tag (GET-894): each account-signal kind's tone, label and the line the table shows.
 export * from './services/signalTone.mjs';

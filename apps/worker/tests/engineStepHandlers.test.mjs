@@ -1,28 +1,28 @@
-// Review finding 6 on the RevBox Job Builder (GET-868): the worker runs event-triggered RevBox jobs,
-// so it registers the two handlers the step engine needs for them, as the API does
-// (apps/api/src/routes/api/revboxes.mjs): `safe_fetch` (box webhooks, through the SSRF guard) and
-// `revbox_visible_accounts` (the owner's visible accounts, for account-scoped box references).
+// Review finding 6 (GET-868): the worker runs event-triggered routines, so it registers the two
+// handlers the step engine needs, as the API does (apps/api/src/lib/engineStepHandlers.mjs):
+// `safe_fetch` (every webhook, through the SSRF guard) and `visible_accounts` (the owner's visible
+// accounts, for what a run reads about an account on their behalf).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { registerRevboxStepHandlers, assertPublicUrl } from '../src/lib/revboxStepHandlers.mjs';
+import { registerEngineStepHandlers, assertPublicUrl } from '../src/lib/engineStepHandlers.mjs';
 import { fakeDb } from './fakeDb.mjs';
 
 function registered() {
   const h = {};
-  registerRevboxStepHandlers((type, fn) => { h[type] = fn; });
+  registerEngineStepHandlers((type, fn) => { h[type] = fn; });
   return h;
 }
 
-test('the worker registers safe_fetch and revbox_visible_accounts', () => {
+test('the worker registers safe_fetch and visible_accounts', () => {
   const h = registered();
   assert.equal(typeof h.safe_fetch, 'function');
-  assert.equal(typeof h.revbox_visible_accounts, 'function');
+  assert.equal(typeof h.visible_accounts, 'function');
 });
 
 test('the index registers them at boot', async () => {
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../src/index.mjs', import.meta.url), 'utf8');
-  assert.match(src, /registerRevboxStepHandlers\(registerStepHandler\)/);
+  assert.match(src, /registerEngineStepHandlers\(registerStepHandler\)/);
 });
 
 test('safe_fetch refuses private and internal addresses before any request, and follows no redirect', async () => {
@@ -49,8 +49,8 @@ test('safe_fetch refuses private and internal addresses before any request, and 
 
 const owner = (uid) => ({ workspace_id: 'ws', entity_id: 'acme', property: 'relationship_owner', invalid_at: null, value: { primary: uid, members: [] } });
 
-test('revbox_visible_accounts: the owner\'s visible accounts, as the API reads them', async () => {
-  const { revbox_visible_accounts: see } = registered();
+test('visible_accounts: the owner\'s visible accounts, as the API reads them', async () => {
+  const { visible_accounts: see } = registered();
   // No owner: nothing account-scoped.
   assert.deepEqual([...(await see({ supabase: fakeDb({}), workspaceId: 'ws', userId: null }))], []);
   // An open workspace: every account (null).
@@ -71,7 +71,7 @@ test('revbox_visible_accounts: the owner\'s visible accounts, as the API reads t
 });
 
 // Pre-ship finding 4 (GET-858): safe_fetch takes { maxRedirects, timeoutMs }. An ordinary webhook
-// step asks for 4 redirects and 30s (as before the guard), a box webhook for none; every hop is
+// step asks for 4 redirects and 30s (as before the guard), asking for nothing follows none; every hop is
 // re-checked, so a redirect into a private address is still refused.
 test('safe_fetch options: up to maxRedirects public hops are followed, a private hop is refused, the default follows none', async () => {
   const { safe_fetch } = registered();
@@ -83,7 +83,7 @@ test('safe_fetch options: up to maxRedirects public hops are followed, a private
     const r = await safe_fetch('https://93.184.216.34/hook', { method: 'POST' }, { maxRedirects: 4, timeoutMs: 30_000 });
     assert.equal(r.status, 200);
     assert.deepEqual(seen, ['https://93.184.216.34/hook', 'https://93.184.216.35/final']);
-    // No options: a box webhook's default, no redirect followed.
+    // No options: the default, no redirect followed.
     seen.length = 0;
     await assert.rejects(safe_fetch('https://93.184.216.34/hook', { method: 'POST' }), /too_many_redirects/);
     assert.deepEqual(seen, ['https://93.184.216.34/hook']);

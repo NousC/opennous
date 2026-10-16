@@ -44,7 +44,7 @@ function database(seed = {}) {
   return { tables, from: t => new Query(t) };
 }
 
-const wonOrLost = { id: 'r-wl', workspace_id: 'ws', user_id: 'owner', name: 'Win/loss table', revbox_id: 'box', steps: [],
+const wonOrLost = { id: 'r-wl', workspace_id: 'ws', user_id: 'owner', name: 'Win/loss table', steps: [],
   trigger_kind: 'deal_closed_won', trigger_config: { signal_keys: ['deal.won', 'deal.lost'], also: [{ kind: 'deal_closed_lost', config: {} }] } };
 const deals = () => ({
   companies: [{ id: A1, workspace_id: 'ws', name: 'Harborline' }, { id: A2, workspace_id: 'ws', name: 'Fernpoint' }, { id: A3, workspace_id: 'ws', name: 'Hidden Co' }],
@@ -57,7 +57,7 @@ const deals = () => ({
 });
 
 test('a won-or-lost job tests on the latest closed deal its owner can see, lost included through `also`', async () => {
-  registerStepHandler('revbox_visible_accounts', async ({ userId }) => (userId === 'owner' ? new Set([A1, A2]) : null));
+  registerStepHandler('visible_accounts', async ({ userId }) => (userId === 'owner' ? new Set([A1, A2]) : null));
   const sb = database(deals());
   const t = await latestTestTrigger(sb, 'ws', wonOrLost);
   assert.ok(t, 'a deal trigger');
@@ -78,7 +78,7 @@ test('a won-or-lost job tests on the latest closed deal its owner can see, lost 
 });
 
 test('without the visibility handler no deal is assumed visible', async () => {
-  registerStepHandler('revbox_visible_accounts', null);
+  registerStepHandler('visible_accounts', null);
   const sb = database(deals());
   assert.equal(await latestTestTrigger(sb, 'ws', wonOrLost), null);
 });
@@ -97,7 +97,7 @@ test('a job on a call and on account signals (through `also`) tests on the newes
 });
 
 test('startTestRun starts a deal-triggered job instead of refusing it', async () => {
-  registerStepHandler('revbox_visible_accounts', async () => null);
+  registerStepHandler('visible_accounts', async () => null);
   const sb = database({ ...deals(), agent_routines: [wonOrLost] });
   const out = await startTestRun(sb, 'ws', 'r-wl', { holdSends: true });
   assert.equal(out.ok, true, out.message);

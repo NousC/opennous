@@ -11,7 +11,7 @@ import { startTestRun, registerStepHandler } from '../dist/services/automationRu
  *  lands, as a network write issued earlier can commit after one issued later. */
 function database(seed = {}, { slowLog = [] } = {}) {
   let logWrites = 0;
-  const tables = { agent_routines: [], agent_routine_runs: [], documents: [], workspace_members: [], revboxes: [], revbox_members: [], revbox_context: [], ...seed };
+  const tables = { agent_routines: [], agent_routine_runs: [], documents: [], workspace_members: [], ...seed };
   let seq = 0;
   class Query {
     constructor(table) { this.table = table; this.filters = []; }
@@ -42,13 +42,11 @@ function database(seed = {}, { slowLog = [] } = {}) {
   return { tables, from: t => new Query(t), rpc: async () => ({ data: null, error: null }) };
 }
 
-const box = () => ({
+const members = () => ({
   workspace_members: [{ workspace_id: 'ws', user_id: 'owner', role: 'admin' }],
-  revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: true, name: 'Ops box', objective: 'Keep the team informed.', blocks: [],
-    delivery: [{ id: 'd-s', kind: 'slack', target: 'C0BOX', channel: 'box-out' }] }],
 });
 const dailyReport = (steps) => ({
-  id: 'r-daily', workspace_id: 'ws', revbox_id: 'box', user_id: 'owner', name: 'Daily report', enabled: true,
+  id: 'r-daily', workspace_id: 'ws', user_id: 'owner', name: 'Daily report', enabled: true,
   trigger_kind: 'clock', trigger_config: { frequency: 'daily', at: '08:00' }, timezone: 'UTC', steps,
 });
 const settle = async (run) => { for (let i = 0; i < 500 && run.status === 'running'; i++) await new Promise(r => setTimeout(r, 5)); await new Promise(r => setTimeout(r, 120)); };
@@ -59,7 +57,7 @@ test('a held Test of a clock job logs the held Slack post after the AI step, and
   const sent = [];
   for (const h of ['slack', 'gmail_draft', 'gmail_send', 'smtp_send', 'safe_fetch']) registerStepHandler(h, async (...a) => { sent.push(h); return { ok: true, status: 'created' }; });
   try {
-    const sb = database({ ...box(), agent_routines: [dailyReport([
+    const sb = database({ ...members(), agent_routines: [dailyReport([
       { id: 'summary', type: 'agent', config: { mode: 'write', prompt: 'Write the daily report.' } },
       { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C0OPS', channel: 'ops-daily', format: 'report' } },
     // The AI step's progress write is the slow one: it lands after the Slack line and the final write.
@@ -83,20 +81,19 @@ test('every held send type on the clock path lands in the step log, in order', a
   const sent = [];
   for (const h of ['slack', 'gmail_draft', 'gmail_send', 'smtp_send', 'safe_fetch']) registerStepHandler(h, async () => { sent.push(h); return { ok: true, status: 'created' }; });
   try {
-    const sb = database({ ...box(), agent_routines: [dailyReport([
+    const sb = database({ ...members(), agent_routines: [dailyReport([
       { id: 'summary', type: 'agent', config: { mode: 'write', prompt: 'Write the daily report.' } },
       { id: 'post', type: 'slack', config: { action: 'channel', channel_id: 'C0OPS', channel: 'ops-daily', format: 'report' } },
       { id: 'mail', type: 'gmail', config: { to: 'lead@example.com', subject: 'Daily', body: '{{steps.summary.output}}', send_from: { id: 'mbx-1', email: 'me@example.com' } } },
       { id: 'hook', type: 'webhook', config: { url: 'https://hooks.example.com/x' } },
-      { id: 'out', type: 'revbox_delivery', config: { format: 'digest' } },
-    ])] }, { slowLog: [70, 50, 30, 10] });
+    ])] }, { slowLog: [70, 50, 30] });
     const out = await startTestRun(sb, 'ws', 'r-daily', { holdSends: true });
     assert.equal(out.ok, true, out.message);
     const run = sb.tables.agent_routine_runs[0];
     await settle(run);
     assert.equal(run.status, 'ok');
     assert.deepEqual(heldOf(run).map(h => h.text), [
-      'Would post to #ops-daily', 'Would draft to lead@example.com', 'Would send to the webhook at hooks.example.com', 'Would deliver to Slack: #box-out',
+      'Would post to #ops-daily', 'Would draft to lead@example.com', 'Would send to the webhook at hooks.example.com',
     ]);
     assert.equal(sent.length, 0);
   } finally {

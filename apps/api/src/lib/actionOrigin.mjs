@@ -32,8 +32,8 @@ export const REC_ORIGIN = {
   meeting_brief: 'Meeting brief',
 };
 
-// The RevBox built-in job behind a detector's ledger row (GET-897): rec_key 'automation.<detector>'
-// (lib/detectorDrafts.mjs) -> core REVBOX_BUILTIN_JOBS key, so Priorities can name the box it is in.
+// The built-in job behind a detector's ledger row (GET-897): rec_key 'automation.<detector>'
+// (lib/detectorDrafts.mjs) -> the built-in job's key, so Priorities can say which job made it.
 export const REC_BUILTIN = {
   'automation.stale_deal': 'stale_deal', 'automation.deal_risk': 'deal_risk',
   'automation.deal_signal': 'deal_signals', 'automation.expansion_signal': 'expansion',

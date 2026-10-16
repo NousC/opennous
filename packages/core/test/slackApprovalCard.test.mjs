@@ -95,7 +95,8 @@ test('finding 2: the card posts when the run pauses, lists every pending action 
     const buttons = m.blocks.find(b => b.type === 'actions').elements;
     assert.deepEqual(buttons.map(b => b.text.text), ['Approve', 'Deny']);
     assert.deepEqual(buttons.map(b => b.style), ['primary', 'danger']);
-    assert.equal(buttons[0].action_id, `revbox_approve:${RUN}:ask:2.${p.content.token.nonce}`);
+    // The approve action's id (its prefix is Cloud's renderer's own) ends in the run, the step and the token.
+    assert.ok(buttons[0].action_id.endsWith(`_approve:${RUN}:ask:2.${p.content.token.nonce}`), buttons[0].action_id);
     assert.equal(m.blocks[0].text.text, 'Approval needed');
     const at = m.blocks.findIndex(b => JSON.stringify(b).includes('Summary (AI-written)'));
     assert.ok(at > 0, 'a labelled summary');
@@ -122,17 +123,15 @@ test('approvalCardContent: every bundle item, the URL host only, fixed kinds; th
     bundle: [
       { index: 1, type: 'email', rows: [{ label: 'To', value: 'a@x.example' }, { label: 'Subject', value: 'Hi' }, { label: 'Body', value: 'long body' }] },
       { index: 2, type: '__followup_draft', rows: [{ label: 'From', value: 'me@x.example' }, { label: 'To', value: 'b@y.example, c@z.example' }] },
-      { index: 3, type: 'revbox_delivery', rows: [{ label: 'Destinations', value: 'Webhook: https://h.example.org/x?k=1\nSlack: #cs' }, { label: 'Message', value: 'm' }] },
       { index: 4, type: 'slack', rows: [{ label: 'Channel', value: 'cs' }, { label: 'Message', value: 'm' }] },
       { index: 5, type: 'hubspot', action: 'task', rows: [{ label: 'Tasks', value: '• Call Dana' }] },
       { index: 6, type: 'webhook', rows: [{ label: 'URL', value: 'not a url' }] },
     ],
   });
-  assert.deepEqual(c.actions.map(a => a.kind), ['Email', 'Gmail', 'RevBox delivery', 'Slack', 'HubSpot', 'Webhook']);
+  assert.deepEqual(c.actions.map(a => a.kind), ['Email', 'Gmail', 'Slack', 'HubSpot', 'Webhook']);
   assert.ok(!JSON.stringify(c.actions).includes('long body'), 'bodies are not listed');
-  assert.deepEqual(c.actions[2].fields, [{ label: 'Destinations', value: 'Webhook: h.example.org\nSlack: #cs' }]);
-  assert.deepEqual(c.actions[4].fields[0], { label: 'Write', value: 'Create tasks' });
-  assert.deepEqual(c.actions[5].fields, [{ label: 'Host', value: '(invalid URL)' }]);
+  assert.deepEqual(c.actions[3].fields[0], { label: 'Write', value: 'Create tasks' });
+  assert.deepEqual(c.actions[4].fields, [{ label: 'Host', value: '(invalid URL)' }]);
   assert.ok(c.summary.length <= 1500);
   assert.deepEqual(c.token, { index: 1, nonce: 'abcdef012345' });
 });

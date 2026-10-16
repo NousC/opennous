@@ -68,6 +68,38 @@ export interface BrainsNavProps {
   badgeDomain: string | null;
 }
 
+/** What AppSidebar hands a group the Workspace layer adds after the Views (cloud.nav.groups): the
+ *  plan tier, whether the rail is collapsed, and the sidebar's own heading, row and tooltip renderers. */
+export interface NavGroupProps {
+  tier: string;
+  collapsed: boolean;
+  sectionLabel: (text: string, fold?: { open: boolean; toggle: () => void }, action?: ReactNode) => ReactNode;
+  renderItem: (item: { title: string; url: string; icon: ElementType }) => ReactNode;
+  withTip: (node: ReactNode, label: string) => ReactNode;
+}
+
+/** A small link on a Priorities item to where the job that made it lives (cloud.shell.priorities). */
+export type ItemChip = { name: string; href: string; title: string };
+
+/** A Workspace-layer object the Accounts list can be narrowed to (the API's account scope). */
+export interface AccountScope {
+  /** The query parameter that names it, on the page's URL and on GET /api/companies/list. */
+  param: string;
+  /** The list answer's field that names it: { id, name }. */
+  field: string;
+  /** The toolbar chip's words for its name, its tooltip, and the clear button's label. */
+  chip: (name: string) => string;
+  title: string;
+  clearLabel: string;
+}
+
+/** The graph narrowed to a Workspace-layer object's accounts: where to read it, its cache key, its banner. */
+export interface GraphScope {
+  key: string;
+  source: { path: string; key: string };
+  banner: ReactNode;
+}
+
 export interface CloudRegistry {
   /** Clerk sign-in (Cloud). Absent → Supabase Auth, the self-host provider. */
   auth?: {
@@ -101,6 +133,8 @@ export interface CloudRegistry {
     recents?: ComponentType<RecentsProps>;
     /** The sidebar's Brains group (Cloud only, GET-839), drawn with the sidebar's own renderers. */
     brains?: ComponentType<BrainsNavProps>;
+    /** Groups after the Views group on the workspace plans (GET-910). */
+    groups?: ComponentType<NavGroupProps>[];
   };
   settings?: {
     /** Section id → the whole section. "billing" is the workspace plans' Billing section. */
@@ -115,9 +149,21 @@ export interface CloudRegistry {
     /** Rendered once in the app shell, after the page (the agent dock). Not over the account-limit wall. */
     overlays?: ComponentType[];
     topBarActions?: ComponentType<TopBarActionProps>[];
-    /** Priorities' "After your meetings": Home's read (/api/home). Absent → only "To approve". */
-    priorities?: { meetings: (args: { ws: string; scope: string; token?: string }) => Promise<InboxRead> };
+    /** Priorities' "After your meetings": Home's read (/api/home). Absent → only "To approve".
+     *  `useItemChip` (a hook): where the built-in job that made an item lives, as a small link. */
+    priorities?: {
+      meetings: (args: { ws: string; scope: string; token?: string }) => Promise<InboxRead>;
+      useItemChip?: (args: { ws: string; token: string; open: boolean }) => (builtinKey: string | null) => ItemChip | null;
+    };
+    /** Workspace-layer pages that draw their own top bar (GET-864). */
+    ownsTopBar?: (pathname: string) => boolean;
+    /** Workspace-layer pages where typing is the point (a job chat): single-key shortcuts stay off. */
+    typingPage?: (pathname: string) => boolean;
   };
+  /** The Accounts list narrowed to a Workspace-layer object's accounts (?<param>=<id>, GET-873). */
+  accounts?: { scope?: AccountScope };
+  /** The graph narrowed the same way (GET-858). Null when the URL names none. */
+  graph?: { scope?: (params: URLSearchParams) => GraphScope | null };
   /** Where "Contact us" goes (config/contact.ts). Absent → VITE_CONTACT_URL, else the project's site. */
   contactUrl?: string;
   /** The MCP tools Cloud's server adds after `score` (read_brain, write_brain, GET-839). */

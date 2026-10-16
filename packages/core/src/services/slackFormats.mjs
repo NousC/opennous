@@ -1,5 +1,5 @@
-// Slack layouts for automation output (GET-858). A Slack step (or a RevBox job's box delivery to
-// Slack) can name a layout in `config.format`: a report reads differently from an approval, an
+// Slack layouts for automation output (GET-858). A Slack step (or an engine extension's step that
+// posts to Slack) can name a layout in `config.format`: a report reads differently from an approval, an
 // alert or a handoff. The AI step before it then writes structured JSON for that layout instead of
 // prose, and the Slack step hands the JSON to the poster, which renders it as Block Kit.
 //
@@ -7,6 +7,7 @@
 // parse that checks what came back, and a plain-text version of it (what a document, an email
 // destination or Slack's notification line reads). Block Kit itself is Cloud's
 // (cloud/lib/slackBlocks.mjs), behind the registered `slack` step handler. Pure: no I/O.
+import { automationExtension } from './automationExtension.mjs';
 
 /** The layouts a Slack step can use. `plain` is today's message: mrkdwn text, no blocks. */
 export const SLACK_FORMATS = ['report', 'approval', 'alert', 'handoff', 'notification', 'digest', 'plain'];
@@ -19,21 +20,6 @@ export function slackFormatOf(v) {
 
 /** True when the format renders as blocks (anything but plain or none). */
 export const structuredSlackFormat = (v) => { const f = slackFormatOf(v); return !!f && f !== 'plain'; };
-
-/**
- * The layout a box delivery posts to a Slack destination in (GET-872). The user never picks it; the
- * job does. In order: the destination's own `format` (older boxes, kept for back-compat; no longer
- * written by the UI); (a) the box-delivery step's `config.format` (the Job Builder sets it); (b) the
- * job's own Slack step's format; (c) by trigger: a clock job posts a `report`, an event job a
- * `notification`. Never `approval`: box delivery is the job's last step, so nothing runs after it
- * for the buttons to release. Pure.
- */
-export function boxSlackFormat({ destination = null, deliveryStep = null, steps = [], triggerKind = null } = {}) {
-  const usable = (v) => { const f = slackFormatOf(v); return f && f !== 'approval' ? f : null; };
-  const own = (Array.isArray(steps) ? steps : []).find(s => s?.type === 'slack' && usable(s.config?.format));
-  return usable(destination?.format) ?? usable(deliveryStep?.config?.format) ?? usable(own?.config?.format)
-    ?? (triggerKind === 'clock' ? 'report' : 'notification');
-}
 
 // What the AI writes for each layout: a JSON object, nothing around it. Kept short; the model reads
 // it on every run. Every field is plain text with Slack's *bold*; no markdown headings.
@@ -218,11 +204,11 @@ export function parseSlackContent(format, raw) {
 // ── The approval card (pre-ship finding 2, GET-858) ──────────────────────────
 // Approve on the card approves everything the run's pause holds (st.bundle). So what the card lists
 // is built here from that bundle, deterministically: each pending action's kind, where it goes
-// (recipients, channel, the URL's host, the box's destinations) and, for HubSpot, the object and what
+// (recipients, channel, the URL's host, an extension step's destinations) and, for HubSpot, the object and what
 // is written. Bodies are left out (they are the model's words). The model's text is carried only as
 // `summary`, which the card shows under "Summary (AI-written)" as plain text; the buttons are fixed.
 
-const APPROVAL_KINDS = { email: 'Email', gmail: 'Gmail', __followup_draft: 'Gmail', slack: 'Slack', webhook: 'Webhook', revbox_delivery: 'RevBox delivery', hubspot: 'HubSpot' };
+const APPROVAL_KINDS = { email: 'Email', gmail: 'Gmail', __followup_draft: 'Gmail', slack: 'Slack', webhook: 'Webhook', hubspot: 'HubSpot' };
 const HUBSPOT_WRITES = { note: 'Add note', update_company: 'Update company', update_deal: 'Update deal', update_contact: 'Update contact' };
 const MAIL_ROWS = ['From', 'To', 'Cc', 'Subject'];
 const hostOf = (u) => { try { const x = new URL(String(u ?? '').trim()); return /^https?:$/.test(x.protocol) ? x.host : '(invalid URL)'; } catch { return '(invalid URL)'; } };
@@ -240,7 +226,8 @@ export function approvalCardAction(item = {}) {
     fields = [row('Channel') ?? { label: 'Channel', value: '—' }];
   } else if (type === 'webhook') {
     fields = [{ label: 'Host', value: hostOf(row('URL')?.value) }];
-  } else if (type === 'revbox_delivery') {
+  } else if (automationExtension()?.approvalKinds?.[type]) {
+    // An extension's step (GET-910) is listed by where it goes: its destinations, URLs as hosts.
     const d = row('Destinations');
     fields = [{ label: 'Destinations', value: d ? d.value.replace(/https?:\/\/[^\s,]+/gi, (u) => hostOf(u)) : 'None yet' }];
   } else if (type === 'hubspot') {
@@ -250,7 +237,7 @@ export function approvalCardAction(item = {}) {
   } else {
     fields = rows.filter(r => !['Body', 'Message'].includes(r.label));
   }
-  return { step: s(item.step, 150), kind: APPROVAL_KINDS[type] ?? (type || 'Step'), fields: fields.filter(f => f.value).slice(0, 10) };
+  return { step: s(item.step, 150), kind: APPROVAL_KINDS[type] ?? automationExtension()?.approvalKinds?.[type] ?? (type || 'Step'), fields: fields.filter(f => f.value).slice(0, 10) };
 }
 
 /** The approval card's content for a pause: { job, actions, count, summary, token }. Pure. */

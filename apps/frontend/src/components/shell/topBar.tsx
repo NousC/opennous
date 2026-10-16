@@ -87,9 +87,8 @@ export function AppTopBar() {
   const crumbs = ctx?.override?.crumbs ?? fallback;
   // The API plan's pages draw their own bar (ApiTopBar, GET-621) with the same title; two bars
   // naming the page twice is one too many (polish pass, GET-657). Its other paths keep this one.
-  // A RevBox draws its own breadcrumb bar on every plan (GET-864): on Workspace too, where the
-  // box's job builder is the job-scoped chat.
-  const apiBar = (isApiTier(plan) && !!apiTopBarRoute(pathname)) || pathname.startsWith('/revboxes/');
+  // A Workspace-layer page may draw its own breadcrumb bar on every plan (cloud.shell.ownsTopBar, GET-864).
+  const apiBar = (isApiTier(plan) && !!apiTopBarRoute(pathname)) || !!cloud.shell?.ownsTopBar?.(pathname);
 
   if (apiBar) return null;
   return (

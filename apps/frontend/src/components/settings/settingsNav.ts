@@ -29,8 +29,8 @@ export interface SettingsNavInput {
   isOwner: boolean;
   /** A self-hosted install: its owner/admins get Instance setup (GET-837). */
   selfHosted?: boolean;
-  /** The workspace has RevBoxes (API and Workspace plans, GET-864): Context and Signals show. */
-  revboxes?: boolean;
+  /** The plan's feature gate (usePlan's can), for rows the Workspace layer adds (GET-910). */
+  can?: (feature: string) => boolean;
 }
 
 export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Context & signals", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
@@ -70,11 +70,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
     { id: "repo",            label: "Repo",                  group: "Connections", show: false },
-    // Context & signals — their own section (GET-882): what every RevBox job may read (GET-858) and
-    // the workspace's signals (GET-862). Both follow the revboxes feature, so they show on API and
-    // Workspace alike (GET-864), to members too: jobs and signals are not admin-only.
-    { id: "context",         label: "Context",               group: "Context & signals", show: !!input.revboxes },
-    { id: "signals",         label: "Signals",               group: "Context & signals", show: !!input.revboxes },
+    // Context & signals (GET-882) are the Workspace layer's rows (cloud/settings/navRows, GET-910).
     // Agent — the Workspace layer adds Memory and Skills ahead of Automations.
     { id: "sequences",       label: "Automations",           group: "Agent", show: selfManagedAgent },
     // Workspace — admins only (GET-430). The Workspace layer's models, changes, spend and adoption

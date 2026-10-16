@@ -42,7 +42,7 @@ systemLogRouter.get('/', verifySupabaseAuth, async (req, res) => {
 
     if (since) query = query.gte('occurred_at', since);
     // `agents` (plural) is the union of every caller-facing source — the slice the
-    // RevBox Agents › Activity log renders. A specific source still filters exactly.
+    // Agents › Activity log renders. A specific source still filters exactly.
     if (source === 'agents') query = query.in('source', AGENT_SOURCES);
     else if (source && source !== 'all') query = query.eq('source', source);
     if (event_type && event_type !== 'all') query = query.eq('event_type', event_type);
@@ -165,7 +165,7 @@ systemLogRouter.get('/daily', verifySupabaseAuth, async (req, res) => {
 });
 
 // GET /api/workspace/system-log/agents — the fleet.
-// The RevBox Agents › Overview table. Each caller-facing key (the api_key an agent
+// The Agents › Overview table. Each caller-facing key (the api_key an agent
 // runs on) is one "agent"; runs from that key aggregate into runs / success /
 // last-active, attributed to the member who owns the key (the Owner column). Rows
 // with no key stamped fall into one bucket per source (MCP / SDK / …). Admin-only

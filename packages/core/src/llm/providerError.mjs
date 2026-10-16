@@ -1,8 +1,7 @@
 // What a failed model call means, for a person and for ops (GET-885).
 //
-// On 2026-10-15 the Anthropic account ran out of credit again. The Job Builder calls Anthropic
-// directly, so a user's chat showed "The job builder hit an error. Try again." and nobody was
-// told. Trying again could not help: the account was empty. This sorts a provider failure into
+// On 2026-10-15 the Anthropic account ran out of credit again. A chat that calls Anthropic
+// directly showed "hit an error. Try again." and nobody was told. Trying again could not help: the account was empty. This sorts a provider failure into
 // the few kinds that need different words and different action:
 //
 //   billing     the account is out of credit (Anthropic says it as a 400, others as 402)

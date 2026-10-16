@@ -1,5 +1,0 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';
-import {executeRevboxRun} from '../src/services/revboxExecution.mjs';
-const run={snapshot:{job:{prompt:'Write a report'},box:{objective:'Handoff',blocks:[]},context:[],accounts:[{id:'a'}]}};
-test('runs check credits and meter invalid generated output',async()=>{const calls=[];await assert.rejects(executeRevboxRun(run,{gate:async()=>calls.push('gate'),generate:async()=>{calls.push('model');return {content:[{type:'text',text:'bad'}]};},meter:async()=>calls.push('meter')}),/invalid result/);assert.deepEqual(calls,['gate','model','meter']);});
-test('model cannot authorize recipients or external effects',async()=>{const result=await executeRevboxRun(run,{gate:async()=>{},generate:async()=>({content:[{type:'text',text:JSON.stringify({title:'Follow-up',body:'Draft',kind:'draft',to:'someone@example.com',send:true})}]}),meter:async()=>{}});assert.equal(result.kind,'draft');assert.equal(result.to,undefined);assert.equal(result.send,undefined);});

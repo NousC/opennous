@@ -3,7 +3,8 @@
 // Claude Haiku extracts structured CRM facts → `note.*` claims on the contact entity.
 // Graph edges (REPORTS_TO, BUDGET_HOLDER_AT, etc.) extracted from each fact → workspace_graph_edges.
 
-import { customSignalSelectionBlock, customSignalRulesForWorkspace, teamReadContext, writesTasks, isTimeBound, retireNote, claimAboutFor } from '@nous/core';
+import { teamReadContext, writesTasks, isTimeBound, retireNote, claimAboutFor } from '@nous/core';
+import { extractionCriteria } from '../lib/extractionCriteria.mjs';
 import { mayReadWorkspace } from '../lib/creditGate.mjs';
 import { setUser } from 'useleak';
 import { createMessage, pipelineModel, parseJsonArray, ModelUnavailableError } from '../lib/llm.mjs';
@@ -962,7 +963,7 @@ function partPreamble(part, noun = 'Transcript') {
 export async function extractFactsFromText({
   contactName, company = null, type, text, maxFactsOverride = null, ourSide = null,
   model = null, fallback = undefined, strict = false, onPart = null, onCall = null,
-  groundAgainst = null, customRules = [],
+  groundAgainst = null, criteria = '',   // what the workspace adds to the prompt (lib/extractionCriteria.mjs)
   // The dated positions on file (GET-770): shown to the model, and its "replaces" resolved to ids.
   positionsOnFile = [],
   // Our side's names as the transcript labels them (GET-417). The meeting path dropped a fact
@@ -988,7 +989,7 @@ export async function extractFactsFromText({
       model: model || pipelineModel(),
       fallback,
       max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt + customSignalSelectionBlock(customRules) }],
+      messages: [{ role: 'user', content: prompt + criteria }],
       accept: (t) => parseJsonArray(t) !== null,
     });
     out.calls.push(msg);
@@ -1067,7 +1068,7 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     const saved = [];
     await extractFactsFromText({
       contactName: contact.name, company: contact.company, type, text: summary, maxFactsOverride, ourSide, strict, positionsOnFile, ourNames,
-      customRules: await customSignalRulesForWorkspace(supabase,workspaceId).catch(error=>{if(error.code==='42P01'||error.code==='PGRST205')return [];throw error;}),
+      criteria: await extractionCriteria(supabase, workspaceId),
       onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-extraction', msg),
       onPart: async (facts, { index, total, model }) => {
         if (facts === null) {
@@ -1554,7 +1555,7 @@ export async function extractMeetingSignals({
     const saved = [];
     // One part, read once — or, when the model returns nothing for it, read again as two halves
     // (GET-415). Returns the facts found and the transcript text they must be grounded against.
-    const customRules=await customSignalRulesForWorkspace(supabase,workspaceId).catch(error=>{if(error.code==='42P01'||error.code==='PGRST205')return [];throw error;});
+    const criteria = await extractionCriteria(supabase, workspaceId);
     const readPart = async (text, label, allowHalving) => {
       const msg = await createMessage({
         feature: 'meeting-signals-extract',
@@ -1564,7 +1565,7 @@ export async function extractMeetingSignals({
         messages: [{ role: 'user', content: buildMeetingSignalsPrompt({
           roster, transcript: text, maxFacts: partBudget, ourSide, positionsOnFile,
           part: { ...label, context, already: saved.map(f => f.content).filter(Boolean) },
-        }) + customSignalSelectionBlock(customRules) }],
+        }) + criteria }],
       });
       await meterLLM(supabase, workspaceId, 'signal-extraction', msg);
       const parsed = parseJsonArray(msg.content[0]?.text);

@@ -1,15 +1,16 @@
-// The step-engine handlers a RevBox job needs (GET-868), for the jobs the worker runs (a deal, a
-// call, a signal). The API registers the same two in apps/api/src/routes/api/revboxes.mjs; the worker
-// image has no apps/api in it, so the two helpers they use are mirrored here. Keep them in step:
-//   safe_fetch                the SSRF guard (apps/api/src/lib/ssrf.mjs): every box webhook, and every
-//                             webhook step, goes through it. (url, init, { maxRedirects, timeoutMs }):
-//                             by default no redirect is followed and 8s (a box webhook); a webhook step
-//                             asks for up to 4 redirects and 30s. Every hop is re-checked.
-//   revbox_visible_accounts   the job owner's visible accounts (apps/api/src/lib/visibility.mjs
-//                             viewerVisibleAccountSet): null for every account, else a Set of ids.
+// The step-engine handlers that need a guard of the app's own (GET-858, GET-868), for the routines
+// the worker runs (a deal, a call, a signal). The API registers the same two in
+// apps/api/src/lib/engineStepHandlers.mjs; the worker image has no apps/api in it, so the two helpers
+// they use are mirrored here. Keep them in step:
+//   safe_fetch         the SSRF guard (apps/api/src/lib/ssrf.mjs): every webhook a run posts to goes
+//                      through it. (url, init, { maxRedirects, timeoutMs }): by default no redirect
+//                      is followed and 8s; a webhook step asks for up to 4 redirects and 30s. Every
+//                      hop is re-checked.
+//   visible_accounts   the routine owner's visible accounts (apps/api/src/lib/visibility.mjs
+//                      viewerVisibleAccountSet): null for every account, else a Set of ids.
 import { lookup } from 'node:dns/promises';
 import net from 'node:net';
-import { inTouchEntityIds, revboxWorkspaceRole } from '@nous/core';
+import { inTouchEntityIds } from '@nous/core';
 
 function isPrivateIp(ip) {
   if (net.isIPv4(ip)) {
@@ -76,7 +77,7 @@ export async function safeFetch(rawUrl, init = {}, { timeoutMs = 8000, maxRedire
 
 /**
  * What a safe_fetch caller may ask for (pre-ship finding 4, GET-858), clamped: 0-4 redirects (default
- * 0) and 1-30s (default 8s). Mirrors apps/api/src/routes/api/revboxes.mjs. Pure.
+ * 0) and 1-30s (default 8s). Mirrors apps/api/src/lib/engineStepHandlers.mjs. Pure.
  */
 export function safeFetchOptions(opts = {}) {
   const r = Number(opts?.maxRedirects), t = Number(opts?.timeoutMs);
@@ -102,10 +103,11 @@ async function visibleAccountSet(supabase, workspaceId, viewerUserId, { isAdmin 
 }
 
 /** Register both handlers on the step engine (registerStepHandler from @nous/core). */
-export function registerRevboxStepHandlers(register) {
-  register('revbox_visible_accounts', async ({ supabase, workspaceId, userId }) => {
+export function registerEngineStepHandlers(register) {
+  register('visible_accounts', async ({ supabase, workspaceId, userId }) => {
     if (!userId) return new Set();
-    const member = await revboxWorkspaceRole(supabase, workspaceId, userId);
+    const { data: member, error } = await supabase.from('workspace_members').select('role').eq('workspace_id', workspaceId).eq('user_id', userId).maybeSingle();
+    if (error) throw error;
     const set = await visibleAccountSet(supabase, workspaceId, userId, { isAdmin: ['admin', 'owner'].includes(member?.role) });
     return set.unrestricted ? null : set.ids;
   });

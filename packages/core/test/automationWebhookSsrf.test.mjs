@@ -1,14 +1,14 @@
-// Review findings on the RevBox Job Builder (GET-868):
+// Review findings on the automation engine (GET-868):
 //   2. a `webhook` step never fetches a private or internal address. It goes through the registered
 //      SSRF-guarded `safe_fetch` when there is one, and otherwise refuses private hosts itself.
-//   7. a RevBox job always runs on the step engine (box context, box delivery), including an
-//      AI-only job and a before_meeting job, which runs with the meeting as its context.
+//   7. an ordinary AI-only routine does not run on the step engine; one with any other step does.
+// Cloud's halves of these live in test/cloud/ (GET-910).
 //
 // Run: pnpm --filter @nous/core build && node --test packages/core/test/automationWebhookSsrf.test.mjs
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runStepsForTest as runSteps, registerStepHandler, flowRunsSteps, runScheduledFlow, assertPublicWebhookUrl } from '../dist/services/automationRun.mjs';
+import { runStepsForTest as runSteps, registerStepHandler, flowRunsSteps, assertPublicWebhookUrl } from '../dist/services/automationRun.mjs';
 
 const doc = { id: 'd1', title: 'Won: Acme', headline: null, sections: [{ label: 'Summary', body: 'Acme signed.' }] };
 const hookFlow = (url) => ({ id: 'a1', name: 'Hook', user_id: 'u1', steps: [{ id: 'w', type: 'webhook', config: { url } }] });
@@ -87,78 +87,27 @@ test('finding 2: assertPublicWebhookUrl is the shared guard (mirrors apps/api/sr
 
 // ── Finding 7 ────────────────────────────────────────────────────────────────
 
-test('finding 7: a RevBox job always runs its steps, an ordinary AI-only routine still does not', () => {
+test('finding 7: an ordinary AI-only routine does not run its steps; one with another step does', () => {
   const aiOnly = [{ id: 'a', type: 'agent', config: { prompt: 'x' } }];
   assert.equal(flowRunsSteps({ steps: aiOnly }), false);
   assert.equal(flowRunsSteps({ steps: [] }), false);
   assert.equal(flowRunsSteps({ steps: [...aiOnly, { id: 's', type: 'slack', config: {} }] }), true);
-  assert.equal(flowRunsSteps({ revbox_id: 'box', steps: aiOnly }), true);
-  assert.equal(flowRunsSteps({ revbox_id: 'box', steps: [] }), true);
-});
-
-function database(seed = {}) {
-  const tables = {
-    workspace_members: [{ workspace_id: 'ws', user_id: 'owner', role: 'admin' }],
-    revboxes: [{ id: 'box', workspace_id: 'ws', owner_id: 'owner', shared: true, name: 'CS', objective: 'Keep CS ahead.', blocks: [],
-      delivery: [{ id: 'd-w', kind: 'webhook', target: 'https://hooks.example/cs' }] }],
-    revbox_members: [], revbox_context: [], agent_routines: [], documents: [],
-    ...seed,
-  };
-  class Query {
-    constructor(table) { this.table = table; this.filters = []; }
-    select() { return this; } order() { return this; } limit() { return this; } gte() { return this; } not() { return this; } is() { return this; }
-    eq(k, v) { this.filters.push(r => r[k] === v); return this; }
-    neq(k, v) { this.filters.push(r => r[k] !== v); return this; }
-    in(k, vs) { this.filters.push(r => vs.includes(r[k])); return this; }
-    insert() { return this; } update() { return this; }
-    result(single) {
-      const values = (tables[this.table] ??= []).filter(r => this.filters.every(f => f(r)));
-      return { data: structuredClone(single ? values[0] ?? null : values), error: null };
-    }
-    maybeSingle() { return Promise.resolve(this.result(true)); }
-    single() { return this.maybeSingle(); }
-    then(ok, bad) { return Promise.resolve(this.result(false)).then(ok, bad); }
-  }
-  return { tables, from: t => new Query(t) };
-}
-
-test('finding 7: a before_meeting box job runs on the step engine with the meeting as its context', async () => {
-  const hooks = [];
-  registerStepHandler('safe_fetch', async (url, init) => { hooks.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200 }; });
-  try {
-    const routine = { id: 'r1', name: 'Prep', user_id: 'owner', revbox_id: 'box', trigger_kind: 'before_meeting',
-      steps: [{ id: 'box_delivery', type: 'revbox_delivery', config: {} }] };
-    const meeting = { title: 'Acme renewal', when: '2026-10-15 09:00', with: 'Dana', company: 'Acme', entity_id: 'acme' };
-    const row = await runScheduledFlow(database(), 'ws', routine, { runId: 'run-1', meeting, entityId: 'acme' });
-    assert.equal(row.status, 'ok', row.error);
-    assert.equal(hooks.length, 1);
-    assert.equal(hooks[0].url, 'https://hooks.example/cs');
-    assert.equal(hooks[0].body.revbox_id, 'box');
-    assert.match(hooks[0].body.text, /Acme renewal/);
-    assert.match(hooks[0].body.text, /Dana/);
-  } finally { registerStepHandler('safe_fetch', null); }
 });
 
 // ── Pre-ship finding 4 (GET-858): existing automations keep their redirects and time ──────────
 // An ordinary webhook step and a legacy destination=webhook follow up to 4 redirects (each hop
-// re-checked by the guard) with a 30s timeout, as before the guard; only a RevBox box webhook
-// follows none and gives up after 8s.
+// re-checked by the guard) with a 30s timeout, as before the guard.
 
-test('pre-ship 4: a webhook step and a legacy webhook ask safe_fetch for 4 redirects and 30s; a box webhook for none and 8s', async () => {
+test('pre-ship 4: a webhook step and a legacy webhook ask safe_fetch for 4 redirects and 30s', async () => {
   const { deliverLegacyForTest } = await import('../dist/services/automationRun.mjs');
   const seen = [];
   registerStepHandler('safe_fetch', async (url, init, opts) => { seen.push({ url, opts }); return { ok: true, status: 200 }; });
   try {
     await runSteps(hookFlow('https://hooks.example/won'), doc, { stage: 'deal_closed_won', ctx: null });
     await deliverLegacyForTest({ id: 'a2', destination: 'webhook', destination_target: 'https://hooks.example/legacy' }, doc, {});
-    const sb = database();
-    const r = await runSteps({ id: 'r1', name: 'Box', user_id: 'owner', revbox_id: 'box', steps: [{ id: 'box_delivery', type: 'revbox_delivery', config: {} }] },
-      doc, { stage: 'scheduled', ctx: { supabase: sb, workspaceId: 'ws', runId: 'run-9' } });
-    assert.equal(r.failed, undefined, r.message);
     assert.deepEqual(seen.map(x => [x.url, x.opts]), [
       ['https://hooks.example/won', { maxRedirects: 4, timeoutMs: 30_000 }],
       ['https://hooks.example/legacy', { maxRedirects: 4, timeoutMs: 30_000 }],
-      ['https://hooks.example/cs', { maxRedirects: 0, timeoutMs: 8_000 }],
     ]);
   } finally { registerStepHandler('safe_fetch', null); }
 });

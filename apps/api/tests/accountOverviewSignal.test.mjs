@@ -4,7 +4,7 @@
 // pinned in packages/core/test/signalTone.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { accountOverviewRows } from '../src/routes/api/revboxes.mjs';
+import { accountOverviewRows } from '../src/routes/api/accountOverview.mjs';
 
 test('each account row carries the latest signal as label, tone and text', () => {
   const rows = accountOverviewRows([
@@ -17,7 +17,7 @@ test('each account row carries the latest signal as label, tone and text', () =>
     ['Expansion signal', 'green', 'we want the reporting module'],
     null,
   ]);
-  // The rest of the row is untouched (the RevBox catalog reads the same counts).
+  // The rest of the row is untouched.
   assert.equal(rows[0].deal_count, 2);
   assert.equal(rows[0].latest_signal.kind, 'churn_risk');
   assert.equal(rows[0].latest_signal.at, '2026-10-14T10:00:00Z');

@@ -30,9 +30,9 @@ const ALLOWED = {
   'apps/api/src/cloud/lib/playgroundAgent.mjs': 'tool-using agent loops; the Anthropic branch runs only when lib/model.mjs resolves an Anthropic model',
   'apps/api/src/cloud/lib/sandboxExecutor.mjs': 'tool-using sandbox agent loop (Anthropic tool protocol), routed through OpenRouter by claudeRoute (GET-885)',
   'apps/api/src/cloud/lib/harness.mjs': 'tool-using agent loop against OpenAI-compatible /chat/completions (routed by lib/model.mjs)',
-  // The RevBox Job Builder (GET-868): a streaming tool-use loop, model from lib/model.mjs, every call metered through recordRevboxUsage.
-  'apps/api/src/cloud/lib/jobBuilder/index.mjs': 'builds the Job Builder client (tool-using agent loop, model from lib/model.mjs)',
-  'apps/api/src/cloud/lib/jobBuilder/loop.mjs': 'the Job Builder tool-use loop; each call metered through recordRevboxUsage',
+  // Cloud's builder agent (GET-868): a streaming tool-use loop, model from lib/model.mjs, every call metered.
+  'apps/api/src/cloud/lib/jobBuilder/index.mjs': "builds the builder agent's client (tool-using agent loop, model from lib/model.mjs)",
+  'apps/api/src/cloud/lib/jobBuilder/loop.mjs': "the builder agent's tool-use loop; each call metered",
 };
 
 const PATTERNS = [

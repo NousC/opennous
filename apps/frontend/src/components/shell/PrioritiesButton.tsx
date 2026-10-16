@@ -21,9 +21,9 @@ import { buildItems, openCount, type InboxRead } from "@/components/priorities/i
 import { usePendingDrafts } from "@/components/priorities/drafts";
 import { automationsFetch } from "@/lib/automations";
 import { approvalWhat, type Approval } from "@/components/AutomationApprovals";
-import { cloud } from "@/lib/cloud";
-import { revboxesRequest } from "@/lib/revboxes";
-import type { BuiltinHome } from "@/lib/builtinJobs";
+import { cloud, type ItemChip } from "@/lib/cloud";
+
+const noChip = (): ItemChip | null => null;
 
 const NO_MEETINGS: InboxRead = {};
 
@@ -60,14 +60,10 @@ export function PrioritiesButton() {
       return r.ok ? ((await r.json())?.approvals ?? []) : [];
     },
   });
-  // Which RevBox holds each built-in job (GET-897), for the box chip on what a built-in made. Read
-  // when the panel opens; a workspace without RevBoxes (or a failed read) just shows no chip.
-  const homes = useQuery({
-    queryKey: ["revbox-builtin-homes", ws],
-    enabled: open && !!ws && !!session?.access_token,
-    staleTime: 5 * 60_000, retry: false,
-    queryFn: async (): Promise<BuiltinHome[]> => (await revboxesRequest<{ homes: BuiltinHome[] }>(ws, session?.access_token ?? "", "/builtins").catch(() => ({ homes: [] }))).homes ?? [],
-  });
+  // Where the built-in job behind an item lives (GET-897), as a chip on what it made: the Workspace
+  // layer's (cloud.shell.priorities.useItemChip, read when the panel opens). Without it, no chip.
+  // The registry is fixed for the build, so this hook is called (or not) on every render alike.
+  const chipFor = cloud.shell?.priorities?.useItemChip?.({ ws, token: session?.access_token ?? "", open }) ?? noChip;
   const data = useMemo<InboxRead | undefined>(() => (homeData ? {
     ...homeData, actions: drafts.data ?? [],
     runs: (runs.data ?? []).map(a => ({ ...a, what: approvalWhat(a) })),
@@ -116,7 +112,7 @@ export function PrioritiesButton() {
           if (t?.closest("input, textarea, select, [contenteditable='true']")) { e.preventDefault(); t.blur(); }
         }}
         className="h-[min(80vh,680px)] w-[940px] max-w-[calc(100vw-16px)] overflow-hidden rounded-2xl p-0 shadow-modal max-md:h-[calc(100dvh-64px)]">
-        <PrioritiesInbox data={data} loading={!!meetings && home.isLoading} failed={!!meetings && home.isError} ws={ws} token={session?.access_token} focus={focus} homes={homes.data}
+        <PrioritiesInbox data={data} loading={!!meetings && home.isLoading} failed={!!meetings && home.isError} ws={ws} token={session?.access_token} focus={focus} chipFor={chipFor}
           onClose={() => setOpen(false)} />
       </PopoverContent>
     </Popover>

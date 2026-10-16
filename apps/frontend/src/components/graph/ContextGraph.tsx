@@ -48,7 +48,7 @@ const KIND = new Map(CLAIM_KINDS.map((k) => [k.id, k]));
 // On a deal with nobody named yet, the account's claims that bear on closing it.
 const DEAL_KINDS = new Set(["objection", "budget", "timeline", "authority", "buying_signal", "competitor"]);
 
-/** The graph's source: the workspace by default, or one RevBox's accounts (GET-858). */
+/** The graph's source: the workspace by default, or one object's accounts (GET-858). */
 export type GraphSource = { path: string; key: string };
 const WORKSPACE: GraphSource = { path: "/api/graph/context", key: "context" };
 

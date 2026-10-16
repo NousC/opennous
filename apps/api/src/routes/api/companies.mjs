@@ -10,7 +10,7 @@ import {
   computeAccountHealth, selectNextStep, loadEngagementActivity, loadAccountHealthTrend,
   getAccountRecord, fetchEntityOverlays, applyCompanyOverlay,
   getRelationshipOwners, getWorkspaceMemberProfiles, effectiveOwnerUserId, accountOwnerIds,
-  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, revboxWorkedAccounts,
+  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal,
 } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { intelTopicsFor } from '../../lib/intelTopics.mjs';
@@ -59,26 +59,12 @@ async function accountRowsOut(supabase, workspaceId, rows) {
   });
 }
 
-/**
- * One page of a RevBox's scoped accounts (GET-873): searched by name or domain, newest activity
- * first (ties by id, so paging is stable), -> { ids, total }. Pure.
- */
-export function revboxAccountPage(accounts, { q = '', limit = 200, offset = 0 } = {}) {
-  const needle = String(q ?? '').trim().toLowerCase();
-  const list = (Array.isArray(accounts) ? accounts : []).filter(a => !needle || `${a.name ?? ''} ${a.domain ?? ''}`.toLowerCase().includes(needle));
-  const t = (a) => (a.last_activity_at ? Date.parse(a.last_activity_at) || 0 : -1);
-  list.sort((a, b) => t(b) - t(a) || String(a.id).localeCompare(String(b.id)));
-  return { ids: list.slice(offset, offset + limit).map(a => a.id), total: list.length };
-}
-
-/**
- * One page of the accounts a RevBox works on (GET-891), the set its Accounts card counts and its
- * Account graph draws (revboxWorkedAccounts): -> { box, page: { ids, total } }.
- */
-export async function revboxListPage(sb, ws, uid, boxId, allowed, { q = '', limit = 200, offset = 0, selectedOnly = false } = {}) {
-  const { box, accounts } = await revboxWorkedAccounts(sb, ws, uid, boxId, allowed, { selectedOnly });
-  return { box, page: revboxAccountPage(accounts, { q, limit, offset }) };
-}
+// A Cloud surface may narrow the list to the accounts one of its objects works on (GET-873, GET-891;
+// a seam since GET-910): { param, resolve(supabase, req, { workspaceId, id, q, limit, offset }) ->
+// { page: { ids, total }, extra } }. `param` is the query parameter that names the object; `extra` is
+// added to the answer (what the list is narrowed to). Registered by cloud/index.mjs.
+let accountScope = null;
+export function registerAccountScope(scope) { accountScope = scope ?? null; }
 
 /** The CRM's owner names on an account's deals, open deals first, as the shape `owners` uses. */
 async function crmOwnersOfAccount(supabase, workspaceId, companyId, memberProfiles) {
@@ -297,17 +283,14 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
     const offset = Math.max(0, Number(req.query.offset) || 0);
     const q = String(req.query.q ?? '').trim();
-    // ?revbox=<id> (GET-873, GET-891): only the accounts that RevBox works on, as its Accounts card
-    // counts them: its scope (selected ids or saved filter) plus what its jobs worked on in 30 days,
-    // resolved by core with the box's own access check and the viewer's account visibility.
-    // &revbox_scope=selected: the scope alone. It replaces the market and owner filters.
-    const revboxId = String(req.query.revbox ?? '').trim();
-    if (revboxId) {
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(revboxId)) return res.status(400).json({ error: 'Invalid RevBox identifier.' });
+    // A registered account scope (registerAccountScope above): only the accounts the named object works
+    // on, resolved by its surface with its own access check and the viewer's account visibility. It
+    // replaces the market and owner filters.
+    const scopeId = accountScope ? String(req.query[accountScope.param] ?? '').trim() : '';
+    if (scopeId) {
       let scoped;
       try {
-        const set = await viewerVisibleAccountSet(supabase, workspaceId, req.internalUserId, { isAdmin: req.viewerScope === 'admin' });
-        scoped = await revboxListPage(supabase, workspaceId, req.internalUserId, revboxId, set.unrestricted ? null : set.ids, { q, limit, offset, selectedOnly: req.query.revbox_scope === 'selected' });
+        scoped = await accountScope.resolve(supabase, req, { workspaceId, id: scopeId, q, limit, offset });
       } catch (e) {
         if (e.status) return res.status(e.status).json({ error: e.message });
         throw e;
@@ -323,7 +306,7 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
       return res.json({
         companies: await accountRowsOut(supabase, workspaceId, rows),
         total: page.total, limit, offset, q: q || null, country: null, focus_country: null, countries: [],
-        revbox: { id: scoped.box.id, name: scoped.box.name ?? 'RevBox' },
+        ...(scoped.extra ?? {}),
       });
     }
 
