@@ -335,6 +335,8 @@ export function ApiWebhooks({
   token: string; workspaceId: string; inbound: ReactNode; onRefreshInbound: () => void;
 }) {
   const [endpoints, setEndpoints] = useState<Endpoint[] | null>(null);
+  // Two directions, one tab each: what we send out (Endpoints) and what your tools send in (Incoming).
+  const [side, setSide] = useState<"out" | "in">("out");
   const [availableEvents, setAvailableEvents] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -454,7 +456,16 @@ export function ApiWebhooks({
   return (
     <div className="h-full min-w-0 overflow-y-auto bg-background">
       <div className="flex w-full min-w-0 flex-col gap-4 p-4 sm:p-5">
-        <ListCard>
+        <div role="tablist" aria-label="Webhook direction" className="flex items-center gap-1">
+          {([["out", "Endpoints", "Where OpenNous sends your events"], ["in", "Incoming", "Your tools sending data into OpenNous"]] as const).map(([id, label, hint]) => (
+            <button key={id} type="button" role="tab" aria-selected={side === id} title={hint} onClick={() => setSide(id)}
+              className={cn("h-7 rounded-md px-2.5 text-[13px] transition-colors duration-fast",
+                side === id ? "bg-hover text-foreground" : "text-ink-2 hover:bg-hover hover:text-foreground")}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {side === "out" && <ListCard>
           <ListHeader
             title="Endpoints"
             count={endpoints === null ? null : endpoints.length}
@@ -495,9 +506,9 @@ export function ApiWebhooks({
               />
             ))
           )}
-        </ListCard>
+        </ListCard>}
 
-        {inbound}
+        {side === "in" && inbound}
       </div>
 
       <NewEndpointDialog

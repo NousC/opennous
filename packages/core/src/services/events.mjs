@@ -1,19 +1,21 @@
 // Record events (GET-559) — something happened on an account, pushed to the workspace's own
 // stack (n8n, Clay, their agent) with the record attached.
 //
-// One door: every detector calls emitEvent. It finds who listens, builds the record ONCE, and
-// writes one outbound_events row per subscription; the trigger delivery worker signs, sends and
-// retries from there. A bare "health changed" is what any CRM can send. What we send is the
+// One door: every detector calls emitEvent. It builds the record ONCE, logs the event (event_log,
+// GET-939: the Events page and GET /v2/events), and writes one outbound_events row per
+// subscription; the trigger delivery worker signs, sends and retries from there. A bare "health changed" is what any CRM can send. What we send is the
 // identity-resolved account, its people, the deal and the evidence behind it, with source and
 // confidence, so the receiver can act without calling back.
 //
-// THE PAYLOAD READS AS THE WHOLE TEAM (teamReadContext). A webhook is a shared destination, so it
-// carries only what every member may read: structured claims and team-readable facts, never
-// something derived from one person's private mail.
+// THE PAYLOAD READS AS THE WHOLE TEAM (teamReadContext). A webhook is a shared destination, so its
+// record carries only what every member may read: structured claims and team-readable facts. The
+// event's own `data` can still name one mailbox's reply (subject, snippet); the Events feed leaves
+// that out (db/eventLog.mjs feedView).
 import crypto from 'node:crypto';
 import { getAccountRecord } from '../db/claims.js';
 import { teamReadContext } from '../db/readContext.js';
 import { subscribersFor } from '../db/triggers.js';
+import { loggedEvent, logEvent, EVENT_LOG_RETENTION_DAYS } from '../db/eventLog.mjs';
 import { loadAutomationExtension } from './automationExtension.mjs';
 
 /** Bump when the envelope changes shape. Receivers can branch on it. */
@@ -175,6 +177,23 @@ export async function buildEventRecord(supabase, workspaceId, { accountId = null
   };
 }
 
+// One account's record, reused for a minute (GET-939). Every event is now logged, so a call that
+// raises five signals on one account would build the same record five times in a row. Keyed by the
+// client, so a test's fake database never sees another test's record.
+const RECORD_TTL_MS = 60_000;
+const recordCache = new WeakMap();
+async function cachedRecord(supabase, workspaceId, ids) {
+  let byKey = recordCache.get(supabase);
+  if (!byKey) { byKey = new Map(); recordCache.set(supabase, byKey); }
+  const key = `${workspaceId}:${ids.accountId ?? ''}:${ids.personId ?? ''}:${ids.dealId ?? ''}`;
+  const hit = byKey.get(key);
+  if (hit && Date.now() - hit.at < RECORD_TTL_MS) return hit.record;
+  const record = await buildEventRecord(supabase, workspaceId, ids);
+  if (byKey.size > 500) byKey.clear();
+  byKey.set(key, { at: Date.now(), record });
+  return record;
+}
+
 /** The signed body every record event carries. */
 export function eventEnvelope({ type, workspaceId, occurredAt, record, data = {} }) {
   return {
@@ -211,28 +230,62 @@ export async function emitEvent(supabase, {
     const ext = await loadAutomationExtension();
     if (ext?.onEvent) await Promise.resolve(ext.onEvent(supabase,{workspaceId,type,accountId,occurredAt:at.toISOString(),data:{...data,...(internalData??{})},dedupeKey})).catch(err=>console.warn('[events] extension',err.message));
     const externalId = `${type}:${dedupeKey}`;
-    let subs = (await subscribersFor(supabase, workspaceId, type))
-      .filter(s => at.getTime() >= new Date(s.created_at).getTime() - SUBSCRIBE_GRACE_MS);
-    if (!subs.length) return 0;
-    // ALREADY SENT IS CHECKED BEFORE THE RECORD IS BUILT. The hourly deal pass re-reads 45 days
-    // of closes; without this every one of them would rebuild its record every hour only for
-    // the unique index to throw it away.
-    const { data: sent } = await supabase.from('outbound_events').select('subscription_id')
-      .eq('workspace_id', workspaceId).eq('external_id', externalId)
-      .in('subscription_id', subs.map(s => s.id));
-    const done = new Set((sent ?? []).map(r => r.subscription_id));
-    subs = subs.filter(s => !done.has(s.id));
-    if (!subs.length) return 0;
+    const occurred = at.toISOString();
+    // Every event is LOGGED (GET-939), listener or not: the Events page and GET /v2/events show
+    // what happened, not only what was sent. A log read that fails counts as not logged, so an
+    // unhealthy log never stops a delivery.
+    const [logged, listening] = await Promise.all([
+      loggedEvent(supabase, workspaceId, externalId).catch(() => null),
+      subscribersFor(supabase, workspaceId, type),
+    ]);
+    let subs = listening.filter(s => at.getTime() >= new Date(s.created_at).getTime() - SUBSCRIBE_GRACE_MS);
+    let alreadySent = false;
+    if (subs.length) {
+      // ALREADY SENT IS CHECKED BEFORE THE RECORD IS BUILT. The hourly deal pass re-reads 45 days
+      // of closes; without this every one of them would rebuild its record every hour only for
+      // the unique index to throw it away.
+      const { data: sent } = await supabase.from('outbound_events').select('subscription_id')
+        .eq('workspace_id', workspaceId).eq('external_id', externalId)
+        .in('subscription_id', subs.map(s => s.id));
+      const done = new Set((sent ?? []).map(r => r.subscription_id));
+      alreadySent = done.size > 0;
+      subs = subs.filter(s => !done.has(s.id));
+    }
+    // Nothing to send, and either logged already or not news for the log: an event every listener
+    // already had (sent before the log existed) or one older than the log keeps would come back on
+    // top of the feed as new, with an id no webhook ever saw.
+    const tooOldToLog = Date.now() - at.getTime() > EVENT_LOG_RETENTION_DAYS * 86_400_000;
+    if (!subs.length && (logged || alreadySent || tooOldToLog)) return 0;
 
-    const record = await buildEventRecord(supabase, workspaceId, { accountId, personId, dealId });
-    const payload = eventEnvelope({ type, workspaceId, occurredAt: at.toISOString(), record, data });
+    // Built once: a logged event keeps its body and id, so a webhook added later is sent exactly
+    // what the Events page shows.
+    let payload = logged
+      ? (await loggedEvent(supabase, workspaceId, externalId, { withPayload: true }).catch(() => null))?.payload ?? null
+      : null;
+    if (!payload) {
+      payload = eventEnvelope({
+        type, workspaceId, occurredAt: occurred, data,
+        record: await cachedRecord(supabase, workspaceId, { accountId, personId, dealId }),
+      });
+      if (!logged && !tooOldToLog) {
+        const entityId = payload.account?.entity_id ?? personId ?? null;
+        // Two detectors emitting the same event at once both build a body; the log keeps the first,
+        // and whoever lost sends that one, so every webhook gets an id the feed knows.
+        if (await logEvent(supabase, { workspaceId, type, externalId, entityId, occurredAt: occurred, payload })) {
+          const kept = await loggedEvent(supabase, workspaceId, externalId, { withPayload: true }).catch(() => null);
+          if (kept?.payload) payload = kept.payload;
+        }
+      }
+    }
+    if (!subs.length) return 0;
+    const entityId = payload.account?.entity_id ?? personId ?? null;
     const rows = subs.map(s => ({
       workspace_id: workspaceId,
       subscription_id: s.id,
-      entity_id: record.account?.entity_id ?? personId ?? null,
+      entity_id: entityId,
       event_type: type,
       payload,
-      occurred_at: at.toISOString(),
+      occurred_at: occurred,
       external_id: externalId,
     }));
     const { error } = await supabase.from('outbound_events')

@@ -22,7 +22,7 @@ import { Link, matchPath, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Activity, BarChart3, Building2, ChevronDown, Filter, Home as HomeIcon, KeyRound, Plug, RefreshCw,
-  Pencil, SquareTerminal, Code2, Users2, Webhook, ArrowUpRight, Zap, Network } from "lucide-react";
+  Pencil, SquareTerminal, Code2, Users2, Webhook, ArrowUpRight, Zap, Network, Radio } from "lucide-react";
 import { InlineEditInput } from "@/components/ui/inline-edit-input";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -54,6 +54,7 @@ const ROUTES: [pattern: string, meta: RouteMeta][] = [
   ["/tasks", { title: "Inbox", icon: Activity }],
   ["/accounts",        { title: "Accounts",          icon: Building2 }],
   ["/accounts/:id",    { title: "Account",           icon: Building2, parent: { label: "Accounts", href: "/accounts" } }],
+  ["/events",          { title: "Events",            icon: Radio }],
   ["/people",          { title: "People",            icon: Users2 }],
   ["/people/:id",      { title: "Person",            icon: Users2,    parent: { label: "People", href: "/people" } }],
   ["/integrations",    { title: "Personal",          icon: Plug,      parent: INTEGRATIONS }],

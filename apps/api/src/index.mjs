@@ -79,6 +79,7 @@ import { usageV2Router } from './routes/v2/usage.mjs';
 import { workflowsV2Router } from './routes/v2/workflows.mjs';
 import { approvalsV2Router } from './routes/v2/approvals.mjs';
 import { webhooksV2Router } from './routes/v2/webhooks.mjs';
+import { eventsV2Router } from './routes/v2/events.mjs';
 
 // /api — Frontend API (Supabase JWT auth)
 import { apiKeysRouter } from './routes/api/apiKeys.mjs';
@@ -415,6 +416,9 @@ app.use('/v2/approvals',       verifyApiKey,     requireOpsBalance, logV2Op, app
 // Events pushed to your own stack (GET-559). Same outbox as /v2/workspace/triggers, so the
 // same self-host block: a self-hosted install has no delivery worker reaching the internet.
 app.use('/v2/webhooks',        verifyApiKey,     requireOpsBalance, logV2Op, webhooksV2Router);
+// Every event, as Stripe lists them (GET-939): a key, or the Events page signed in. Only a key's
+// calls go in the op log: the page polls, and its reads are not an agent's activity.
+app.use('/v2/events',          verifyAuthEither, requireOpsBalance, (req, res, next) => (req.apiKeyId ? logV2Op(req, res, next) : next()), eventsV2Router);
 
 // ── /api — Frontend API ───────────────────────────────────────────────────────
 app.use('/me',                        meRouter); // legacy path used by AuthContext

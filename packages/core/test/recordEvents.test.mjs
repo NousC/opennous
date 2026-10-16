@@ -106,7 +106,7 @@ test('a deal close weeks old still goes out when the caller widens the window', 
     workspaceId: WS, type: 'deal.won', accountId: ACC, dealId: WON, occurredAt: closed,
     dedupeKey: `${WON}:closed_won`, maxAgeHours: 45 * 24,
   }), 1);
-  const p = db.writes[0].rows[0].payload;
+  const p = db.writes.find(x => x.table === 'outbound_events').rows[0].payload;
   assert.equal(p.deal.name, 'Corrigan — Pilot', 'a named deal is the one sent');
 });
 
@@ -120,9 +120,43 @@ test('a subscription hears nothing from before the week it was created', async (
   }), 0);
 });
 
-test('nobody listening: no record is built, nothing is queued', async () => {
+test('nobody listening: nothing is queued, but the event is logged for the Events page (GET-939)', async () => {
   const f = fixtures();
   f.trigger_subscriptions = [];
+  const db = fakeDb(f);
+  assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: NOW, dedupeKey: 'k' }), 0);
+  assert.deepEqual(db.writes.map(w => w.table), ['event_log']);
+  const [w] = db.writes;
+  assert.equal(w.opts.onConflict, 'workspace_id,external_id');
+  assert.equal(w.rows.external_id, 'deal.won:k');
+  assert.equal(w.rows.entity_id, ACC);
+  assert.equal(w.rows.id, w.rows.payload.id, 'the row id is the envelope id');
+  assert.equal(w.rows.payload.account.name, 'Corrigan Systems');
+});
+
+test('a listener: the event is logged once and the delivery carries the same id (GET-939)', async () => {
+  const db = fakeDb(fixtures());
+  assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: NOW, dedupeKey: 'k' }), 1);
+  const log = db.writes.find(x => x.table === 'event_log');
+  const out = db.writes.find(x => x.table === 'outbound_events');
+  assert.equal(out.rows[0].payload.id, log.rows.id);
+});
+
+test('already logged, a new subscriber: sent the logged body, no record rebuilt, not logged twice (GET-939)', async () => {
+  const f = fixtures();
+  const logged = { id: 'evt-1', type: 'deal.won', account: { entity_id: ACC, name: 'As logged' } };
+  f.event_log = [{ id: 'evt-1', payload: logged }];
+  f.entity_list_rows = []; // a rebuild would lose the account name
+  const db = fakeDb(f);
+  assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: NOW, dedupeKey: 'k' }), 1);
+  assert.deepEqual(db.writes.map(w => w.table), ['outbound_events']);
+  assert.equal(db.writes[0].rows[0].payload, logged);
+});
+
+test('already logged and nobody new to send to: nothing written', async () => {
+  const f = fixtures();
+  f.trigger_subscriptions = [];
+  f.event_log = [{ id: 'evt-1', payload: { id: 'evt-1' } }];
   const db = fakeDb(f);
   assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: NOW, dedupeKey: 'k' }), 0);
   assert.equal(db.writes.length, 0);
@@ -143,7 +177,23 @@ test('a person-only event finds the account they work at', async () => {
 test('already sent to a subscription: skipped before any record is built', async () => {
   const f = fixtures();
   f.outbound_events = [{ subscription_id: 'sub-1', external_id: 'deal.won:k1' }];
+  f.event_log = [{ id: 'evt-k1', payload: { id: 'evt-k1' } }];
   const db = fakeDb(f);
   assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: NOW, dedupeKey: 'k1' }), 0);
   assert.equal(db.writes.length, 0);
+});
+
+test('every listener already had it (sent before the log existed): not logged as new (GET-939)', async () => {
+  const f = fixtures();
+  f.outbound_events = [{ subscription_id: 'sub-1', external_id: 'deal.won:old' }];
+  const db = fakeDb(f);
+  assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: NOW, dedupeKey: 'old' }), 0);
+  assert.equal(db.writes.length, 0);
+});
+
+test('older than the log keeps: sent to a listener, but not logged on top of the feed (GET-939)', async () => {
+  const db = fakeDb(fixtures());
+  const closed = new Date(Date.now() - 40 * 86_400_000).toISOString();
+  assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: closed, dedupeKey: 'late', maxAgeHours: 45 * 24 }), 1);
+  assert.deepEqual(db.writes.map(w => w.table), ['outbound_events']);
 });

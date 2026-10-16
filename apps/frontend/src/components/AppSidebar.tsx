@@ -11,6 +11,7 @@ import {
   BarChart3,
   Plug,
   Webhook,
+  Radio,
   Users2,
   ChevronRight,
   Settings as SettingsIcon,
@@ -99,6 +100,8 @@ const workspaceGroupItems: NavItem[] = [
 const workNavItemsApi: NavItem[] = [
   { title: "Home",     url: "/",         icon: HomeIcon, end: true },
   { title: "Accounts", url: "/accounts", icon: Building2 },
+  // What happened, as events an engineer can pull or subscribe to (GET-939).
+  { title: "Events",   url: "/events",   icon: Radio },
 ];
 // The API plan redesign (GET-620): integrations are a group of their own, the four places that
 // change what the record contains or who reads it, with API keys beside the webhooks. Usage and

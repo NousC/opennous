@@ -157,6 +157,8 @@ export {
 export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
 // Record events (GET-559): every detector emits through one door; the trigger worker delivers.
 export { emitEvent, buildEventRecord, eventEnvelope, EVENT_API_VERSION } from './services/events.mjs';
+// The event log (GET-939): every event once, for the Events page and GET /v2/events.
+export { listEvents, getLoggedEvent, pruneEventLog, EVENT_LOG_RETENTION_DAYS, EVENTS_PAGE_MAX } from './db/eventLog.mjs';
 // HubSpot fields as automation variables (GET-567): listed from the stored schema, read live.
 export { hubspotFieldList, hubspotTemplateVars, hubspotPropsIn } from './services/hubspotVars.mjs';
 export {

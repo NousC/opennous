@@ -6,7 +6,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useLocation, useSearchParams } from "react-router-dom";
 import {
   Activity, BarChart3, Brain, Building2, Columns3, GraduationCap, HeartHandshake, Inbox,
-  Home as HomeIcon, KeyRound, Lightbulb, MessageCircle, Network, Plug, Webhook, Zap,
+  Home as HomeIcon, KeyRound, Lightbulb, MessageCircle, Network, Plug, Radio, Webhook, Zap,
 } from "lucide-react";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
 import { PrioritiesButton } from "@/components/shell/PrioritiesButton";
@@ -62,6 +62,7 @@ const SECTIONS: { prefix: string; icon: typeof HomeIcon; label: string }[] = [
   { prefix: "/integrations", icon: Plug, label: "Integrations" },
   // The pages both plans share (GET-660): the API plan's bar names them the same way.
   { prefix: "/company-sources", icon: Plug, label: "Integrations" },
+  { prefix: "/events", icon: Radio, label: "Events" },
   { prefix: "/webhooks", icon: Webhook, label: "Webhooks" },
   { prefix: "/keys", icon: KeyRound, label: "API keys" },
   { prefix: "/usage", icon: BarChart3, label: "Usage and billing" },

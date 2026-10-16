@@ -186,6 +186,8 @@ const routes = [
   ...apiDataRoutes,
   // Settings > Agent activity (GET-898, GET-900): a seeded call log, on every plan.
   ...(await import("./fixtures/api-activity.mjs")).routes,
+  // The Events page (GET-939): a live-looking feed, on every plan.
+  ...(await import("./fixtures/events.mjs")).routes,
   ["GET", /^\/me$/, () => ME],
   ["GET", /^\/api\/me$/, () => ME],
   ["GET", /^\/api\/onboarding\/status$/, () => ONBOARDING_STATUS],

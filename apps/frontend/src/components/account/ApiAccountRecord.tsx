@@ -1,16 +1,17 @@
 // The account record on the API plan (GET-634). Read-only: the agent writes through the API, so
 // this page shows what Nous holds about the account — its facts with their confidence, freshness
-// and source on the left, the people and the timeline on the right. No chat, tasks, insights or
+// and source on the left, the people and the account's events on the right. No chat, tasks, insights or
 // edit controls; those are Workspace surfaces.
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, Copy, ExternalLink, FileText } from "lucide-react";
+import { Check, Copy, ExternalLink } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { EntityAvatar } from "@/components/EntityAvatar";
 import { ActivityIcon } from "@/components/mind/entities";
 import { INTEL_ORDER, type Note } from "@/components/record/RecordParts";
 import { catName } from "@/components/account/parts";
-import { activityTitle, buildAccountFeed } from "@/components/account/AccountActivity";
+import { buildAccountFeed } from "@/components/account/AccountActivity";
+import { EventFeed } from "@/components/events/EventFeed";
 import { useAccountDeals } from "@/components/deals/AccountDeals";
 import { cn } from "@/lib/utils";
 import { when } from "@/lib/format";
@@ -101,7 +102,6 @@ export default function ApiAccountRecord({ cd }: { cd: ApiAccountDetail }) {
   const id: string = co.id;
   const deals = useAccountDeals(id);
   const [allPeople, setAllPeople] = useState(false);
-  const [allTimeline, setAllTimeline] = useState(false);
 
   const score = cd.icp?.score ?? (typeof co.icp_score === "number" ? co.icp_score : null);
   const tier = tierOf(score);
@@ -123,15 +123,7 @@ export default function ApiAccountRecord({ cd }: { cd: ApiAccountDetail }) {
     order: INTEL_ORDER, categoryName: catName, nameOf,
   }), [cd.facts, co, cd.notes, deals.data, nameOf]);
 
-  // What already happened, newest first: the activity and the account's call summaries.
-  const timeline = useMemo(() => {
-    const now = Date.now();
-    return buildAccountFeed({ acts: cd.activity ?? [], calls: cd.calls ?? [] })
-      .filter((i) => i.type !== "signal" && ts(i.at) <= now);
-  }, [cd.activity, cd.calls]);
-
   const shownPeople = allPeople ? people : people.slice(0, 5);
-  const shownTimeline = allTimeline ? timeline : timeline.slice(0, 8);
 
   return (
     <div className="h-full overflow-auto bg-card">
@@ -201,38 +193,13 @@ export default function ApiAccountRecord({ cd }: { cd: ApiAccountDetail }) {
             {people.length > 0 && people.length <= 5 && <div className="h-2" />}
           </div>
 
+          {/* What happened on the account, as events (GET-939): the feed its webhooks and
+              GET /v2/events carry, in place of a CRM-style activity list. */}
           <div className={card}>
             <div className="flex items-center px-4 pb-1 pt-3 text-[13px]">
-              <span className="flex-1 font-medium">Timeline</span>
+              <span className="flex-1 font-medium">Events</span>
             </div>
-            {shownTimeline.map((i) => {
-              const title = i.type === "activity" ? activityTitle(i.a)
-                : i.type === "page" ? (i.doc.title || "Call summary") : "";
-              const src = i.type === "activity" ? String(i.a.source ?? "").toLowerCase() : "";
-              const who = i.type === "activity" && i.a.contactName && !title.includes(i.a.contactName) ? i.a.contactName : null;
-              const sub = i.type === "page" ? "Call summary"
-                : [who, src && !["manual", "agent", "system"].includes(src) ? providerName(src.replace(/-/g, "_")) : null].filter(Boolean).join(" · ");
-              return (
-                <div key={i.key} className="flex gap-3 px-4 py-2.5 text-[13px]">
-                  <span className="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-[7px] bg-muted text-ink-2">
-                    {i.type === "activity" ? <ActivityIcon source={i.a.source} type={i.a.activity_type || ""} /> : <FileText className="h-3.5 w-3.5" />}
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col leading-snug">
-                    <span className="truncate">{title}</span>
-                    {sub && <span className="truncate text-[12px] text-muted-foreground">{sub}</span>}
-                  </span>
-                  <span className="flex-shrink-0 text-[12px] text-muted-foreground">{i.at ? when(i.at) : ""}</span>
-                </div>
-              );
-            })}
-            {timeline.length === 0 && <div className="px-4 pb-3 pt-1 text-[13px] text-muted-foreground">No activity yet</div>}
-            {timeline.length > 8 ? (
-              <div className="px-4 pb-3 pt-1.5">
-                <button onClick={() => setAllTimeline((v) => !v)} className="text-[12px] font-medium text-muted-foreground hover:text-foreground">
-                  {allTimeline ? "Show fewer" : `Show all ${timeline.length}`}
-                </button>
-              </div>
-            ) : <div className="h-2" />}
+            <div className="px-2 pb-2">{co.id ? <EventFeed accountId={co.id} showAccount={false} /> : null}</div>
           </div>
         </aside>
       </div>

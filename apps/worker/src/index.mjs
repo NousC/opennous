@@ -7,7 +7,7 @@
 import './bootEnv.mjs'; // first — normalizes APP_URL/API_URL from domains before any module reads them
 import express from 'express';
 import cron from 'node-cron';
-import { runAutomationDailyPoll, emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, pruneWebhookDeliveries, reconcileAfterCallWebhooks, processAccountSignals, processHubspotFieldChanges, registerStepHandler } from '@nous/core';
+import { runAutomationDailyPoll, emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, pruneWebhookDeliveries, pruneEventLog, reconcileAfterCallWebhooks, processAccountSignals, processHubspotFieldChanges, registerStepHandler } from '@nous/core';
 
 import { runFlagSweepCron } from './flags/sweep.mjs';
 import {
@@ -686,6 +686,15 @@ cron.schedule('40 4 * * *', async () => {
     const removed = await pruneWebhookDeliveries(getSupabaseClient());
     if (removed) console.log(`[WEBHOOK_DELIVERIES] pruned ${removed} row(s) older than 30 days`);
   } catch (e) { console.error('[WEBHOOK_DELIVERIES] prune:', e?.message ?? e); }
+}, { timezone: 'UTC' });
+
+// ── Event log retention (GET-939) — daily 04:45 UTC ──────────────────────────
+// event_log keeps every event for the Events page and GET /v2/events, 30 days like Stripe's.
+cron.schedule('45 4 * * *', async () => {
+  try {
+    const removed = await pruneEventLog(getSupabaseClient());
+    if (removed) console.log(`[EVENT_LOG] pruned ${removed} event(s) older than 30 days`);
+  } catch (e) { console.error('[EVENT_LOG] prune:', e?.message ?? e); }
 }, { timezone: 'UTC' });
 
 // ── GitHub dispatch delivery (automation layer, GET-74) — every 30 seconds ───

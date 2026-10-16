@@ -119,6 +119,7 @@ const AutomationEditor = lazyWithErrorBoundary(() => import("@/pages/AutomationE
 const DocPage         = lazyWithErrorBoundary(() => import("@/pages/DocPage"));
 const IntegrationsPage = lazyWithErrorBoundary(() => import("@/pages/Integrations"));
 const WebhooksPage = lazyWithErrorBoundary(() => import("@/pages/Webhooks"));
+const EventsPage = lazyWithErrorBoundary(() => import("@/pages/Events"));
 const ApiKeys         = lazyWithErrorBoundary(() => import("@/pages/ApiKeys"));
 const KeyDetail       = lazyWithErrorBoundary(() => import("@/pages/KeyDetail"));
 const People          = lazyWithErrorBoundary(() => import("@/pages/People"));
@@ -321,6 +322,8 @@ export function AppRoutes() {
             {/* Integrations + Webhooks live inside Settings now (2026-07-31). The old
                 standalone paths redirect into their section so nothing 404s. */}
             <Route path="/webhooks"   element={<Suspense fallback={<MinimalLoader />}><WebhooksPage /></Suspense>} />
+            {/* Every event as it happens, Stripe-style (GET-939). */}
+            <Route path="/events"     element={<Suspense fallback={<MinimalLoader />}><EventsPage /></Suspense>} />
             {/* Triggers are headless (2026-07-14): the engine and MCP tools stay live, but
                 there's no page. Old links redirect so nothing 404s. */}
             <Route path="/triggers"   element={<Navigate to="/accounts" replace />} />
