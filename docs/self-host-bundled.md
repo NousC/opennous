@@ -256,6 +256,9 @@ Members then see **Connect with Google** on the Integrations page.
 - The ledger is by filename. A migration file that is edited after it ran on this
   database is never run again; changes go in a new file.
   `docker compose --env-file nous.env logs db-schema` shows what ran.
+- A database first set up from a release of 2026-10-15 or earlier can hold a few
+  tables that belong to Nous Cloud features and are no longer in this schema. They
+  are left in place (nothing drops them), unused, and their files stay in the ledger.
 - A migration that fails stops `db-schema`, and the API does not start until it
   passes, so the app never runs against a half-migrated database. Nothing from the
   failed file is kept. Fix the cause and run `docker compose --env-file nous.env up -d`

@@ -239,7 +239,7 @@ export { hubspotFieldChanges, changesFromHistory, changeText } from './services/
 // The built-in drafters' email voice block (GET-902); the voice files themselves are Cloud's.
 export { emailVoiceBlock } from './services/emailVoiceBlock.mjs';
 // The Accounts table's per-account overview (GET-894): deal count and latest signal.
-export { accountOverview, requireWorkspaceMember } from './db/accountOverview.mjs';
+export { accountOverview, requireWorkspaceMember, registerAccountOverviewFallback } from './db/accountOverview.mjs';
 export { registerAutomationExtension, loadAutomationExtension, automationExtension } from './services/automationExtension.mjs';
 
 export * from './services/routineSchedule.mjs';

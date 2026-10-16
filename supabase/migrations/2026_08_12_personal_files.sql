@@ -1,5 +1,5 @@
 -- The personal workspace — each member's private vault of markdown files, the
--- counterpart to the shared RevBox. A closed set of foundation folders (inbox,
+-- counterpart to the shared company graph. A closed set of foundation folders (inbox,
 -- thoughts, decisions, projects, briefs, content); the member cannot add or delete
 -- folders. Phase 1 is Nous-native (source = human/agent); Phase 2/3 add Git + local
 -- sync, where the connected source becomes canonical and these rows are the mirror.

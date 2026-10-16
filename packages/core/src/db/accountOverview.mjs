@@ -1,13 +1,28 @@
-// The Accounts table's per-account overview (GET-894, GET-910): each account's deal count and its
-// latest signal, read in one call (the revbox_account_overview RPC: its name predates this module) for the accounts on screen. A latest
-// signal the team may not read (its fact came from a private message) is left out.
+// The Accounts table's per-account overview (GET-894, GET-910, GET-924): each account's deal count
+// and its latest signal, read in one call (the account_overview RPC,
+// supabase/migrations/2026_10_15_account_overview.sql) for the accounts on screen. A latest signal
+// the team may not read (its fact came from a private message) is left out.
 
 async function rows(q) { const { data, error } = await q; if (error) throw error; return data ?? []; }
+
+// A database that predates account_overview has the same read under another name: a deployment can
+// register it here, and it is used only while account_overview is missing (PostgREST PGRST202).
+let fallbackRpc = null;
+/** Name an older RPC with account_overview's signature to call while the database lacks it. */
+export function registerAccountOverviewFallback(name) { fallbackRpc = name || null; }
+
+async function overviewRows(sb, ws, ids) {
+  const args = { p_workspace_id: ws, p_ids: ids };
+  const { data, error } = await sb.rpc('account_overview', args);
+  if (!error) return data ?? [];
+  if (error.code === 'PGRST202' && fallbackRpc) return rows(sb.rpc(fallbackRpc, args));
+  throw error;
+}
 
 /** [{ id, deal_count, latest_signal }] for these account ids, in the RPC's order. */
 export async function accountOverview(sb, ws, ids) {
   if (!ids.length) return [];
-  const accounts = await rows(sb.rpc('revbox_account_overview', { p_workspace_id: ws, p_ids: ids }));
+  const accounts = await overviewRows(sb, ws, ids);
   const signals = accounts.map(a => a.latest_signal).filter(Boolean);
   if (!signals.length) return accounts;
   // Loaded here, not at the top: this module is also imported straight from src (tests), where the

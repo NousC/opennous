@@ -11,6 +11,7 @@
 // Skipped and unread conversations cost nothing: only what was read counts.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cloudRequestedFeatures } from '../services/cloudRequestedFeatures.js';
 
 export const MEETING_MINUTES_PER_CREDIT = 10;
 
@@ -31,10 +32,11 @@ export const CREDIT_SCALE = 2;
  * WORK A PERSON ASKS FOR is metered by what it actually cost (GET-516), at the same
  * denomination as a read: one credit per $0.01 BEFORE the scale, half a cent after it. Background work that runs on its own — extraction, the insights board, clustering,
  * scorecards, topic grouping, health — is part of the plan and never billed.
+ * Nous Cloud's own features are billed the same way and named in its folder
+ * (services/cloudRequestedFeatures.ts, GET-924); conversationCredits adds them.
  */
 export const REQUESTED_USD_PER_CREDIT = 0.01 / CREDIT_SCALE;
 export const REQUESTED_FEATURES = [
-  'revbox-plan', 'revbox-run', 'revbox-custom-signal',
   'home-agent-turn', 'home-agent-close', 'playground-agent-turn',       // the agent, and what it drafts inline
   'studio-email-draft', 'studio-linkedin-draft', 'studio-email-brief', 'studio-campaign-brief',
   'sequence-ai-step',
@@ -151,11 +153,14 @@ export async function conversationCredits(
       if (day) { out.byDay.set(day, (out.byDay.get(day) ?? 0) + n); out.readsByDay.set(day, (out.readsByDay.get(day) ?? 0) + n); }
     }
   }
-  // What people asked for, metered by its cost.
+  // What people asked for, metered by its cost. A Cloud build adds its own features (GET-924).
+  const cloud = await cloudRequestedFeatures();
+  const requestedFeatures = [...REQUESTED_FEATURES, ...cloud.requested];
+  const cloudAutomations = new Set(cloud.automations);
   for (const ws of workspaceIds) {
     const rows = await pageAll<{ cost_usd: number | null; occurred_at: string; feature?: string | null }>((a, b) => {
       let q = supabase.from('llm_usage').select('cost_usd, occurred_at, feature')
-        .eq('workspace_id', ws).in('feature', REQUESTED_FEATURES).gte('occurred_at', since);
+        .eq('workspace_id', ws).in('feature', requestedFeatures).gte('occurred_at', since);
       if (until) q = q.lt('occurred_at', until);
       return q.order('occurred_at').range(a, b);
     });
@@ -163,7 +168,7 @@ export async function conversationCredits(
       const usd = Number(r.cost_usd) || 0;
       requestedUsd += usd;
       const day = String(r.occurred_at ?? '').slice(0, 10);
-      const auto = String(r.feature ?? '').startsWith('automation-') || ['revbox-run','revbox-custom-signal'].includes(String(r.feature));
+      const auto = String(r.feature ?? '').startsWith('automation-') || cloudAutomations.has(String(r.feature));
       if (auto) automationsUsd += usd;
       if (day) {
         out.byDay.set(day, (out.byDay.get(day) ?? 0) + usd / REQUESTED_USD_PER_CREDIT);

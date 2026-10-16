@@ -411,7 +411,6 @@ app.use('/v2/members',         verifyApiKey,     requireOpsBalance, logV2Op, mem
 app.use('/v2/icp',             verifyApiKey,     logV2Op, icpV2Router);
 app.use('/v2/usage',           verifyApiKey,     logV2Op, usageV2Router);
 app.use('/v2/workflows',       verifyApiKey,     requireOpsBalance, logV2Op, workflowsV2Router);
-// /v2/revboxes is Cloud's, mounted by cloud/index.mjs (GET-910).
 app.use('/v2/approvals',       verifyApiKey,     requireOpsBalance, logV2Op, approvalsV2Router);
 // Events pushed to your own stack (GET-559). Same outbox as /v2/workspace/triggers, so the
 // same self-host block: a self-hosted install has no delivery worker reaching the internet.

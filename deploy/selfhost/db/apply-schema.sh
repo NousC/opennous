@@ -29,6 +29,11 @@
 #        insert into selfhost.schema_migrations (filename, how) values ('<file>', 'manual');
 #   4. Grants and the owner-claim table (post-schema.sql), idempotent, every start.
 #   5. While the instance has no owner, prints the setup link (SELFHOST_SETUP_TOKEN).
+#
+# Only supabase/schema.sql and supabase/migrations are applied: the open-source schema. Nous
+# Cloud's own tables come from supabase/cloud/, which the open-source tree does not have and this
+# never reads (GET-924). A database that got Cloud-only tables from an earlier release keeps them:
+# nothing here drops anything, and the ledger keeps their rows, so they are never run again.
 set -eu
 
 export PGHOST=db PGUSER=postgres PGDATABASE=postgres PGPASSWORD="$POSTGRES_PASSWORD"
@@ -144,10 +149,10 @@ else
       q --single-transaction -f "$MIGRATIONS/$1" -c "$record" 2> "/tmp/err/$1" && echo "db-schema:   $1"
     fi
   }
-  # Filename order is not dependency order within a day (2026_10_14_revbox_builtin_jobs.sql
-  # sorts before 2026_10_14_revboxes.sql, which creates its table). So, day by day, a file that
-  # fails is retried after its siblings, until a pass applies nothing: the order
-  # scripts/check-schema-baseline.sh uses. A failed file left nothing behind (one transaction).
+  # Filename order is not dependency order within a day (a file can need a table that a sibling
+  # sorting after it creates). So, day by day, a file that fails is retried after its siblings,
+  # until a pass applies nothing: the order scripts/check-schema-baseline.sh uses. A failed file
+  # left nothing behind (one transaction).
   mkdir -p /tmp/err
   for day in $(while IFS= read -r f; do file_date "$f"; done < /tmp/pending.txt | uniq); do
     while IFS= read -r f; do [ "$(file_date "$f")" = "$day" ] && echo "$f"; done < /tmp/pending.txt > /tmp/day.txt

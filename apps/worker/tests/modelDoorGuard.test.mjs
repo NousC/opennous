@@ -15,10 +15,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const SCAN = ['apps/api/src', 'apps/api/scripts', 'apps/worker/src', 'apps/worker/scripts', 'packages/core/src'];
+const CLOUD_EXCEPTIONS = 'apps/api/src/cloud/modelDoorExceptions.mjs';
 
 // file → why it may talk to a provider SDK directly.
 const ALLOWED = {
@@ -30,9 +31,8 @@ const ALLOWED = {
   'apps/api/src/cloud/lib/playgroundAgent.mjs': 'tool-using agent loops; the Anthropic branch runs only when lib/model.mjs resolves an Anthropic model',
   'apps/api/src/cloud/lib/sandboxExecutor.mjs': 'tool-using sandbox agent loop (Anthropic tool protocol), routed through OpenRouter by claudeRoute (GET-885)',
   'apps/api/src/cloud/lib/harness.mjs': 'tool-using agent loop against OpenAI-compatible /chat/completions (routed by lib/model.mjs)',
-  // Cloud's builder agent (GET-868): a streaming tool-use loop, model from lib/model.mjs, every call metered.
-  'apps/api/src/cloud/lib/jobBuilder/index.mjs': "builds the builder agent's client (tool-using agent loop, model from lib/model.mjs)",
-  'apps/api/src/cloud/lib/jobBuilder/loop.mjs': "the builder agent's tool-use loop; each call metered",
+  // Cloud's own exceptions for its Cloud-only features, kept with them (GET-924); none on an open-source build.
+  ...(existsSync(join(ROOT, CLOUD_EXCEPTIONS)) ? (await import(pathToFileURL(join(ROOT, CLOUD_EXCEPTIONS)).href)).MODEL_DOOR_EXCEPTIONS : {}),
 };
 
 const PATTERNS = [

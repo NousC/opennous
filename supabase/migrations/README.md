@@ -2,6 +2,8 @@
 
 `schema.sql` in the parent directory is the **complete schema** for a fresh install: run it once and you have the latest state. It is generated, not hand-edited: `../schema-baseline-migrations.txt` lists every file in this folder that is already folded into it. Files here are **incremental migrations** for existing deployments that have an older schema applied.
 
+Nous Cloud's own tables are not here: their migrations live in `../cloud/migrations/` and their fresh-install addition in `../cloud/schema.sql`, both left out of the open-source export (GET-924). `scripts/check-schema-baseline.sh regenerate` writes `../cloud/schema.sql` too, where that folder exists.
+
 ## When to run which
 
 - **Fresh install** → run `../schema.sql` once in the Supabase SQL editor. Done. (On plain Postgres with pgvector instead of a Supabase project, run `../bare-postgres-shims.sql` first.)
@@ -12,7 +14,7 @@
 
 1. Name it `YYYY_MM_DD_what_it_does.sql` and make it re-runnable.
 2. Apply it where it needs to go, as before.
-3. Run `scripts/check-schema-baseline.sh regenerate` (Docker, local only) and commit the updated `schema.sql` and `schema-baseline-migrations.txt` with the migration.
+3. Run `scripts/check-schema-baseline.sh regenerate` (Docker, local only) and commit the updated `schema.sql` and `schema-baseline-migrations.txt` with the migration. A Cloud-only migration goes in `../cloud/migrations/` instead, and regenerate updates `../cloud/schema.sql`.
 4. `scripts/check-schema-baseline.sh` proves `schema.sql` applies on an empty database and that no migration outside the manifest changes it. Exit 1 means it is stale.
 
 ## How to run
@@ -50,6 +52,7 @@ psql "$DATABASE_URL" -f supabase/migrations/<file>.sql
 | 2026-07-15 | `2026_07_15_audit_snapshots.sql` | `workspace_audit_snapshots` — nightly audit-sweep history for regression detection |
 | 2026-07-15 | `2026_07_15_provider_setup_metadata.sql` | `workflow_providers` connect-form columns (`key_url`, `key_hint`, `webhook_mode`, `webhook_settings_url`) |
 | 2026-09-24 | `2026_09_24_brains.sql` | Brains (GET-431): `brains` table (one GTM brain per workspace in v1) + `documents.brain_id` / `brain_path` + the `brain_page` document kind |
+| 2026-10-15 | `2026_10_15_account_overview.sql` | The Accounts table's overview read (GET-924): `account_overview(workspace, account ids)` returns each account's deal count, won/lost deals and latest team-readable signal |
 
 > Not every file between 2026-05-26 and 2026-07-13 is logged above; the files in this folder are the source of truth. The 2026-07-13/07-15 files were consolidated here from a former top-level `migrations/` folder so the documented update flow (this folder) surfaces them.
 

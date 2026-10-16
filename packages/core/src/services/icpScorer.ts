@@ -15,9 +15,9 @@ import type { StakeResult } from '../db/predictions.js';
 // is no Nous score to stake or refresh, so they do nothing, and the workspace is scored only by
 // what it posts (db/externalScores.ts treats every workspace as 'external').
 //
-// This file is the only place in core that reaches into src/cloud/, and it checks the folder
-// exists first (scripts/check-cloud-imports.mjs keeps every other public file out of it). It loads
-// lazily, on first use, so nothing here runs at import time.
+// This file and services/cloudRequestedFeatures.ts are the only places in core that reach into
+// src/cloud/, and they check the folder exists first (scripts/check-cloud-imports.mjs keeps every
+// other public file out of it). It loads lazily, on first use, so nothing here runs at import time.
 
 export interface RescoreResult {
   rescored: number;       // open predictions whose score actually moved
