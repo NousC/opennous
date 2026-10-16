@@ -626,7 +626,7 @@ function ToolsCard({ loading, rows, add, copied, busy, onCopy, onGuide, onRemove
     setOpen((cur) => { const next = new Set(cur); if (v) next.add(source); else next.delete(source); return next; });
   return (
     <ListCard>
-      <ListHeader title="Tools sending in" count={loading && rows.length === 0 ? null : rows.length} right={add} className="items-center" />
+      <ListHeader title="Webhooks" count={loading && rows.length === 0 ? null : rows.length} right={add} className="items-center" />
       {loading && rows.length === 0 ? (
         <div className="space-y-1 p-1">{[0, 1].map((i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-muted/40" />)}</div>
       ) : rows.length === 0 ? (
