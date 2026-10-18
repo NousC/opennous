@@ -120,7 +120,7 @@ export interface CloudRegistry {
   /** <Route> elements mounted at the app root, outside sign-in (the /live dashboard). */
   publicRoutes?: ReactNode;
   /** Cloud versions of public pages; public code renders its own fallback when absent. */
-  variants?: Partial<Record<"home" | "docIndex" | "doc" | "reporting" | "accountRecord", CloudComponent>>;
+  variants?: Partial<Record<"home" | "docIndex" | "doc" | "reporting", CloudComponent>>;
   /** Sidebar rows on the workspace plans. The API plan's rail is public and never changes. */
   nav?: {
     /** After Home and Accounts in the main group. */

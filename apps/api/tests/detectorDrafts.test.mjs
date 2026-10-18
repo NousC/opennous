@@ -15,9 +15,10 @@ import {
   DETECTORS, quietOpenDeals, staleDealFiring, signalFirings, gateFiring, planDrafts, draftedToday,
   rankRecipients, speakerMatches, originMarker, ledgerKey, runDetectorDraftsForWorkspace, recKeyOf,
   runDetectorDrafts, allowedWorkspaces, dealSignalFirings, DEAL_SIGNALS, DETECTOR_ORDER, draftSystem, voiceFor,
+  isAlreadyHandled, researchLine, HANDLED_OUTCOMES, researchedNameMatches,
 } from '../src/lib/detectorDrafts.mjs';
 import { parseEmailDraft, EMAIL_DRAFT_SYSTEM } from '../src/lib/emailDraft.mjs';
-import { originOf } from '../src/lib/actionOrigin.mjs';
+import { originOf, signalOf } from '../src/lib/actionOrigin.mjs';
 
 const DAY = 86_400_000;
 const NOW = Date.parse('2026-10-04T06:10:00Z');
@@ -732,4 +733,174 @@ test('a voice that cannot be read leaves the drafts as they were', async () => {
   assert.ok(systems.every(x => x === draftSystem({ memberBlock: 'You are writing as Theo.' })));
   assert.equal(voiceFor({ automation: 'deal_signal' }, new Map([['deal_signals', { text: 'x' }]])), 'x');
   assert.equal(voiceFor({ automation: 'expansion_signal' }, null), null);
+});
+
+
+// ─── GET-944: the first signal play, a decision maker named on the call ─────────────────────────
+
+const ceo = (over = {}) => sig('s_ceo', 'a_acme', 'stakeholder_identified', 1, {
+  content: 'CEO has a say in the decision (name not yet known)', speaker: 'Rita',
+  quote: 'Our CEO will want to see this before we sign', detail: { role: 'decision_maker' }, ...over,
+});
+
+test('a decision maker or budget holder named on a call fires; a champion or a blocker does not', () => {
+  const rows = [ceo(), sig('s_ch', 'a2', 'stakeholder_identified', 1, { detail: { role: 'champion' } }),
+    sig('s_bl', 'a3', 'stakeholder_identified', 1, { detail: { role: 'blocker' } }),
+    sig('s_eb', 'a4', 'stakeholder_identified', 1, { detail: { role: 'economic_buyer' } })];
+  const f = dealSignalFirings(rows, { now: NOW, names: new Map([['a_acme', 'Acme']]), domains: new Map([['a_acme', 'acme.test']]) });
+  assert.deepEqual(f.map((x) => x.accountId).sort(), ['a4', 'a_acme']);
+  const a = f.find((x) => x.accountId === 'a_acme');
+  assert.match(a.why, /^Decision maker identified on Oct 3: CEO has a say/);
+  assert.equal(a.raisedBy, 'Rita', 'the warm path is whoever named them');
+  assert.deepEqual(a.excludeIds, []);
+  assert.equal(a.trigger.quote, 'Our CEO will want to see this before we sign');
+  assert.equal(a.trigger.speaker, 'Rita');
+  assert.equal(a.trigger.domain, 'acme.test');
+  assert.match(f.find((x) => x.accountId === 'a4').why, /^Economic buyer identified/);
+});
+
+test('a more urgent signal on the same account still wins over a new decision maker', () => {
+  const f = dealSignalFirings([ceo(), sig('s_obj', 'a_acme', 'objection_raised', 2)], { now: NOW });
+  assert.equal(f[0].trigger.kind, 'objection_raised');
+});
+
+test('the play researches the person, writes to whoever named them, and the inbox reads it back', async () => {
+  const s = world();
+  s.db.account_signals = [ceo()];
+  const asked = [];
+  const { deps, calls } = fakeDeps({
+    signalResearch: async (_s, _w, { firing }) => { asked.push(firing.trigger.kind); return { name: 'Andrew Lemoine', title: 'CEO', source_url: 'https://acme.test/team', source_title: 'Team' }; },
+  });
+  const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(r.drafted, 1, JSON.stringify(r));
+  assert.deepEqual(asked, ['stakeholder_identified']);
+  const [d] = s.db.pending_actions;
+  assert.equal(d.recipient_email, 'rita@acme.test');
+  const brief = calls.last.messages[0].content;
+  assert.match(brief, /Who that person is \(researched, source https:\/\/acme.test\/team\): Andrew Lemoine, CEO/);
+  assert.match(brief, /ask them to bring that person into the next call/);
+  const ledger = s.db.ri_recommendations.find((l) => l.rec_key === recKeyOf('deal_signal'));
+  assert.equal(ledger.evidence.trigger.research.name, 'Andrew Lemoine');
+  const sigOut = originOf(d, { recs: new Map([[ledger.id, ledger]]) }).signal;
+  assert.equal(sigOut.kind, 'stakeholder_identified');
+  assert.equal(sigOut.speaker, 'Rita');
+  assert.equal(sigOut.quote, 'Our CEO will want to see this before we sign');
+  assert.deepEqual(sigOut.research, { name: 'Andrew Lemoine', title: 'CEO', source_url: 'https://acme.test/team', source_title: 'Team', contact_id: null });
+});
+
+test('a researched person who is already a contact is never the recipient; one in touch since is already handled', async () => {
+  const s = world();
+  // Cass is the CEO. In touch 60 days ago, before the call: the play asks Rita to bring Cass in.
+  s.db.account_signals = [ceo()];
+  const found = async () => ({ name: 'Cass Champion', title: 'CEO', source_url: 'https://acme.test/cass' });
+  const { deps } = fakeDeps({ signalResearch: found });
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(s.db.pending_actions[0].recipient_email, 'rita@acme.test');
+  assert.equal(s.db.ri_recommendations[0].evidence.trigger.research.contact_id, 'p_cass');
+
+  // Cass wrote in yesterday, after the call: nothing to bring about, no draft, no model call.
+  const s2 = world();
+  s2.db.account_signals = [ceo({ occurred_at: iso(3) })];
+  s2.db.contacts.find((p) => p.id === 'p_cass').last_interaction_at = iso(1);
+  const { deps: deps2, calls: calls2 } = fakeDeps({ signalResearch: found });
+  const r = await runDetectorDraftsForWorkspace(s2, WS, { now: NOW, deps: deps2, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(r.outcomes.already_handled, 1, JSON.stringify(r));
+  assert.equal(s2.db.pending_actions.length, 0);
+  assert.equal(calls2.model, 0);
+  assert.ok(HANDLED_OUTCOMES.has('already_handled'), 'and it is not looked at again for a month');
+});
+
+test('no research (self-host, no key, or the search failed): the play still drafts from the graph', async () => {
+  for (const signalResearch of [null, async () => null, async () => { throw new Error('exa down'); }]) {
+    const s = world();
+    s.db.account_signals = [ceo()];
+    const { deps, calls } = fakeDeps({ signalResearch });
+    const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+    assert.equal(r.drafted, 1);
+    assert.doesNotMatch(calls.last.messages[0].content, /researched/);
+    assert.equal(s.db.ri_recommendations[0].evidence.trigger.research?.name ?? null, null);
+  }
+});
+
+test('in touch since the signal, and the research line, read as they should', () => {
+  assert.equal(isAlreadyHandled({ last_interaction_at: iso(1) }, iso(2)), true);
+  assert.equal(isAlreadyHandled({ last_interaction_at: iso(3) }, iso(2)), false);
+  assert.equal(isAlreadyHandled({}, iso(2)), false);
+  // The call the signal came from ends after it was said: not a later conversation.
+  const said = iso(2);
+  assert.equal(isAlreadyHandled({ last_interaction_at: new Date(Date.parse(said) + 3600_000).toISOString() }, said), false);
+  // A CRM sync or our own outbound moves last_activity_at: not their conversation.
+  assert.equal(isAlreadyHandled({ last_activity_at: iso(1) }, iso(2)), false);
+  assert.equal(researchLine(null), null);
+  assert.equal(researchLine({ name: 'Ann Lee', contact_id: 'p1' }), 'Who that person is (researched): Ann Lee (already a contact on this account)');
+});
+
+test('only a Deal signals draft carries a signal', () => {
+  assert.equal(signalOf({ rec_key: 'automation.stale_deal', evidence: { trigger: { kind: 'stale' } } }), null);
+  assert.equal(signalOf({ rec_key: 'automation.deal_signal', evidence: {} }), null);
+  assert.equal(signalOf({ rec_key: 'automation.deal_signal', evidence: { trigger: { kind: 'buying_signal', label: 'Buying signal' }, quote: 'q' } }).quote, 'q');
+});
+
+test('a researched name matches a contact only on a full name: middle initials and short forms count, a first name alone never', () => {
+  const andrew = { first_name: 'Andrew', last_name: 'Lemoine' };
+  assert.equal(researchedNameMatches(andrew, 'Andrew Lemoine'), true);
+  assert.equal(researchedNameMatches(andrew, 'Andrew J. Lemoine'), true);
+  assert.equal(researchedNameMatches({ first_name: 'Andy', last_name: 'Lemoine' }, 'Andrew Lemoine'), true);
+  assert.equal(researchedNameMatches(andrew, 'Andrew'), false);
+  assert.equal(researchedNameMatches(andrew, 'Andrew Smith'), false);
+  assert.equal(researchedNameMatches({ first_name: 'Andrew', last_name: null }, 'Andrew Lemoine'), false);
+});
+
+test('the person the play brings in is never the one written to, even when they raised it', async () => {
+  // Rita named the CEO and Rita IS the CEO: without the exclusion she would rank first.
+  const s = world();
+  s.db.account_signals = [ceo()];
+  const { deps } = fakeDeps({ signalResearch: async () => ({ name: 'Rita Roster', title: 'CEO', source_url: 'https://acme.test/rita' }) });
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(s.db.pending_actions[0].recipient_email, 'cass@acme.test');
+});
+
+test('one search per signal: a retry of the same trigger reuses the research the ledger kept', async () => {
+  const s = world();
+  s.db.account_signals = [ceo()];
+  // Rita already has a draft waiting: the play stops before writing, and retries next hour.
+  s.db.pending_actions = [{ id: 'old', workspace_id: WS, entity_id: 'p_rita', kind: 'email', status: 'pending' }];
+  let searches = 0;
+  const { deps } = fakeDeps({ signalResearch: async () => { searches += 1; return { name: 'Andrew Lemoine', title: 'CEO', source_url: 'https://acme.test/team' }; } });
+  for (const at of [NOW, NOW + 3_600_000, NOW + 7_200_000]) {
+    const r = await runDetectorDraftsForWorkspace(s, WS, { now: at, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+    assert.equal(r.outcomes.recipient_has_open_draft, 1, JSON.stringify(r));
+  }
+  assert.equal(searches, 1);
+  assert.equal(s.db.ri_recommendations[0].evidence.trigger.research.name, 'Andrew Lemoine');
+  // Nothing found is remembered too.
+  const s2 = world();
+  s2.db.account_signals = [ceo()];
+  s2.db.pending_actions = [{ id: 'old', workspace_id: WS, entity_id: 'p_rita', kind: 'email', status: 'pending' }];
+  let none = 0;
+  const { deps: d2 } = fakeDeps({ signalResearch: async () => { none += 1; return null; } });
+  await runDetectorDraftsForWorkspace(s2, WS, { now: NOW, deps: d2, opts: { ...OPTS, only: ['deal_signal'] } });
+  await runDetectorDraftsForWorkspace(s2, WS, { now: NOW + 3_600_000, deps: d2, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(none, 1);
+});
+
+test('a snooze holds the draft it was set on; a new draft on the same ledger row starts awake', async () => {
+  const s = world();
+  s.db.account_signals = [ceo()];
+  const { deps } = fakeDeps();
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  const ledger = s.db.ri_recommendations[0];
+  const [d] = s.db.pending_actions;
+  ledger.evidence = { ...ledger.evidence, snoozed_until: iso(-3), snoozed_action_id: d.id };
+  const recs = new Map([[ledger.id, ledger]]);
+  assert.equal(originOf(d, { recs }).snoozed_until, iso(-3));
+  assert.equal(originOf({ ...d, id: 'another' }, { recs }).snoozed_until, null);
+
+  // The draft is skipped; a month later a new signal on the account drafts again, unsnoozed.
+  d.status = 'rejected';
+  s.db.account_signals = [ceo({ id: 's_ceo2', occurred_at: iso(-40) })];
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW + 41 * DAY, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(s.db.pending_actions.length, 2);
+  assert.equal(ledger.evidence.snoozed_until, undefined);
+  assert.equal(ledger.evidence.snoozed_action_id, undefined);
 });

@@ -1,11 +1,14 @@
 // The Priorities inbox (GET-678): the panel the top bar's ⚑ opens. Two panes, the way a mail client
 // reads: the list on the left, the selected item read in place on the right.
 //
-// Since GET-681 it holds two things only:
+// Since GET-681 it holds three things only:
 //   After your meetings — one row per meeting, its wrap-up on the right: Home's FollowUpCard
 //     (variant "pane") in three parts, the thank-you email, the tasks, the CRM updates, with every
 //     action Home offers (edit, copy, Approve / Sync, Skip).
-//   To approve — every other draft waiting on a person (pending_actions), opened in chat's own
+//   From signals (GET-944) — a signal a call raised, with its next move ready: what was said and by
+//     whom, who the play found the person it named is, then the draft in the same ApprovalCard.
+//     Send, Snooze (3 days) and Not relevant.
+//   Drafts to review — every other draft waiting on a person (pending_actions), opened in chat's own
 //     ApprovalCard: To / Subject / body edited in place, Approve & send and Skip are the existing
 //     approve and reject routes, so there is no second send path.
 // A decision keeps its row with the result until the panel closes; the counts leave it out.
@@ -15,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Boxes } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Boxes, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { day, time, when } from "@/lib/format";
 import { freshAccessToken } from "@/lib/freshToken";
@@ -279,7 +282,7 @@ function ItemPane(p: PaneProps) {
         )}
       </div>
       <div className="px-4 py-4 sm:px-5">
-        {item.run ? <RunPane {...p} /> : item.action ? <ApprovalPane {...p} /> : <MeetingPane {...p} />}
+        {item.run ? <RunPane {...p} /> : item.kind === "signal" ? <SignalPane {...p} /> : item.action ? <ApprovalPane {...p} /> : <MeetingPane {...p} />}
       </div>
     </div>
   );
@@ -350,6 +353,81 @@ function ApprovalPane({ item, token, onActionDecided }: PaneProps) {
       <ApprovalCard key={`${a.id}:${a.status}`} action={a as PendingAction} token={token ?? ""} apiUrl={apiUrl} className="mt-0"
         labels={{ send: "Approve & send", discard: "Skip", discarded: "Skipped. Nothing was sent." }}
         onDecided={(outcome) => onActionDecided(a.id, outcome === "rejected" ? "rejected" : "sent")} />
+    </div>
+  );
+}
+
+/** A signal's next move (GET-944): what happened, who it is, then the draft. Send is the existing
+ *  approve route; Not relevant rejects with that reason (it teaches the engine which signals are
+ *  noise); Snooze writes snoozed_until on the signal's ledger row and the row leaves until then. */
+function SignalPane({ item, ws, token, onActionDecided, onDismissed, onAfterChange }: PaneProps) {
+  const queryClient = useQueryClient();
+  const a = item.action!;
+  const s = a.origin?.signal ?? null;
+  const r = s?.research ?? null;
+  const first = (a.recipient ?? "").trim().split(/\s+/)[0] || null;
+  const [snoozeError, setSnoozeError] = useState<string | null>(null);
+  const [snoozing, setSnoozing] = useState(false);
+  const move = s?.kind === "stakeholder_identified"
+    ? `Ask ${first ?? "your contact"} to bring ${r?.name ?? "them"} into the next call`
+    : draftKind("signal").action(first);
+  const snooze = async () => {
+    if (snoozing) return;
+    setSnoozing(true);
+    setSnoozeError(null);
+    try {
+      const t = (await freshAccessToken()) ?? token ?? "";
+      const res = await fetch(`${apiUrl}/api/actions/${a.id}/snooze`, {
+        method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ days: 3 }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      onDismissed(item.key);
+      onAfterChange();
+      void queryClient.invalidateQueries({ queryKey: draftsKey(ws) });
+    } catch {
+      setSnoozeError("Couldn't snooze it. Try again in a moment.");
+    }
+    setSnoozing(false);
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <span className={cn("inline-flex h-[22px] items-center rounded-md px-2 text-[11.5px] font-medium", KIND_TONE.quiet)}>{s?.label ?? "Signal"}</span>
+        <p className="mt-2 text-[14px] font-medium leading-snug text-foreground">{move}</p>
+      </div>
+      {/* WHAT HAPPENED: their words, who said them, when. */}
+      {s && (s.quote || s.text) && (
+        <div>
+          <p className="text-[11.5px] font-medium text-muted-foreground/70">What happened</p>
+          {s.quote
+            ? <blockquote className="mt-1 border-l-2 border-border pl-3 text-[13px] leading-relaxed text-foreground/90">“{s.quote}”</blockquote>
+            : <p className="mt-1 text-[13px] leading-relaxed text-foreground/90">{s.text}</p>}
+          <p className="mt-1 text-[12px] text-muted-foreground/70">{[s.speaker, s.said_at ? day(s.said_at) : null].filter(Boolean).join(" · ")}</p>
+        </div>
+      )}
+      {/* WHO IT IS: what the play found, and where. */}
+      {r && (
+        <div>
+          <p className="text-[11.5px] font-medium text-muted-foreground/70">Who it is</p>
+          <p className="mt-1 text-[13px] text-foreground">{[r.name, r.title].filter(Boolean).join(", ")}</p>
+          <p className="mt-0.5 text-[12px] text-muted-foreground/70">
+            {r.contact_id ? "Already a contact on this account" : "Not a contact yet"}
+            {r.source_url && <> · <a href={r.source_url} target="_blank" rel="noreferrer" className="underline decoration-border underline-offset-2 hover:text-foreground">{r.source_title || "Source"}</a></>}
+          </p>
+        </div>
+      )}
+      <ApprovalCard key={`${a.id}:${a.status}`} action={a as PendingAction} token={token ?? ""} apiUrl={apiUrl} className="mt-0"
+        labels={{ send: "Send", discard: "Not relevant", discarded: "Marked not relevant. Nothing was sent." }} rejectReason="not_relevant"
+        onDecided={(outcome) => onActionDecided(a.id, outcome === "rejected" ? "rejected" : "sent")} />
+      {a.status === "pending" && (
+        <div className="-mt-2 flex items-center gap-2">
+          <button type="button" onClick={snooze} disabled={snoozing}
+            className="inline-flex disabled:opacity-50 h-7 items-center gap-1.5 rounded-lg px-2 text-[12px] text-muted-foreground/80 transition-colors duration-fast hover:bg-hover hover:text-foreground">
+            <Clock className="h-3.5 w-3.5" strokeWidth={1.75} />Snooze 3 days
+          </button>
+          <span role="status" aria-live="polite" className="text-[12px] text-destructive">{snoozeError}</span>
+        </div>
+      )}
     </div>
   );
 }

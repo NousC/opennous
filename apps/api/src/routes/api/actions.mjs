@@ -148,6 +148,41 @@ actionsRouter.post('/:id/approve', verifySupabaseAuth, async (req, res) => {
   }
 });
 
+// POST /api/actions/:id/snooze { days } — a signal's draft leaves the inbox for a few days (GET-944).
+// The draft stays pending; the snooze is written on the ledger row it came from (rec_id), with the
+// draft's id, and the origin reads it back (snoozed_until) for that draft only, so the inbox leaves
+// it out until then.
+export const SNOOZE_DAYS = [1, 3, 7];
+actionsRouter.post('/:id/snooze', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const days = Number(req.body?.days ?? 3);
+    if (!SNOOZE_DAYS.includes(days)) return res.status(400).json({ error: 'invalid_days', allowed: SNOOZE_DAYS });
+    const { data: action } = await supabase
+      .from('pending_actions').select('workspace_id, rec_id, status').eq('id', req.params.id).maybeSingle();
+    if (!action) return res.status(404).json({ error: 'not_found' });
+    if (!(await isWorkspaceMember(supabase, action.workspace_id, req.internalUserId))) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    if (action.status !== 'pending') return res.status(409).json({ error: 'not_pending' });
+    if (!action.rec_id) return res.status(409).json({ error: 'not_snoozable' });
+    const { data: rec, error: re } = await supabase.from('ri_recommendations')
+      .select('id, rec_key, evidence').eq('id', action.rec_id).eq('workspace_id', action.workspace_id).maybeSingle();
+    if (re) throw re;
+    // Only a signal's next move snoozes (the From signals group); other drafts are sent or skipped.
+    if (!rec || rec.rec_key !== 'automation.deal_signal') return res.status(409).json({ error: 'not_snoozable' });
+    const until = new Date(Date.now() + days * 86_400_000).toISOString();
+    const { error } = await supabase.from('ri_recommendations')
+      .update({ evidence: { ...(rec.evidence ?? {}), snoozed_until: until, snoozed_action_id: req.params.id }, updated_at: new Date().toISOString() })
+      .eq('id', rec.id);
+    if (error) throw error;
+    return res.json({ snoozed_until: until });
+  } catch (err) {
+    console.error('[POST /api/actions/:id/snooze]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
 actionsRouter.post('/:id/reject', verifySupabaseAuth, async (req, res) => {
   try {
     const supabase = getSupabaseClient();

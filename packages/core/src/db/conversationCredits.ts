@@ -41,6 +41,7 @@ export const REQUESTED_FEATURES = [
   'studio-email-draft', 'studio-linkedin-draft', 'studio-email-brief', 'studio-campaign-brief',
   'sequence-ai-step',
   'automation-email-draft',         // a detector automation's drafted follow-up (GET-685), capped per day
+  'signal-research',                // who a stakeholder signal named, for the Deal signals play (GET-944)
   'automation-handoff',             // a canvas automation's AI steps: summaries, follow-ups, CRM fields (GET-721)
   'revenue-report',                 // a report someone asked for
   'insight-topic-recommendation',   // "what should we do about this" on an insight topic

@@ -37,7 +37,7 @@ export type PendingAction = {
 };
 
 export function ApprovalCard({
-  action, token, apiUrl, onDecided, labels, className,
+  action, token, apiUrl, onDecided, labels, className, rejectReason,
 }: {
   action: PendingAction;
   token: string;
@@ -48,6 +48,8 @@ export function ApprovalCard({
   /** The buttons' and the discarded line's words, where a surface names them its own way (the
    *  Priorities inbox: "Approve & send", "Skip"). Defaults are chat's. */
   labels?: { send?: string; discard?: string; discarded?: string };
+  /** Why a discard happened, recorded with the rejection (e.g. "not_relevant", GET-944). */
+  rejectReason?: string;
   /** Replaces the card's top margin (chat spaces it under the message). */
   className?: string;
 }) {
@@ -73,7 +75,7 @@ export function ApprovalCard({
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: what === "send"
           ? JSON.stringify(isEmail ? { body, subject, to, ...(from ? { from } : {}) } : { body })
-          : undefined,
+          : rejectReason ? JSON.stringify({ reason: rejectReason }) : undefined,
       });
       if (!res.ok && res.status !== 204) {
         const d = await res.json().catch(() => ({}));

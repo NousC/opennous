@@ -5,7 +5,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import {
-  Activity, BarChart3, Brain, Building2, Columns3, GraduationCap, HeartHandshake, Inbox,
+  Activity, BarChart3, Brain, Building2, Columns3, GraduationCap, HeartHandshake, Inbox, ListChecks,
   Home as HomeIcon, KeyRound, Lightbulb, MessageCircle, Network, Plug, Radio, Webhook, Zap,
 } from "lucide-react";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
@@ -51,7 +51,8 @@ const SECTIONS: { prefix: string; icon: typeof HomeIcon; label: string }[] = [
   { prefix: "/pipeline", icon: Columns3, label: "Pipeline" },
   { prefix: "/customers", icon: HeartHandshake, label: "Customers" },
   { prefix: "/accounts", icon: Building2, label: "Accounts" },
-  { prefix: "/tasks", icon: Inbox, label: "Inbox" },
+  { prefix: "/tasks", icon: ListChecks, label: "Tasks" },
+  { prefix: "/inbox", icon: Inbox, label: "Inbox" },
   { prefix: "/reporting", icon: BarChart3, label: "Reporting" },
   { prefix: "/coaching", icon: GraduationCap, label: "Coaching" },
   { prefix: "/insights", icon: Lightbulb, label: "Insights" },

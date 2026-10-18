@@ -1,11 +1,14 @@
-// The Priorities inbox's list (GET-678, reshaped by GET-681). Priorities holds two things and
+// The Priorities inbox's list (GET-678, reshaped by GET-681). Priorities holds three things and
 // nothing else, in this order:
 //
 //   After your meetings — one row per meeting: the follow-up card the worker writes after every
 //     call (a follow_up_call recommendation carrying `followup`): the thank-you email, the tasks it
 //     would create and what goes back to the CRM. A meeting, not an email: the row names the
 //     meeting, and the pane reads its wrap-up.
-//   To approve — every other draft waiting on a person: pending_actions rows from GET /api/actions
+//   From signals (GET-944) — one row per signal a call or email raised that has a next move ready:
+//     the Deal signals drafts (origin.builtin "deal_signals"), each carrying what was said, by whom,
+//     and, for a decision maker named on the call, who the play found they are. Snoozed ones wait.
+//   Drafts to review (GET-943; was "To approve") — every other draft waiting on a person: pending_actions rows from GET /api/actions
 //     (an automation's, a play's, one made in chat or from a recommendation), each named by the
 //     `origin` the API reads back.
 //
@@ -14,11 +17,12 @@
 //
 // A group of more than three shows three and a "+ N more" row.
 
-export type InboxKind = "meeting" | "approve";
+export type InboxKind = "meeting" | "signal" | "approve";
 
 export const GROUPS: { kind: InboxKind; label: string }[] = [
   { kind: "meeting", label: "After your meetings" },
-  { kind: "approve", label: "To approve" },
+  { kind: "signal", label: "From signals" },
+  { kind: "approve", label: "Drafts to review" },
 ];
 
 /** The fields of a /api/home recommendation the inbox reads. */
@@ -41,6 +45,14 @@ export type InboxDeal = {
   stage?: string | null; close_date: string; value?: number | string | null; hubspot_url?: string | null;
 };
 
+/** The signal behind a Deal signals draft (GET-944, lib/actionOrigin.mjs signalOf). */
+export type InboxSignal = {
+  kind: string; label: string | null; said_at: string | null; text: string | null;
+  quote: string | null; speaker: string | null; role?: string | null;
+  /** Who the play found the person a stakeholder signal named is. */
+  research: { name: string; title: string | null; source_url: string | null; source_title: string | null; contact_id: string | null } | null;
+};
+
 /** A waiting draft from GET /api/actions?status=pending&include=origin (a pending_actions row). */
 export type InboxAction = {
   id: string; kind: "email" | "linkedin_message" | "linkedin_invite";
@@ -50,7 +62,10 @@ export type InboxAction = {
   error?: string | null; entity_id?: string | null; rec_id?: string | null; thread_id?: string | null;
   created_at?: string | null;
   /** Who wrote it: the automation, play or conversation, and why (lib/actionOrigin.mjs). */
-  origin?: { source: string; name: string; why?: string | null; at?: string | null; run_id?: string | null; routine_id?: string | null; builtin?: string | null } | null;
+  origin?: {
+    source: string; name: string; why?: string | null; at?: string | null; run_id?: string | null; routine_id?: string | null; builtin?: string | null;
+    signal?: InboxSignal | null; snoozed_until?: string | null;
+  } | null;
   /** The company it is for (the person's, for a draft to a person). */
   account?: { id: string | null; name: string | null; domain: string | null; person?: string | null } | null;
 };
@@ -123,14 +138,26 @@ function meetingItem(r: InboxRec, now: Date): InboxItem {
   };
 }
 
+/** A Deal signals draft is a signal's next move, not a draft among drafts (GET-944). */
+export const isSignalDraft = (a: InboxAction) => a.origin?.builtin === "deal_signals";
+
+/** A signal row's quiet line: "Stakeholder identified: CEO has a say in the decision". Pure. */
+export function signalLine(s: InboxSignal | null | undefined, fallback: string | null): string | null {
+  if (!s) return fallback;
+  const text = (s.text ?? "").replace(/\s*\(name not (yet )?known\)/i, "").trim();
+  const named = s.research?.name ? `${s.research.name}${s.research.title ? `, ${s.research.title}` : ""}` : null;
+  return [s.label, named ?? (text || null)].filter(Boolean).join(": ") || fallback;
+}
+
 function actionItem(a: InboxAction): InboxItem {
   const by = a.origin?.name ?? null;
   const what = a.kind === "email" ? a.subject || null : a.kind === "linkedin_invite" ? "LinkedIn connection request" : "LinkedIn message";
   const accountId = a.account?.id ?? null;
+  const signal = isSignalDraft(a);
   return {
-    key: `act:${a.id}`, kind: "approve",
+    key: `act:${a.id}`, kind: signal ? "signal" : "approve",
     title: a.account?.name ?? a.recipient ?? a.account?.person ?? "Draft",
-    sub: [by, what].filter(Boolean).join(" · ") || null,
+    sub: signal ? signalLine(a.origin?.signal, what) : [by, what].filter(Boolean).join(" · ") || null,
     domain: a.account?.domain ?? null, at: a.created_at ?? null,
     href: accountId ? `/accounts/${accountId}` : null,
     by, why: a.origin?.why ?? null, done: DONE[a.status] ?? null, action: a,
@@ -154,7 +181,9 @@ export function buildItems(data: InboxRead | null | undefined, now: Date = new D
   const meetings = (data?.recommendations ?? []).filter(isWaitingCard).map((r) => meetingItem(r, now)).sort(newestFirst);
   // Drafts still on the table, and any decided while the panel is open (they keep their row). A
   // failed send is not waiting on anyone's approval any more.
-  const drafts = [...(data?.actions ?? []).filter((a) => a.status !== "failed").map(actionItem), ...(data?.runs ?? []).map(runItem)].sort(newestFirst);
+  // A snoozed signal waits until its time (GET-944).
+  const awake = (a: InboxAction) => !(a.status === "pending" && a.origin?.snoozed_until && Date.parse(a.origin.snoozed_until) > now.getTime());
+  const drafts = [...(data?.actions ?? []).filter((a) => a.status !== "failed" && awake(a)).map(actionItem), ...(data?.runs ?? []).map(runItem)].sort(newestFirst);
   return [...meetings, ...drafts];
 }
 

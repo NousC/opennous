@@ -12,14 +12,12 @@ import { PageHeader } from "@/components/ui/page-header";
 import { useTabs } from "@/contexts/TabsContext";
 import { useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { useApiTopBar } from "@/components/shell/apiTopBarContext";
-import ApiAccountRecord, { type ApiAccountDetail } from "@/components/account/ApiAccountRecord";
-import { cloud, type Preloadable } from "@/lib/cloud";
+import { preloadable } from "@/lib/preloadable";
 import { faviconUrl } from "@/lib/externalImages";
 
-// The account record (CompanyDetailView) is the Workspace layer's (GET-754) and every plan on Cloud
-// renders it, the API plan included (GET-784). A build without the layer renders ApiAccountRecord.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const CompanyDetailView = cloud.variants?.accountRecord as Preloadable<any> | undefined;
+// The account record: every plan on Cloud renders it, the API plan included (GET-784), and so does
+// self-host (GET-947). Lazy, so the accounts list doesn't carry it.
+const CompanyDetailView = preloadable(() => import("@/components/CompanyDetailView"));
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 // How many accounts one "Load more" brings in. The API caps a read at 500; 200 keeps the first
@@ -108,7 +106,7 @@ export default function Companies({ embedded = false, leadingTab = null }: { emb
   // Fetch the record's chunk while its data loads, so it renders without a loading frame.
   // A failed fetch is logged; the record renders its own "failed to load" in place.
   useEffect(() => {
-    CompanyDetailView?.preload().catch(() => { /* reported where the record renders */ });
+    CompanyDetailView.preload().catch(() => { /* reported where the record renders */ });
   }, []);
   // Back from a company detail: if we got here by navigating (e.g. clicked the
   // company link on a person record inside a lead list), go BACK to that origin
@@ -408,27 +406,6 @@ export default function Companies({ embedded = false, leadingTab = null }: { emb
     if (!cd) {
       const instantName = (location.state as any)?.accountName ?? detail?.name ?? "Account";
       const instantDomain = detail?.domain ?? null;
-      if (!CompanyDetailView) return (
-        <div className="flex h-full flex-col bg-card">
-          <div className="flex items-center gap-3.5 border-b border-hairline px-5 pb-[18px] pt-[22px] sm:px-7">
-            {faviconUrl(instantDomain)
-              ? <img src={faviconUrl(instantDomain)!} alt="" className="h-11 w-11 rounded-[11px] border border-border bg-card object-contain" />
-              : <div className="flex h-11 w-11 items-center justify-center rounded-[11px] bg-muted text-[18px] font-semibold text-muted-foreground">{instantName.charAt(0).toUpperCase()}</div>}
-            <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-foreground">{instantName}</h1>
-          </div>
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center text-[13px]">
-            {cdError ? (
-              <>
-                <p className="text-foreground/80">{cdError}</p>
-                <button onClick={refreshDetail}
-                  className="inline-flex h-7 items-center rounded-lg border border-border bg-card px-2.5 text-[12.5px] font-medium text-foreground transition-colors hover:bg-hover">
-                  Try again
-                </button>
-              </>
-            ) : <span className="text-muted-foreground">Loading…</span>}
-          </div>
-        </div>
-      );
       return (
         <div className="flex h-full flex-col bg-background lg:flex-row">
           <div className="flex-shrink-0 border-b border-hairline px-5 py-5 lg:w-[320px] lg:border-b-0 lg:border-r">
@@ -462,7 +439,6 @@ export default function Companies({ embedded = false, leadingTab = null }: { emb
         </div>
       );
     }
-    if (!CompanyDetailView) return <ApiAccountRecord cd={cd as unknown as ApiAccountDetail} />;
     return (
       <Suspense fallback={null}>
       <CompanyDetailView

@@ -79,7 +79,10 @@ export const DETECTORS = {
 /**
  * The deal signals that earn a drafted next move (GET-694), most urgent first. Churn risk and
  * expansion are not here: Deal risk detection and Expansion signals already draft for those.
- * A next step, a budget mention or a new stakeholder is information, not a reason to write.
+ * A next step or a budget mention is information, not a reason to write. A new stakeholder is
+ * one only when they decide (GET-944): a decision maker or economic buyer named on the call is
+ * someone to bring in, through whoever named them (the warm path). A champion or a blocker is
+ * not: the first is already in the room, the second is not someone to ask for.
  */
 export const DEAL_SIGNALS = {
   stakeholder_left: {
@@ -102,7 +105,14 @@ export const DEAL_SIGNALS = {
     why: () => 'Showed buying intent',
     prompt: 'The buyer just showed buying intent. Make the next step easy: confirm what they asked for in one line and propose a concrete next step with a time.',
   },
+  stakeholder_identified: {
+    rank: 4, label: 'Stakeholder identified',
+    roles: ['decision_maker', 'economic_buyer'],
+    why: (s) => `${ROLE_LABEL[s.detail?.role] ?? 'A decision maker'} identified`,
+    prompt: 'Someone with a say in this decision just came up, and they are not in the conversation yet. Write to the recipient, who is already in it: in one or two lines, ask them to bring that person into the next call, and say why it helps them (the decision moves faster when the person who signs off has heard it first-hand). Name the person if you know their name. Never write as if you know them, and never ask the recipient for an introduction to a stranger: they are the recipient\'s own colleague.',
+  },
 };
+const ROLE_LABEL = { decision_maker: 'Decision maker', economic_buyer: 'Economic buyer' };
 // Run order when the day's cap is short: a customer in trouble first, an opening next, a quiet
 // deal last (there are many more of those, and they keep).
 export const DETECTOR_ORDER = ['deal_risk', 'deal_signal', 'expansion_signal', 'stale_deal'];
@@ -277,11 +287,12 @@ export function signalFirings(rows, kind, { now = Date.now(), lookbackDays = 7, 
  * at most once. Pure.
  * @param rows account_signals: { id, account_id, entity_id, kind, title, content, quote, speaker, detail, occurred_at, team_readable }
  */
-export function dealSignalFirings(rows, { now = Date.now(), lookbackDays = 7, names = new Map() } = {}) {
+export function dealSignalFirings(rows, { now = Date.now(), lookbackDays = 7, names = new Map(), domains = new Map() } = {}) {
   const best = new Map();
   for (const s of rows ?? []) {
     const def = DEAL_SIGNALS[s?.kind];
     if (!def || !s.account_id || s.team_readable !== true) continue;
+    if (def.roles && !def.roles.includes(s.detail?.role)) continue;
     const age = days(s.occurred_at, now);
     if (age == null || age > lookbackDays) continue;
     const prev = best.get(s.account_id);
@@ -302,7 +313,12 @@ export function dealSignalFirings(rows, { now = Date.now(), lookbackDays = 7, na
       fingerprint: `${accountId}|signal:${s.id}`,
       why: `${def.why(s)}${when ? ` on ${when}` : ''}${text ? `: ${clipText(text, 140)}` : ''}`,
       prompt: def.prompt,
-      trigger: { signal_id: s.id, kind: s.kind, label: def.label, said_at: s.occurred_at, text: clipText(text, 400) },
+      trigger: {
+        signal_id: s.id, kind: s.kind, label: def.label, said_at: s.occurred_at, text: clipText(text, 400),
+        // What the inbox's From signals pane reads back (GET-944): who said it, in their words.
+        quote: s.quote ? clipText(s.quote, 300) : null, speaker: s.speaker ? String(s.speaker) : null,
+        role: s.detail?.role ?? null, domain: domains.get(accountId) ?? null,
+      },
       rosterIds: [],
       ownerEmail: null,
       // Who said it is the best person to answer — unless the signal is that they left.
@@ -319,7 +335,8 @@ export function dealSignalFirings(rows, { now = Date.now(), lookbackDays = 7, na
 // Outcomes that close a trigger for sameTriggerDays. Everything else (failed, the person already
 // has a draft waiting, the sender switched drafting off, a constraint, no sender) cost nothing or
 // may clear by tomorrow, so the trigger is looked at again the next night.
-export const HANDLED_OUTCOMES = new Set(['drafted', 'no_recipient']);
+// already_handled: the person a play would bring in has been in touch since the signal (GET-944).
+export const HANDLED_OUTCOMES = new Set(['drafted', 'no_recipient', 'already_handled']);
 
 /**
  * Whether a firing may be drafted now, given its subject's ledger row. Pure.
@@ -417,6 +434,22 @@ export function speakerMatches(person, speaker) {
 }
 
 /**
+ * Is this contact the person the research named (GET-944)? Stricter than a speaker label: the
+ * research gives a full name, so the last names must agree, and the first names too, or one be
+ * the short form of the other (Andy / Andrew). Middle names and initials are ignored. A one-word
+ * name never matches: "Andrew" is not a person. Pure.
+ */
+export function researchedNameMatches(person, name) {
+  const tokens = (s) => norm(s).split(' ').filter((t) => t.length > 1);
+  const n = tokens(name);
+  const p = tokens(fullName(person));
+  if (n.length < 2 || p.length < 2) return false;
+  if (n[n.length - 1] !== p[p.length - 1]) return false;
+  const [a, b] = [n[0], p[0]];
+  return a === b || (a.length >= 3 && b.length >= 3 && a.slice(0, 3) === b.slice(0, 3));
+}
+
+/**
  * The people to write to, best first. Pure.
  *
  * Who said it (a risk, an ask) knows what they meant; then the deal's own people (its CRM
@@ -494,6 +527,13 @@ export function draftSystem({ memberBlock = '', voice = null } = {}) {
   return [EMAIL_DRAFT_SYSTEM, memberBlock, emailVoiceBlock(voice)].filter(Boolean).join('\n\n');
 }
 
+/** What the play found out about the person a signal named (GET-944), as the brief says it. Pure. */
+export function researchLine(r) {
+  if (!r?.name) return null;
+  const who = [r.name, r.title].filter(Boolean).join(', ');
+  return `Who that person is (researched${r.source_url ? `, source ${r.source_url}` : ''}): ${who}${r.contact_id ? ' (already a contact on this account)' : ''}`;
+}
+
 /** The model's user turn for one draft. Pure. */
 export function draftRequest(firing, { recipient, context }) {
   const d = DETECTORS[firing.automation];
@@ -501,6 +541,7 @@ export function draftRequest(firing, { recipient, context }) {
     `Recipient: ${recipient}`,
     `Why you are writing (OpenNous noticed this): ${firing.why}`,
     firing.quote ? `What they said, in their words: "${firing.quote}"` : null,
+    researchLine(firing.trigger?.research),
     `What to write (the ${d?.name ?? 'automation'} instructions): ${firing.prompt ?? d?.prompt ?? 'a timely, specific follow-up'}`,
     '',
     `Account record:\n${context}`,
@@ -630,13 +671,14 @@ async function detectDealSignals(supabase, workspaceId, { now, lookbackDays }) {
   }
   const ids = [...new Set(rows.map((r) => r.account_id))];
   const names = new Map();
+  const domains = new Map();
   for (let i = 0; i < ids.length; i += 100) {
-    const { data, error } = await supabase.from('companies').select('id, name')
+    const { data, error } = await supabase.from('companies').select('id, name, domain')
       .eq('workspace_id', workspaceId).in('id', ids.slice(i, i + 100));
     if (error) throw new Error(`accounts read failed: ${error.message}`);
-    for (const c of data ?? []) names.set(c.id, c.name ?? null);
+    for (const c of data ?? []) { names.set(c.id, c.name ?? null); domains.set(c.id, c.domain ?? null); }
   }
-  return dealSignalFirings(rows.filter((r) => names.has(r.account_id)), { now, lookbackDays, names });
+  return dealSignalFirings(rows.filter((r) => names.has(r.account_id)), { now, lookbackDays, names, domains });
 }
 
 /** Every firing for one workspace tonight, eligible accounts only. */
@@ -713,6 +755,39 @@ async function accountPeople(supabase, workspaceId, accountId, deps) {
   return { people: people ?? [], championIds: readable.map((c) => c.subject_id).filter(Boolean) };
 }
 
+/**
+ * Who the person a stakeholder signal named is (GET-944): the research hook's answer (Cloud's web
+ * search, registerSignalResearch), matched against the account's contacts. Writes the finding onto
+ * the firing's trigger, so the ledger, the draft's origin and the inbox read it back. Returns the
+ * matching contact, or null. Research that fails leaves the play drafting from the graph alone.
+ */
+async function researchStakeholder(supabase, workspaceId, firing, people, deps, cached) {
+  // One search per signal: a retry of the same trigger (a draft already waiting for the recipient,
+  // a sender who switched drafting off) reuses what the ledger kept, found or not.
+  let found = cached !== undefined ? cached : null;
+  if (cached === undefined && deps.signalResearch) {
+    try { found = await deps.signalResearch(supabase, workspaceId, { firing, people }); }
+    catch (e) { console.warn('[detectorDrafts] signal research failed:', e?.message); }
+    firing.trigger = { ...firing.trigger, research: found?.name ? found : { name: null } };
+  }
+  if (!found?.name) return null;
+  const known = (people ?? []).find((p) => researchedNameMatches(p, found.name)) ?? null;
+  firing.trigger = { ...firing.trigger, research: { ...found, contact_id: known?.id ?? null } };
+  return known;
+}
+
+// A conversation with them that started this long after the signal was said is one the play did
+// not need to bring about. The slack keeps the call the signal came from (it ends after it was said) out.
+const HANDLED_SLACK_MS = 12 * 3600_000;
+
+/** In a conversation since the signal was said: the play has nothing to bring about. Pure. */
+export function isAlreadyHandled(person, saidAt) {
+  // Their own conversations only: last_activity_at also moves on a CRM sync or our own outbound.
+  const touched = Date.parse(person?.last_interaction_at ?? '');
+  const said = Date.parse(saidAt ?? '');
+  return Number.isFinite(touched) && Number.isFinite(said) && touched > said + HANDLED_SLACK_MS;
+}
+
 /** Write the ledger row's claim on this subject before spending anything. Returns the row id, or null if another run holds it. */
 async function claimSubject(supabase, workspaceId, firing, state, now) {
   const d = DETECTORS[firing.automation];
@@ -760,6 +835,8 @@ async function settleSubject(supabase, id, firing, prevEvidence, outcome, now, e
     ...extra,
   };
   delete evidence.attempt_fingerprint; delete evidence.attempt_at;
+  // A snooze was on the last draft (GET-944); a new draft starts awake.
+  if (outcome === 'drafted') { delete evidence.snoozed_until; delete evidence.snoozed_action_id; }
   const { error } = await supabase.from('ri_recommendations')
     .update({ evidence, status: outcome === 'drafted' ? 'drafted' : 'settled', decided_at: at, updated_at: at })
     .eq('id', id);
@@ -787,7 +864,14 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
   }
 
   const { people, championIds } = await accountPeople(supabase, workspaceId, firing.accountId, deps);
-  const ranked = rankRecipients(people, { rosterIds: firing.rosterIds, championIds, raisedBy: firing.raisedBy, internalIds, excludeIds: firing.excludeIds ?? [] });
+  // A play that brings someone in (GET-944): find out who they are, and stop if they are already in.
+  let excludeIds = firing.excludeIds ?? [];
+  if (firing.trigger?.kind === 'stakeholder_identified') {
+    const known = await researchStakeholder(supabase, workspaceId, firing, people, deps, ctx.cachedResearch);
+    if (known && isAlreadyHandled(known, firing.trigger.said_at)) return { outcome: 'already_handled', contact_id: known.id };
+    if (known) excludeIds = [...excludeIds, known.id];
+  }
+  const ranked = rankRecipients(people, { rosterIds: firing.rosterIds, championIds, raisedBy: firing.raisedBy, internalIds, excludeIds });
   let person = null;
   let toEmail = null;
   for (const p of ranked.slice(0, 4)) {
@@ -867,9 +951,16 @@ export const CORE_DEPS = {
   getInternalEntityIds, bindingConstraints, pickRecipientEmail, filterDerivedForViewer, filterByCitedClaimsForViewer,
   // The team's email voice per built-in (GET-902): Cloud's (registerEmailVoices), none without it.
   emailVoices: null,
+  // Who a stakeholder signal named (GET-944): Cloud's web research (registerSignalResearch), none without it.
+  signalResearch: null,
 };
 /** Where the built-in drafters' email voices come from (GET-910): (supabase, workspaceId) -> Map(key -> { text }). */
 export function registerEmailVoices(fn) { CORE_DEPS.emailVoices = fn ?? null; }
+/**
+ * Where a stakeholder play's research comes from (GET-944):
+ * (supabase, workspaceId, { firing, people }) -> { name, title, source_url, source_title } | null.
+ */
+export function registerSignalResearch(fn) { CORE_DEPS.signalResearch = fn ?? null; }
 async function apiDeps() {
   const [{ createMessage, messageText }, { trackLlmUsage }, { requireAiCredits }, { loadMemberProfile, buildMemberBlock }] = await Promise.all([
     import('./llm.mjs'), import('./llmUsage.mjs'), import('./plans.mjs'), import('./agentDirectives.mjs'),
@@ -938,7 +1029,9 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
     const prev = { ...(state?.evidence ?? {}), attempt_fingerprint: firing.fingerprint };
     let r;
     try {
-      r = await draftOne(supabase, workspaceId, firing, { deps, members, internalIds, now, recId, voices, onSpend: () => { spent += 1; } });
+      // The same trigger's research, kept on the ledger from an earlier attempt (GET-944).
+      const cachedResearch = state?.evidence?.fingerprint === firing.fingerprint ? state.evidence.trigger?.research : undefined;
+      r = await draftOne(supabase, workspaceId, firing, { deps, members, internalIds, now, recId, voices, cachedResearch, onSpend: () => { spent += 1; } });
     } catch (e) {
       console.error('[detectorDrafts] draft failed', workspaceId, firing.automation, firing.targetId, e?.message);
       r = { outcome: 'failed', reason: String(e?.message ?? e).slice(0, 200) };

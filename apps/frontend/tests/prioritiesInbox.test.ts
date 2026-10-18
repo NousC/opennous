@@ -1,6 +1,7 @@
-// The Priorities inbox's list rules (GET-678, reshaped by GET-681), pinned. Priorities holds two
-// groups only: "After your meetings" (one row per waiting follow-up card, named for the meeting)
-// and "To approve" (every pending_actions draft, named for the automation that wrote it). Briefs,
+// The Priorities inbox's list rules (GET-678, reshaped by GET-681), pinned. Priorities holds three
+// groups only: "After your meetings" (one row per waiting follow-up card, named for the meeting),
+// "From signals" (GET-944: the Deal signals drafts, named for the signal) and "Drafts to review"
+// (every other pending_actions draft, named for the automation that wrote it). Briefs,
 // reach-outs, quiet accounts, handoffs and deals past close are not Priorities'. A group of more
 // than three shows three and says how many more.
 //
@@ -8,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, buildItems, groupItems, meetingWhen, openCount, visibleItems, type InboxAction } from "../src/components/priorities/inboxModel.ts";
+import { GROUPS, buildItems, groupItems, meetingWhen, openCount, signalLine, visibleItems, type InboxAction } from "../src/components/priorities/inboxModel.ts";
 
 const NOW = new Date("2026-10-02T15:30:00");
 const acct = (n: string) => ({ id: `id-${n}`, name: n, domain: `${n.toLowerCase()}.example` });
@@ -41,11 +42,11 @@ const draft = (id: string, extra: Partial<InboxAction> = {}): InboxAction => ({
   ...extra,
 });
 
-test("two groups only, meetings first; briefs, nudges, handoffs and deals are not listed", () => {
-  assert.deepEqual(GROUPS.map((g) => g.label), ["After your meetings", "To approve"]);
+test("three groups only, meetings first; briefs, nudges, handoffs and deals are not listed", () => {
+  assert.deepEqual(GROUPS.map((g) => g.label), ["After your meetings", "From signals", "Drafts to review"]);
   const items = buildItems({ ...data, actions: [draft("a1")] }, NOW);
   assert.deepEqual(items.map((i) => i.key), ["fu:1", "fu:3", "act:a1"]);
-  assert.deepEqual(groupItems(items, new Set()).map((g) => g.label), ["After your meetings", "To approve"]);
+  assert.deepEqual(groupItems(items, new Set()).map((g) => g.label), ["After your meetings", "Drafts to review"]);
   // An empty group is left out; nothing at all is an empty list.
   assert.deepEqual(groupItems(buildItems(data, NOW), new Set()).map((g) => g.label), ["After your meetings"]);
   assert.deepEqual(buildItems({ recommendations: [rec("b1", "meeting_brief", "F")] }, NOW), []);
@@ -123,7 +124,7 @@ test("keyboard order follows what is on screen", () => {
   assert.deepEqual(visibleItems(groups).map((i) => i.key), ["fu:1", "fu:3", "act:a1"]);
 });
 
-test("an automation run waiting on review sits under To approve, named by its account (GET-737)", () => {
+test("an automation run waiting on review sits under Drafts to review, named by its account (GET-737)", () => {
   const items = buildItems({
     runs: [{ run_id: "r1", requested_at: "2026-10-05T18:00:00Z", automation: { id: "a1", name: "Call summary" },
       account: { id: "c1", name: "Ridgeway Haulage", domain: "ridgeway-haulage.example" }, why: "After the call: Theo x Dana", what: "Email draft · 3 tasks" }],
@@ -131,4 +132,39 @@ test("an automation run waiting on review sits under To approve, named by its ac
   assert.equal(items.length, 1);
   assert.deepEqual([items[0].key, items[0].kind, items[0].title, items[0].sub, items[0].href],
     ["run:r1", "approve", "Ridgeway Haulage", "Call summary · Email draft · 3 tasks", "/accounts/c1"]);
+});
+
+// GET-944: the Deal signals drafts are a signal's next move, listed under From signals.
+const signalDraft = (id: string, signal: Record<string, unknown>, extra: Partial<InboxAction> = {}) => draft(id, {
+  origin: { source: "rec", name: "Deal signals", why: "Decision maker identified", builtin: "deal_signals",
+    signal: { kind: "stakeholder_identified", label: "Stakeholder identified", said_at: "2026-10-01T10:00:00", text: "CEO has a say in the decision (name not yet known)", quote: "Our CEO signs off", speaker: "Dana", research: null, ...signal } },
+  ...extra,
+});
+
+test("a Deal signals draft sits under From signals, between meetings and drafts, named by the signal", () => {
+  const items = buildItems({ ...data, actions: [draft("d1"), signalDraft("s1", { research: { name: "Andrew Lemoine", title: "CEO", source_url: "https://x", source_title: null, contact_id: null } })] }, NOW);
+  const groups = groupItems(items, new Set());
+  assert.deepEqual(groups.map((g) => g.label), ["After your meetings", "From signals", "Drafts to review"]);
+  const s = items.find((i) => i.key === "act:s1")!;
+  assert.equal(s.kind, "signal");
+  assert.equal(s.sub, "Stakeholder identified: Andrew Lemoine, CEO");
+  assert.equal(items.find((i) => i.key === "act:d1")!.kind, "approve");
+});
+
+test("a signal row with nothing researched says what was said, without the 'name not known'", () => {
+  assert.equal(signalLine({ kind: "stakeholder_identified", label: "Stakeholder identified", said_at: null, text: "CEO has a say in the decision (name not yet known)", quote: null, speaker: null, research: null }, null),
+    "Stakeholder identified: CEO has a say in the decision");
+  assert.equal(signalLine(null, "Subject"), "Subject");
+});
+
+test("a snoozed signal waits until its time; a decided one keeps its row", () => {
+  const later = signalDraft("s1", {}, {});
+  later.origin!.snoozed_until = "2026-10-05T09:00:00";
+  const past = signalDraft("s2", {}, {});
+  past.origin!.snoozed_until = "2026-10-01T09:00:00";
+  const keys = buildItems({ actions: [later, past] }, NOW).map((i) => i.key);
+  assert.deepEqual(keys, ["act:s2"]);
+  const sent = signalDraft("s3", {}, { status: "sent" });
+  sent.origin!.snoozed_until = "2026-10-05T09:00:00";
+  assert.deepEqual(buildItems({ actions: [sent] }, NOW).map((i) => i.done), ["Sent"]);
 });

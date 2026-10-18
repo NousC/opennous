@@ -83,6 +83,8 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 // collapsible Workspace group under the Workspace layer's groups.
 const footerNavItemsWorkspace: NavItem[] = [
   { title: "Activity", url: "/activity", icon: Activity },
+  // The Workspace sees the same events the API plan does (GET-942): what happened, and where it is sent.
+  { title: "Events", url: "/events", icon: Radio },
 ];
 const workspaceGroupItems: NavItem[] = [
   { title: "Graph", url: "/graph", icon: Network },

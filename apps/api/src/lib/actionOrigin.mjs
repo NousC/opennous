@@ -81,7 +81,11 @@ export function originOf(action, { plays = new Map(), routines = new Map(), recs
   }
   const rec = action.rec_id ? recs.get(action.rec_id) : null;
   if (rec) {
-    return { source: 'rec', name: REC_ORIGIN[rec.rec_key] ?? rec.text ?? 'Recommendation', why: rec.evidence?.why ?? null, at, rec_id: rec.id, builtin: REC_BUILTIN[rec.rec_key] ?? null };
+    return {
+      source: 'rec', name: REC_ORIGIN[rec.rec_key] ?? rec.text ?? 'Recommendation', why: rec.evidence?.why ?? null, at, rec_id: rec.id, builtin: REC_BUILTIN[rec.rec_key] ?? null,
+      // A snooze holds the draft it was set on, never a later one on the same ledger row (GET-944).
+      signal: signalOf(rec), snoozed_until: rec.evidence?.snoozed_action_id === action.id ? rec.evidence?.snoozed_until ?? null : null,
+    };
   }
   if (action.thread_id && !routineThreads.has(action.thread_id)) {
     return { source: 'chat', name: 'Ask Nous', why: null, at, thread_id: action.thread_id };
@@ -93,6 +97,21 @@ export function originOf(action, { plays = new Map(), routines = new Map(), recs
   }
   if (d && d.surface === 'agent') return { source: 'agent', name: 'Your agent', why: null, at };
   return { source: 'app', name: 'OpenNous', why: null, at };
+}
+
+/**
+ * The signal behind a Deal signals draft (GET-944), as the inbox's From signals pane reads it: what
+ * was said, by whom and when, and what the play found out about the person it named. Pure.
+ */
+export function signalOf(rec) {
+  const t = rec?.rec_key === 'automation.deal_signal' ? rec.evidence?.trigger : null;
+  if (!t?.kind) return null;
+  const r = t.research;
+  return {
+    kind: t.kind, label: t.label ?? null, said_at: t.said_at ?? null, text: t.text ?? null,
+    quote: t.quote ?? rec.evidence?.quote ?? null, speaker: t.speaker ?? null, role: t.role ?? null,
+    research: r?.name ? { name: r.name, title: r.title ?? null, source_url: r.source_url ?? null, source_title: r.source_title ?? null, contact_id: r.contact_id ?? null } : null,
+  };
 }
 
 /** The account a draft is for — the company behind a person — for the row's logo. Pure. */

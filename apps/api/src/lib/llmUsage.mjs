@@ -147,6 +147,8 @@ export const AI_CREDIT_FEATURES = [
   // The built-in detector automations (Stale deal, Deal risk, Expansion signals) drafting the
   // follow-up they promise (GET-685, lib/detectorDrafts.mjs). Capped per workspace per day.
   'automation-email-draft',
+  // Who a stakeholder signal named, looked up on the web for the Deal signals play (GET-944).
+  'signal-research',
 
   // A canvas automation's run (GET-710): the write-up its OpenNous or AI step makes. About a credit.
   'automation-handoff',
