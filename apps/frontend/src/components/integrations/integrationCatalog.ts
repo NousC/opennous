@@ -24,7 +24,7 @@ export const railLabel = (k: RailKey) => RAIL.find((r) => r.key === k)?.label ??
 export type CatalogProvider = { name: string; display_name: string; category?: string | null; description?: string | null };
 
 const MAIL = new Set(["gmail_oauth", "gmail", "google_calendar", "outlook", "outlook_oauth", "smtp", "cal_com", "calendly"]);
-const CHAT = new Set(["linkedin", "slack"]);
+const CHAT = new Set(["linkedin", "slack", "slack_personal"]);
 
 /** Which rail category a catalogue provider sits under. */
 export function catalogCategoryOf(p: CatalogProvider): CatalogCategory {
@@ -68,6 +68,8 @@ export function readsFor(p: CatalogProvider): string[] {
   if (name === "smtp") return ["Incoming mail in the mailbox you connect"];
   if (name === "cal_com" || name === "calendly") return ["Bookings and cancellations"];
   if (name === "linkedin") return ["Messages on the LinkedIn account you connect"];
+  // A person's own Slack (GET-985): slackPersonalDms.mjs reads only DMs with someone matched to a customer.
+  if (name === "slack_personal") return ["Your personal Slack messages with customers", "The last 30 days when you connect, then new messages as they arrive"];
   if (name === "stripe") return ["Payments, from the webhook you add in Stripe"];
   if (name === "nous") return ["Signups and subscription events from your own product"];
   if (cat === "meetings") return ["Meeting transcripts and summaries"];
@@ -81,6 +83,7 @@ export function readsFor(p: CatalogProvider): string[] {
 /** The one thing this tool's connection never does, where the code guarantees it; else null. */
 export function neverFor(p: CatalogProvider): string | null {
   const cat = (p.category ?? "").toLowerCase();
+  if (p.name.toLowerCase() === "slack_personal") return "Never reads chats with teammates, and never posts or replies for you";
   if (cat === "crm") return "Never creates, edits or deletes a deal";
   return null;
 }

@@ -165,23 +165,11 @@ function DetailStep({ provider, scope, workspaceName, form, cta, notice, onCance
 }) {
   const reads = readsFor(provider);
   const never = neverFor(provider);
-  // Personal or shared is per tool, decided by the API, not by whoever connects it. Both options
-  // show so the choice is legible; the one this tool isn't is disabled and says why.
+  // Personal or shared is per tool, decided by the API, not by whoever connects it, so it is stated,
+  // not offered: one fixed value and why.
   const fixedWhy = scope === "personal"
-    ? `${provider.display_name} is connected by each person for themselves.`
-    : `${provider.display_name} is one connection for everyone in ${workspaceName}.`;
-  const seg = (value: "personal" | "company", label: string) => {
-    const on = scope === value;
-    return (
-      <button type="button" role="radio" aria-checked={on} disabled={!on} title={on ? undefined : fixedWhy}
-        className={cn(
-          "h-[30px] whitespace-nowrap rounded-[7px] px-3 text-[12.5px] font-medium transition-colors duration-fast",
-          on ? "bg-card text-foreground shadow-[0_0_0_1px_hsl(var(--border)),0_1px_2px_rgba(20,20,18,0.06)]" : "cursor-not-allowed text-muted-foreground",
-        )}>
-        {label}
-      </button>
-    );
-  };
+    ? `Each person connects their own ${provider.display_name}.`
+    : `One connection for everyone in ${workspaceName}.`;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-[22px] overflow-y-auto px-5 py-6 sm:px-8 sm:py-7">
@@ -220,9 +208,11 @@ function DetailStep({ provider, scope, workspaceName, form, cta, notice, onCance
 
         <div className="flex flex-col gap-2">
           <span className="text-[12px] font-medium text-ink-2">Who sees it</span>
-          <div role="radiogroup" aria-label="Who sees it" className="inline-flex gap-0.5 self-start rounded-[9px] bg-muted p-0.5">
-            {seg("personal", "Only me")}
-            {seg("company", `Everyone in ${workspaceName}`)}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="inline-flex h-[30px] items-center whitespace-nowrap rounded-[7px] bg-muted px-3 text-[12.5px] font-medium text-foreground">
+              {scope === "personal" ? "Only me" : `Everyone in ${workspaceName}`}
+            </span>
+            <span className="text-[12px] text-muted-foreground">{fixedWhy}</span>
           </div>
         </div>
 

@@ -76,3 +76,10 @@ test("All lists tools in the rail's order, stable inside a category", () => {
   const sorted = sortByRail([CATALOGUE[10], CATALOGUE[5], CATALOGUE[3], CATALOGUE[0], CATALOGUE[1]]).map((p) => p.name);
   assert.deepEqual(sorted, ["gmail_oauth", "google_calendar", "fireflies", "hubspot", "stripe"]);
 });
+
+test("Slack messages says it reads only personal messages with customers, and never teammates' chats (GET-985)", () => {
+  const p = { name: "slack_personal", display_name: "Slack messages", category: "communication" };
+  assert.equal(catalogCategoryOf(p), "chat");
+  assert.match(readsFor(p)[0], /personal Slack messages with customers/);
+  assert.match(neverFor(p) ?? "", /Never reads chats with teammates/);
+});

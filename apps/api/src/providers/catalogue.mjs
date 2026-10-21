@@ -352,6 +352,10 @@ export const CATALOGUE = {
   // so it never installs or changes the workspace bot.
   slack_personal: {
     display: 'Slack messages', category: 'communication', auth: 'oauth2',
+    // Written to the row because nothing else gives this provider a card (the older ones got theirs
+    // from migrations). Each member connects their own; the workspace's Slack stays as it is.
+    description: 'Reads your personal Slack messages with customers. Only you see them.',
+    logoInDb: true,
     keyHint: 'Sign in with Slack. Reads only your own DMs with customers. Only you see the messages; what is learned from them builds the shared account record.',
     webhook: 'none',
   },
@@ -585,4 +589,15 @@ export async function syncCatalogueToDb(supabase) {
 
   if (error) console.error('[CATALOGUE] sync failed:', error.message);
   else console.log(`[CATALOGUE] ${rows.length} providers synced`);
+
+  // A card's description and logo, for the providers that set them here. One update each: a bulk
+  // upsert with these columns would blank every other provider's.
+  for (const [name, p] of Object.entries(CATALOGUE)) {
+    if (!p.description && !p.logoInDb) continue;
+    const { error: e } = await supabase.from('workflow_providers').update({
+      ...(p.description ? { description: p.description } : {}),
+      ...(p.logoInDb ? { logo_url: logoOf(name) } : {}),
+    }).eq('name', name);
+    if (e) console.error(`[CATALOGUE] ${name} card sync failed:`, e.message);
+  }
 }
