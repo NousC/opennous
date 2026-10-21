@@ -123,8 +123,11 @@ export interface CloudRegistry {
   publicRoutes?: ReactNode;
   /** Cloud versions of public pages; public code renders its own fallback when absent. */
   variants?: Partial<Record<"home" | "docIndex" | "doc" | "reporting", CloudComponent>>;
-  /** Sidebar rows on the workspace plans. The API plan's rail is public and never changes. */
+  /** Sidebar rows. The workspace plans take the groups below; the API plan's rail is public and
+   *  takes only `api`. */
   nav?: {
+    /** The API plan's main rail, after Events (GTM insights, GET-973). */
+    api?: CloudNavItem[];
     /** After Home and Accounts in the main group. */
     main?: CloudNavItem[];
     /** The Views group (Pipeline, Handoff, Customers); the group is hidden when empty. */

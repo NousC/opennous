@@ -169,7 +169,8 @@ export function AppSidebar() {
   // where it runs in the app.
   const tier = planTier(plan);
   const showRecents = tier === "custom";
-  const workNavItems = api ? workNavItemsApi : workNavItemsCustom;
+  // The API plan's rail, then the Workspace layer's rows for it (GTM insights, GET-973).
+  const workNavItems = api ? [...workNavItemsApi, ...(cloud.nav?.api ?? [])] : workNavItemsCustom;
   // Main rail on the workspace plans: Home, Accounts, then the Workspace layer's Tasks and Insights.
   const mainItems = api ? workNavItems : [...workNavItems, ...cloudRows(cloud.nav?.main, tier)];
   // Workspace (GET-665): on the workspace plan Reporting (the Workspace layer's) leads it; the API
