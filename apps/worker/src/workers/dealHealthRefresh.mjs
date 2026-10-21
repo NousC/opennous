@@ -165,6 +165,27 @@ export async function refreshWorkspaceDealHealth(supabase, ws, { cap = RUN_DEAL_
   return out;
 }
 
+/**
+ * One account's open deals, right after new evidence on it (GET-976): the same scoring and row
+ * write as the scheduled run, for the deals of this account only.
+ */
+export async function refreshAccountDealHealth(supabase, ws, companyId) {
+  const { data, error } = await supabase.from('entity_list_rows')
+    .select('entity_id').eq('workspace_id', ws).eq('kind', 'deal').eq('status', 'open').eq('company_id', companyId);
+  if (error) throw new Error(error.message);
+  const dealIds = [...new Set((data ?? []).map(r => r.entity_id).filter(Boolean))];
+  if (!dealIds.length) return 0;
+  const results = await dealHealthForAccount(supabase, ws, companyId, { dealIds });
+  const nowIso = new Date().toISOString();
+  let scored = 0;
+  for (const id of dealIds) {
+    const patch = healthPatch(results.get(id), nowIso);
+    const { error: e } = await supabase.from('entity_list_rows').update(patch).eq('workspace_id', ws).eq('entity_id', id).eq('kind', 'deal');
+    if (!e && patch.deal_health_score != null) scored += 1;
+  }
+  return scored;
+}
+
 async function allWorkspaceIds(supabase) {
   const ids = [];
   for (let from = 0; ; from += PAGE) {

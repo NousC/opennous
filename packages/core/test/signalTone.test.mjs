@@ -28,6 +28,8 @@ test('negative kinds are red, positive green, the rest grouped', () => {
   assert.equal(signalTone('objection_raised'), 'orange');
   assert.equal(signalTone('budget_discussed'), 'purple');
   assert.equal(signalTone('next_step'), 'slate');
+  assert.equal(signalTone('next_step_missed'), 'red');
+  assert.equal(signalTone('next_step_slipped'), 'orange');
 });
 
 test('a custom signal gets a stable colour of its own; an unknown kind is neutral', () => {

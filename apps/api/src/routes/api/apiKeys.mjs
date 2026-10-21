@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { getSupabaseClient, isUUID } from '@nous/core';
 import { apiKeyScopeFor } from '../../lib/apiKeyScope.mjs';
 import { auditFromReq } from '../../lib/audit.mjs';
@@ -308,6 +309,7 @@ apiKeysRouter.post('/', async (req, res) => {
       metadata: { name: data.name },
     });
     // Raw key only returned once — never stored in plaintext
+    if (req.internalUserId) captureProductEvent({ distinctId: req.internalUserId, event: 'api_key_created', workspaceId: req.workspaceId });
     return res.status(201).json({ ...data, key: rawKey });
   } catch (err) {
     if (err?.code === 'no_resolved_user') {

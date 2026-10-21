@@ -60,6 +60,7 @@ export async function buildObjectionHandlers(supabase, workspaceId) {
   // 3. One model pass — cluster + answer.
   const numbered = items.map((it, i) => `[${i}] ${it.text.slice(0, 200)}`).join('\n');
   const resp = await createMessage({
+    meter: false,
     feature: 'objection-handlers', max_tokens: 3000, system: SYSTEM,
     accept: (t) => /\{[\s\S]*\}/.test(t),
     messages: [{ role: 'user', content: `COMPANY CONTEXT (the source of every answer):\n${context}\n\nOBJECTIONS (index in brackets):\n${numbered}` }],

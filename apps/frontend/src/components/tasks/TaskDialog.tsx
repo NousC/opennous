@@ -3,6 +3,7 @@
 // chips: who owns it, when it is due (change it here) and whether it is done. Under them, where it
 // came from: the source with its date and link, the sentence it was said in, who it is for.
 // The footer closes it or ticks it off.
+import { SlackText } from "@/components/record/SlackText";
 import { useEffect, useState } from "react";
 import { ChevronRight, ExternalLink, Loader2, X } from "lucide-react";
 import { format } from "date-fns";
@@ -154,7 +155,7 @@ export function TaskDialog({ task, open, onOpenChange, recordName, recordDomain,
                 </a>
               )}
             </div>
-            {quote && <p className="text-[12.5px] italic leading-snug text-muted-foreground [overflow-wrap:anywhere]">“{quote}”</p>}
+            {quote && <p className="text-[12.5px] italic leading-snug text-muted-foreground [overflow-wrap:anywhere]">“<SlackText text={String(quote)} />”</p>}
             {(task.for_name || task.asked_by) && (
               <p className="text-[12px] text-muted-foreground/70">
                 {task.for_name ? `${task.awaiting_them ? "Waiting on" : "For"} ${task.for_name}` : null}

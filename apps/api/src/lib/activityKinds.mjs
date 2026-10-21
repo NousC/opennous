@@ -24,7 +24,7 @@ const INBOUND = new Set(['email_received', 'email_reply', 'reply', 'positive_rep
  * open pixel, a scoring run, a booking that hasn't happened. Counting them as activity would
  * make a deal nobody spoke to look busy.
  */
-const NOT_A_TOUCH = /_opened$|_scheduled$|_cancelled$|_no_show$|_missed$|^added_to_campaign$|^enrichment_run$|^icp_scored$|^contact_created$|^website_visit$|^pricing_page_visit$|^deal_(won|lost|disqualified)$|^signed_up$|^trial_started$|^subscription_|^proposal_viewed$|^meeting_interest$/;
+const NOT_A_TOUCH = /_opened$|_scheduled$|_cancelled$|_no_show$|_missed$|^added_to_campaign$|^enrichment_run$|^icp_scored$|^contact_created$|^website_visit$|^pricing_page_visit$|^deal_(won|lost|disqualified)$|^signed_up$|^product_used$|^trial_started$|^subscription_|^proposal_viewed$|^meeting_interest$/;
 
 export const isInteraction = (o) => String(o?.property ?? '').startsWith('interaction.');
 export const isMeeting = (o) => HELD.has(typeOf(o));

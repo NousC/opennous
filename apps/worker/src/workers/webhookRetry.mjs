@@ -23,6 +23,7 @@ import { reprocessSmartlead } from '../webhooks/handlers/smartlead.mjs';
 import { reprocessLemlist }   from '../webhooks/handlers/lemlist.mjs';
 import { reprocessRB2B }      from '../webhooks/handlers/rb2b.mjs';
 import { reprocessStripe }    from '../webhooks/handlers/stripe.mjs';
+import { reprocessPostHog }   from '../webhooks/handlers/posthog.mjs';
 
 const HANDLERS = {
   calendly:  reprocessCalendly,
@@ -38,6 +39,7 @@ const HANDLERS = {
   lemlist:   reprocessLemlist,
   rb2b:      reprocessRB2B,
   stripe:    reprocessStripe,
+  posthog:   reprocessPostHog,
 };
 
 // Cloud's sources (LinkedIn, GET-754) register their reprocessor at boot. A row from a source

@@ -1,6 +1,7 @@
 // A claim as a tag (GET-799, GET-801, GET-805): its words on its category's colour, no dot, that shows
 // the claim behind it on hover or keyboard focus — its kind, status and date, the fact, the quote,
 // who said it and a link to the call or email. Click pins it open on touch screens.
+import { SlackText } from "@/components/record/SlackText";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { day } from "@/lib/format";
@@ -57,7 +58,7 @@ export function ClaimHoverTag({ text, color, kind, note, who, extra }: {
             <span className="ml-auto text-muted-foreground/70">{[statusWord, note?.created_at ? day(note.created_at) : null].filter(Boolean).join(" · ")}</span>
           </div>
           {note?.content && <p className="text-[13px] leading-snug text-foreground [overflow-wrap:anywhere]">{note.content}</p>}
-          {quote && <p className="text-[12px] italic leading-snug text-muted-foreground [overflow-wrap:anywhere]">“{quote}”</p>}
+          {quote && <p className="text-[12px] italic leading-snug text-muted-foreground [overflow-wrap:anywhere]">“<SlackText text={String(quote)} />”</p>}
           {extra}
           {(who || (note && factSource(note))) && (
             <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11.5px] text-muted-foreground/70">

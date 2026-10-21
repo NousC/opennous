@@ -52,6 +52,7 @@ export function peopleFromContacts(contacts) {
 
 async function runScoreModel(prompt, supabase, workspaceId, accept = usableReview) {
   const msg = await createMessage({
+    meter: false,
     feature: 'call-scoring',
     model: pipelineModel(),
     // The review writes the call page too (two-paragraph summary, verdict, a 4–7 sentence quoted

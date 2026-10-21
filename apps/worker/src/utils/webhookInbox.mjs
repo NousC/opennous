@@ -13,10 +13,14 @@ const MAX_BACKOFF     = 60 * 60_000;  // 1 hour
 
 // Capture only headers we'd plausibly need on retry (sig headers, content-type).
 // Avoids storing the entire header bag including transport metadata.
+// A header that IS a shared secret (not a signature over the body) is never kept: PostHog's
+// X-Nous-Secret is the connection's secret itself (GET-751).
+const NEVER_STORED = new Set(['x-nous-secret']);
 function captureHeaders(rawHeaders) {
   const out = {};
   for (const [k, v] of Object.entries(rawHeaders || {})) {
     const low = k.toLowerCase();
+    if (NEVER_STORED.has(low)) continue;
     if (low.startsWith('x-') || low.includes('signature') || low === 'content-type') {
       out[low] = typeof v === 'string' ? v : String(v);
     }

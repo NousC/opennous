@@ -540,7 +540,7 @@ ${JSON.stringify(findings, null, 1).slice(0, 16000)}`;
   let raw = '';
   try {
     // Prose a person reads: the writing tier (WRITING_MODEL).
-    const msg = await createMessage({ feature: 'revenue-report', tier: 'writing', max_tokens: 3000, messages: [{ role: 'user', content: prompt }] });
+    const msg = await createMessage({ meter: false, feature: 'revenue-report', tier: 'writing', max_tokens: 3000, messages: [{ role: 'user', content: prompt }] });
     await meterLLM(supabase, workspaceId, 'revenue-report', msg);
     raw = messageText(msg).trim();
   } catch (e) { console.error('[REVENUE_REPORT] llm error:', e?.message || e); }

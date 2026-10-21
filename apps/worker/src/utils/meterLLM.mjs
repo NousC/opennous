@@ -4,28 +4,12 @@
 // records each worker model call into llm_usage, exactly like the API's trackLlmUsage, so
 // the wallet (getTeamAiCredits) reflects real Nous-side spend.
 //
-// The worker can't import apps/api/src/lib/llmUsage.mjs, so the PRICING table is mirrored
-// here — KEEP IT IN SYNC with that file. Fail-safe: metering must never break a job.
+// Prices come from @nous/core (llm/usageCost.mjs, GET-957), one table for both apps and the model
+// door, which meters most calls itself now; this is for the call sites that record their own usage
+// (a different label, a write-only path). Fail-safe: metering must never break a job.
 
 import { recordPipelineEvent } from '../lib/pipelineEvents.mjs';
-
-const PRICING = {
-  'claude-opus-4-8':           { in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.50 },
-  'claude-sonnet-5':           { in: 3, out: 15, cacheWrite: 3.75, cacheRead: 0.30 },
-  'claude-haiku-4-5':          { in: 1, out: 5,  cacheWrite: 1.25, cacheRead: 0.10 },
-  'claude-haiku-4-5-20251001': { in: 1, out: 5,  cacheWrite: 1.25, cacheRead: 0.10 },
-};
-
-function computeCost(model, usage) {
-  const p = PRICING[model];
-  if (!p) return 0; // unknown model → 0, matching the API (a wrong number corrupts unit economics)
-  const input   = usage?.input_tokens ?? 0;
-  const output  = usage?.output_tokens ?? 0;
-  const written = usage?.cache_creation_input_tokens ?? 0;
-  const read    = usage?.cache_read_input_tokens ?? 0;
-  return (input / 1e6) * p.in + (output / 1e6) * p.out
-       + (written / 1e6) * p.cacheWrite + (read / 1e6) * p.cacheRead;
-}
+import { computeCost } from '@nous/core';
 
 // Record one worker model call. `msg` is the Anthropic response (has .usage + .model).
 // Pass `model` explicitly when the response doesn't echo it. No-op without a workspaceId.

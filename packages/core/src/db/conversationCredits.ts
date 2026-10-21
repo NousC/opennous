@@ -52,6 +52,8 @@ export const MEETING_DEFAULT_MINUTES = 30;
 const PAGE = 1000;
 
 export interface ConversationCredits {
+  /** Chat conversations; omitted when none were read for backwards-compatible consumers. */
+  messages?: number;
   /** The month's credits: every read outside a backfill window. */
   total: number;
   /** Reads made while a backfill ran (GET-515) — shown apart, never counted against the month. */
@@ -149,7 +151,8 @@ export async function conversationCredits(
       // redenomination never has to rewrite what was already read.
       const n = CREDIT_SCALE * (r.source === 'gmail' ? 1 : Math.max(0, Number(r.value?.credits ?? 1)));
       if (windows.length && inBackfill(r.observed_at)) { out.backfill += n; continue; }
-      if (kind === 'email') out.email += n; else if (kind === 'call') out.calls += n; else out.meetings += n;
+      if (kind === 'email') out.email += n; else if (kind === 'call') out.calls += n;
+      else if (kind === 'message') out.messages = (out.messages ?? 0) + n; else out.meetings += n;
       const day = String(r.observed_at ?? '').slice(0, 10);
       if (day) { out.byDay.set(day, (out.byDay.get(day) ?? 0) + n); out.readsByDay.set(day, (out.readsByDay.get(day) ?? 0) + n); }
     }
@@ -181,7 +184,7 @@ export async function conversationCredits(
   out.requested = Math.ceil(requestedUsd / REQUESTED_USD_PER_CREDIT - 1e-9);
   out.automations = Math.ceil(automationsUsd / REQUESTED_USD_PER_CREDIT - 1e-9);
   for (const m of [out.byDay, out.readsByDay, out.aiByDay, out.automationsByDay]) for (const [d, v] of m) m.set(d, Math.round(v));
-  out.total = out.email + out.calls + out.meetings + out.requested;
+  out.total = out.email + out.calls + out.meetings + (out.messages ?? 0) + out.requested;
   return out;
 }
 
@@ -250,4 +253,20 @@ export async function conversationCreditsByKey(
     return q.order('observed_at').range(a, b);
   });
   return creditsByKeyFromReads(rows);
+}
+
+/** Reader receipts for exact source versions, scoped to one workspace and connector. */
+export async function conversationReadMarkers(
+  supabase: SupabaseClient, workspaceId: string, source: string, sourceRefs: string[],
+): Promise<{ observed_at: string; value: Record<string, any> }[]> {
+  const refs = [...new Set(sourceRefs.filter(Boolean))];
+  const out: { observed_at: string; value: Record<string, any> }[] = [];
+  for (let i = 0; i < refs.length; i += 100) {
+    const { data, error } = await supabase.from('observations').select('observed_at,value')
+      .eq('workspace_id', workspaceId).eq('source', source).eq('property', 'noema.read')
+      .in('value->>source_ref', refs.slice(i, i + 100));
+    if (error) throw error;
+    out.push(...(data ?? []) as { observed_at: string; value: Record<string, any> }[]);
+  }
+  return out;
 }

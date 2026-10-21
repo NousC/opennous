@@ -53,13 +53,14 @@ const dotClass: Record<SourceStatus["kind"], string> = {
   warn: "bg-warning-dot",
 };
 
-export function SourceCard({ logoUrl, name, account, status, synced, actions, manageHint, progress }: {
+export function SourceCard({ logoUrl, name, account, status, synced, actions, manageHint, progress, children }: {
   logoUrl?: string; name: string; account: string; status: SourceStatus; synced: string;
   /** A running sync's progress: a thin bar under the account line while the chip says Syncing (in the gap, so the card keeps its height). */
   progress?: SyncProgress | null;
   /** The manage menu. Empty: the button shows disabled with `manageHint` as its tooltip. */
   actions: (ManageAction | "separator" | { note: string })[];
   manageHint?: string;
+  children?: React.ReactNode;
 }) {
   const canManage = actions.some((a) => typeof a === "object" && "onSelect" in a);
   const pct = status.kind === "syncing" ? syncPercent(progress) : null;
@@ -82,6 +83,7 @@ export function SourceCard({ logoUrl, name, account, status, synced, actions, ma
           {status.label}
         </span>
       </div>
+      {children}
       <div className="flex items-center gap-2 border-t border-hairline pt-2 text-[12px] text-muted-foreground">
         <span className="truncate">{synced}</span>
         <span className="flex-1" />

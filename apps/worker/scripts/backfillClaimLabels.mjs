@@ -35,6 +35,7 @@ Output ONLY valid JSON: [{"i": <number>, "label": "2-4 word tag"}]`;
 async function labelBatch(items) {
   try {
     const msg = await createMessage({
+      meter: { workspaceId: null },
       feature: 'backfill-claim-labels',
       max_tokens: 1024,
       accept: (t) => /\[[\s\S]*\]/.test(t),

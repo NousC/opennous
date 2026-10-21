@@ -46,7 +46,16 @@ test("labels: a known type by name, an unknown one from its own words", () => {
 });
 
 test("the filter offers every signal, and knows which families need a webhook", () => {
-  assert.equal(EVENT_FILTER_GROUPS[0].types.length, 13);
+  assert.equal(EVENT_FILTER_GROUPS[0].types.length, 22);
+  // A next step agreed stays in the raw feed; missed and slipped join it (GET-954), and the four
+  // product-usage signals from PostHog (GET-751).
+  for (const t of ["signal.next_step", "signal.next_step_missed", "signal.next_step_slipped",
+    "signal.usage_dropped", "signal.account_inactive", "signal.feature_adopted", "signal.seat_dropped",
+    "signal.product_qualified", "signal.seats_growing", "signal.account_activated"]) assert.ok(EVENT_FILTER_GROUPS[0].types.includes(t), t);
+  assert.equal(eventTone("signal.account_inactive"), "risk");
+  assert.equal(eventTone("signal.feature_adopted"), "positive");
+  assert.equal(eventTone("signal.next_step_missed"), "risk");
+  assert.equal(eventLabel("signal.next_step_slipped"), "Next step slipped");
   assert.equal(needsSubscription("deal.won"), true);
   assert.equal(needsSubscription("deal.*"), true);
   assert.equal(needsSubscription("signal.churn_risk"), false);
@@ -67,4 +76,20 @@ test("tones: won green, lost red, an objection amber, a call grey", () => {
   assert.equal(eventTone("signal.objection_raised"), "warning");
   assert.equal(eventTone("conversation.call_ended"), "neutral");
   assert.equal(eventTone("signal.something_new"), "neutral");
+});
+
+test("the interpreted events (GET-950) have a family, a line and a tone", () => {
+  assert.equal(eventFamilyLabel("account.champion_left"), "Accounts");
+  assert.equal(eventLabel("account.champion_left"), "Champion left");
+  assert.equal(eventLabel("deal.stalled"), "Deal stalled");
+  assert.equal(eventSummary(ev("account.champion_left", { data: { person: { name: "Mara Quill" }, replacement: { name: "Ines Varga" } } })), "Mara Quill left; Ines Varga takes over");
+  assert.equal(eventSummary(ev("account.expansion_requested", { data: { product: "Lumen Scan" } })), "Asked for more Lumen Scan");
+  assert.equal(eventSummary(ev("deal.stalled", { data: { stage: "Proposal sent", days_in_stage: 25 } })), "25 days in Proposal sent");
+  assert.equal(eventTone("account.champion_left"), "risk");
+  assert.equal(eventTone("account.expansion_requested"), "positive");
+  assert.equal(eventTone("deal.stalled"), "warning");
+  assert.ok(EVENT_FILTER_GROUPS.find((g) => g.family === "deal.*")?.types.includes("deal.stalled"));
+  assert.equal(needsSubscription("account.champion_left"), false, "read from signals, logged for every workspace");
+  assert.equal(needsSubscription("deal.stalled"), false, "computed for every workspace");
+  assert.equal(needsSubscription("deal.*"), true, "the rest of the family still needs a webhook");
 });

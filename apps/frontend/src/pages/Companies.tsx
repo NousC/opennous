@@ -1,3 +1,4 @@
+import { trackProductEvent } from "@/lib/posthog";
 import React, { useState, useEffect, useMemo, useCallback, Suspense } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Trash2, Search, Download, FileText, ChevronRight, UserCheck } from "lucide-react";
@@ -230,6 +231,7 @@ export default function Companies({ embedded = false, leadingTab = null }: { emb
   const hasToken = !!token;
   useEffect(() => {
     if (!id || !hasToken) return;
+    trackProductEvent('account_record_opened', { workspace_id: workspaceId ?? null });
     setCd(null); setCoLoading(true); setCoLocalOverrides({}); setCdError(null);
     // A failed detail used to leave the page on "Loading…" forever: the fetch swallowed the status,
     // set cd to null, and the render has no branch for "we tried and it did not work". On an

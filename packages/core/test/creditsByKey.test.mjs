@@ -5,7 +5,20 @@
 // Run: cd packages/core && npm run build && node --test test/creditsByKey.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { creditsByKeyFromReads, conversationCreditsByKey, readRowCredits, CREDIT_SCALE } from '../dist/db/conversationCredits.js';
+import { creditsByKeyFromReads, conversationCreditsByKey, conversationCredits, readRowCredits, CREDIT_SCALE } from '../dist/db/conversationCredits.js';
+
+test('Slack conversations count once at the normal scale and are not labelled as meetings', async () => {
+  const db = { from(table) {
+    const q = { then: resolve => Promise.resolve({ data: table === 'observations'
+      ? [{ source: 'slack', observed_at: '2026-10-20T12:00:00Z', value: { kind: 'message', credits: 1 } }] : [], error: null }).then(resolve) };
+    for (const method of ['select', 'eq', 'gte', 'in', 'order', 'range']) q[method] = () => q;
+    return q;
+  } };
+  const out = await conversationCredits(db, ['workspace'], '2026-10-01');
+  assert.equal(out.messages, CREDIT_SCALE);
+  assert.equal(out.meetings, 0);
+  assert.equal(out.total, CREDIT_SCALE);
+});
 
 const read = (source, value) => ({ source, value });
 

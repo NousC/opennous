@@ -6,6 +6,7 @@ import {
 import type { ReadContext } from './readContext.js';
 import { isPrivateMessageType, applyMessagePrivacyToActivities, loadMessageViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
 import { recordObservation, deriveSourceRef, hashRaw } from './observations.js';
+import { EVIDENCE_SNAPSHOT_TYPES } from '../services/engagement.mjs';
 
 // Activities — the v2 connector ingestion path.
 //
@@ -346,7 +347,11 @@ export async function listActivities(
   if (opts.types?.length) {
     q = q.in('property', opts.types.map(t => `interaction.${t}`));
   } else {
-    q = q.like('property', 'interaction.%');
+    // A conversation snapshot is provenance a finding cites, not something that happened: it is
+    // never a timeline row (GET-976). New snapshots are filed outside interaction.*; this keeps
+    // the ones written before that off every timeline too.
+    q = q.like('property', 'interaction.%')
+      .not('property', 'in', `(${EVIDENCE_SNAPSHOT_TYPES.map(t => `interaction.${t}`).join(',')})`);
   }
   if (opts.contactId) q = q.eq('entity_id', opts.contactId);
   if (opts.contactIds?.length) q = q.in('entity_id', opts.contactIds);
@@ -412,6 +417,24 @@ export async function hasActivityWithExternalId(
     .eq('external_id', externalId)
     .limit(1);
   return (data?.length ?? 0) > 0;
+}
+
+/** Resolve the existing observation on an idempotent connector retry. */
+export async function activityByExternalId(supabase: SupabaseClient, workspaceId: string, source: string, externalId: string): Promise<{ id: string } | null> {
+  const { data, error } = await supabase.from('observations').select('id')
+    .eq('workspace_id', workspaceId).eq('source', source).eq('external_id', externalId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+/** Reconcile a still-current connector message after its conversation version changes. */
+export async function refreshActivityEvidence(supabase: SupabaseClient, workspaceId: string, source: string, externalId: string,
+  evidence: { summary: string; rawData: Record<string, unknown> }): Promise<void> {
+  const { error } = await supabase.from('observations').update({
+    raw: evidence.rawData, content_hash: hashRaw(evidence.rawData),
+    value: { summary: evidence.summary, description: evidence.summary },
+  }).eq('workspace_id', workspaceId).eq('source', source).eq('external_id', externalId);
+  if (error) throw error;
 }
 
 // ── cross-source meeting de-duplication (read-time) ──────────────────────────

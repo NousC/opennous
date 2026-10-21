@@ -1,4 +1,4 @@
-import { SIGNAL_LABEL } from './signalLabels.mjs';
+import { SIGNAL_LABEL, TASK_SIGNAL_KINDS, DETECTED_SIGNAL_KINDS, shownAsSignal } from './signalLabels.mjs';
 // The automation engine (GET-426): a daily poll that turns a deal changing stage into an
 // artifact somebody receives.
 //
@@ -33,7 +33,12 @@ import { sendEmail } from '../utils/email.js';
 import { createMessage, messageText } from '../llm/modelDoor.mjs';
 import { renderDocumentPdf } from './briefPdf.mjs';
 import { emitEvent } from './events.mjs';
-import { filterDerivedForViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
+import { filterDerivedForViewer, filterByCitedClaimsForViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
+import { roleFromAuthorityClaims } from './committee.js';
+import { championLeftEvent, expansionRequestedEvent, stalledDealEvent, quietOpenDeals, REPLACEMENT_WINDOW_DAYS } from './interpretedEvents.mjs';
+import { loadDealCandidates } from './crmAgent.js';
+import { meetingsStillOn } from '../attention.js';
+import { stepFromClaim, missedNextStep, slippedNextSteps, MISSED_GRACE_DAYS, MISSED_MAX_AGE_DAYS, SLIPPED_MAX_AGE_DAYS } from './nextStepSignals.mjs';
 import { hubspotTemplateVars } from './hubspotVars.mjs';
 import { workspacesSubscribedTo } from '../db/triggers.js';
 import { getInternalEntityIds } from '../db/teamMembers.js';
@@ -42,6 +47,7 @@ import { getRelationshipOwners, effectiveOwnerUserId } from '../db/relationshipO
 import { runHubspotStep } from './hubspotAutomation.js';
 import { readHubspotRecords } from './hubspotRead.mjs';
 import { hubspotFieldChanges, entityForHubspotId, changeText, FIELD_CHANGE_WINDOW_MS } from './hubspotFieldTrigger.mjs';
+import { posthogEventsSince, posthogEventSignal, posthogEventVars, POSTHOG_EVENT_WINDOW_MS } from './posthogTrigger.mjs';
 import { crmFieldsFromConversation } from './crmFieldsFromConversation.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft } from './emailDraftBrief.mjs';
 import { routineListensTo, routineTriggers, triggerConfigsFor, listensToFilter, accountSignalKinds, callRecorders } from './routineTriggers.mjs';
@@ -993,6 +999,7 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
   if (format === 'email' && !materialOnly) {
     try {
       const msg = await createMessage({
+        meter: false,
         feature: 'automation-handoff', tier: 'writing', max_tokens: 1200,
         system: prompt ? `${EMAIL_DRAFT_SYSTEM}\n\n---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}` : EMAIL_DRAFT_SYSTEM,
         messages: [{ role: 'user', content: JSON.stringify(materialObject) }],
@@ -1013,6 +1020,7 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
   }
   try {
     const msg = await createMessage({
+      meter: false,
       feature: 'automation-handoff',
       tier: 'writing',
       // Enough room to finish. At 2000 the answer was being cut mid-JSON on an account
@@ -1179,6 +1187,8 @@ async function templateVars(automation, doc, { stage = null, at = null, ctx = nu
     vars['signal.who'] = sig.speaker ?? null;
   }
   vars['deal.close_date'] = longDate(at);
+  // The PostHog event that fired it (GET-751).
+  Object.assign(vars, posthogEventVars(ctx?.event));
   // The call that fired it (GET-706).
   const call = ctx?.call ?? null;
   if (call) {
@@ -1597,6 +1607,7 @@ async function writeDigest(supabase, workspaceId, { prompt, data, runId, agentSt
   const rowShape = !shape && row?.instruction ? row.instruction : null;
   try {
     const msg = await createMessage({
+      meter: false,
       feature: 'automation-handoff', tier: 'writing', max_tokens: shape || rowShape ? 1800 : 900,
       system: [shape ? `${DIGEST_SYSTEM}\n\n${shape}` : rowShape ? `${DIGEST_SYSTEM}\n\n${rowShape}` : slack ? `${DIGEST_SYSTEM}\n\n${DIGEST_SLACK}` : DIGEST_SYSTEM,
         prompt ? `---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}\n\nWhere that contradicts anything above, theirs wins.` : ''].filter(Boolean).join('\n\n'),
@@ -1672,6 +1683,7 @@ async function shapeForSlack(supabase, workspaceId, { format, source = null, tex
   if (!words) return null;
   try {
     const msg = await createMessage({
+      meter: false,
       feature: 'automation-handoff', tier: 'writing', max_tokens: 1800,
       system: `${SLACK_SHAPE_SYSTEM}\n\n${slackFormatInstruction(format)}`,
       messages: [{ role: 'user', content: words.slice(0, 20_000) }],
@@ -2461,6 +2473,7 @@ export async function testTriggers(supabase, workspaceId, automation, { limit = 
     const kinds = automation.trigger_config?.signals ?? [];
     let q = supabase.from('account_signals').select('id, kind, content, title, occurred_at, account_id').eq('workspace_id', workspaceId).not('account_id', 'is', null).eq('team_readable', true);
     if (kinds.length) q = q.in('kind', kinds);
+    else for (const k of TASK_SIGNAL_KINDS) q = q.neq('kind', k);   // "any signal" is never a task (GET-954)
     const { data } = await q.order('occurred_at', { ascending: false }).limit(limit);
     const coIds = [...new Set((data ?? []).map(x => x.account_id))];
     const { data: cos } = coIds.length ? await supabase.from('companies').select('id, name, domain').in('id', coIds) : { data: [] };
@@ -2574,6 +2587,7 @@ async function latestSignalTestTrigger(supabase, workspaceId, automation, pick) 
   const kinds = accountSignalKinds(automation) ?? [];
   let q = supabase.from('account_signals').select('*').eq('workspace_id', workspaceId).not('account_id', 'is', null).eq('team_readable', true);
   if (kinds.length) q = q.in('kind', kinds);
+  else for (const k of TASK_SIGNAL_KINDS) q = q.neq('kind', k);   // "any signal" is never a task (GET-954)
   if (pick) q = q.eq('id', String(pick));
   const { data } = await q.order('occurred_at', { ascending: false }).limit(1);
   const sig = data?.[0];
@@ -3364,7 +3378,7 @@ const SIGNAL_ACCOUNT_COOLDOWN_HOURS = 24;
 
 // Which signal leads a conversation's one run when it raised several: the one that most needs an
 // answer. Kinds not listed rank last, newest first among equals.
-const SIGNAL_RANK = ['stakeholder_left', 'churn_risk', 'objection_raised', 'competitor_evaluating', 'buying_signal',
+const SIGNAL_RANK = ['stakeholder_left', 'churn_risk', 'account_inactive', 'usage_dropped', 'next_step_missed', 'objection_raised', 'next_step_slipped', 'seat_dropped', 'competitor_evaluating', 'buying_signal', 'product_qualified', 'seats_growing', 'account_activated', 'feature_adopted',
   'expansion_signal', 'competitor_mentioned', 'stakeholder_joined', 'next_step', 'budget_discussed',
   'stakeholder_identified', 'objection_resolved', 'expansion_declined'];
 const rankOf = (k) => { const i = SIGNAL_RANK.indexOf(k); return i < 0 ? SIGNAL_RANK.length : i; };
@@ -3430,7 +3444,10 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
         const ok = readable.has(s.id);
         const fresh = s.occurred_at && Date.now() - new Date(s.occurred_at).getTime() <= SIGNAL_FRESH_HOURS * 3_600_000;
         if (ok && fresh) {
-          emitted += await emitEvent(supabase, {
+          // A next step agreed is a task, not an event (GET-967, finishing GET-954): it is on the Tasks
+          // page, and missed / slipped are the signals. As an event it put every task on the Events
+          // page, a co-founder call's private ones included, and nothing subscribed to it.
+          if (s.kind !== 'next_step') emitted += await emitEvent(supabase, {
             workspaceId: ws, type: `signal.${s.kind}`, accountId: s.account_id, personId: s.entity_id !== s.account_id ? s.entity_id : null,
             occurredAt: s.occurred_at, dedupeKey: s.id, maxAgeHours: SIGNAL_FRESH_HOURS,
             data: {
@@ -3442,11 +3459,14 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
         }
         await supabase.from('account_signals').update({ processed_at: new Date().toISOString(), team_readable: ok }).eq('id', s.id);
       }
+      // What those signals mean for the account (GET-950): the champion left, they asked for more.
+      emitted += await emitInterpretedSignalEvents(supabase, ws, runnable, readable);
       // Each routine once per account and conversation, not once per signal (GET-834).
       for (const a of routines) {
-        // Every account_signal trigger of the routine, merged: null = any signal.
+        // Every account_signal trigger of the routine, merged: null = any signal. A next step agreed
+        // is a task, not a signal (GET-954): it starts only a routine that names it.
         const wanted = accountSignalKinds(a);
-        const mine = runnable.filter((s) => s.account_id && (wanted === null || wanted.includes(s.kind))
+        const mine = runnable.filter((s) => s.account_id && (wanted === null ? shownAsSignal(s.kind) : wanted.includes(s.kind))
           && !(a.created_at && String(s.occurred_at) < String(a.created_at)));
         for (const g of groupSignalsForRuns(mine)) {
           if (ran >= SIGNAL_RUNS_PER_PASS) break;
@@ -3459,6 +3479,312 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
   }
   if (emitted || ran) console.log(`[signals] ${pending.length} signal(s): ${emitted} webhook deliver(ies), ${ran} automation run(s)`);
   return { processed: pending.length, emitted, ran };
+}
+
+// ── Interpreted events (GET-950) ─────────────────────────────────────────────
+//
+// On top of the signal.* events: account.champion_left and account.expansion_requested, read from
+// the same signals in the same pass (so the same privacy and freshness gates), and deal.stalled on
+// its own poll below. The rules are pure, in interpretedEvents.mjs; this is only their reads. Each
+// is keyed by the signal it came from, so it fires once. Best-effort: a failed read here never
+// holds up the signals themselves.
+
+/** account.champion_left and account.expansion_requested for one workspace's fresh, team-readable signals. */
+async function emitInterpretedSignalEvents(supabase, ws, signals, readable) {
+  let queued = 0;
+  for (const s of signals) {
+    try {
+      let ev = null;
+      if (s.kind === 'expansion_signal') ev = expansionRequestedEvent(s, { declines: signals });
+      else if (s.kind === 'stakeholder_left' && s.account_id) ev = championLeftEvent(s, await championContext(supabase, ws, s, readable));
+      if (!ev) continue;
+      queued += await emitEvent(supabase, {
+        workspaceId: ws, type: ev.type, accountId: ev.accountId, personId: ev.personId ?? null,
+        occurredAt: ev.occurredAt, dedupeKey: ev.dedupeKey, maxAgeHours: SIGNAL_FRESH_HOURS, data: ev.data,
+      });
+    } catch (err) {
+      console.warn(`[signals] ${ws}: interpreting ${s.kind} ${s.id} failed:`, err?.message ?? err);
+    }
+  }
+  return queued;
+}
+
+/**
+ * What championLeftEvent needs about one account: its name, its people (every contact, so a
+ * departure filed on the company can be read back to the person), the CHAMPIONS edges
+ * (the account page's reading) and the committee's champion claims, both as the team may read
+ * them, and the joins and new champions around the departure for a replacement.
+ */
+async function championContext(supabase, ws, signal, readable) {
+  const acct = signal.account_id;
+  const { data: peopleRows } = await supabase.from('entity_list_rows').select('entity_id, name, company_id, kind')
+    .eq('workspace_id', ws).eq('kind', 'person').eq('company_id', acct).limit(300);
+  const people = (peopleRows ?? []).filter(p => p.company_id === acct && p.kind === 'person');
+  const ids = [...new Set([...people.map(p => p.entity_id), ...(signal.entity_id !== acct ? [signal.entity_id] : [])])];
+  const names = new Map(people.filter(p => p.name).map(p => [p.entity_id, p.name]));
+  if (signal.entity_id !== acct && !names.has(signal.entity_id)) {
+    const { data: one } = await supabase.from('entity_list_rows').select('entity_id, name')
+      .eq('workspace_id', ws).eq('entity_id', signal.entity_id).maybeSingle();
+    if (one?.name) names.set(signal.entity_id, one.name);
+  }
+
+  const EDGE_COLS = 'id, subject_id, subject_label, object_id, relationship, confidence, created_at, source_memory_id';
+  const [onAccount, byPeople] = await Promise.all([
+    supabase.from('workspace_graph_edges').select(EDGE_COLS)
+      .eq('workspace_id', ws).eq('relationship', 'CHAMPIONS').eq('object_id', acct).limit(100),
+    ids.length ? supabase.from('workspace_graph_edges').select(EDGE_COLS)
+      .eq('workspace_id', ws).eq('relationship', 'CHAMPIONS').in('subject_id', ids.slice(0, 300)).limit(300) : { data: [] },
+  ]);
+  const idSet = new Set(ids);
+  const seen = new Set();
+  const edgeRows = [...(onAccount.data ?? []), ...(byPeople.data ?? [])].filter(e => {
+    if (e.relationship !== 'CHAMPIONS' || !(e.object_id === acct || idSet.has(e.subject_id))) return false;
+    const k = e.id ?? `${e.subject_id}|${e.object_id}|${e.created_at}`;
+    return !seen.has(k) && seen.add(k);
+  });
+  const edges = await filterByCitedClaimsForViewer(supabase, ws, edgeRows, TEAM_VIEWER, (e) => [e.source_memory_id]);
+
+  const roles = new Map();
+  if (ids.length) {
+    const { data: auth } = await supabase.from('claims')
+      .select('entity_id, property, value, supporting_observation_ids, derived_visibility')
+      .eq('workspace_id', ws).in('entity_id', ids.slice(0, 300)).like('property', 'note.%')
+      .is('invalid_at', null).eq('value->>category', 'authority');
+    const visible = await filterDerivedForViewer(supabase, ws, (auth ?? []).filter(r => idSet.has(r.entity_id)), TEAM_VIEWER);
+    const byPerson = new Map();
+    for (const r of visible) (byPerson.get(r.entity_id) ?? byPerson.set(r.entity_id, []).get(r.entity_id)).push(r);
+    for (const [id, rows] of byPerson) { const role = roleFromAuthorityClaims(rows); if (role) roles.set(id, role); }
+  }
+
+  const since = new Date(Date.parse(signal.occurred_at) - REPLACEMENT_WINDOW_DAYS * 86_400_000).toISOString();
+  const { data: around } = await supabase.from('account_signals')
+    .select('id, account_id, entity_id, kind, quote, detail, occurred_at, team_readable')
+    .eq('workspace_id', ws).eq('account_id', acct).in('kind', ['stakeholder_joined', 'stakeholder_identified'])
+    .gte('occurred_at', since).limit(100);
+  // A join or a new champion read from one member's private mail is not named to the team.
+  const related = (around ?? []).filter(r => r.team_readable === true || readable.has(r.id));
+  for (const r of related) {
+    if (r.entity_id && !names.has(r.entity_id)) {
+      const { data: one } = await supabase.from('entity_list_rows').select('entity_id, name')
+        .eq('workspace_id', ws).eq('entity_id', r.entity_id).maybeSingle();
+      if (one?.name) names.set(r.entity_id, one.name);
+    }
+  }
+  const { data: acctRow } = await supabase.from('entity_list_rows').select('entity_id, name')
+    .eq('workspace_id', ws).eq('entity_id', acct).maybeSingle();
+  return { edges, roles, names, related, people: people.map(p => ({ entity_id: p.entity_id, name: p.name ?? null })), accountName: acctRow?.name ?? null };
+}
+
+// deal.stalled: an open deal past its stage window with no touch, the stale-deal automation's
+// rule, for EVERY workspace (it is on the Events page whether or not a webhook listens). Every
+// six hours, in two steps so it stays cheap: the deal list alone finds the open deals untouched
+// for the window, and only those accounts get the expensive reads (the CRM's stage history to
+// date the stage, then their meetings), capped per workspace per pass. A deal already logged for
+// its current stage is skipped, so the cap goes to deals not yet read. A meeting with anyone at the
+// account is a touch, and one booked ahead means waiting, not stalled. Dated when the deal
+// crossed the window and kept a week, so a deal that went quiet months ago is history.
+const STALLED_FRESH_DAYS = 7;
+const STALLED_ACCOUNTS_PER_WORKSPACE = 50;
+const MEETING_PROPS = ['interaction.meeting_scheduled', 'interaction.meeting_cancelled', 'interaction.meeting_held'];
+
+/** Start times of the meetings with anyone at the account since `sinceIso`, past and booked ahead, still on. */
+async function accountMeetingTimes(supabase, ws, accountId, sinceIso) {
+  const { data: people } = await supabase.from('entity_list_rows').select('entity_id, company_id, kind')
+    .eq('workspace_id', ws).eq('kind', 'person').eq('company_id', accountId).limit(300);
+  const ids = [accountId, ...(people ?? []).filter(p => p.company_id === accountId).map(p => p.entity_id)];
+  const { data: rows, error } = await supabase.from('observations')
+    .select('entity_id, observed_at, value, property')
+    .eq('workspace_id', ws).eq('kind', 'event').in('property', MEETING_PROPS)
+    .in('entity_id', ids.slice(0, 300)).gte('observed_at', sinceIso)
+    .order('observed_at', { ascending: true }).limit(500);
+  if (error) throw new Error(`meetings read failed: ${error.message}`);
+  const mine = (rows ?? []).filter(r => ids.includes(r.entity_id) && MEETING_PROPS.includes(r.property));
+  return [
+    ...meetingsStillOn(mine).map(r => r.observed_at),
+    ...mine.filter(r => r.property === 'interaction.meeting_held').map(r => r.observed_at),
+  ];
+}
+
+export async function emitStalledDealsPoll({ now = Date.now(), onlyWorkspace = null, supabase: given = null, staleDays = null } = {}) {
+  const supabase = given ?? getSupabaseClient();
+  const windowDays = staleDays ?? (Number(process.env.DETECTOR_DRAFTS_STALE_DAYS) > 0 ? Number(process.env.DETECTOR_DRAFTS_STALE_DAYS) : 14);
+  let workspaces = [onlyWorkspace].filter(Boolean);
+  if (!onlyWorkspace) {
+    const { data, error } = await supabase.from('workspaces').select('id');
+    if (error) { console.error('[events] deal.stalled: workspaces read failed:', error.message); return { queued: 0 }; }
+    workspaces = (data ?? []).map(w => w.id).filter(Boolean);
+  }
+  let total = 0;
+  for (const ws of workspaces) {
+    let queued = 0;
+    try {
+      // Step 1, cheap: the deal list.
+      const rows = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('entity_list_rows')
+          .select('entity_id, name, company_id, company_name, stage, status, pipeline_value, last_activity_at')
+          .eq('workspace_id', ws).eq('kind', 'deal').order('entity_id').range(from, from + 999);
+        if (error) throw new Error(error.message);
+        rows.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
+      const quiet = quietOpenDeals(rows, { now, staleDays: windowDays });
+      if (!quiet.length) continue;
+      // What is already logged, deal and stage: those are not read again for the same stint.
+      const { data: logged } = await supabase.from('event_log').select('external_id')
+        .eq('workspace_id', ws).eq('type', 'deal.stalled').limit(5000);
+      const done = new Set((logged ?? []).map(r => String(r.external_id ?? '').replace(/^deal\.stalled:/, '').split('|').slice(0, 2).join('|')));
+      const byAccount = new Map();
+      for (const d of quiet) {
+        if (done.has(`${d.entity_id}|${String(d.stage ?? '').toLowerCase()}`)) continue;
+        (byAccount.get(d.company_id) ?? byAccount.set(d.company_id, []).get(d.company_id)).push(d);
+      }
+      // Step 2, capped: stage history, then meetings, only for the accounts left.
+      let read = 0;
+      const sinceIso = new Date(now - windowDays * 86_400_000).toISOString();
+      for (const [companyId, deals] of byAccount) {
+        if (read++ >= STALLED_ACCOUNTS_PER_WORKSPACE) break;
+        let candidates;
+        try { candidates = await loadDealCandidates(supabase, ws, companyId); }
+        catch (e) { console.warn('[events] stalled: deal candidates', companyId, e?.message); continue; }
+        const byId = new Map(candidates.map(c => [c.dealEntityId, c]));
+        const firing = deals.filter(row => stalledDealEvent(row, byId.get(row.entity_id), { now, staleDays: windowDays }));
+        if (!firing.length) continue;
+        let meetings;
+        try { meetings = await accountMeetingTimes(supabase, ws, companyId, sinceIso); }
+        catch (e) { console.warn('[events] stalled: meetings', companyId, e?.message); continue; }   // unsure: not stalled
+        for (const row of firing) {
+          const ev = stalledDealEvent(row, byId.get(row.entity_id), { now, staleDays: windowDays, meetings });
+          if (!ev) continue;
+          queued += await emitEvent(supabase, {
+            workspaceId: ws, type: ev.type, accountId: ev.accountId, dealId: ev.dealId,
+            occurredAt: ev.occurredAt, dedupeKey: ev.dedupeKey, maxAgeHours: STALLED_FRESH_DAYS * 24, data: ev.data,
+          });
+        }
+      }
+      if (queued) console.log(`[events] ${ws}: ${queued} deal.stalled deliver(ies) queued`);
+    } catch (err) {
+      console.error(`[events] deal.stalled for ${ws} failed:`, err?.message ?? err);
+    }
+    total += queued;
+  }
+  return { queued: total };
+}
+
+// ── Next step missed and slipped (GET-954) ────────────────────────────────────
+//
+// A next step agreed is a task. Two things about one are signals: it is more than a day past its
+// due date with nothing on the account since it was agreed, or the buyer pushed its date a second
+// time. The rules are pure (nextStepSignals.mjs); this is their reads. Every hour, per workspace:
+// the open and recent task claims (the index-friendly range read), only those the whole team may
+// read, each on its account; then the touches on the account only for the steps that would be
+// missed without one, capped per pass. The rows go into account_signals like any other kind, keyed
+// so each fires once, and processAccountSignals sends them on (privacy, signal.* events, routines).
+const NEXT_STEP_LOOKBACK_DAYS = 60;
+const NEXT_STEP_TASK_ROWS = 20_000;
+const NEXT_STEP_MISSED_READS_PER_WORKSPACE = 200;
+
+/** Each entity's account: the company itself, or the company the person is at. -> Map(entity -> account) */
+async function accountsOf(supabase, ws, entityIds) {
+  const out = new Map();
+  const ids = [...new Set(entityIds.filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from('entity_list_rows').select('entity_id, kind, company_id')
+      .eq('workspace_id', ws).in('entity_id', ids.slice(i, i + 100)).in('kind', ['account', 'person']);
+    if (error) throw new Error(`accounts read failed: ${error.message}`);
+    for (const r of data ?? []) {
+      const acct = r.kind === 'person' ? r.company_id : r.entity_id;
+      if (acct && !out.has(r.entity_id)) out.set(r.entity_id, acct);
+    }
+  }
+  return out;
+}
+
+/** The touches on an account between two times: its people and the company, meetings still on. */
+async function accountTouches(supabase, ws, accountId, sinceIso, untilIso, peopleCache) {
+  if (!peopleCache.has(accountId)) {
+    const { data: people } = await supabase.from('entity_list_rows').select('entity_id, company_id, kind')
+      .eq('workspace_id', ws).eq('kind', 'person').eq('company_id', accountId).limit(300);
+    peopleCache.set(accountId, [accountId, ...(people ?? []).filter(p => p.company_id === accountId).map(p => p.entity_id)]);
+  }
+  const ids = peopleCache.get(accountId);
+  const { data: rows, error } = await supabase.from('observations')
+    .select('entity_id, observed_at, value, property')
+    .eq('workspace_id', ws).eq('kind', 'event').gte('property', 'interaction.').lt('property', 'interaction/')
+    .in('entity_id', ids.slice(0, 300)).gt('observed_at', sinceIso).lte('observed_at', untilIso)
+    .order('observed_at', { ascending: true }).limit(500);
+  if (error) throw new Error(`touches read failed: ${error.message}`);
+  const mine = (rows ?? []).filter(r => ids.includes(r.entity_id));
+  return [
+    ...mine.filter(r => r.property !== 'interaction.meeting_scheduled'),
+    ...meetingsStillOn(mine),
+  ].map(r => ({ at: r.observed_at, property: r.property }));
+}
+
+export async function detectNextStepSignalsPoll({ now = Date.now(), onlyWorkspace = null, supabase: given = null } = {}) {
+  const supabase = given ?? getSupabaseClient();
+  let workspaces = [onlyWorkspace].filter(Boolean);
+  if (!onlyWorkspace) {
+    const { data, error } = await supabase.from('workspaces').select('id');
+    if (error) { console.error('[signals] next steps: workspaces read failed:', error.message); return { written: 0 }; }
+    workspaces = (data ?? []).map(w => w.id).filter(Boolean);
+  }
+  const since = now - NEXT_STEP_LOOKBACK_DAYS * 86_400_000;
+  let total = 0;
+  for (const ws of workspaces) {
+    try {
+      const claims = [];
+      for (let from = 0; from < NEXT_STEP_TASK_ROWS; from += 1000) {
+        const { data, error } = await supabase.from('claims')
+          .select('entity_id, property, value, valid_from, last_observed_at, supporting_observation_ids, derived_visibility')
+          .eq('workspace_id', ws).gte('property', 'action_item.').lt('property', 'action_item/')
+          .is('invalid_at', null).order('property').order('entity_id').range(from, from + 999);
+        if (error) throw new Error(error.message);
+        claims.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
+      const recent = claims.filter(c => { const s = stepFromClaim(c); return s && Date.parse(s.agreed_at ?? '') >= since; });
+      if (!recent.length) continue;
+      // A step from one person's private mail never becomes a shared signal.
+      const visible = await filterDerivedForViewer(supabase, ws, recent, TEAM_VIEWER, { isDerived: () => true });
+      const accounts = await accountsOf(supabase, ws, visible.map(c => c.entity_id));
+      const steps = visible.map(c => ({ ...stepFromClaim(c), account_id: accounts.get(c.entity_id) ?? null })).filter(s => s.account_id);
+      if (!steps.length) continue;
+
+      const { data: had } = await supabase.from('account_signals').select('dedupe_key')
+        .eq('workspace_id', ws).in('kind', DETECTED_SIGNAL_KINDS).limit(10_000);
+      const done = new Set((had ?? []).map(r => r.dedupe_key));
+      const rows = slippedNextSteps(steps, { now, maxAgeDays: SLIPPED_MAX_AGE_DAYS }).filter(r => !done.has(r.dedupe_key));
+
+      // Missed: only the steps that would be missed with no touch get the touch read.
+      const peopleCache = new Map();
+      let reads = 0;
+      for (const step of steps) {
+        const bare = missedNextStep(step, [], { now, maxAgeDays: MISSED_MAX_AGE_DAYS });
+        if (!bare || done.has(bare.dedupe_key)) continue;
+        if (reads++ >= NEXT_STEP_MISSED_READS_PER_WORKSPACE) break;
+        const agreed = Date.parse(step.agreed_at ?? '');
+        const deadline = Date.parse(step.due_at) + MISSED_GRACE_DAYS * 86_400_000;
+        let touches;
+        try {
+          touches = await accountTouches(supabase, ws, step.account_id,
+            new Date(Number.isFinite(agreed) ? agreed : deadline - NEXT_STEP_LOOKBACK_DAYS * 86_400_000).toISOString(),
+            new Date(deadline).toISOString(), peopleCache);
+        } catch (e) { console.warn('[signals] next steps: touches', step.account_id, e?.message); continue; }   // unsure: not missed
+        const row = missedNextStep(step, touches, { now, maxAgeDays: MISSED_MAX_AGE_DAYS });
+        if (row) rows.push(row);
+      }
+      if (!rows.length) continue;
+      const { error } = await supabase.from('account_signals')
+        .upsert(rows.map(r => ({ workspace_id: ws, ...r })), { onConflict: 'workspace_id,dedupe_key', ignoreDuplicates: true });
+      if (error) throw new Error(`write failed: ${error.message}`);
+      total += rows.length;
+      console.log(`[signals] ${ws}: ${rows.length} next step signal(s) (missed or slipped)`);
+    } catch (err) {
+      console.error(`[signals] next steps for ${ws} failed:`, err?.message ?? err);
+    }
+  }
+  return { written: total };
 }
 
 /** Which of these signals the whole team may read: their source fact passes message privacy. */
@@ -3649,6 +3975,57 @@ export async function processHubspotFieldChanges({ onlyWorkspace = null, supabas
   return { ran };
 }
 
+// ── When a PostHog event fires (GET-751) ────────────────────────────────────
+
+/** One event, one run: on the person's account when we know it, else on the person. */
+export async function runPostHogEventAutomation(supabase, workspaceId, a, row, { test = false, holdSends = false, runId: given = null, onLog = null } = {}) {
+  const dedupe = `${a.id}:ph:${row.id}`;
+  let runId = given;
+  if (!runId) {
+    const { data: seen } = await supabase.from('agent_routine_runs').select('id').eq('routine_id', a.id).eq('dedupe_key', dedupe).maybeSingle();
+    if (seen) return false;
+    const { data: run, error } = await supabase.from('agent_routine_runs').insert({ workspace_id: workspaceId, routine_id: a.id, dedupe_key: dedupe, status: 'running' }).select('id').single();
+    if (error) return false;
+    runId = run.id;
+  }
+  try {
+    const signal = posthogEventSignal(row);
+    const event = { name: signal.detail.event, properties: signal.detail.properties };
+    const entityId = signal.account_id || signal.entity_id;
+    const agentCfg = (Array.isArray(a.steps) ? a.steps : []).find(st => st?.type === 'agent')?.config ?? {};
+    const doc = await makeArtifact(supabase, workspaceId, {
+      artifact: a.artifact, entityId: agentCfg.account_id || entityId, stage: 'posthog_event', prompt: await withScopeContext(supabase, workspaceId, a, a.prompt),
+      context: agentCfg.context ?? null, signal, runId, agentStep: agentStepOf(a), format: formatOf(a),
+    });
+    const out = await deliver(a, doc, { stage: 'posthog_event', at: row.observed_at, ctx: { supabase, workspaceId, entityId, dealId: null, signal, event, runId, onLog, ...(holdSends ? { holdSends: true } : {}), ...(test ? { test: true } : {}) } });
+    await supabase.from('agent_routine_runs').update({ ...runOutcome(out), document_id: doc.id }).eq('id', runId);
+    if (!test) await supabase.from('agent_routines').update({ last_run_at: new Date().toISOString() }).eq('id', a.id);
+    return true;
+  } catch (err) {
+    await supabase.from('agent_routine_runs').update({ status: 'error', error: String(err?.message ?? err).slice(0, 500) }).eq('id', runId);
+    console.error(`[posthog-event] ${a.name} failed:`, err?.message ?? err);
+    return false;
+  }
+}
+
+/** Every few minutes: each enabled PostHog automation, the matching events of the last half hour, one run each. */
+export async function processPostHogEvents({ onlyWorkspace = null, supabase: given = null, now = Date.now(), readEvents = posthogEventsSince, runOne = runPostHogEventAutomation } = {}) {
+  const supabase = given ?? getSupabaseClient();
+  let q = supabase.from('agent_routines').select('*').eq('enabled', true).or(listensToFilter('posthog_event'));
+  if (onlyWorkspace) q = q.eq('workspace_id', onlyWorkspace);
+  const { data: routines, error } = await q;
+  if (error || !routines?.length) return { ran: 0 };
+  let ran = 0;
+  for (const a of routines) {
+    for (const cfg of triggerConfigsFor(a, 'posthog_event')) {
+      const r = await readEvents(supabase, a.workspace_id, cfg, { since: now - POSTHOG_EVENT_WINDOW_MS });
+      if (!r.ok) { console.warn(`[posthog-event] ${a.name}: ${r.reason}`); continue; }
+      for (const row of r.events.slice(0, 50)) if (await runOne(supabase, a.workspace_id, { ...a, trigger_config: cfg }, row)) ran++;
+    }
+  }
+  return { ran };
+}
+
 async function runSignalAutomation(supabase, workspaceId, a, group) {
   const s = group.lead;
   // Signals from the same conversation that land in a later pass find this key and stop here.
@@ -3690,13 +4067,16 @@ async function runSignalAutomation(supabase, workspaceId, a, group) {
 /**
  * What changed on an account (GET-686): its signals over the last `days`, newest first, with
  * the quote and where it was said. Team-readable only — a signal from one person's private mail
- * is not shown on a shared surface.
+ * is not shown on a shared surface. `forPeople` (the app's account page) leaves out the kinds that
+ * are tasks, not signals (GET-954); the API plan's /v2 read keeps every kind, as its events do.
  */
-export async function listAccountSignals(supabase, workspaceId, accountId, { days = 7, limit = 50 } = {}) {
+export async function listAccountSignals(supabase, workspaceId, accountId, { days = 7, limit = 50, forPeople = false } = {}) {
   const since = new Date(Date.now() - Math.max(1, Math.min(days, 365)) * 86_400_000).toISOString();
-  const { data, error } = await supabase.from('account_signals')
+  let q = supabase.from('account_signals')
     .select('id, kind, title, content, quote, speaker, source_ref, detail, entity_id, occurred_at')
-    .eq('workspace_id', workspaceId).eq('account_id', accountId).eq('team_readable', true)
+    .eq('workspace_id', workspaceId).eq('account_id', accountId).eq('team_readable', true);
+  if (forPeople) for (const k of TASK_SIGNAL_KINDS) q = q.neq('kind', k);
+  const { data, error } = await q
     .gte('occurred_at', since).order('occurred_at', { ascending: false }).limit(Math.min(limit, 200));
   if (error) {
     if (error.code === '42P01' || error.code === 'PGRST205') return [];

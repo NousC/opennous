@@ -711,3 +711,117 @@ export function isIntelClaim(value: Record<string, any> | null | undefined): boo
   if (/^#{1,3}\s[^\n]+\n/.test(content)) return false;
   return true;
 }
+
+// ── The chip on a claim (GET-959) ────────────────────────────────────────────────────────────
+//
+// The chip a reader skims, and the title of the signal a claim fires. It was the extractor's free
+// text, which mixed the thing with an opinion about it ("Quillbox vs Our Data", "Quillbox experimental
+// chaos", "Pays to Fix CRM") and spelled one tool three ways. Where the category says what the chip
+// is, code builds it; elsewhere the model's label stands. A claim with no label gets the start of
+// its own sentence, never the three-word scrap the UI used to cut ("still work out"). Pure.
+
+const ROLE_WORDS: Record<string, string> = {
+  economic_buyer: 'Budget holder', decision_maker: 'Decision maker', champion: 'Champion',
+  blocker: 'Blocker', technical: 'Technical buyer',
+};
+// A title only when it is who the sentence is about ("The CEO …", "Quillmere's CRO …"), not one the
+// person reports to.
+const TITLE_RE = /^(?:(?:The|Their|Our)\s+)?(?:[\w&.-]+['’]s\s+)?(CEO|CTO|CFO|COO|CRO|CMO|CPO|CIO|CISO|VP of [A-Za-z]+|Head of [A-Za-z]+|[Ff]ounder|[Cc]o-founder)\b/;
+const UNNAMED_RE = /\bname (?:is )?(?:not (?:yet )?known|unknown)\b|\bnot (?:yet )?named\b|\bunnamed\b/i;
+const MONEY_RE = /(?:[$€£]\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:k|m|bn|million|thousand)(?![a-z]))?|\b\d[\d,]*(?:\.\d+)?\s?(?:k|m)?\s?(?:USD|CAD|EUR|GBP|dollars|euros)\b)(?:\s?(?:\/|per|a|an)\s?(?:year|yr|month|mo|seat|user)\b)?/i;
+// A leading "First Last" is a person only when what follows is something a person does: "Google
+// Sheets breaks" and "New York office" keep their subject.
+const ATTRIBUTION_VERBS = 'says|said|wants|wanted|thinks|believes|explained|explains|noted|notes|mentioned|plans|planned|raised|asked|questioned|set|sees|still|does|did|has|had|is|was|will|would|can|cannot|approached|found|pushed|backtracked|signs|decides|owns|leads|runs|champions|controls|approves|reviews';
+const LEADING_NAME_RE = new RegExp(`^([A-Z][a-z]+ [A-Z][a-z-]+)(?= (?:${ATTRIBUTION_VERBS})\\b)`);
+const BUDGET_STATE_RE = /\b(frozen|freeze|approved|approval|cut|slashed|increased|reduced|pending|allocated|locked|signed off|no budget|over budget|under budget|ran out|exhausted)\b/i;
+const MAX_CHIP = 60;
+const POSSESSIVE_COMPANY_RE = /^[A-Z][\w-]*(?: [A-Z][\w-]*)?['’]s company [A-Z][\w&.-]*(?: [A-Z][\w&.-]*)?['’]s\s+/;
+const SAYING_RE = /^(?:says|said|explains|explained|notes|noted|mentions|mentioned|states|stated)(?: that)?\s+/i;
+const FILLER_RE = /^(?:still|also|now|then)\s+/i;
+const TRAILING_STOP = new Set(['a', 'an', 'the', 'to', 'of', 'as', 'for', 'and', 'or', 'with', 'in', 'on', 'by', 'at', 'that', 'how', 'who']);
+const START_WORDS = 7;
+
+/** The start of a claim's own sentence, without the "X says" in front of it: a chip that reads. */
+function sentenceStart(content: string, speaker: string | null, category: string): string {
+  let s = String(content ?? '').replace(/[*_`>#]+/g, ' ').replace(/^\s*[-•]\s+/gm, '').trim().replace(/\s+/g, ' ');
+  s = s.replace(POSSESSIVE_COMPANY_RE, '');
+  const names = [speaker, speaker?.split(' ')[0]].filter((n): n is string => !!n && n.length > 1);
+  for (const n of names) if (s.startsWith(`${n} `)) { s = s.slice(n.length + 1); break; }
+  s = s.replace(LEADING_NAME_RE, '').trim();
+  s = s.replace(SAYING_RE, '').replace(FILLER_RE, '');
+  if (!s) return CLAIM_CATEGORIES.find(c => c.key === category)?.label ?? 'Note';
+  const words = s.split(' ');
+  let head = words.slice(0, START_WORDS);
+  if (words.length > START_WORDS) {
+    while (head.length > 1 && TRAILING_STOP.has(head[head.length - 1].toLowerCase().replace(/[^a-z]/g, ''))) head = head.slice(0, -1);
+  }
+  const text = head.join(' ').replace(/\s*[,;:—–-]+$/, '');
+  const cut = text.length > MAX_CHIP ? `${text.slice(0, MAX_CHIP).replace(/\s+\S*$/, '')}…` : text;
+  return cut.charAt(0).toUpperCase() + cut.slice(1) + (words.length > START_WORDS && cut === text ? '…' : '');
+}
+
+/**
+ * "Re-engage Churned Customers" → "Re-engage churned customers" (GET-962). The extractor was asked for
+ * Title Case, and labels read like headlines. A word after the first keeps its capital only when the
+ * fact itself writes it with one (a name: "Kelsey") or it is a short word the fact never uses
+ * ("Ops"); internal capitals (HubSpot) and acronyms (CRM) are never touched. Pure.
+ */
+const SMALL_WORDS = new Set(['a', 'an', 'the', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'at', 'by', 'vs', 'with', 'from', 'into', 'per']);
+function sentenceCase(label: string, content: string): string {
+  const words = label.split(' ');
+  return words.map((w, i) => {
+    if (i > 0 && SMALL_WORDS.has(w.toLowerCase())) return w.toLowerCase();
+    if (i === 0 || !/^[A-Z][a-z]+(?:-[a-z]+)*[,:]?$/.test(w)) return w;
+    const bare = w.replace(/[,:]$/, '');
+    // Capitalised mid-sentence is a name; at the start of a sentence it says nothing.
+    const said = (form: string) => new RegExp(`(?<![.!?]\\s|^)(?<![\\p{L}])${form}(?![\\p{L}])`, 'u').test(content);
+    if (said(bare.toLowerCase())) return w.toLowerCase();
+    if (said(bare) || bare.length <= 3) return w;
+    return w.toLowerCase();
+  }).join(' ');
+}
+
+export function claimLabel(claim: {
+  category?: string | null;
+  label?: string | null;
+  content?: string | null;
+  metadata?: Record<string, unknown> | null;
+}): string {
+  const category = normalizeClaimCategory(claim.category ?? '');
+  const meta = claim.metadata ?? {};
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const content = text(claim.content) ?? '';
+  const raw = text(claim.label)?.slice(0, 40) ?? null;
+  const modelLabel = raw ? sentenceCase(raw, content) : null;
+
+  if (category === 'competitor') {
+    const name = normalizeToolName(text(meta.entity));
+    if (name) return name;
+  }
+  if (category === 'tech_stack') {
+    const name = normalizeToolName(text(meta.tool));
+    if (name) return name;
+  }
+  if (category === 'budget') {
+    const m = `${text(meta.quote) ?? ''}\n${content}`.match(MONEY_RE);
+    if (m) return m[0].trim();
+    // "Budget frozen until Q3" says something a number would not; "pays to fix the CRM" does not.
+    if (BUDGET_STATE_RE.test(`${modelLabel ?? ''} ${content}`)) return modelLabel ?? sentenceStart(content, text(meta.speaker), category);
+    return 'No number yet';
+  }
+  if (category === 'authority') {
+    const role = ROLE_WORDS[String(meta.role ?? '')] ?? null;
+    const title = content.match(TITLE_RE)?.[1] ?? null;
+    if (title) {
+      const who = UNNAMED_RE.test(content) ? 'not named yet' : role;
+      return who ? `${title} · ${who}` : title;
+    }
+    // The model's label before a name read off the front of the sentence: "Sorrel cannot switch off
+    // the bots because the CEO runs them" is about the CEO, not Sorrel.
+    if (modelLabel) return modelLabel;
+    const name = content.match(LEADING_NAME_RE)?.[1] ?? null;
+    if (name && role) return `${name} · ${role}`;
+    return role ? `${role} · ${sentenceStart(content, text(meta.speaker), category)}` : sentenceStart(content, text(meta.speaker), category);
+  }
+  return modelLabel ?? sentenceStart(content, text(meta.speaker), category);
+}

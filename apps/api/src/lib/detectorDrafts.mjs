@@ -40,7 +40,7 @@
 
 import { getSupabaseClient, getAccountRecord, mirrorDraftAsDecision, loadDealCandidates, getRelationshipOwners,
   effectiveOwnerUserId, getInternalEntityIds, bindingConstraints, filterDerivedForViewer, filterByCitedClaimsForViewer,
-  TEAM_VIEWER, emailVoiceBlock } from '@nous/core';
+  TEAM_VIEWER, emailVoiceBlock, touchDirection, REPLY_TOUCH_PROPERTIES, quietOpenDeals, staleDealFiring } from '@nous/core';
 import { pickRecipientEmail } from './recipientEmail.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft, DEFAULT_SUBJECT } from './emailDraft.mjs';
 
@@ -113,11 +113,52 @@ export const DEAL_SIGNALS = {
   },
 };
 const ROLE_LABEL = { decision_maker: 'Decision maker', economic_buyer: 'Economic buyer' };
+// A next step that went wrong (GET-954 detects it, GET-956 plays it). The agreed step itself is a task,
+// not a signal; it becomes one when its date passes with nothing done, or when it keeps moving.
+Object.assign(DEAL_SIGNALS, {
+  next_step_missed: {
+    rank: 5, label: 'Next step missed',
+    why: (s) => `Next step missed: ${s.title || 'an agreed step'}${s.detail?.due_at ? `, due ${dayLabel(s.detail.due_at)}` : ''}`,
+    prompt: 'An agreed next step passed its date and nothing has happened since. If the step was ours (see the owner), own it in one line and either deliver it now or give a firm new date. If it was theirs, check in kindly: name the step and the date it was due, ask whether it is still on, and offer to help it along. Two or three lines, no guilt.',
+  },
+  next_step_slipped: {
+    rank: 6, label: 'Next step slipped',
+    why: (s) => `Next step pushed ${s.detail?.pushes ?? 2} times: ${s.title || 'an agreed step'}`,
+    prompt: 'The buyer has pushed the same next step more than once. Confirm the step in one line, ask what is in the way, and propose one firm date (or a short call to unblock it). Friendly and direct; never sound annoyed about the delays.',
+  },
+});
+// Product signals from PostHog (GET-751): a reason to write that needs no open deal, because the
+// product found the opening before sales did. Ranked after the deal signals.
+Object.assign(DEAL_SIGNALS, {
+  product_qualified: {
+    rank: 7, label: 'Product-qualified', noDealNeeded: true,
+    why: (s) => `Product-qualified: ${s.detail?.active_users_30d ?? 'several'} people using the product`,
+    prompt: 'Several people at this account now use the product on their own. Write to the most engaged of them: say you noticed the team is using it, ask in one line what they are using it for, and offer a short call on rolling it out to the rest of the team. Helpful, not salesy; never mention tracking or analytics.',
+  },
+  seats_growing: {
+    rank: 8, label: 'Seats growing', noDealNeeded: true,
+    why: (s) => `More people using the product: ${s.detail?.active_users_prev_30d ?? '?'} to ${s.detail?.active_users_30d ?? '?'}`,
+    prompt: 'More people at this account are using the product than a month ago. Write to the main contact: acknowledge the team is growing into it, ask what changed, and offer the plan or setup that fits a bigger team, with one concrete next step. Never mention tracking or analytics.',
+  },
+  account_inactive: {
+    rank: 9, label: 'Account inactive', noDealNeeded: true,
+    why: (s) => `Stopped using the product${s.detail?.days_inactive ? ` ${s.detail.days_inactive} days ago` : ''}`,
+    prompt: 'This account has stopped using the product. Write to the main contact: a short, kind check-in that asks whether something got in the way and offers to help them get value from it again, with one easy next step. Never mention tracking or analytics, and never guilt.',
+  },
+});
+
 // Run order when the day's cap is short: a customer in trouble first, an opening next, a quiet
 // deal last (there are many more of those, and they keep).
 export const DETECTOR_ORDER = ['deal_risk', 'deal_signal', 'expansion_signal', 'stale_deal'];
 
 export const recKeyOf = (key) => `automation.${key}`;
+
+/**
+ * The detectors whose drafts are a signal's next move (GET-953): listed under From signals, snoozed,
+ * tracked after Send and nudged once (GET-949). Stale deals are not a signal anyone raised.
+ */
+export const SIGNAL_DETECTORS = ['deal_signal', 'deal_risk', 'expansion_signal'];
+export const SIGNAL_REC_KEYS = new Set(SIGNAL_DETECTORS.map(recKeyOf));
 
 const envNum = (name, fallback) => {
   const n = Number(process.env[name]);
@@ -164,46 +205,9 @@ const dayLabel = (iso) => {
   return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : null;
 };
 
-/**
- * Open deals quiet long enough to be worth a stage-age read: no touch in `staleDays` (or never).
- * Biggest first, so a short day's cap goes to the deals with the most at stake. Pure.
- * @param rows entity_list_rows deal rows: { entity_id, name, company_id, company_name, stage, status, pipeline_value, last_activity_at }
- */
-export function quietOpenDeals(rows, { now = Date.now(), staleDays = 14, staleMaxDays = Infinity } = {}) {
-  return (rows ?? [])
-    .filter((d) => d?.entity_id && d.company_id && String(d.status ?? '').toLowerCase() === 'open')
-    .filter((d) => { const q = days(d.last_activity_at, now); return q == null || (q >= staleDays && q <= staleMaxDays); })
-    .sort((a, b) => (Number(b.pipeline_value) || 0) - (Number(a.pipeline_value) || 0)
-      || String(a.last_activity_at ?? '').localeCompare(String(b.last_activity_at ?? '')));
-}
-
-/**
- * A stale-deal firing from one quiet deal row and its CRM candidate (stage entry date, roster,
- * owner), or null when it does not fire. A deal whose stage entry we cannot date does not fire:
- * "sat in one stage for 14 days" is a claim, and an undated stage cannot back it. Pure.
- */
-export function staleDealFiring(row, candidate, { now = Date.now(), staleDays = 14, staleMaxDays = Infinity } = {}) {
-  if (!row || !candidate) return null;
-  if (String(candidate.status ?? row.status ?? '').toLowerCase() !== 'open') return null;
-  const inStage = days(candidate.lastStageChangeAt, now);
-  if (inStage == null || inStage < staleDays || inStage > staleMaxDays) return null;
-  const quiet = days(row.last_activity_at, now);
-  if (quiet != null && (quiet < staleDays || quiet > staleMaxDays)) return null;
-  const stage = candidate.stage || row.stage || 'its stage';
-  const name = candidate.name || row.name || 'This deal';
-  return {
-    automation: 'stale_deal',
-    targetType: 'deal', targetId: row.entity_id,
-    accountId: row.company_id, accountName: row.company_name ?? null,
-    dealId: row.entity_id, dealName: name,
-    fingerprint: `${row.entity_id}|${String(stage).toLowerCase()}|${String(candidate.lastStageChangeAt).slice(0, 10)}`,
-    why: `${name} sat in ${stage} for ${inStage} days${quiet != null ? `, no touch in ${quiet} days` : ', never touched'}`,
-    trigger: { stage, days_in_stage: inStage, days_quiet: quiet, stage_entered_at: candidate.lastStageChangeAt, value: row.pipeline_value ?? null },
-    rosterIds: Array.isArray(candidate.roster) ? candidate.roster : [],
-    ownerEmail: candidate.ownerEmail ?? null,
-    raisedBy: null, quote: null,
-  };
-}
+// The stale-deal rule (quietOpenDeals, staleDealFiring) lives in core since GET-950, so the
+// deal.stalled event and this automation read a stale deal the same way.
+export { quietOpenDeals, staleDealFiring };
 
 /**
  * Risk or expansion firings from claim rows on accounts — one per account, the gravest/newest
@@ -270,6 +274,10 @@ export function signalFirings(rows, kind, { now = Date.now(), lookbackDays = 7, 
       trigger: {
         claim_property: r.property, said_at: at, text: clipText(text, 400),
         ...(m.severity ? { severity: m.severity } : {}), ...(m.product ? { product: String(m.product) } : {}),
+        // What the From signals pane reads back (GET-953), as for a deal signal.
+        kind: category === 'risk_signal' ? 'churn_risk' : 'expansion_signal',
+        label: category === 'risk_signal' ? 'Churn risk' : 'Expansion signal',
+        quote: m.quote ? clipText(m.quote, 300) : null, speaker: m.speaker ? String(m.speaker) : null,
       },
       rosterIds: [],
       ownerEmail: null,
@@ -318,6 +326,11 @@ export function dealSignalFirings(rows, { now = Date.now(), lookbackDays = 7, na
         // What the inbox's From signals pane reads back (GET-944): who said it, in their words.
         quote: s.quote ? clipText(s.quote, 300) : null, speaker: s.speaker ? String(s.speaker) : null,
         role: s.detail?.role ?? null, domain: domains.get(accountId) ?? null,
+        // A next step's own facts (GET-956): what it is, who owned it, when it was due, how often it moved.
+        ...(s.kind.startsWith('next_step_') ? {
+          step: s.title ?? null, owner: s.detail?.owner ?? null, due_at: s.detail?.due_at ?? null,
+          ...(s.detail?.pushes ? { pushes: s.detail.pushes, first_due_at: s.detail.first_due_at ?? null } : {}),
+        } : {}),
       },
       rosterIds: [],
       ownerEmail: null,
@@ -436,7 +449,7 @@ export function speakerMatches(person, speaker) {
 /**
  * Is this contact the person the research named (GET-944)? Stricter than a speaker label: the
  * research gives a full name, so the last names must agree, and the first names too, or one be
- * the short form of the other (Andy / Andrew). Middle names and initials are ignored. A one-word
+ * the short form of the other (Bob / Robert). Middle names and initials are ignored. A one-word
  * name never matches: "Andrew" is not a person. Pure.
  */
 export function researchedNameMatches(person, name) {
@@ -534,6 +547,13 @@ export function researchLine(r) {
   return `Who that person is (researched${r.source_url ? `, source ${r.source_url}` : ''}): ${who}${r.contact_id ? ' (already a contact on this account)' : ''}`;
 }
 
+/** The next step a missed or slipped signal is about (GET-956), as the brief says it. Pure. */
+export function stepLine(t) {
+  if (!t?.step) return null;
+  return [`The next step: ${t.step}`, t.owner ? `owner: ${t.owner}` : null, t.due_at ? `due ${dayLabel(t.due_at)}` : null,
+    t.pushes ? `pushed ${t.pushes} times (first due ${dayLabel(t.first_due_at)})` : null].filter(Boolean).join('; ');
+}
+
 /** The model's user turn for one draft. Pure. */
 export function draftRequest(firing, { recipient, context }) {
   const d = DETECTORS[firing.automation];
@@ -542,6 +562,7 @@ export function draftRequest(firing, { recipient, context }) {
     `Why you are writing (OpenNous noticed this): ${firing.why}`,
     firing.quote ? `What they said, in their words: "${firing.quote}"` : null,
     researchLine(firing.trigger?.research),
+    stepLine(firing.trigger),
     `What to write (the ${d?.name ?? 'automation'} instructions): ${firing.prompt ?? d?.prompt ?? 'a timely, specific follow-up'}`,
     '',
     `Account record:\n${context}`,
@@ -720,7 +741,8 @@ export async function detectFirings(supabase, workspaceId, { now = Date.now(), o
   // objection is account health's business, and a lost prospect is not chased.
   const openOn = new Set(dealRows.filter((d) => /^open$/i.test(String(d.status ?? ''))).map((d) => d.company_id));
   const eligible = (f) => live.has(f.accountId) && (!f.dealId || live.has(f.dealId)) && !internalCompanies.has(f.accountId)
-    && (f.automation === 'stale_deal' || !hasSpine || (f.automation === 'deal_signal' ? openOn.has(f.accountId) : working.has(f.accountId)));
+    && (f.automation === 'stale_deal' || !hasSpine
+      || (f.automation === 'deal_signal' ? openOn.has(f.accountId) || DEAL_SIGNALS[f.trigger?.kind]?.noDealNeeded === true : working.has(f.accountId)));
   return { firings: [...stale, ...signals].filter(eligible), internalIds };
 }
 
@@ -836,7 +858,8 @@ async function settleSubject(supabase, id, firing, prevEvidence, outcome, now, e
   };
   delete evidence.attempt_fingerprint; delete evidence.attempt_at;
   // A snooze was on the last draft (GET-944); a new draft starts awake.
-  if (outcome === 'drafted') { delete evidence.snoozed_until; delete evidence.snoozed_action_id; }
+  // A new draft is a new case (GET-949): the last one's tracking stays with the last one.
+  if (outcome === 'drafted') { delete evidence.snoozed_until; delete evidence.snoozed_action_id; delete evidence.tracking; }
   const { error } = await supabase.from('ri_recommendations')
     .update({ evidence, status: outcome === 'drafted' ? 'drafted' : 'settled', decided_at: at, updated_at: at })
     .eq('id', id);
@@ -907,6 +930,7 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
   const memberBlock = deps.buildMemberBlock(profile, { includePrefs: false });
   ctx.onSpend?.();
   const resp = await deps.createMessage({
+    meter: false,
     feature: DRAFT_FEATURE, tier: 'writing', max_tokens: 1000,
     system: draftSystem({ memberBlock, voice: voiceFor(firing, ctx.voices) }),
     messages: [{ role: 'user', content: draftRequest(firing, { recipient, context }) }],
@@ -940,6 +964,255 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
     payload: originMarker(firing, { contactId: person.id }),
   });
   return { outcome: 'drafted', action_id: action.id, contact_id: person.id, sender };
+}
+
+// ─── After Send: did the signal's move work? (GET-949) ──────────────────────────────
+//
+// A Deal signals draft that was sent is tracked on its ledger row (evidence.tracking):
+//   moved    the recipient answered (any inbound message), a meeting with them was held or
+//            booked, or, for a stakeholder play, the person it set out to bring in showed up in
+//            any conversation. The case closes and says how.
+//   nudged   nothing moved in NUDGE_DAYS: one short follow-up is drafted to the same person and
+//            lands in From signals again. One nudge per case, never a loop.
+//   quiet    the nudge was sent and nothing moved in another NUDGE_DAYS: the case closes.
+// A nudge that is skipped (Not relevant) closes the case too.
+
+export const NUDGE_DAYS = 5;
+const MEETING_TOUCHES = new Set(['interaction.meeting_held', 'interaction.meeting_scheduled', 'interaction.meeting_booked', 'interaction.call_held']);
+const TRACK_TOUCHES = [...new Set([...REPLY_TOUCH_PROPERTIES, ...MEETING_TOUCHES])];
+
+/**
+ * Where a sent move stands. Pure.
+ * @param touches observations: { entity_id, property, observed_at, is_outbound, source }
+ * @returns {{ state: 'moved', how: 'replied'|'meeting'|'joined', at } | { state: 'due' } | { state: 'waiting' }}
+ */
+export function trackMove({ sentAt, dueFrom = null, recipientId, joinerId = null, touches = [], now = Date.now(), days = NUDGE_DAYS }) {
+  const since = Date.parse(sentAt ?? '');
+  if (!Number.isFinite(since)) return { state: 'waiting' };
+  const after = (touches ?? []).filter((t) => Date.parse(t.observed_at ?? '') > since && t.source !== 'motion')
+    .sort((a, b) => String(a.observed_at).localeCompare(String(b.observed_at)));
+  for (const t of after) {
+    if (joinerId && t.entity_id === joinerId) return { state: 'moved', how: 'joined', at: t.observed_at };
+    if (t.entity_id !== recipientId) continue;
+    if (MEETING_TOUCHES.has(t.property)) return { state: 'moved', how: 'meeting', at: t.observed_at };
+    if (touchDirection(t) === 'in') return { state: 'moved', how: 'replied', at: t.observed_at };
+  }
+  const from = Date.parse(dueFrom ?? '') || since;
+  return now - from >= days * DAY ? { state: 'due' } : { state: 'waiting' };
+}
+
+/** The model's turn for a nudge: the email that went unanswered, and the one-line ask. Pure. */
+export function nudgeRequest(action, { days = NUDGE_DAYS } = {}) {
+  return [
+    `Recipient: ${action.recipient ?? 'there'}`,
+    `You emailed them ${days} days ago and heard nothing back. Write a short follow-up: two or three lines, no guilt, restate the one ask in plain words, make it easy to say yes. Do not repeat the first email.`,
+    '',
+    `The first email (subject "${action.subject ?? ''}"):`,
+    String(action.body ?? '').slice(0, 3000),
+  ].join('\n');
+}
+
+const reSubject = (s) => (/^re:/i.test(String(s ?? '').trim()) ? String(s).trim() : `Re: ${String(s ?? '').trim() || DEFAULT_SUBJECT}`);
+
+async function loadActions(supabase, workspaceId, ids) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from('pending_actions')
+      .select('id, user_id, kind, entity_id, recipient, recipient_email, subject, body, status, decided_at, created_at')
+      .eq('workspace_id', workspaceId).in('id', ids.slice(i, i + 100));
+    if (error) throw new Error(`signal drafts read failed: ${error.message}`);
+    for (const a of data ?? []) out.set(a.id, a);
+  }
+  return out;
+}
+
+async function loadTouches(supabase, workspaceId, entityIds, since) {
+  const ids = [...new Set(entityIds.filter(Boolean))];
+  const rows = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from('observations')
+      .select('entity_id, property, observed_at, source, is_outbound:raw->is_outbound')
+      .eq('workspace_id', workspaceId).in('entity_id', ids.slice(i, i + 100))
+      .in('property', TRACK_TOUCHES).gte('observed_at', since)
+      .order('observed_at', { ascending: false }).limit(1000);
+    if (error) throw new Error(`touches read failed: ${error.message}`);
+    rows.push(...(data ?? []));
+  }
+  return rows;
+}
+
+async function setTracking(supabase, rec, patch, now) {
+  const at = new Date(now).toISOString();
+  const evidence = { ...(rec.evidence ?? {}), ...patch, tracking: { ...(rec.evidence?.tracking ?? {}), ...(patch.tracking ?? {}), updated_at: at } };
+  // Optimistic lock on updated_at, as claimSubject: of two overlapping passes only one writes.
+  const { data, error } = await supabase.from('ri_recommendations').update({ evidence, updated_at: at })
+    .eq('id', rec.id).eq('updated_at', rec.updated_at).select('id');
+  if (error) throw new Error(`tracking write failed: ${error.message}`);
+  if (!data?.length) return false;
+  rec.evidence = evidence; rec.updated_at = at;
+  return true;
+}
+
+// The ledger fields that are the case's bookkeeping, not its origin: never copied onto a nudge's decision.
+const BOOKKEEPING = ['action_id', 'outcome', 'outcome_at', 'failures', 'tracking', 'attempt_fingerprint', 'attempt_at', 'reason', 'drafted_at', 'snoozed_until', 'snoozed_action_id', 'existing_action_id'];
+
+/**
+ * May this nudge be written now, by the first draft's sender? The same gates a first draft passes
+ * (draftOne): still a member, drafting not switched off, no rule against email outreach, no email
+ * already waiting for the person. Returns null when it may, else the reason.
+ */
+async function nudgeBlocked(supabase, workspaceId, first, deps, members) {
+  const m = members.find((x) => x.user_id === first.user_id);
+  if (!m) return 'no_sender';
+  if (m.agent_prefs?.home?.auto_draft === false) return 'sender_opted_out';
+  try {
+    const binding = await deps.bindingConstraints(supabase, workspaceId, { userId: first.user_id, actionType: 'email_send', category: 'outreach' });
+    if (binding.length) return 'blocked_by_constraint';
+  } catch (e) {
+    console.warn('[detectorDrafts] constraint check failed, allowing:', e?.message);
+  }
+  const { data: waiting, error } = await supabase.from('pending_actions').select('id')
+    .eq('workspace_id', workspaceId).eq('entity_id', first.entity_id).eq('kind', 'email').eq('status', 'pending').limit(1);
+  if (error) throw new Error(`open drafts read failed: ${error.message}`);
+  if (waiting?.length) return 'recipient_has_open_draft';
+  return null;
+}
+
+/** Draft the one nudge for a case. Returns the new action, or null when it could not be drafted. */
+async function draftNudge(supabase, workspaceId, rec, first, deps, voices) {
+  // (The caller has claimed the case and checked nudgeBlocked.)
+  const profile = await deps.loadMemberProfile(supabase, workspaceId, first.user_id);
+  const memberBlock = deps.buildMemberBlock(profile, { includePrefs: false });
+  const resp = await deps.createMessage({
+    meter: false,
+    feature: DRAFT_FEATURE, tier: 'writing', max_tokens: 600,
+    system: draftSystem({ memberBlock, voice: voiceFor({ automation: rec.rec_key.replace(/^automation\./, '') }, voices) }),
+    messages: [{ role: 'user', content: nudgeRequest(first) }],
+  });
+  deps.trackLlmUsage(supabase, { workspaceId, userId: first.user_id, feature: DRAFT_FEATURE, model: resp.model, usage: resp.usage });
+  const { body } = parseEmailDraft(deps.messageText(resp));
+  if (!body) return null;
+  const row = {
+    workspace_id: workspaceId, user_id: first.user_id, kind: 'email', entity_id: first.entity_id,
+    recipient: first.recipient, recipient_email: first.recipient_email, subject: reSubject(first.subject), body,
+    rationale: `No reply in ${NUDGE_DAYS} days to "${first.subject ?? 'your email'}"`, rec_id: rec.id,
+  };
+  let { data: action, error } = await supabase.from('pending_actions').insert(row).select('*').single();
+  // pending_actions.rec_id is hand-applied (see draftOne): without it the nudge cannot point at its case.
+  if (error && /rec_id|42703|PGRST204/i.test(`${error.message} ${error.code ?? ''}`)) return { blocked: 'no_rec_id' };
+  if (error) throw new Error(`nudge insert failed: ${error.message}`);
+  return action;
+}
+
+/**
+ * Track every sent Deal signals move in the workspace: close the ones that moved, nudge the ones
+ * that went quiet, close a nudge that went quiet too. `room` is how many model calls the day's cap
+ * still allows. Returns { moved, nudged, quiet, waiting, spent }.
+ */
+export async function trackSignalMoves(supabase, workspaceId, { ledger, now = Date.now(), loadDeps, room = Infinity, loadVoices = async () => null }) {
+  const out = { moved: 0, nudged: 0, quiet: 0, waiting: 0, spent: 0 };
+  const open = [...ledger.values()].filter((r) => SIGNAL_REC_KEYS.has(r.rec_key) && r.evidence?.action_id
+    && r.evidence?.outcome === 'drafted' && !CLOSED.has(r.evidence?.tracking?.state));
+  if (!open.length) return out;
+  const actions = await loadActions(supabase, workspaceId,
+    open.flatMap((r) => [r.evidence.action_id, r.evidence.tracking?.first_action_id]).filter(Boolean));
+  const firstOf = ({ rec, action }) => actions.get(rec.evidence?.tracking?.first_action_id) ?? action;
+  const cases = open.map((rec) => ({ rec, action: actions.get(rec.evidence.action_id) })).filter(({ action }) => action);
+  const at = new Date(now).toISOString();
+
+  // Closed without a send: the first draft skipped or failed (the case never started), or the
+  // nudge skipped or failed (the case ends there). Neither is tracked again.
+  for (const c of cases.filter(({ action }) => ['rejected', 'failed'].includes(action.status))) {
+    const nudged = c.rec.evidence?.tracking?.state === 'nudged';
+    const state = nudged ? 'quiet' : 'skipped';
+    const reason = `${nudged ? 'nudge' : 'draft'}_${c.action.status === 'rejected' ? 'skipped' : 'failed'}`;
+    try { if (await setTracking(supabase, c.rec, { tracking: { state, reason, closed_at: at } }, now)) out.quiet += nudged ? 1 : 0; }
+    catch (e) { console.error('[detectorDrafts] tracking failed', workspaceId, c.rec.id, e?.message); }
+  }
+
+  const live = cases.filter(({ action }) => action.status === 'sent');
+  if (!live.length) return out;
+  const since = live.map((x) => { const f = firstOf(x); return f.decided_at ?? f.created_at; }).sort()[0];
+  const touches = await loadTouches(supabase, workspaceId,
+    live.flatMap(({ rec, action }) => [action.entity_id, rec.evidence?.trigger?.research?.contact_id]), since);
+  let deps = null;
+  let members = null;
+  let credited = null;
+  for (const c of live) {
+    const { rec, action } = c;
+    const nudged = rec.evidence?.tracking?.state === 'nudged';
+    try {
+      // Anything since the FIRST send counts as the move; the quiet window runs from the latest send.
+      const first = firstOf(c);
+      const t = trackMove({
+        sentAt: first.decided_at ?? first.created_at, dueFrom: action.decided_at ?? action.created_at,
+        recipientId: action.entity_id, joinerId: rec.evidence?.trigger?.research?.contact_id ?? null, touches, now,
+      });
+      if (t.state === 'moved') {
+        if (await setTracking(supabase, rec, { tracking: { state: 'moved', how: t.how, at: t.at, closed_at: at } }, now)) out.moved += 1;
+        continue;
+      }
+      if (t.state !== 'due') { out.waiting += 1; continue; }
+      if (nudged) {
+        if (await setTracking(supabase, rec, { tracking: { state: 'quiet', reason: 'no_reply', closed_at: at } }, now)) out.quiet += 1;
+        continue;
+      }
+      if (out.spent >= room) { out.waiting += 1; continue; }
+      deps ??= await loadDeps();
+      members ??= await loadMembers(supabase, workspaceId);
+      const blocked = await nudgeBlocked(supabase, workspaceId, action, deps, members);
+      if (blocked) {
+        // Nothing to write today. The person already has a draft waiting or the sender switched
+        // drafting off: look again next pass, at no cost. Anything else closes the case.
+        if (blocked === 'recipient_has_open_draft' || blocked === 'sender_opted_out') { out.waiting += 1; continue; }
+        if (await setTracking(supabase, rec, { tracking: { state: 'quiet', reason: blocked, closed_at: at } }, now)) out.quiet += 1;
+        continue;
+      }
+      credited ??= await deps.requireAiCredits(supabase, workspaceId);
+      if (!credited.ok) { out.waiting += 1; continue; }
+      // Claim the case before spending: of two overlapping passes only one drafts the nudge.
+      if (!(await setTracking(supabase, rec, { tracking: { state: 'nudging', first_action_id: action.id, claimed_at: at } }, now))) continue;
+      out.spent += 1;
+      let nudge = null;
+      try { nudge = await draftNudge(supabase, workspaceId, rec, action, deps, await loadVoices()); }
+      catch (e) { console.error('[detectorDrafts] nudge failed', workspaceId, rec.id, e?.message); }
+      if (!nudge?.id) {
+        // One try per case: a nudge that cannot be written closes the case rather than paying again every hour.
+        await setTracking(supabase, rec, { tracking: { state: 'quiet', reason: nudge?.blocked ?? 'nudge_failed', closed_at: at } }, now);
+        out.quiet += 1;
+        continue;
+      }
+      await setTracking(supabase, rec, {
+        action_id: nudge.id, drafted_at: at,
+        tracking: { state: 'nudged', first_action_id: action.id, nudge_action_id: nudge.id, nudged_at: at },
+      }, now);
+      out.nudged += 1;
+      try {
+        const payload = Object.fromEntries(Object.entries(rec.evidence ?? {}).filter(([k]) => !BOOKKEEPING.includes(k)));
+        await deps.mirrorDraftAsDecision(supabase, workspaceId, nudge, {
+          actionType: 'email_send', category: 'outreach', surface: 'automation', agent: rec.rec_key.replace(/^automation\./, ''),
+          payload: { ...payload, contact_id: action.entity_id, nudge: true },
+        });
+      } catch (e) {
+        console.warn('[detectorDrafts] nudge decision mirror failed:', e?.message);
+      }
+    } catch (e) {
+      console.error('[detectorDrafts] tracking failed', workspaceId, rec.id, e?.message);
+    }
+  }
+  return out;
+}
+
+const CLOSED = new Set(['moved', 'quiet', 'skipped']);
+
+async function loadMembers(supabase, workspaceId) {
+  let { data, error } = await supabase.from('workspace_members').select('user_id, agent_prefs').eq('workspace_id', workspaceId);
+  // agent_prefs is hand-applied (see the pass below); without it nobody has opted out.
+  if (error && /agent_prefs|42703|PGRST204/i.test(`${error.message} ${error.code ?? ''}`)) {
+    ({ data, error } = await supabase.from('workspace_members').select('user_id').eq('workspace_id', workspaceId));
+  }
+  if (error) throw new Error(`members read failed: ${error.message}`);
+  return data ?? [];
 }
 
 // Everything with a side effect or a network hop, injectable so the tests can run the whole pass
@@ -977,14 +1250,28 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
   const ledger = await loadLedger(supabase, workspaceId);
   const room = Math.max(0, opts.dailyCap - draftedToday([...ledger.values()], now));
   const summary = { workspaceId, firings: 0, drafted: 0, skipped: {}, outcomes: {}, plan: [] };
-  if (!room && !dryRun) { summary.skipped.daily_cap = 'reached'; return summary; }
+  // After Send (GET-949): the sent signal moves are tracked first, on the Deal signals pass. A nudge
+  // is a model call, so it shares the day's cap with the drafts below.
+  // The team's email voice per built-in (GET-902), read at most once for the pass, when a draft
+  // needs it. Unreadable: none, and the drafts read as they always did.
+  let voicesP = null;
+  const loadVoices = () => (voicesP ??= Promise.resolve().then(() => deps.emailVoices?.(supabase, workspaceId))
+    .then((v) => v ?? new Map(), (e) => { console.warn('[detectorDrafts] email voice unreadable:', e?.message); return new Map(); }));
+  let room2 = room;
+  if (!dryRun && (!opts.only || opts.only.includes('deal_signal'))) {
+    // The model client loads only when a nudge is actually due.
+    const loadDeps = async () => (given?.createMessage ? deps : { ...(await apiDeps()), ...deps });
+    summary.tracking = await trackSignalMoves(supabase, workspaceId, { ledger, now, loadDeps, room, loadVoices });
+    room2 = Math.max(0, room - summary.tracking.spent);
+  }
+  if (!room2 && !dryRun) { summary.skipped.daily_cap = 'reached'; return summary; }
 
   const actionIds = [...ledger.values()].map((r) => r.evidence?.action_id).filter(Boolean);
   const pendingActionIds = await pendingAmong(supabase, workspaceId, actionIds);
   const gateCtx = { ...opts, now, pendingActionIds };
   const gate = (f) => gateFiring(f, ledger.get(ledgerKey(f)) ?? null, gateCtx).ok;
 
-  const { firings, internalIds } = await detectFirings(supabase, workspaceId, { now, opts, want: Math.max(room, 1), deps, gate });
+  const { firings, internalIds } = await detectFirings(supabase, workspaceId, { now, opts, want: Math.max(room2, 1), deps, gate });
   summary.firings = firings.length;
   if (!firings.length) return summary;
 
@@ -992,7 +1279,7 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
   const { draft, skipped } = planDrafts(firings, ledger, { ...gateCtx, dailyCap: undefined });
   for (const s of skipped) summary.skipped[s.reason] = (summary.skipped[s.reason] ?? 0) + 1;
   if (dryRun) {
-    summary.room = room;
+    summary.room = room2;
     summary.plan = draft.map((f) => ({ automation: f.automation, target: `${f.targetType}:${f.targetId}`, account: f.accountName, why: f.why }));
     return summary;
   }
@@ -1014,15 +1301,13 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
   if (!members?.length) { summary.skipped.no_members = draft.length; return summary; }
   // The team's email voice per built-in (GET-902), read once for the pass. Unreadable: none, and the
   // drafts read as they always did.
-  let voices = new Map();
-  try { voices = (await deps.emailVoices?.(supabase, workspaceId)) ?? new Map(); }
-  catch (e) { console.warn('[detectorDrafts] email voice unreadable:', e?.message); }
+  const voices = await loadVoices();
 
   // The day's cap is charged where a model call is made. A firing that ends before one (nobody to
   // write to, a draft already waiting, the sender opted out) costs nothing and takes no slot.
   let spent = 0;
   for (const firing of draft) {
-    if (spent >= room) { summary.skipped.daily_cap = (summary.skipped.daily_cap ?? 0) + 1; continue; }
+    if (spent >= room2) { summary.skipped.daily_cap = (summary.skipped.daily_cap ?? 0) + 1; continue; }
     const state = ledger.get(ledgerKey(firing)) ?? null;
     const recId = await claimSubject(supabase, workspaceId, firing, state, now);
     if (!recId) { summary.skipped.in_progress = (summary.skipped.in_progress ?? 0) + 1; continue; }

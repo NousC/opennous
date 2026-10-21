@@ -69,7 +69,9 @@ export async function listEvents(supabase, workspaceId, { type = null, entityId 
     if (!data) return { events: [], has_more: false, unknown_cursor: true };
     cursor = data;
   }
-  let q = supabase.from('event_log').select('id, created_at, payload').eq('workspace_id', workspaceId);
+  let q = supabase.from('event_log').select('id, created_at, payload').eq('workspace_id', workspaceId)
+    // Logged before GET-967, when a next step agreed was still an event: a task, not news.
+    .neq('type', 'signal.next_step');
   if (type?.endsWith('.*')) q = q.like('type', `${type.slice(0, -1)}%`);
   else if (type) q = q.eq('type', type);
   if (entityId) q = q.eq('entity_id', entityId);

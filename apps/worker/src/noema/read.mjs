@@ -61,6 +61,7 @@ export async function read({
   let msg;
   try {
     msg = await createMessage({
+      meter: false,
       feature,
       tier,
       model: model ?? (tier === 'extraction' ? pipelineModel() : undefined),

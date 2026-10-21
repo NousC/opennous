@@ -78,7 +78,9 @@ export async function adoptStagesAfterSync(supabase, workspaceId, provider, toke
 }
 
 /** Providers whose connect starts live ingest only — no history, no workspace backfill. */
-const LIVE_ONLY_ON_CONNECT = new Set(['fellow', 'ringcentral']);
+// PostHog (GET-751): its own history is the usage pull (pollers/posthog.mjs, within the hour of a
+// connect), and its users are not conversations for the backfill to look for.
+const LIVE_ONLY_ON_CONNECT = new Set(['fellow', 'ringcentral', 'posthog']);
 
 const DAY = 86400000;
 /** How far back a connect-time CRM import reaches: accounts touched inside this, and their conversations. */

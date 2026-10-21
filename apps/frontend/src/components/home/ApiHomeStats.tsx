@@ -49,7 +49,7 @@ function Card({ label, children, className }: { label: string; children: React.R
 
 const value = "text-[20px] font-medium tabular-nums tracking-[-0.02em] text-foreground";
 
-type ReadCounts = { read?: { accounts_analysed?: number; meetings_transcribed?: number; email_threads_read?: number; calls_recorded?: number } } | null;
+type ReadCounts = { read?: { accounts_analysed?: number; meetings_transcribed?: number; email_threads_read?: number; slack_conversations_read?: number; calls_recorded?: number } } | null;
 
 /**
  * `readDays` (Activity, GET-660) adds a fourth card: what reached a model in the ledger's window —
@@ -73,6 +73,7 @@ export function ApiHomeStats({ readDays }: { readDays?: number | null } = {}) {
   const readCounts = !withReads || !r ? [] : [
     { n: r.meetings_transcribed ?? 0, label: "meetings" },
     { n: r.email_threads_read ?? 0, label: "email threads" },
+    { n: r.slack_conversations_read ?? 0, label: "Slack conversations" },
     { n: r.calls_recorded ?? 0, label: "calls" },
     ...(isApiTier(plan) ? [] : [{ n: r.accounts_analysed ?? 0, label: "accounts" }]),
   ].filter((c) => c.n > 0);

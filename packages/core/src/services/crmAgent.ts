@@ -29,7 +29,7 @@ import type { ActivityHook } from '../db/activities.js';
 import { notifyCrmPushNow } from '../db/activities.js';
 import { proposeDecision, recordVerdict } from '../db/decisions.mjs';
 import { linkObservationToDeals } from '../db/observationDeals.js';
-import { crmDealState } from './dealRollup.js';
+import { crmDealState, type CrmDealState } from './dealRollup.js';
 import { stageEnteredAt, type DealStageObservation } from '../integrations/crm/index.js';
 
 type HookCtx = Parameters<ActivityHook>[0];
@@ -161,6 +161,45 @@ async function readAll<T>(
     out.push(...(data ?? []));
     if (!data || data.length < 1000) return out;
   }
+}
+
+/**
+ * Every CRM deal in the workspace, boiled down to which outcomes each account holds:
+ * company entity id -> the set of 'open' | 'won' | 'lost' across its deals. The open book reads
+ * this so an account whose CRM deals are all closed stops counting as an open deal (GET-835).
+ * An account with no CRM deal isn't in the map at all. Outcome is crmDealState, same as the
+ * workspace deal list, so a deal is never closed on one screen and open in the forecast.
+ */
+export async function loadCrmDealStatesByAccount(
+  supabase: SupabaseClient,
+  workspaceId: string,
+): Promise<Map<string, Set<CrmDealState>>> {
+  const out = new Map<string, Set<CrmDealState>>();
+  const ents = await readAll<{ id: string }>((from, to) => supabase.from('entities').select('id')
+    .eq('workspace_id', workspaceId).eq('type', 'deal').order('id').range(from, to));
+  const ids = ents.map(e => e.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const batch = ids.slice(i, i + 200);
+    const [claimRows, edges] = await Promise.all([
+      readAll<{ entity_id: string; property: string; value: unknown }>((from, to) => supabase.from('claims')
+        .select('entity_id, property, value')
+        .eq('workspace_id', workspaceId).in('entity_id', batch).in('property', ['status', 'stage']).is('invalid_at', null)
+        .order('id').range(from, to)),
+      readAll<{ from_entity_id: string; to_entity_id: string }>((from, to) => supabase.from('relationships')
+        .select('from_entity_id, to_entity_id')
+        .eq('workspace_id', workspaceId).eq('type', 'belongs_to').in('from_entity_id', batch).is('valid_to', null)
+        .order('id').range(from, to)),
+    ]);
+    const status = new Map<string, string | null>();
+    const stage = new Map<string, string | null>();
+    for (const c of claimRows) (c.property === 'status' ? status : stage).set(c.entity_id, str(c.value));
+    for (const e of edges) {
+      // No status and no stage reads as open, like the deal list: missing data never closes a deal.
+      const state = crmDealState({ status: status.get(e.from_entity_id) ?? null, stage: stage.get(e.from_entity_id) ?? null });
+      (out.get(e.to_entity_id) ?? out.set(e.to_entity_id, new Set()).get(e.to_entity_id)!).add(state);
+    }
+  }
+  return out;
 }
 
 /** Every deal on the account with what the ranker needs. Four reads, batched over the deals. */

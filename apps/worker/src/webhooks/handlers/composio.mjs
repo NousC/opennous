@@ -189,6 +189,25 @@ async function contactsByAnyEmail(supabase, workspaceId, emails) {
 }
 // Match existing contacts only (Gmail never bootstraps new contacts — same rule as the
 // native poller). Attribution owner is the mailbox member (conn.owner_user_id) directly.
+/**
+ * Why an email is not filed yet, or null when it should be (GET-964). Pure.
+ *
+ * A Gmail scheduled send sits in the outbox carrying its planned send time; the scan filed it there
+ * as a sent email stamped hours ahead (written at 01:45, "sent" at 11:17), and everything that reads
+ * an email's time saw the future. A draft or a scheduled message is left for the scan to pick up once
+ * it is really sent. A time more than a few minutes ahead is the same outbox when the list call
+ * carried no labels.
+ */
+const FUTURE_SLACK_MS = 10 * 60_000;
+export function notSentYet({ labels = [], occurredAt = null, now = Date.now() } = {}) {
+  const ls = new Set((labels ?? []).map(l => String(l).toUpperCase()));
+  if (ls.has('SCHEDULED')) return 'scheduled';
+  if (ls.has('DRAFT')) return 'draft';
+  const at = occurredAt ? Date.parse(occurredAt) : NaN;
+  if (Number.isFinite(at) && at > now + FUTURE_SLACK_MS) return 'future';
+  return null;
+}
+
 export async function ingestGmail(supabase, conn, data, { triggerSlug = '' } = {}) {
   const workspaceId = conn.workspace_id;
   const ownerUserId = conn.owner_user_id || null;
@@ -218,6 +237,11 @@ export async function ingestGmail(supabase, conn, data, { triggerSlug = '' } = {
   // from the second founder's inbox as "received from" the first filed it on the sender's own record instead of the
   // prospect's. Gmail's SENT label marks this mailbox's own sends; a teammate's address marks the rest.
   const labels = [].concat(pick(data, 'labelIds', 'label_ids') || []).map(String);
+  const unsent = notSentYet({ labels, occurredAt });
+  if (unsent) {
+    console.log(`[composio/gmail] ${messageId} not filed yet: ${unsent} (${occurredAt})`);
+    return 0;
+  }
   const sentHere = triggerSlug.includes('SENT') || labels.includes('SENT') || Boolean(mailbox && fromAddr === mailbox);
   const internalEmails = await internalEmailSet(supabase, workspaceId, mailbox);
   const sentByTeam = sentHere || internalEmails.has(fromAddr);

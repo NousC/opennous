@@ -21,6 +21,7 @@ const DEFAULT_CONTACT = process.env.CONTACT_ID || '00000000-0000-0000-0000-00000
 // by the same bar so the backfill and the writer agree on what a fact is.
 async function judge(supabase, workspaceId, content) {
   const msg = await createMessage({
+    meter: false,
     feature: 'facts-backfill-judge',
     max_tokens: 10,
     accept: (t) => /\b(KEEP|PURGE)\b/i.test(t),

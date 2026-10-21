@@ -7,8 +7,60 @@
 // Insights docs (never onto a contact's account). Runs once per call.
 
 import { setUser } from 'useleak';
-import { appendInsights, buildInsightExtractionPrompt, parseInsightsJson, loadWorkspaceContext, buildTeamInsightExtractionPrompt, appendTeamInsights, listInsightTopics, formatWatchTopics } from '@nous/core';
+import { appendInsights, buildInsightExtractionPrompt, parseInsightsJson, loadWorkspaceContext, buildTeamInsightExtractionPrompt, appendTeamInsights, listInsightTopics, formatWatchTopics, embedBatch } from '@nous/core';
 import { read, parseArray, acceptsArray } from '../noema/read.mjs';
+import { externalEvidence } from '../noema/externalEvidence.mjs';
+import { groundQuote, spokenByOurSide } from '../noema/grounding.mjs';
+
+// ── Evidence (GET-974) ───────────────────────────────────────────────────────
+//
+// An insight rests on the customer's own words; the prompt says so, and now code checks it. Claims
+// have gone through the verbatim quote check since GET-329; insights went onto the page as "receipts"
+// unchecked. An insight whose quote is not in the source, or is a line our own side spoke, is dropped.
+// The caller passes what a quote may rest on: the transcript of a call, their side of a thread.
+export function groundInsights(items, { sourceText, transcript = sourceText, ourNames = [] } = {}) {
+  const kept = [];
+  let dropped = 0;
+  for (const it of items ?? []) {
+    const quote = typeof it?.quote === 'string' ? groundQuote(it.quote, sourceText) : null;
+    if (!quote || (ourNames.length && spokenByOurSide(quote, transcript, ourNames))) { dropped++; continue; }
+    kept.push({ ...it, quote });
+  }
+  return { kept, dropped };
+}
+
+// A re-read of the same source must not file a point again (GET-974). One email thread, read again
+// on every new reply, filed "activity summaries in Slack" about fourteen times, each reworded, which
+// the 80-character text key cannot see. Measured on that workspace's insights: rewordings of one
+// point sat at 0.85 and above, and nothing different came close. Only the SAME source counts: the
+// same point from another account is the pattern insights exist to count, so it is kept.
+export const INSIGHT_REPEAT_SIMILARITY = 0.85;
+const cosine = (a, b) => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; } return x && y ? d / Math.sqrt(x * y) : 0; };
+
+/** The items that are not repeats: of one already filed from this source, or of each other. Pure. */
+export function newInsights(items, itemVecs, existing, existingVecs, threshold = INSIGHT_REPEAT_SIMILARITY) {
+  const out = [], outVecs = [];
+  (items ?? []).forEach((it, i) => {
+    const vec = itemVecs?.[i];
+    if (!vec) { out.push(it); return; }
+    const near = (cat, vecs, rows) => rows.some((r, k) => r.category === cat && vecs[k] && cosine(vec, vecs[k]) >= threshold);
+    if (near(it.category, existingVecs ?? [], existing ?? []) || near(it.category, outVecs, out)) return;
+    out.push(it); outVecs.push(vec);
+  });
+  return out;
+}
+
+async function withoutRepeats(supabase, workspaceId, items, sourceRef) {
+  if (!items.length) return items;
+  const { data: existing } = sourceRef
+    ? await supabase.from('insight_items').select('category, statement').eq('workspace_id', workspaceId).eq('source_ref', sourceRef).limit(200)
+    : { data: [] };
+  const old = existing ?? [];
+  if (!old.length && items.length < 2) return items;
+  const vecs = await embedBatch([...items.map(i => i.content), ...old.map(e => e.statement)]).catch(() => null);
+  if (!vecs) return items;   // no embeddings: file them; the text key still catches exact copies
+  return newInsights(items, vecs.slice(0, items.length), old, vecs.slice(items.length));
+}
 
 
 // The insights pass reads the whole transcript once per call. It goes through the model door like
@@ -70,9 +122,9 @@ export async function readCallInsightItems({ supabase, workspaceId, transcript, 
 
 // onResult({ ok, reason }) — whether the model was reached: the Gmail reader holds its read marker
 // when it was not, so an outage does not mark a thread done without its insights.
-export async function extractCallInsights({ supabase, workspaceId, transcript, sourceLabel, attendees, occurredAt, sourceRef, sourceSystem, onResult = null }) {
+export async function extractCallInsights({ supabase, workspaceId, transcript, sourceLabel, attendees, occurredAt, sourceRef, sourceSystem, onResult = null, evidenceMessages = null, structuredOnly = false, minTranscriptChars = 200, groundAgainst = null, ourNames = [] }) {
   try {
-    if (!transcript || transcript.length < 200) return 0; // thin calls rarely hold a real insight
+    if (!transcript || transcript.length < minTranscriptChars) { onResult?.({ ok: true, reason: 'thin_source' }); return 0; }
     setUser({ id: String(workspaceId) });
 
     // Ground the extraction in who WE are. Without the workspace's own context the model
@@ -81,6 +133,7 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
     // SKIP — an ungrounded insight folder is worse than an empty one.
     const workspaceContext = await loadWorkspaceContext(supabase, workspaceId).catch(() => null);
     if (!workspaceContext) {
+      onResult?.({ ok: true, reason: 'no_workspace_context' });
       console.log(`[INSIGHT_EXTRACTOR] skipped — workspace ${workspaceId} has no ICP/positioning context to attribute against`);
       return 0;
     }
@@ -91,10 +144,17 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
     // than a call that looks like it held no insight at all (GET-320).
     onResult?.(result.ok ? { ok: true } : { ok: false, reason: result.reason });
     if (!result.ok) return 0;
-    const items = result.value;
+    let items;
+    if (evidenceMessages !== null) items = externalEvidence(result.value, evidenceMessages);
+    else {
+      const g = groundInsights(result.value, { sourceText: groundAgainst ?? transcript, transcript, ourNames });
+      if (g.dropped) console.log(`[INSIGHT_EXTRACTOR] ${g.dropped} of ${result.value.length} insight(s) dropped: quote not in the source, or ours (${sourceRef ?? 'no ref'})`);
+      items = g.kept;
+    }
+    items = await withoutRepeats(supabase, workspaceId, items, sourceRef);
     if (items.length === 0) return 0;
 
-    return await appendInsights(supabase, workspaceId, items.slice(0, 8), { sourceLabel, occurredAt, sourceRef, sourceSystem });
+    return await appendInsights(supabase, workspaceId, items.slice(0, 8), { sourceLabel, occurredAt, sourceRef, sourceSystem, structuredOnly, strict: evidenceMessages !== null });
   } catch (err) {
     console.warn('[INSIGHT_EXTRACTOR_ERROR]', err.message);
     onResult?.({ ok: false, reason: /unavailable|402|429|5\d\d/i.test(String(err?.message)) || err?.name === 'ModelUnavailableError' ? 'unavailable' : 'error' });

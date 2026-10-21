@@ -3,7 +3,8 @@
 // record/DealHealthCard.tsx since GET-609.)
 // One copy of each, so a deal reads exactly like the account it belongs to.
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { SlackText } from "@/components/record/SlackText";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronDown, Circle, CheckCircle2, ExternalLink, Phone, Mail, Plus } from "lucide-react";
 import { EntityAvatar } from "@/components/EntityAvatar";
 import { ActivityIcon } from "@/components/mind/entities";
@@ -54,13 +55,27 @@ export function intelChips(facts: Note[], topics?: IntelTopic[] | null): Chip[] 
     const whole = groups.flat().length === t.facts.flat().length;
     chips.push({ key: `t:${t.label}`, cat: (t.kind || "general").toLowerCase(), topic: { label: t.label, kind: t.kind, summary: whole ? t.summary : null, facts: groups } });
   }
+  // Facts no topic covers: one chip per tool (GET-959). Tech stack and competitor chips are the
+  // tool's name now, so seven HubSpot facts are one "HubSpot" chip holding all seven, not seven chips
+  // that say the same word.
+  const same = new Map<string, { cat: string; label: string; facts: Note[] }>();
   for (const f of facts) {
     if (covered.has(f.id)) continue;
     let cat = (f.category || "general").toLowerCase();
     // A declined expansion is its own section (GET-417): "Customer declined Lumen ID" under a green
     // "expansion signal" heading read as good news. The category is unchanged; the grouping is.
     if (cat === "expansion_signal" && String((f.metadata as { stance?: string } | undefined)?.stance ?? "").toLowerCase() === "declined") cat = "declined expansion";
-    chips.push({ key: f.id, cat, fact: f });
+    // Only where the chip IS the thing (a tool, a competitor): two champions or two budget facts
+    // that share a label are still two different facts.
+    const label = f.label?.trim();
+    const key = label && (cat === "tech_stack" || cat === "competitor") ? `${cat}|${label.toLowerCase()}` : `id|${f.id}`;
+    const g = same.get(key);
+    if (g) g.facts.push(f); else same.set(key, { cat, label: label ?? "", facts: [f] });
+  }
+  for (const [key, g] of same) {
+    chips.push(g.facts.length === 1
+      ? { key: g.facts[0].id, cat: g.cat, fact: g.facts[0] }
+      : { key: `l:${key}`, cat: g.cat, topic: { label: g.label, kind: g.cat, summary: null, facts: g.facts.map(f => [f]) } });
   }
   return chips;
 }
@@ -290,7 +305,7 @@ export function TaskRow({ t, checked: checkedProp, onToggle, personOf, showQuote
           {t.description && !checked && <p className="mt-0.5 text-[12.5px] leading-snug text-muted-foreground/70">{t.description}</p>}
           {showQuote && typeof t.quote === "string" && t.quote.trim() && (
             <span className={cn("mt-1 block border-l-2 border-border pl-2 text-[12px] italic leading-snug line-clamp-2 [overflow-wrap:anywhere]", checked ? "text-muted-foreground/45" : "text-muted-foreground/75")}>
-              “{t.quote.trim()}”
+              “<SlackText text={String(t.quote.trim())} />”
               {(t.stated_by === "them" || t.stated_by === "us") && (
                 <span className="not-italic text-muted-foreground/50"> · {t.stated_by === "them" ? "they said" : "we said"}</span>
               )}
@@ -571,6 +586,7 @@ const nameOfAddress = (a?: string | null) => {
   return (m ? m[1] : s.split("@")[0] || s).trim() || null;
 };
 
+/** Display metadata never replaces the original Slack message evidence. */
 export function ActivityRow({ a }: { a: any }) {
   const [open, setOpen] = useState(false);
   const raw = a.raw_data ?? {};
@@ -581,8 +597,10 @@ export function ActivityRow({ a }: { a: any }) {
   // Who the counterpart is, so "email sent" never reads as if THEY sent it.
   const other = a.contactName
     || (type === "email_sent" ? nameOfAddress((raw.to ?? [])[0]) : nameOfAddress(raw.from));
+  const isSlack = /^slack_(message|dm)$/.test(type);
   const label = isEmail
     ? `${type === "email_sent" ? "Email sent to" : "Email from"} ${other ?? "someone"}`
+    : isSlack ? `Slack message ${raw.is_outbound === true ? "to" : "from"} ${a.contactName ?? "someone"}`
     : sentenceCat(type) || "Activity";
   // Someone else's email: the row stays (it is real activity on this account) but its words are
   // only for the people who were on it. Say that, rather than "no text" — which reads as empty.
@@ -602,7 +620,7 @@ export function ActivityRow({ a }: { a: any }) {
       )}
       {!hidden && body && (
         <div className="mt-0.5 pl-[34px]">
-          <p className={cn("text-[12.5px] leading-relaxed text-muted-foreground/90 whitespace-pre-wrap", !open && "line-clamp-2")}>{body}</p>
+          <p className={cn("text-[12.5px] leading-relaxed text-muted-foreground/90 whitespace-pre-wrap", !open && "line-clamp-2")}>{type === "slack_message" ? <SlackText text={body} mentions={raw.slack_mentions} /> : body}</p>
           {long && (
             <button onClick={() => setOpen(o => !o)} className="mt-1 text-[11.5px] text-muted-foreground/60 hover:text-foreground transition-colors">
               {open ? "Show less" : "Show more"}

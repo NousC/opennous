@@ -7,7 +7,7 @@
 import './bootEnv.mjs'; // first — normalizes APP_URL/API_URL from domains before any module reads them
 import express from 'express';
 import cron from 'node-cron';
-import { runAutomationDailyPoll, emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, pruneWebhookDeliveries, pruneEventLog, reconcileAfterCallWebhooks, processAccountSignals, processHubspotFieldChanges, registerStepHandler } from '@nous/core';
+import { runAutomationDailyPoll, emitDealEventsPoll, emitStalledDealsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, pruneWebhookDeliveries, pruneEventLog, reconcileAfterCallWebhooks, processAccountSignals, detectNextStepSignalsPoll, processHubspotFieldChanges, processPostHogEvents, registerStepHandler } from '@nous/core';
 
 import { runFlagSweepCron } from './flags/sweep.mjs';
 import {
@@ -28,6 +28,7 @@ import { pollAllSmtpWorkspaces } from './pollers/smtp.mjs';
 import { pollAllGranolaWorkspaces } from './pollers/granola.mjs';
 import { pollAllFellowWorkspaces } from './pollers/fellow.mjs';
 import { pollAllRingCentralWorkspaces } from './pollers/ringcentral.mjs';
+import { pollPostHogUsage } from './pollers/posthog.mjs';
 import { pollNotetakers } from './pollers/notetakers.mjs';
 import { backfillComposioConnection } from './services/composioBackfill.mjs';
 import { webhookRouter, cloudWebhookRouter } from './webhooks/index.mjs';
@@ -373,6 +374,13 @@ async function runRingCentralPoller() {
 }
 cron.schedule('2-59/5 * * * *', runRingCentralPoller);
 console.log('[WORKER] RingCentral poller — every 5 min');
+
+// ── PostHog usage — hourly, each connection once a day (GET-751) ──────────────
+// Hourly so a new connection gets its first pull within the hour; a connection pulled in the
+// last 20 hours is skipped. No-op when nobody has PostHog connected.
+cron.schedule('41 * * * *', () => pollPostHogUsage().catch(err =>
+  console.error('[WORKER] PostHog usage error:', err.message)));
+console.log('[WORKER] PostHog usage — hourly at :41, once a day per connection');
 
 // ── Pipeline stage decay — daily at 03:00 UTC ────────────────────────────────
 async function runPipelineDecay() {
@@ -921,6 +929,12 @@ cron.schedule('17 * * * *', () => emitDealEventsPoll().catch(err =>
   console.error('[WORKER] deal events error:', err.message)));
 console.log('[WORKER] Deal events — hourly at :17');
 
+// deal.stalled (GET-950): an open deal past its stage window with no touch, and no meeting booked.
+// Every six hours for every workspace; one event per deal per stage stint, so a re-read sends nothing twice.
+cron.schedule('47 */6 * * *', () => emitStalledDealsPoll().catch(err =>
+  console.error('[WORKER] deal.stalled error:', err.message)));
+console.log('[WORKER] deal.stalled, every 6 hours at :47');
+
 // ICP events (GET-588) — icp.score_changed / icp.tier_changed for the workspaces subscribed to them,
 // from any scorer (Nous's own, or a workspace's own via /v2/scores). Hourly, off the deal pass.
 cron.schedule('37 * * * *', () => emitIcpEventsPoll().catch(err =>
@@ -935,10 +949,22 @@ cron.schedule('2-59/5 * * * *', () => processAccountSignals().catch(err =>
   console.error('[WORKER] account signals error:', err.message)));
 console.log('[WORKER] Account signals — every 5 minutes');
 
+// Next step missed and slipped (GET-954): a next step agreed is a task, but one a day past due with
+// nothing on the account, or one the buyer pushed twice, is a signal. Hourly, as account_signals
+// rows keyed once per step, so the pass above sends them on like any other kind.
+cron.schedule('23 * * * *', () => detectNextStepSignalsPoll().catch(err =>
+  console.error('[WORKER] next step signals error:', err.message)));
+console.log('[WORKER] Next step missed and slipped — hourly at :23');
+
 // When a HubSpot field changes (GET-781): the watched fields' recent history, every 5 minutes.
 cron.schedule('4-59/5 * * * *', () => processHubspotFieldChanges().catch(err =>
   console.error('[WORKER] hubspot field changes error:', err.message)));
 console.log('[WORKER] HubSpot field changes — every 5 minutes');
+
+// When a PostHog event fires (GET-751): the product events the PostHog webhook filed, every 2 minutes.
+cron.schedule('1-59/2 * * * *', () => processPostHogEvents().catch(err =>
+  console.error('[WORKER] posthog events error:', err.message)));
+console.log('[WORKER] PostHog events — every 2 minutes');
 
 cron.schedule('7 * * * *', () => emitPeopleAddedPoll().catch(err =>
   console.error('[WORKER] people.added error:', err.message)));

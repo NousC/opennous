@@ -41,6 +41,7 @@ ${items.map(it => `${it.i}. ${it.content}`).join('\n')}`,
 async function tagBatch(category, items) {
   try {
     const msg = await createMessage({
+      meter: { workspaceId: null },
       feature: 'backfill-claim-context', max_tokens: 1024,
       accept: (t) => /\[[\s\S]*\]/.test(t),
       messages: [{ role: 'user', content: PROMPTS[category](items) }],

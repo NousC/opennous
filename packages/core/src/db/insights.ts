@@ -68,6 +68,10 @@ export interface InsightDoc {
 }
 
 export interface ExtractedInsight {
+  /** Resolved by a source adapter from checked evidence, never guessed by the model. */
+  contactId?: string | null;
+  companyId?: string | null;
+  saidAt?: string | null;
   /** One of the INSIGHT_CATEGORY_KEYS. */
   category: string;
   /** The insight, as one crisp standalone sentence about US. */
@@ -199,7 +203,12 @@ export function parseInsightsJson(text: string): ExtractedInsight[] {
     if (s === -1 || e === -1) return [];
     const arr = JSON.parse(t.slice(s, e + 1));
     if (!Array.isArray(arr)) return [];
-    return arr.filter(x => x && typeof x.content === 'string' && typeof x.category === 'string');
+    return arr.filter(x => x && typeof x.content === 'string' && typeof x.category === 'string').map(item => {
+      // Entity IDs are assigned by a source adapter after checking authorship.
+      // A model response must never supply them for this or another workspace.
+      const { contactId: _contact, companyId: _company, saidAt: _saidAt, ...finding } = item;
+      return finding;
+    });
   } catch {
     return [];
   }
@@ -307,6 +316,9 @@ export async function appendInsights(
      *  a quoted insight can reach the call it came out of. See NewInsightItem.source_ref. */
     sourceRef?: string | null;
     sourceSystem?: string | null;
+    /** Conversation sources with edit/delete reconciliation use the structured store only. */
+    structuredOnly?: boolean;
+    strict?: boolean;
   } = {},
 ): Promise<number> {
   const byCat = new Map<string, ExtractedInsight[]>();
@@ -322,6 +334,7 @@ export async function appendInsights(
   const allRows: ExtractedInsight[] = [];
   for (const [cat, catItems] of byCat) {
     allRows.push(...catItems);
+    if (opts.structuredOnly) continue;
     const existing = await getInsight(supabase, workspaceId, cat);
     const body = existing?.body_md ?? '';
     // Cheap dedup: skip an insight whose leading clause already appears verbatim.
@@ -344,11 +357,13 @@ export async function appendInsights(
   const stored = await upsertInsightItems(supabase, workspaceId, allRows.map(it => ({
     source: 'external', category: normalizeInsightCategory(it.category) || it.category,
     statement: it.content, quote: it.quote ?? null, speaker: it.speaker ?? null,
-    occurred_at: opts.occurredAt ?? null,
+    ...(it.contactId ? { contact_id: it.contactId } : {}),
+    ...(it.companyId ? { company_id: it.companyId } : {}),
+    occurred_at: it.saidAt ?? opts.occurredAt ?? null,
     source_ref: opts.sourceRef ?? null,
     source_system: opts.sourceSystem ?? null,
     kind: normalizeInsightKind((it as { kind?: string }).kind),
-  }))).catch(() => 0);
+  }))).catch(error => { if (opts.strict) throw error; return 0; });
   return Math.max(stored, written);
 }
 
@@ -361,6 +376,8 @@ const INSIGHT_PAGE = 1000;
 const THEME_ID_BATCH = 50;
 
 export interface NewInsightItem {
+  contact_id?: string | null;
+  company_id?: string | null;
   source: InsightSource;
   category: string;
   statement: string;
@@ -418,6 +435,8 @@ export async function upsertInsightItems(
         statement,
         quote: it.quote?.trim() || null,
         speaker: it.speaker?.trim() || null,
+        ...(it.contact_id ? { contact_id: it.contact_id } : {}),
+        ...(it.company_id ? { company_id: it.company_id } : {}),
         occurred_at: it.occurred_at || null,
         source_ref: it.source_ref || null,
         source_system: it.source_system || null,
@@ -456,7 +475,7 @@ export async function listInsightItems(
     let q = supabase
       .from('insight_items')
       .select(ITEM_COLS)
-      .eq('workspace_id', workspaceId);
+      .eq('workspace_id', workspaceId).neq('status', 'source_removed');
     if (opts.source) q = q.eq('source', opts.source);
     const { data, error } = await q
       .order('occurred_at', { ascending: false, nullsFirst: false })
@@ -486,6 +505,7 @@ export async function listUnclusteredInsightItems(
       .from('insight_items')
       .select(ITEM_COLS)
       .eq('workspace_id', workspaceId)
+      .neq('status', 'source_removed')
       .eq('source', source)
       .is('theme_id', null);
     if (category) q = q.eq('category', category);
@@ -517,6 +537,7 @@ export async function listInsightItemsByTheme(
         .from('insight_items')
         .select(`${ITEM_COLS}, theme_id`)
         .eq('workspace_id', workspaceId)
+        .neq('status', 'source_removed')
         .in('theme_id', batch)
         .order('id', { ascending: true })
         .range(from, from + INSIGHT_PAGE - 1);

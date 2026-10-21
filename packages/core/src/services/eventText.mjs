@@ -10,8 +10,13 @@ const LABEL = {
   'signal.buying_signal': 'Buying signal', 'signal.next_step': 'Next step agreed',
   'signal.expansion_signal': 'Expansion signal', 'signal.expansion_declined': 'Expansion declined',
   'signal.churn_risk': 'Churn risk',
+  'signal.next_step_missed': 'Next step missed', 'signal.next_step_slipped': 'Next step slipped',
+  'signal.usage_dropped': 'Usage dropped', 'signal.account_inactive': 'Account inactive',
+  'signal.feature_adopted': 'Feature adopted', 'signal.seat_dropped': 'Seat dropped',
+  'signal.product_qualified': 'Product-qualified', 'signal.seats_growing': 'Seats growing', 'signal.account_activated': 'Account activated',
   'conversation.call_ended': 'Call ended', 'conversation.reply_received': 'Reply received',
-  'deal.won': 'Deal won', 'deal.lost': 'Deal lost', 'deal.stage_changed': 'Stage changed',
+  'deal.won': 'Deal won', 'deal.lost': 'Deal lost', 'deal.stage_changed': 'Stage changed', 'deal.stalled': 'Deal stalled',
+  'account.champion_left': 'Champion left', 'account.expansion_requested': 'Expansion requested',
   'icp.score_changed': 'ICP score changed', 'icp.tier_changed': 'ICP tier changed',
   'people.added': 'People added', 'automation.approval_requested': 'Approval requested',
   'webhook.test': 'Test event',
@@ -23,6 +28,10 @@ const TONE = {
   'deal.lost': 'risk', 'signal.churn_risk': 'risk', 'signal.stakeholder_left': 'risk', 'signal.expansion_declined': 'risk',
   'signal.objection_raised': 'warning', 'signal.competitor_mentioned': 'warning', 'signal.competitor_evaluating': 'warning',
   'signal.budget_discussed': 'warning', 'automation.approval_requested': 'warning',
+  'account.champion_left': 'risk', 'account.expansion_requested': 'positive', 'deal.stalled': 'warning',
+  'signal.next_step_missed': 'risk', 'signal.next_step_slipped': 'warning',
+  'signal.usage_dropped': 'risk', 'signal.account_inactive': 'risk', 'signal.seat_dropped': 'warning', 'signal.feature_adopted': 'positive',
+  'signal.product_qualified': 'positive', 'signal.seats_growing': 'positive', 'signal.account_activated': 'positive',
 };
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
@@ -50,6 +59,13 @@ export function eventSummary(e) {
   if (type === 'conversation.reply_received') return str(d.subject) ?? '';
   if (type === 'deal.won' || type === 'deal.lost') return str(e?.deal?.name) ?? '';
   if (type === 'deal.stage_changed') return str(d.stage) ? `Stage is now ${str(d.stage)}` : '';
+  if (type === 'deal.stalled') return num(d.days_in_stage) != null && str(d.stage) ? `${d.days_in_stage} days in ${str(d.stage)}` : '';
+  if (type === 'account.champion_left') {
+    const who = str(d.person?.name) ?? 'Their champion';
+    const next = str(d.replacement?.name);
+    return next ? `${who} left; ${next} takes over` : `${who} left, no replacement named`;
+  }
+  if (type === 'account.expansion_requested') return str(d.product) ? `Asked for more ${str(d.product)}` : '';
   if (family === 'icp') {
     const from = num(d.from?.score);
     const to = num(d.to?.score);
@@ -82,8 +98,10 @@ export function slackMessage(eventType, payload) {
   const head = `${TONE_EMOJI[eventTone(eventType)]} *${esc(label)}*${account ? ` · ${esc(account)}` : ''}`;
   const lines = [head];
   if (summary) lines.push(esc(summary));
-  const quote = str(e.data?.quote);
-  if (quote) lines.push(`> ${esc(quote)}${str(e.data?.said_by) ? ` — ${esc(e.data.said_by)}` : ''}`);
+  // Signals say said_by; the interpreted events (GET-950) say speaker, or keep both under evidence.
+  const quote = str(e.data?.quote) ?? str(e.data?.evidence?.quote);
+  const by = str(e.data?.said_by) ?? str(e.data?.speaker) ?? str(e.data?.evidence?.speaker);
+  if (quote) lines.push(`> ${esc(quote)}${by ? ` — ${esc(by)}` : ''}`);
   const deal = e.deal ?? null;
   const dealBits = deal ? [str(deal.name), str(deal.stage), money(num(deal.amount), str(deal.currency))].filter(Boolean) : [];
   const context = [dealBits.length ? dealBits.map(esc).join(' · ') : null, `\`${esc(eventType)}\``].filter(Boolean).join('   ');

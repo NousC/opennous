@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseClient, getWorkspaceMemberProfiles, getWorkspaceStages, saveWorkspaceStages } from '@nous/core';
+import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
 import { JOB_ROLES } from './me.mjs';
@@ -95,6 +96,7 @@ workspacesRouter.post('/', verifySupabaseAuth, async (req, res) => {
     if (wsError) throw wsError;
 
     await supabase.from('workspace_members').insert({ workspace_id: newWorkspace.id, user_id: user.id, role: 'owner' });
+    captureProductEvent({ distinctId: user.id, event: 'workspace_created', properties: { source: 'manual' }, workspaceId: newWorkspace.id });
     return res.json({ workspace: newWorkspace });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });

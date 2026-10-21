@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useRef, Suspense, type ReactNode } from "react";
 import { ArrowLeft, Check, RefreshCw, Plus, ExternalLink, Copy, Lock, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlan } from "@/hooks/usePlan";
@@ -14,6 +14,7 @@ import { roleOf } from "@/lib/roles";
 import { fetchGoogleNative, connectNativeGoogle, isGoogleProduct } from "@/lib/googleConnect";
 import { useTopBarCrumbs } from "@/components/shell/topBar";
 import { SourcesToolbar, SourceCard, AddSourceCard, SourceGrid, type ManageAction } from "@/components/integrations/SourceCards";
+import { PostHogEventsDialog } from "@/components/integrations/PostHogEventsDialog";
 import { accountLine, anySyncing, sourceStatus, syncedLabel, type CardConn, type SyncProgress } from "@/components/integrations/sourceCardModel";
 import { AddIntegrationDialog, type TileState } from "@/components/integrations/AddIntegrationDialog";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,9 @@ const COMPOSIO_PROVIDERS = new Set(["gmail_oauth", "google_calendar"]);
 const isComposio = (p: AvailableProvider | null) =>
   !!p && (COMPOSIO_PROVIDERS.has(p.name) || (p as any).managed_by === "composio");
 
+import { cloud } from "@/lib/cloud";
+
+const IntegrationSetup = cloud.integrationSetup;
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
 // Shown for providers whose API can't create a webhook for us (Fireflies, HubSpot).
@@ -643,6 +647,8 @@ export default function Integrations({ embedded = false, connectProvider, chrome
   };
 
   const [disconnecting, setDisconnecting] = useState<string|null>(null);
+  // The PostHog connection whose events are being edited (GET-751).
+  const [posthogEventsFor, setPosthogEventsFor] = useState<string | null>(null);
   // The connection the user is being asked to confirm removing. A real dialog, not the
   // browser's "localhost says" confirm().
   const [confirmDisconnect, setConfirmDisconnect] = useState<IntegrationConn|null>(null);
@@ -779,6 +785,7 @@ export default function Integrations({ embedded = false, connectProvider, chrome
           <div className="text-[13px] text-foreground">{conn.provider?.display_name??conn.name}</div>
           {sub && <div className="text-[12px] text-muted-foreground/70 truncate">{sub}</div>}
         </div>
+        {IntegrationSetup && conn.provider?.name === "slack" && <Suspense fallback={null}><IntegrationSetup provider="slack" token={token} workspaceId={workspaceId} canManage={canManage && isManager} /></Suspense>}
         <span className={`text-[11px] px-2 py-0.5 rounded-md border flex-shrink-0 ${conn.is_verified?"text-emerald-700 border-emerald-200 bg-emerald-50":"text-amber-700 border-amber-200 bg-amber-50"}`}>
           {conn.is_verified ? "Connected" : "Needs auth"}
         </span>
@@ -1261,6 +1268,7 @@ export default function Integrations({ embedded = false, connectProvider, chrome
         { label: oauthish ? "Reconnect" : "Update credentials", onSelect: () => { startConnect(providerOf(conn), conn.name); setAddScope(null); setAddOpen(true); } },
         ...((conn.provider?.name === "calendly" || conn.provider?.name === "cal_com") && conn.webhook_registered
           ? [{ note: "Webhook registered" }] : []),
+        ...(conn.provider?.name === "posthog" ? [{ label: "Edit events", onSelect: () => setPosthogEventsFor(conn.id) }] : []),
         "separator" as const,
         { label: disconnecting === conn.id ? "Removing…" : "Disconnect", destructive: true, disabled: disconnecting === conn.id, onSelect: () => disconnect(conn) },
       ];
@@ -1268,11 +1276,16 @@ export default function Integrations({ embedded = false, connectProvider, chrome
         <SourceCard key={conn.id}
           logoUrl={conn.provider?.logo_url} name={name}
           account={accountLine(conn, workspaceName)}
-          status={sourceStatus(conn)}
+          status={conn.provider?.name === "slack" && conn.is_verified ? { kind: "live", label: "Connected" } : sourceStatus(conn)}
           progress={conn.sync_progress}
           synced={syncedLabel(conn.last_synced_at, conn.created_at)}
           actions={actions}
-          manageHint="Owners and admins manage shared integrations." />
+          manageHint="Owners and admins manage shared integrations.">
+          {IntegrationSetup && conn.provider?.name === "slack" && <Suspense fallback={null}><IntegrationSetup provider="slack" token={token} workspaceId={workspaceId} canManage={canManage && isManager} /></Suspense>}
+          {conn.provider?.name === "posthog" && posthogEventsFor === conn.id && (
+            <PostHogEventsDialog connectionId={conn.id} token={token} open onOpenChange={(o) => { if (!o) setPosthogEventsFor(null); }} />
+          )}
+        </SourceCard>
       );
     };
     const linkedinCards = side === "personal" && showLinkedInRow

@@ -14,6 +14,7 @@
 // each fact with its quote, speaker, channel, date and confidence, linking to the call or email
 // when the fact knows where it came from. The data carries no suggested next step, so the panel
 // offers the two actions a rep takes instead: create a task, ask Nous about it.
+import { SlackText } from "@/components/record/SlackText";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowUpRight, Quote } from "lucide-react";
 import { fallbackLabel } from "@/components/mind/ClaimTag";
@@ -280,7 +281,7 @@ export function IntelBoard({ facts, topics, nameOf, scope, companyId, companyNam
             if (!text || text === now) return null;
             return (
               <div key={n.id} className="min-w-0">
-                <p className="text-[12.5px] leading-snug text-foreground/80 line-clamp-2 [overflow-wrap:anywhere]">{text}</p>
+                <p className="text-[12.5px] leading-snug text-foreground/80 line-clamp-2 [overflow-wrap:anywhere]"><SlackText text={String(text)} /></p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted-foreground/60">
                   {[v ? voiceName(v) : null, ch ? CHANNEL_WORD[ch] : null, n.created_at ? day(n.created_at) : null].filter(Boolean).join(" · ")}
                   {renderSource ? renderSource(n) : factSource(n) ? <><span aria-hidden className="text-border">·</span><FactSourceLink note={n} /></> : null}

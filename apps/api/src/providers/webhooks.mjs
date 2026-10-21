@@ -33,6 +33,8 @@
 
 import crypto from 'crypto';
 import { publicApiBase } from '../lib/publicApiBase.mjs';
+import { posthogSettings, posthogRequest, posthogDestination } from '@nous/core';
+import { assertPublicUrl } from '../lib/ssrf.mjs';
 
 export function workerBaseUrl() {
   return (process.env.WORKER_URL
@@ -536,6 +538,104 @@ async function unsubscribeFellow(apiKey, creds) {
   }
 }
 
+// ── PostHog (GET-751) ──────────────────────────────────────────────────────────────────────
+//
+// An HTTP Webhook destination in their project (PostHog's own template-webhook), filtered to the
+// signup event and their key events, posting to our inbound URL with a secret we generate as the
+// X-Nous-Secret header. Needs the key's Hog function write scope; without it the connection is
+// still worth keeping, because the daily usage pull only needs Query read.
+
+/**
+ * Remove the destinations we created for this workspace before, found by our inbound URL. A
+ * reconnect makes a new one with a new secret; the old one would keep posting to us and be
+ * refused (401) on every event. Best-effort.
+ */
+export async function removeOurPostHogDestinations(apiKey, apiBase, projectId, url, { keepId = null, request = posthogRequest } = {}) {
+  let removed = 0;
+  try {
+    const list = await request(apiKey, apiBase, `/api/projects/${projectId}/hog_functions/?type=destination&limit=200`);
+    for (const fn of list?.results ?? []) {
+      if (!fn?.id || String(fn.id) === String(keepId) || fn.deleted) continue;
+      if (fn?.inputs?.url?.value !== url) continue;
+      await request(apiKey, apiBase, `/api/projects/${projectId}/hog_functions/${encodeURIComponent(fn.id)}/`, { method: 'PATCH', body: { deleted: true } })
+        .then(() => { removed++; }, (err) => console.warn('[WEBHOOK/posthog] old destination:', err.message));
+    }
+  } catch (err) {
+    console.warn('[WEBHOOK/posthog] listing destinations:', err.message);
+  }
+  return removed;
+}
+
+/**
+ * Change which events the destination sends, in place (GET-751): the signup event and the key
+ * events, without a reconnect. Returns the settings now in force.
+ */
+export async function updatePostHogEvents(apiKey, creds, { signupEvent, keyEvents }, { request = posthogRequest } = {}) {
+  const read = posthogSettings({ ...creds, signup_event: signupEvent, key_events: keyEvents });
+  if (!read.ok) return { ok: false, error: read.reason };
+  const { apiBase, projectId, signupEvent: signup, keyEvents: keys } = read.settings;
+  if (!apiBase.endsWith('.posthog.com')) {
+    try { await assertPublicUrl(apiBase); } catch { return { ok: false, error: 'posthog_host_not_public' }; }
+  }
+  const id = creds?.hog_function_id;
+  if (id) {
+    const events = [signup, ...keys];
+    await request(apiKey, apiBase, `/api/projects/${projectId}/hog_functions/${encodeURIComponent(id)}/`, {
+      method: 'PATCH', body: { filters: { events: events.map((e, order) => ({ id: e, name: e, type: 'events', order })) } },
+    });
+  }
+  return { ok: true, signupEvent: signup, keyEvents: keys, destination: !!id };
+}
+
+async function subscribePostHog(apiKey, workspaceId, credentials = {}) {
+  const read = posthogSettings(credentials);
+  if (!read.ok) return { error: read.reason };
+  const { apiBase, projectId, signupEvent, keyEvents } = read.settings;
+  if (!apiBase.endsWith('.posthog.com')) {
+    try { await assertPublicUrl(apiBase); } catch { return { error: 'posthog_host_not_public' }; }
+  }
+  const secret = crypto.randomBytes(32).toString('hex');
+  const plain = {
+    posthog_api_base: apiBase, posthog_project_id: projectId,
+    signup_event: signupEvent, key_events: keyEvents.join(', '),
+  };
+  try {
+    const url = inboundUrl('posthog', workspaceId);
+    const fn = await posthogRequest(apiKey, apiBase, `/api/projects/${projectId}/hog_functions/`, {
+      method: 'POST',
+      body: posthogDestination(url, secret, [signupEvent, ...keyEvents]),
+    });
+    if (!fn?.id) return { error: 'posthog_destination_id_missing', detail: fn };
+    // A reconnect: the destinations we made before for this workspace go, this one stays.
+    await removeOurPostHogDestinations(apiKey, apiBase, projectId, url, { keepId: fn.id });
+    return { plain: { ...plain, hog_function_id: String(fn.id) }, secret: { webhook_secret: secret } };
+  } catch (err) {
+    const denied = err.status === 401 || err.status === 403;
+    return {
+      error: `posthog_subscribe_failed_${err.status ?? 'exception'}`,
+      detail: err.message,
+      note: denied
+        ? 'Connected. Your key can read usage but cannot create the destination that sends signups as they happen. Add the Hog function write scope to the key and reconnect, or usage still refreshes every day.'
+        : null,
+    };
+  }
+}
+
+async function unsubscribePostHog(apiKey, creds) {
+  const id = creds?.hog_function_id;
+  const read = posthogSettings(creds);
+  if (!apiKey || !id || !read.ok) return;
+  const { apiBase, projectId } = read.settings;
+  try {
+    // PostHog soft-deletes a destination with a PATCH; DELETE answers 405.
+    await posthogRequest(apiKey, apiBase, `/api/projects/${projectId}/hog_functions/${encodeURIComponent(id)}/`, {
+      method: 'PATCH', body: { deleted: true },
+    });
+  } catch (err) {
+    console.warn('[WEBHOOK/posthog] unsubscribe:', err.message);
+  }
+}
+
 /**
  * The registry. A provider here is `webhook: 'auto'` in the catalogue; the two must
  * agree, and assertCatalogueIsSane() fails the boot if they don't.
@@ -558,4 +658,5 @@ export const WEBHOOK_HANDLERS = {
   instantly: { subscribe: subscribeInstantly, unsubscribe: unsubscribeInstantly },
   granola:   { subscribe: subscribeGranola,   unsubscribe: unsubscribeGranola   },
   fellow:    { subscribe: subscribeFellow,    unsubscribe: unsubscribeFellow    },
+  posthog:   { subscribe: subscribePostHog,   unsubscribe: unsubscribePostHog   },
 };

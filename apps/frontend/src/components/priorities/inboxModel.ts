@@ -6,7 +6,7 @@
 //     would create and what goes back to the CRM. A meeting, not an email: the row names the
 //     meeting, and the pane reads its wrap-up.
 //   From signals (GET-944) — one row per signal a call or email raised that has a next move ready:
-//     the Deal signals drafts (origin.builtin "deal_signals"), each carrying what was said, by whom,
+//     the Deal signals, Deal risk and Expansion signals drafts (GET-953), each carrying what was said, by whom,
 //     and, for a decision maker named on the call, who the play found they are. Snoozed ones wait.
 //   Drafts to review (GET-943; was "To approve") — every other draft waiting on a person: pending_actions rows from GET /api/actions
 //     (an automation's, a play's, one made in chat or from a recommendation), each named by the
@@ -51,6 +51,8 @@ export type InboxSignal = {
   quote: string | null; speaker: string | null; role?: string | null;
   /** Who the play found the person a stakeholder signal named is. */
   research: { name: string; title: string | null; source_url: string | null; source_title: string | null; contact_id: string | null } | null;
+  /** The follow-up on a move that went unanswered for 5 days (GET-949). */
+  nudge?: boolean;
 };
 
 /** A waiting draft from GET /api/actions?status=pending&include=origin (a pending_actions row). */
@@ -138,15 +140,18 @@ function meetingItem(r: InboxRec, now: Date): InboxItem {
   };
 }
 
-/** A Deal signals draft is a signal's next move, not a draft among drafts (GET-944). */
-export const isSignalDraft = (a: InboxAction) => a.origin?.builtin === "deal_signals";
+/** A signal's next move, not a draft among drafts (GET-944): Deal signals, and since GET-953 Deal
+ *  risk (churn risk) and Expansion signals. Stale deal drafts stay drafts: nobody raised a signal. */
+const SIGNAL_BUILTINS = new Set(["deal_signals", "deal_risk", "expansion"]);
+export const isSignalDraft = (a: InboxAction) => SIGNAL_BUILTINS.has(a.origin?.builtin ?? "");
 
 /** A signal row's quiet line: "Stakeholder identified: CEO has a say in the decision". Pure. */
 export function signalLine(s: InboxSignal | null | undefined, fallback: string | null): string | null {
   if (!s) return fallback;
   const text = (s.text ?? "").replace(/\s*\(name not (yet )?known\)/i, "").trim();
   const named = s.research?.name ? `${s.research.name}${s.research.title ? `, ${s.research.title}` : ""}` : null;
-  return [s.label, named ?? (text || null)].filter(Boolean).join(": ") || fallback;
+  const line = [s.label, named ?? (text || null)].filter(Boolean).join(": ") || fallback;
+  return s.nudge && line ? `Follow-up · ${line}` : line;
 }
 
 function actionItem(a: InboxAction): InboxItem {

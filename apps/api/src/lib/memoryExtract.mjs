@@ -103,6 +103,7 @@ export async function extractTurnMemory({ supabase, workspaceId, userId, userTex
     const knownSet = new Set(known.map(norm));
 
     const resp = await createMessage({
+      meter: { workspaceId, userId },
       feature: 'turn-memory-extract',
       max_tokens: 400,
       system: SYSTEM,
@@ -210,6 +211,7 @@ export async function buildMemoryOverview(supabase, workspaceId, userId) {
 
   try {
     const resp = await createMessage({
+      meter: { workspaceId, userId },
       feature: 'memory-overview',
       tier: 'writing',
       max_tokens: 700,

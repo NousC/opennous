@@ -172,10 +172,11 @@ export const ARTIFACT_RECIPES = [
 
 // Which triggers something actually dispatches today. routineRunner handles the clock and
 // before_meeting; the daily deal pass (runAutomationsForWorkspace) handles won, lost and stage
-// moves, an account signal lands (GET-686), or a customer call ends and is read (GET-706). The
+// moves, an account signal lands (GET-686), a customer call ends and is read (GET-706), or a
+// PostHog event arrives (GET-751). The
 // rest are not wired, so the API says so rather than letting a workspace build an automation that
 // silently never runs.
-export const LIVE_TRIGGERS = new Set(['clock', 'before_meeting', 'deal_closed_won', 'deal_closed_lost', 'deal_stage_changed', 'icp_tier_changed', 'account_signal', 'call_ended', 'hubspot_field_changed']);
+export const LIVE_TRIGGERS = new Set(['clock', 'before_meeting', 'deal_closed_won', 'deal_closed_lost', 'deal_stage_changed', 'icp_tier_changed', 'account_signal', 'call_ended', 'hubspot_field_changed', 'posthog_event']);
 
 const DESTINATIONS = [
   { key: 'none',    label: 'Home only' },

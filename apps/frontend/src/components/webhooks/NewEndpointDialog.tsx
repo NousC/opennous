@@ -1,7 +1,7 @@
 // The "add an outbound webhook" dialog (a trigger_subscriptions row via POST /api/triggers).
 // Shared by the Webhooks page (GET-632, "Add endpoint") and the headless Triggers page.
 import { useEffect, useMemo, useState } from "react";
-import { Briefcase, Calendar, Check, ExternalLink, Gauge, Github, Link2, Mail, MessageSquare, Phone, Radio, Search, UserPlus, Webhook } from "lucide-react";
+import { Briefcase, Calendar, Check, ExternalLink, Gauge, Github, Link2, Mail, MessageSquare, Phone, Radio, Search, TrendingUp, UserMinus, UserPlus, Webhook } from "lucide-react";
 import { TONE_DOT, eventTone } from "@/lib/events";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -60,13 +60,33 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
       { id: "signal.objection_raised", label: "Objection raised", description: "A buyer pushed back on a call or in email, in their words.", icon: Radio, logo: null },
       { id: "signal.expansion_signal", label: "Expansion signal", description: "They asked about, or are considering, more: a product, seats, a team.", icon: Radio, logo: null },
       { id: "signal.buying_signal", label: "Buying signal", description: "Intent to buy, a request for pricing or a proposal.", icon: Radio, logo: null },
-      { id: "signal.next_step", label: "Next step agreed", description: "A next step was agreed: what, for whom, and when.", icon: Radio, logo: null },
+      { id: "signal.next_step_missed", label: "Next step missed", description: "An agreed next step is a day past its due date with nothing on the account since.", icon: Radio, logo: null },
+      { id: "signal.next_step_slipped", label: "Next step slipped", description: "The buyer pushed the date of the same next step a second time.", icon: Radio, logo: null },
+      { id: "signal.usage_dropped", label: "Usage dropped", description: "Product use at the account halved against the 30 days before (PostHog).", icon: Radio, logo: null },
+      { id: "signal.account_inactive", label: "Account inactive", description: "Nobody at the account has used the product for 14 days (PostHog).", icon: Radio, logo: null },
+      { id: "signal.feature_adopted", label: "Feature adopted", description: "The account used a key product feature for the first time (PostHog).", icon: Radio, logo: null },
+      { id: "signal.seat_dropped", label: "Seat dropped", description: "Someone at the account stopped using the product (PostHog).", icon: Radio, logo: null },
+      { id: "signal.product_qualified", label: "Product-qualified", description: "3 or more people at the account now use the product (PostHog).", icon: Radio, logo: null },
+      { id: "signal.seats_growing", label: "Seats growing", description: "More people at the account use the product than last month (PostHog).", icon: Radio, logo: null },
+      { id: "signal.account_activated", label: "Account activated", description: "The account has used every key part of the product (PostHog).", icon: Radio, logo: null },
       { id: "signal.stakeholder_identified", label: "Stakeholder identified", description: "A buying role was named: champion, economic buyer, decision maker or blocker.", icon: Radio, logo: null },
       { id: "signal.stakeholder_joined", label: "Stakeholder joined", description: "Someone new joined the account's team.", icon: Radio, logo: null },
       { id: "signal.competitor_mentioned", label: "Competitor mentioned", description: "A competitor came up, and in what stance.", icon: Radio, logo: null },
       { id: "signal.budget_discussed", label: "Budget discussed", description: "Budget, procurement or a commercial constraint came up.", icon: Radio, logo: null },
       { id: "signal.objection_resolved", label: "Objection resolved", description: "An open objection was answered.", icon: Radio, logo: null },
       { id: "signal.expansion_declined", label: "Expansion declined", description: "They declined more of a product.", icon: Radio, logo: null },
+    ],
+  },
+  {
+    // Interpreted events (GET-950): what a signal means for the account, with the evidence.
+    group: "Accounts",
+    items: [
+      { id: "account.champion_left", label: "Champion left",
+        description: "A champion of the account left: who, who took over if anyone was named, the quote, and how sure we are.",
+        icon: UserMinus, logo: null },
+      { id: "account.expansion_requested", label: "Expansion requested",
+        description: "A customer asked for more of a named product, in their words.",
+        icon: TrendingUp, logo: null },
     ],
   },
   {
@@ -91,6 +111,9 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
         icon: Briefcase, logo: null },
       { id: "deal.lost", label: "Deal lost",
         description: "A deal closed lost. Same timing as deal.won.",
+        icon: Briefcase, logo: null },
+      { id: "deal.stalled", label: "Deal stalled",
+        description: "An open deal sat in its stage past the window with no touch and no meeting booked. Checked every six hours.",
         icon: Briefcase, logo: null },
     ],
   },
@@ -174,7 +197,7 @@ export type EditableEndpoint = {
 export const SLACK_WEBHOOK = /^https:\/\/hooks\.slack\.com\/(services|workflows|triggers)\/[A-Za-z0-9_\-/]+$/;
 const SLACK_HELP = "https://api.slack.com/messaging/webhooks";
 // The groups shown open; the outreach-tool events (a person snapshot only) sit behind "More events".
-const MAIN_GROUPS = new Set(["Signals", "Calls and replies", "Deals", "ICP", "People"]);
+const MAIN_GROUPS = new Set(["Signals", "Accounts", "Calls and replies", "Deals", "ICP", "People"]);
 
 function DestinationCard({ on, onClick, title, sub, tile }: { on: boolean; onClick: () => void; title: string; sub: string; tile: React.ReactNode }) {
   return (

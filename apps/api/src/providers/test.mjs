@@ -14,7 +14,8 @@
 
 import { fellowApiBase } from './webhooks.mjs';
 import { normalizeCredentials } from './credentials.mjs';
-import { ringCentralAuth, ringCentralToken, ringCentralGet, RingCentralError } from '@nous/core';
+import { ringCentralAuth, ringCentralToken, ringCentralGet, RingCentralError, posthogSettings, posthogRequest } from '@nous/core';
+import { assertPublicUrl } from '../lib/ssrf.mjs';
 
 // Cal.com's v2 API requires a dated cal-api-version header on every request.
 const CAL_COM_API_VERSION = '2026-05-01';
@@ -50,6 +51,7 @@ export async function testProviderCredentials(provider, rawCredentials) {
       return { verified: false, message: `Fellow returned ${r.status} — check your API key and subdomain` };
     }
     if (p === 'ringcentral') return await testRingCentral(credentials);
+    if (p === 'posthog') return await testPostHog(credentials);
     // Your own model (GET-528): listing the models is the lightest call that proves the key.
     if (p === 'anthropic' || p === 'openai') {
       if (!token) return { verified: false, message: 'No API key provided' };
@@ -484,4 +486,32 @@ async function testRingCentral(credentials) {
   // The address this JWT belongs to is evidence of which domain the WORKSPACE is (GET-291), and
   // we already have it — returning it costs nothing and saves a second round trip later.
   return { verified: true, message: `Connected as ${who} — reading your company call log`, accountEmail: me.data?.contact?.email || null };
+}
+
+// PostHog (GET-751): the project itself is the lightest read that proves the key, the project id
+// and the host together, and names the project so the user sees WHICH one they connected.
+export async function testPostHog(credentials, { fetchImpl = fetch } = {}) {
+  const read = posthogSettings(credentials);
+  if (!read.ok) {
+    return { verified: false, message: read.reason === 'posthog_host_invalid'
+      ? 'Enter us or eu for PostHog Cloud, or the https address of your own PostHog.'
+      : 'Enter your PostHog project ID: the number after /project/ in your PostHog address.' };
+  }
+  const key = String(credentials?.api_key ?? '').trim();
+  if (!key) return { verified: false, message: 'No PostHog personal API key provided' };
+  if (key.startsWith('phc_')) return { verified: false, message: 'That is the project token, which can only send events. Create a personal API key (it starts with phx_) under Settings → Personal API keys.' };
+  const { apiBase, projectId } = read.settings;
+  if (!apiBase.endsWith('.posthog.com')) {
+    try { await assertPublicUrl(apiBase); }
+    catch { return { verified: false, message: `${new URL(apiBase).host} is not a public address we can reach.` }; }
+  }
+  try {
+    const project = await posthogRequest(key, apiBase, `/api/projects/${projectId}/`, { fetchImpl });
+    return { verified: true, message: `Connected to ${project?.name ? `"${project.name}"` : `project ${projectId}`} on ${new URL(apiBase).host}` };
+  } catch (err) {
+    if (err.status === 401) return { verified: false, message: 'PostHog rejected this key. Check it was copied whole and has not been revoked.' };
+    if (err.status === 403) return { verified: false, message: `This key cannot read project ${projectId}. Give it the Project read scope, and access to this project.` };
+    if (err.status === 404) return { verified: false, message: `No project ${projectId} on ${new URL(apiBase).host}. Check the project ID and the region (us or eu).` };
+    return { verified: false, message: `PostHog returned ${err.status ?? 'an error'}: ${err.message}` };
+  }
 }

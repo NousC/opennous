@@ -73,6 +73,7 @@ export async function crmFieldsFromConversation({ object, fields, call = null, s
   const p = buildFieldsPrompt({ object, fields: allow, call, signal, written });
   try {
     const msg = await createMessage({
+      meter: false,   // automationRun meters it from the returned usage
       feature: 'automation-handoff', tier: 'extraction', max_tokens: 800,
       system: p.system, messages: [{ role: 'user', content: p.user }],
     });

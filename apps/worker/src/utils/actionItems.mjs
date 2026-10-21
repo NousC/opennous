@@ -86,6 +86,7 @@ export async function extractDuePhrasesWithModel(items, { occurredAt, workspaceI
   try {
     const when = occurredAt ? new Date(occurredAt).toISOString().slice(0, 10) : 'an unknown date';
     const msg = await createMessage({
+      meter: false,
       feature: 'meeting-action-item-due',
       max_tokens: 600,
       system: DUE_SYSTEM,

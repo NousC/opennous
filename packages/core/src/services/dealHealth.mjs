@@ -8,7 +8,7 @@ import { listNotes, listAccountNotes } from '../db/notes.js';
 import { listActivities } from '../db/activities.js';
 import { teamReadContext } from '../db/readContext.js';
 import { filterDerivedForViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
-import { windowedCounts, engagementTrend, medianBuyerResponseDays, multiThread } from './engagement.mjs';
+import { windowedCounts, engagementTrend, medianBuyerResponseDays, multiThread, isEvidenceSnapshot, isOutboundActivity, isBuyerResponse } from './engagement.mjs';
 import { decisionMakers, committeeRating, selectNextStep } from './accountHealthScore.mjs';
 
 // Deal Health, computed on read from the SAME intel the record shows — so the four
@@ -26,28 +26,30 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
   const competitors = byCat('competitor');
   const objections  = byCat('objection');
   const buying      = byCat('buying_signal');
+  // A customer asking for more (onboarding another team, a new use case) is intent too (GET-976).
+  // It stays an expansion signal; urgency only cites it as the evidence it is.
+  const expansion   = byCat('expansion_signal');
+  const intent      = [...buying, ...expansion];
   const timelines   = byCat('timeline');
   const authority   = byCat('authority');
   const budgets     = byCat('budget');
   const departures  = byCat('staff_change').filter(n => (n.metadata?.change || '') === 'left');
 
   const at = (a) => (a?.activity_type || '').toLowerCase();
-  const acts = activity || [];
+  // A conversation snapshot is provenance for a finding, not a second touch (GET-976).
+  const acts = (activity || []).filter(a => !isEvidenceSnapshot(a.activity_type));
   const now = Date.now();
   // Real event time (occurred_at), NOT ingest time (created_at) — sorting by ingest made
   // every account read as "responded on the backfill date".
   const tsOf = (a) => a.occurred_at || a.created_at || null;
   const meetings = acts.filter(a => at(a).includes('meeting') && !at(a).includes('scheduled')).length;
   const inbound  = acts.filter(a => /email_received|email_reply/.test(at(a)));   // Buyer Emails count
-  const outbound = acts.filter(a => /_sent$/.test(at(a))).length;
+  const outbound = acts.filter(isOutboundActivity).length;
   // "Last Response" = the most recent BUYER touch on ANY channel — a meeting held, an
   // inbound email/reply, a LinkedIn reply, a call — not just email replies (which missed
   // every meeting). Past events only; a scheduled future meeting is "next", not "last".
-  const isResponse = (a) => {
-    const t = at(a);
-    if (/_sent$|enrichment|deal_won|scheduled|created|updated|scored/.test(t)) return false;
-    return /meeting|received|reply|inbound|call|linkedin|message/.test(t);
-  };
+  // A message's own direction decides (GET-976): their Slack message is a response, ours is not.
+  const isResponse = isBuyerResponse;
   const respMs = acts.filter(isResponse).map(tsOf).filter(Boolean)
     .map(t => new Date(t).getTime()).filter(t => Number.isFinite(t) && t <= now + 60_000);
   const lastInbound = respMs.length ? new Date(Math.max(...respMs)).toISOString() : null;
@@ -58,9 +60,11 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
   const SENIOR = /c[_\s-]?suite|c[_\s-]?level|chief|\bcxo\b|founder|owner|president|partner|\bvp\b|vice[\s-]?president|director|\bhead\b|managing/i;
   const isSenior = (s) => SENIOR.test(s.seniority || '') || SENIOR.test(s.title || '');
   const seniors = (stakeholders || []).filter(isSenior);
-  const seniorEngaged = seniors.some(s =>
-    (s.signal_count || 0) > 0 ||
-    (s.last_activity_at && (now - new Date(s.last_activity_at).getTime()) / 86_400_000 <= 45));
+  // A senior title is not engagement (GET-976): a senior person counts only once they took part in
+  // a conversation in 45 days, the same rule Multi-threading reads.
+  const inConversation = new Set(multiThread(stakeholders, now, acts).engaged_ids || []);
+  const seniorsInConversation = seniors.filter(s => inConversation.has(s.id));
+  const seniorEngaged = seniorsInConversation.length > 0;
 
   // ── Recency weight: a claim's pull decays with age (~90-day half-life), floored at
   // 0.15 so old-but-real context still counts a little. A concern from months ago
@@ -163,9 +167,9 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
       ...(!(stakeholders || []).length
             ? lv('Unknown', 'unknown', [], 'Nobody is on this account yet')
         : seniorEngaged && (stakeholders || []).length > 1
-            ? lv('Strong', 'good', [], `${seniors.length} senior stakeholder${seniors.length === 1 ? '' : 's'} engaged, of ${(stakeholders || []).length} on the account. No buying roles named in a conversation yet`)
+            ? lv('Strong', 'good', [], `${seniorsInConversation.length} senior stakeholder${seniorsInConversation.length === 1 ? '' : 's'} in conversation, of ${(stakeholders || []).length} on the account. No buying roles named in a conversation yet`)
         : seniorEngaged
-            ? lv('Single-threaded', 'warn', [], `${seniors[0]?.title || 'One senior contact'} is engaged, but they are the only person on the account`)
+            ? lv('Single-threaded', 'warn', [], `${seniorsInConversation[0]?.title || 'One senior contact'} is engaged, but they are the only person on the account`)
         : seniors.length ? lv('Moderate', 'warn', [], `${seniors.length} senior stakeholder${seniors.length === 1 ? '' : 's'}, but quiet`)
         : lv('Weak', 'bad', [], 'No senior stakeholder identified')) };
   }
@@ -193,6 +197,10 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
     const shortDay = (iso) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     // GET-800: the step agreed on the latest conversation (or a meeting booked), never an old task.
     const pick = selectNextStep({ activity: acts, nextSteps: steps, now });
+    // Asked for and not yet agreed (GET-976): a live step our side owes, not a plan both sides hold.
+    if (pick.status === 'requested' && pick.title) {
+      return { ...base, ...lv('Requested', 'warn', [], `${pick.asked_by ? `${pick.asked_by} asked: ` : 'Asked: '}${clipText(pick.title, 70)}. Not agreed or scheduled yet`) };
+    }
     if (pick.status !== 'none' && pick.title) {
       return { ...base, ...lv('Agreed', 'good', [], `${clipText(pick.title, 80)}${pick.due_at ? ` (${pick.status === 'scheduled' ? 'on' : 'due'} ${shortDay(pick.due_at)})` : ''}`) };
     }
@@ -217,12 +225,13 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
     { key: 'buyer_urgency', label: 'Buyer Urgency',
       // Never heard from them AND nothing stated: unknown, not Low. Low is a judgment that
       // needs evidence of silence — which means there has to have been a conversation first.
-      ...(!lastInbound && !buying.length && !timelines.length
+      // Expansion asks are cited and named, never counted twice (GET-976).
+      ...(!lastInbound && !intent.length && !timelines.length
             ? lv('Unknown', 'unknown', [], 'They have not replied yet and have said nothing about timing')
-        : (buying.length > 0 && daysSince <= 30) || daysSince <= 7
-            ? lv('High', 'good', [...buying, ...timelines].map(n => n.id), 'Active intent and recent contact')
-        : daysSince <= 30 || timelines.length > 0 || buying.length > 0
-            ? lv('Moderate', 'warn', [...buying, ...timelines].map(n => n.id), (timelines.length && daysSince > 30) ? 'Stated a timeline but has gone quiet' : 'Some recent engagement')
+        : (intent.length > 0 && daysSince <= 30) || daysSince <= 7
+            ? lv('High', 'good', [...intent, ...timelines].map(n => n.id), `Active intent and recent contact${expansion.length ? `, including ${expansion.length === 1 ? 'an expansion ask' : `${expansion.length} expansion asks`}` : ''}`)
+        : daysSince <= 30 || timelines.length > 0 || intent.length > 0
+            ? lv('Moderate', 'warn', [...intent, ...timelines].map(n => n.id), (timelines.length && daysSince > 30) ? 'Stated a timeline but has gone quiet' : 'Some recent engagement')
         : lv('Low', 'bad', [], 'No stated intent and no recent replies')) },
     committeeSignal(),
     budgetSignal(),
@@ -252,7 +261,7 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
   const { recent: eng30, prior: engPrior } = windowedCounts(acts, now);
   const trend = engagementTrend(eng30, engPrior);
   const responseTimeDays = medianBuyerResponseDays(acts);
-  const mt = multiThread(stakeholders, now);
+  const mt = multiThread(stakeholders, now, acts);
   if (!won) score += trend === 'rising' ? 3 : trend === 'cooling' ? -5 : trend === 'cold' ? -8 : 0;
   score = Math.max(0, Math.min(100, score));
   if (won) score = Math.max(score, 90);
@@ -273,7 +282,9 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
   const numeric = [
     { key: 'last_response', label: 'Last Response', value: shortDate(lastInbound), tone: recencyTone(lastInbound) },
     { key: 'engagement_trend', label: 'Engagement', value: TREND_LABEL[trend], tone: trendTone },
-    { key: 'multi_threading', label: 'Multi-threading', value: `${mt.engaged}/${mt.total} engaged`, tone: mt.total === 0 ? 'warn' : mt.single_threaded ? 'bad' : 'good' },
+    // In conversation, not "engaged": product use and people only identified are said apart (GET-976).
+    { key: 'multi_threading', label: 'Multi-threading', value: `${mt.engaged}/${mt.total} in conversation`, tone: mt.total === 0 ? 'warn' : mt.single_threaded ? 'bad' : 'good',
+      detail: { in_conversation: mt.engaged, product_users: mt.product_users ?? 0, identified: mt.identified ?? 0, total: mt.total } },
     { key: 'response_time', label: 'Buyer response', value: responseTimeDays != null ? `${responseTimeDays}d median` : '—', tone: responseTimeDays == null ? 'warn' : responseTimeDays <= 2 ? 'good' : responseTimeDays <= 7 ? 'warn' : 'bad' },
     { key: 'meetings',      label: 'Meetings',      value: `${meetings} meeting${meetings === 1 ? '' : 's'}`, tone: meetings > 0 ? 'good' : 'warn' },
     { key: 'buyer_emails',  label: 'Buyer Emails',  value: `${inbound.length} received`, tone: inbound.length > 0 ? 'good' : 'warn' },
@@ -329,20 +340,27 @@ export async function loadNextSteps(supabase, workspaceId, entityIds) {
     due_at: r.value.due_at || null, occurred_at: r.value.occurred_at || null,
     // Which conversation it came from, so the next step can be read off the latest one (GET-800).
     source_observation_id: (r.supporting_observation_ids || [])[0] ?? null, quote: r.value.quote || null,
+    // Who asked, who owes it and whether anyone has said yes (GET-976). A step without a recorded
+    // commitment came from a source that only files what was agreed (a call's action items).
+    commitment: r.value.commitment || null, asked_by: r.value.asked_by || null, owner_name: r.value.owner_name || null,
+    participants: Array.isArray(r.value.participants) ? r.value.participants : [],
+    source_type: r.value.source_type || null, source_id: r.value.source_id || null, slack_mentions: r.value.slack_mentions || null,
   }));
 }
 
 export async function loadHealthInputs(supabase, workspaceId, companyId) {
   const { data: contacts } = await supabase
     .from('contacts')
-    .select('id, job_title, seniority, pipeline_stage, last_activity_at')
+    .select('id, first_name, last_name, email, job_title, seniority, pipeline_stage, last_activity_at')
     .eq('workspace_id', workspaceId).eq('company_id', companyId);
   // The same notes the account page reads, so the stored score matches the record.
   // The stored score and its reasons are shown to the whole team, so they rest on team-readable
   // facts (GET-253). The live record a member opens reads the same facts, for the same reason.
   const notes = await listAccountNotes(supabase, workspaceId, companyId, (contacts || []).map(c => c.id), {}, teamReadContext(workspaceId));
+  // Named as the account page names them, so an authority claim that names a person matches the
+  // same person in the stored score as on the record (GET-976).
   const stakeholders = (contacts || []).map(c => ({
-    id: c.id, title: c.job_title, seniority: c.seniority,
+    id: c.id, name: [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || null, title: c.job_title, seniority: c.seniority,
     pipeline_stage: c.pipeline_stage, last_activity_at: c.last_activity_at, signal_count: 0,
   }));
   const contactIds = (contacts || []).map(c => c.id);

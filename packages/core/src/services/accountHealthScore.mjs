@@ -18,7 +18,7 @@
 
 import { readTitle } from './titleRead.js';
 import { COMMITTEE_ROLE_RANK } from './committee.js';
-import { engagementTrend } from './engagement.mjs';
+import { engagementTrend, isEvidenceSnapshot, activityOutbound, isChatMessage, EVIDENCE_SNAPSHOT_TYPES } from './engagement.mjs';
 import { loadHealthInputs, loadNextSteps } from './dealHealth.mjs';
 
 const DAY = 86_400_000;
@@ -34,18 +34,23 @@ const ms = (iso) => { const t = iso ? Date.parse(iso) : NaN; return Number.isFin
 const lower = (s) => String(s ?? '').trim().toLowerCase();
 const tsOf = (a) => ms(a?.occurred_at || a?.created_at);
 
-/** A real two-way touch: they replied, wrote in, or we met. Our own outbound is not engagement. */
-export function isTwoWay(activityType) {
+/**
+ * A real two-way touch: they replied, wrote in, or we met. Our own outbound is not engagement.
+ * `outbound` is the row's payload direction (GET-976): a Slack or LinkedIn message they wrote is a
+ * reply even though its type does not say so; one we wrote is not.
+ */
+export function isTwoWay(activityType, outbound = null) {
   const t = lower(activityType);
-  if (!t || /_sent$|^sent|scheduled|enrichment|created|updated|scored|deal_|import|note/.test(t)) return false;
+  if (!t || isEvidenceSnapshot(t) || /_sent$|^sent|scheduled|enrichment|created|updated|scored|deal_|import|note/.test(t)) return false;
+  if (outbound != null && /message|linkedin|inmail|dm/.test(t) && !/connect|invite/.test(t)) return outbound === false;
   return /meeting|received|reply|inbound|call/.test(t);
 }
 
-/** A conversation the next step can come from: a meeting held, a call, or an email either way. */
+/** A conversation the next step can come from: a meeting held, a call, an email or a chat message. */
 function isConversation(activityType) {
   const t = lower(activityType);
-  if (!t || /scheduled|enrichment|created|updated|scored|deal_|import/.test(t)) return false;
-  return /meeting|call|email|reply|received/.test(t);
+  if (!t || isEvidenceSnapshot(t) || /scheduled|enrichment|created|updated|scored|deal_|import/.test(t)) return false;
+  return /meeting|call|email|reply|received/.test(t) || isChatMessage(t);
 }
 
 // ── Engagement (GET-804) ────────────────────────────────────────────────────
@@ -58,7 +63,7 @@ function isConversation(activityType) {
 // (loadEngagementActivity, no row cap), and a call page counts as the call it records.
 
 /** Never a touch: system rows, bookings that have not happened, things that did not connect. */
-const NOT_A_TOUCH = /scheduled|booked|cancel|no_show|missed|bounce|enrichment|created|updated|scored|deal_|import|note|connection|connected|invite|visit|unsubscrib|subscription|onboarding|welcome|drip|offer|payment|interest|engagement|job_change|proposal/;
+const NOT_A_TOUCH = /scheduled|booked|cancel|no_show|missed|bounce|enrichment|created|updated|scored|deal_|import|note|connection|connected|invite|visit|unsubscrib|subscription|onboarding|welcome|drip|offer|payment|interest|engagement|job_change|proposal|signed_up|product_used/;
 const INBOUND_TOUCH = /received|reply|replied|inbound/;
 const OUTBOUND_TOUCH = /_sent$|^sent|_made$/;
 
@@ -68,11 +73,15 @@ const OUTBOUND_TOUCH = /_sent$|^sent|_made$/;
  * a conversation (`conversational`: they have replied or met with us at some point), so a cold
  * sequence never reads as engagement.
  */
-export function isTwoWayTouch(activityType, { conversational = true } = {}) {
+export function isTwoWayTouch(activityType, { conversational = true, outbound = null } = {}) {
   const t = lower(activityType);
-  if (!t || NOT_A_TOUCH.test(t)) return false;
+  if (!t || isEvidenceSnapshot(t) || NOT_A_TOUCH.test(t)) return false;
   if (/meeting|call/.test(t)) return true;
-  if (/email|message|linkedin|inmail|reply|replied|received|inbound/.test(t)) {
+  if (/email|message|linkedin|inmail|reply|replied|received|inbound|dm/.test(t)) {
+    // Direction from the payload when the source wrote it (GET-976): a Slack message from the
+    // customer is a reply; ours counts only on a conversation, like our own email.
+    if (outbound === false) return true;
+    if (outbound === true) return conversational;
     if (INBOUND_TOUCH.test(t) && !/_sent$/.test(t)) return true;
     return conversational && (OUTBOUND_TOUCH.test(t) || /^email$|^message$/.test(t));
   }
@@ -89,9 +98,9 @@ const SAME_CALL_MS = 3 * 3_600_000;
  */
 export function twoWayTouches({ activity = [], calls = [], now = Date.now() } = {}) {
   const acts = (activity || []).filter(a => { const t = tsOf(a); return t != null && t <= now + 60_000; });
-  const conversational = acts.some(a => isTwoWayTouch(a.activity_type, { conversational: false }))
+  const conversational = acts.some(a => isTwoWayTouch(a.activity_type, { conversational: false, outbound: activityOutbound(a) }))
     || (calls || []).some(c => { const t = ms(c.occurred_at); return t != null && t <= now + 60_000; });
-  const touches = acts.filter(a => isTwoWayTouch(a.activity_type, { conversational }))
+  const touches = acts.filter(a => isTwoWayTouch(a.activity_type, { conversational, outbound: activityOutbound(a) }))
     .map(a => ({ t: tsOf(a), kind: /meeting|call/.test(lower(a.activity_type)) ? 'call' : 'message' }));
   const callRows = touches.filter(x => x.kind === 'call').map(x => x.t);
   for (const c of calls || []) {
@@ -130,6 +139,22 @@ export function gradeMeter(tone) {
 
 // ── Decision makers ─────────────────────────────────────────────────────────
 
+// The executive roles an unnamed authority claim names by title. Each maps its spellings to one key.
+const ROLE_TITLES = [
+  ['ceo', /\bceo\b|\bchief executive( officer)?\b/],
+  ['coo', /\bcoo\b|\bchief operating( officer)?\b/],
+  ['cfo', /\bcfo\b|\bchief financial( officer)?\b/],
+  ['cto', /\bcto\b|\bchief technology( officer)?\b/],
+  ['cro', /\bcro\b|\bchief revenue( officer)?\b/],
+  ['cmo', /\bcmo\b|\bchief marketing( officer)?\b/],
+  ['cpo', /\bcpo\b|\bchief product( officer)?\b/],
+  ['ciso', /\bciso\b|\bchief information security( officer)?\b/],
+  ['cio', /\bcio\b|\bchief information officer\b/],
+];
+const roleKeys = (title) => ROLE_TITLES.filter(([, re]) => re.test(lower(title))).map(([k]) => k);
+/** The single role a claim's title names ("CEO", "the chief executive"), or null for anything else. */
+const roleKey = (title) => { const k = roleKeys(title); return k.length === 1 ? k[0] : null; };
+
 /**
  * Every decision role on the account, named and unnamed, with where it stands.
  *
@@ -148,6 +173,17 @@ export function decisionMakers({ notes = [], stakeholders = [], activity = [], n
   const byId = new Map(people.map(s => [s.id, s]));
   const byName = new Map(people.filter(s => s.name).map(s => [lower(s.name), s]));
   const byTitle = new Map(people.filter(s => s.title).map(s => [lower(s.title), s]));
+  // An unnamed role ("our CEO") is the one person whose title holds that same role (GET-976):
+  // "CEO" is the person titled "Founder & CEO". Exactly one holder or none, never a guess between
+  // two, and the role is read as a whole word so "CTO" is never "Director".
+  const holderOfTitle = (title) => {
+    const exact = byTitle.get(lower(title));
+    if (exact) return { s: exact, by: 'exact_title' };
+    const key = roleKey(title);
+    if (!key) return null;
+    const holders = people.filter(s => s.title && roleKeys(s.title).includes(key));
+    return holders.length === 1 ? { s: holders[0], by: 'role_in_title' } : null;
+  };
 
   const entries = new Map();
   const better = (a, b) => (b && (!a || (COMMITTEE_ROLE_RANK[b] ?? -1) > (COMMITTEE_ROLE_RANK[a] ?? -1)) ? b : a);
@@ -172,8 +208,14 @@ export function decisionMakers({ notes = [], stakeholders = [], activity = [], n
     const pname = typeof m.person_name === 'string' && m.person_name.trim() ? m.person_name.trim() : null;
     const ptitle = typeof m.person_title === 'string' && m.person_title.trim() ? m.person_title.trim() : null;
     let e;
-    const known = (n.entity_id && byId.get(n.entity_id)) || (pname && byName.get(lower(pname))) || (!pname && ptitle && byTitle.get(lower(ptitle))) || null;
-    if (known) e = personEntry(known);
+    const byRole = !pname && ptitle && !(n.entity_id && byId.get(n.entity_id)) ? holderOfTitle(ptitle) : null;
+    const known = (n.entity_id && byId.get(n.entity_id)) || (pname && byName.get(lower(pname))) || byRole?.s || null;
+    if (known) {
+      e = personEntry(known);
+      // Who said the role and how it was matched stay with the entry: the claim named a title, the
+      // person record supplied the name. Their engagement is still read from their own touches.
+      if (byRole) { e.matched_by = byRole.by; e.claim_title = ptitle; }
+    }
     else if (pname) e = entryFor(`name:${lower(pname)}`, { name: pname, title: ptitle });
     else if (ptitle) e = entryFor(`title:${lower(ptitle)}`, { title: ptitle, unnamed: true });
     else continue;   // a company-level authority fact with nobody attached to it
@@ -187,11 +229,12 @@ export function decisionMakers({ notes = [], stakeholders = [], activity = [], n
 
   const acts = activity || [];
   const touchesOf = (id) => acts.filter(a => a.contact_id === id);
+  const twoWayAt = (a) => isTwoWay(a.activity_type, activityOutbound(a));
   const status = (e) => {
     if (e.role === 'blocker' || e.engagement === 'blocking') return 'blocking';
     if (e.entity_id) {
       const mine = touchesOf(e.entity_id);
-      const lastTwoWay = Math.max(-Infinity, ...mine.filter(a => isTwoWay(a.activity_type)).map(tsOf).filter(t => t != null && t <= now + 60_000));
+      const lastTwoWay = Math.max(-Infinity, ...mine.filter(twoWayAt).map(tsOf).filter(t => t != null && t <= now + 60_000));
       if (Number.isFinite(lastTwoWay) && now - lastTwoWay <= ENGAGED_WINDOW_DAYS * DAY) return 'engaged';
       // With no activity loaded at all, fall back to the record's own last touch.
       const s = byId.get(e.entity_id);
@@ -210,6 +253,7 @@ export function decisionMakers({ notes = [], stakeholders = [], activity = [], n
     .map(e => ({
       key: e.key, entity_id: e.entity_id, name: e.name, title: e.title, role: e.role,
       status: status(e), unnamed: e.unnamed, basis: e.basis,
+      ...(e.matched_by ? { matched_by: e.matched_by, claim_title: e.claim_title } : {}),
       tier: readTitle(e.title ?? '').tier ?? null,
       evidence: e.evidence, quote: e.quote, said_at: e.said_at,
     }))
@@ -520,7 +564,9 @@ export function selectNextStep({ activity = [], calls = [], nextSteps = [], now 
     const t = tsOf(a);
     if (t == null || t > now + 60_000 || !isConversation(a.activity_type)) continue;
     const type = lower(a.activity_type);
-    convs.push({ id: a.id ?? null, at: new Date(t).toISOString(), t, kind: /meeting/.test(type) ? 'meeting' : /call/.test(type) ? 'call' : 'email', title: conversationName(a) });
+    // A chat message is named by its channel kind, never by its words (GET-976).
+    const chat = isChatMessage(type);
+    convs.push({ id: a.id ?? null, at: new Date(t).toISOString(), t, kind: chat ? 'slack' : /meeting/.test(type) ? 'meeting' : /call/.test(type) ? 'call' : 'email', title: chat ? null : conversationName(a) });
   }
   for (const c of calls || []) {
     const t = ms(c.occurred_at || c.meeting_date || c.date || c.created_at);
@@ -534,6 +580,7 @@ export function selectNextStep({ activity = [], calls = [], nextSteps = [], now 
   // (a call page and its meeting row are the same call; the call wins over an email that day).
   const sourceOf = (x) => {
     if (x.source_observation_id && convById.has(x.source_observation_id)) return convById.get(x.source_observation_id);
+    if (x.source_id && convById.has(x.source_id)) return convById.get(x.source_id);
     const said = ms(x.occurred_at);
     if (said == null) return null;
     const near = convs.filter(c => Math.abs(c.t - said) <= DAY)
@@ -566,6 +613,9 @@ export function selectNextStep({ activity = [], calls = [], nextSteps = [], now 
     status, title: step?.title ?? null, due_at: step?.due_at ?? null, said_at: step?.occurred_at ?? null,
     agreed_at: extra.agreed_at ?? null, quote: step?.quote ?? null, items: items ?? [],
     conversation: extra.conversation ?? conversationOf(last), reason: extra.reason ?? null,
+    // Who asked and who owes it, when the source recorded them (GET-976).
+    commitment: step?.commitment ?? null, asked_by: step?.asked_by ?? null, owner_name: step?.owner_name ?? null,
+    participants: step?.participants ?? [], slack_mentions: step?.slack_mentions ?? null,
   });
 
   if (agreed.length) {
@@ -573,7 +623,9 @@ export function selectNextStep({ activity = [], calls = [], nextSteps = [], now 
     const group = agreed.filter(g => sameConversation(g, latest)).sort(dueOrder);
     const head = group[0];
     const dated = Number.isFinite(latest.at);
-    return out('agreed', head.step, group.map(g => g.step.title), {
+    // Requested, not agreed: someone asked and nobody on the owing side has said yes (GET-976).
+    // Accepted or scheduled, and every source that records only agreed steps, reads as agreed.
+    return out(head.step.commitment === 'requested' ? 'requested' : 'agreed', head.step, group.map(g => g.step.title), {
       agreed_at: dated ? new Date(latest.at).toISOString() : null,
       conversation: conversationOf(latest.src) ?? (dated ? { kind: 'conversation', at: new Date(latest.at).toISOString(), title: null } : null),
     });
@@ -604,10 +656,12 @@ export async function loadEngagementActivity(supabase, workspaceId, entityIds, {
   const out = [];
   for (let i = 0; i < ids.length; i += 100) {
     for (let from = 0; out.length < maxRows; from += ENGAGEMENT_PAGE) {
+      // Direction only, never the message (GET-976): a Slack message is a reply when they wrote it.
       let q = supabase.from('observations')
-        .select('id, entity_id, property, value, source, observed_at')
+        .select('id, entity_id, property, value, source, observed_at, is_outbound:raw->is_outbound')
         .eq('workspace_id', workspaceId).in('entity_id', ids.slice(i, i + 100))
-        .like('property', 'interaction.%');
+        .like('property', 'interaction.%')
+        .not('property', 'in', `(${EVIDENCE_SNAPSHOT_TYPES.map(t => `interaction.${t}`).join(',')})`);
       if (since) q = q.gte('observed_at', since);
       const { data, error } = await q.order('observed_at', { ascending: false }).range(from, from + ENGAGEMENT_PAGE - 1);
       if (error) throw new Error(error.message);
@@ -615,6 +669,7 @@ export async function loadEngagementActivity(supabase, workspaceId, entityIds, {
         out.push({
           id: o.id, contact_id: o.entity_id, activity_type: String(o.property ?? '').replace(/^interaction\./, ''),
           summary: o.value?.summary ?? null, description: o.value?.description ?? null, source: o.source, occurred_at: o.observed_at,
+          is_outbound: typeof o.is_outbound === 'boolean' ? o.is_outbound : null,
         });
       }
       if (!data || data.length < ENGAGEMENT_PAGE) break;

@@ -54,6 +54,7 @@ export async function classifyReplySignal(text, supabase = null, workspaceId = n
   const label = (t) => String(t || '').trim().toLowerCase().replace(/[^a-z_]/g, '');
   try {
     const msg = await createMessage({
+      meter: false,
       feature: 'reply-classify',
       max_tokens: 8,
       // An answer outside the taxonomy is unusable: let the fallback model try.

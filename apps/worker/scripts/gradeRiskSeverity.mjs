@@ -130,7 +130,7 @@ async function run(supabase) {
     const prompt = batch.map((r, i) => `${i}. ${String(r.value.content).slice(0, 300)}\n   quote: "${String(r.value.metadata?.quote ?? '').replace(/\s+/g, ' ').slice(0, 300)}"`).join('\n');
     let grades = new Map();
     try {
-      const msg = await createMessage({ feature: 'cs_risk_grading', model: MODEL, max_tokens: 800, system: SYSTEM, messages: [{ role: 'user', content: prompt }] });
+      const msg = await createMessage({ meter: { workspaceId: WS ?? null }, feature: 'cs_risk_grading', model: MODEL, max_tokens: 800, system: SYSTEM, messages: [{ role: 'user', content: prompt }] });
       spend += Number(msg.cost_usd ?? 0);
       grades = parseGrades(messageText(msg));
     } catch (err) { counts.failed += batch.length; console.warn(`  batch ${b / BATCH}: ${err?.message ?? err}`); continue; }

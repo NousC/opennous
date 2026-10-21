@@ -475,7 +475,8 @@ export function checkBeforeSave(flow: Flow, ctx: {
   if (kind.startsWith("deal_") && !ctx.crm.length) out.push({ level: "warn", text: "No CRM is connected, so this never fires." });
   if (["email_received", "reply_owed", "thread_quiet"].includes(kind) && !has("gmail")) out.push({ level: "warn", text: "Gmail isn't connected, so this never fires." });
   if (kind === "before_meeting" && !has("google_calendar")) out.push({ level: "warn", text: "Google Calendar isn't connected, so this never fires." });
-  if (kind === "posthog_event") out.push({ level: "warn", text: "PostHog can't be connected yet, so this never fires." });
+  if (kind === "posthog_event" && !has("posthog")) out.push({ level: "warn", text: "PostHog isn't connected, so this never fires." });
+  else if (kind === "posthog_event" && !flow.trigger.config?.event) out.push({ level: "warn", text: "Name the PostHog event to watch, and add it to the key events on your PostHog connection." });
   else if (kind && ctx.live.get(kind) === false) out.push({ level: "warn", text: "This trigger doesn't fire yet. It saves and waits." });
 
   for (const [type, slug, name] of [["hubspot", "hubspot", "HubSpot"], ["gmail", "gmail", "Gmail"], ["slack", "slack", "Slack"]] as const) {

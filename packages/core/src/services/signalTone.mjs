@@ -3,25 +3,27 @@
 // signal (latestSignalView), so the browser only maps a tone to its tinted pill. Pure.
 //
 // Tones are colour names, not meanings, so the frontend's class map stays a plain palette:
-//   red     the account is at risk          churn_risk, expansion_declined, stakeholder_left
+//   red     the account is at risk          churn_risk, expansion_declined, stakeholder_left, next_step_missed
 //   green   the account is moving forward   buying_signal, expansion_signal, objection_resolved
 //   blue    people                          stakeholder_identified, stakeholder_joined
 //   amber   competitors                     competitor_mentioned, competitor_evaluating
-//   orange  objections                      objection_raised
+//   orange  objections, a step pushed       objection_raised, next_step_slipped
 //   purple  pricing and budget              budget_discussed
-//   slate   neutral (next steps, unknown)   next_step
+//   slate   neutral (unknown)               next_step (a task, never shown as a signal: GET-954)
 //   teal / pink / indigo                    a workspace's own signals (custom_<id>), stable per id
-import { SIGNAL_LABEL } from './signalLabels.mjs';
+import { SIGNAL_LABEL, shownAsSignal } from './signalLabels.mjs';
 
 export const SIGNAL_TONES = ['red', 'green', 'blue', 'amber', 'orange', 'purple', 'slate', 'teal', 'pink', 'indigo'];
 export const CUSTOM_TONES = ['teal', 'pink', 'indigo'];
 
 export const SIGNAL_TONE = {
-  churn_risk: 'red', expansion_declined: 'red', stakeholder_left: 'red',
-  buying_signal: 'green', expansion_signal: 'green', objection_resolved: 'green',
+  churn_risk: 'red', expansion_declined: 'red', stakeholder_left: 'red', next_step_missed: 'red',
+  usage_dropped: 'red', account_inactive: 'red',
+  buying_signal: 'green', expansion_signal: 'green', objection_resolved: 'green', feature_adopted: 'green',
+  product_qualified: 'green', seats_growing: 'green', account_activated: 'green',
   stakeholder_identified: 'blue', stakeholder_joined: 'blue',
   competitor_mentioned: 'amber', competitor_evaluating: 'amber',
-  objection_raised: 'orange',
+  objection_raised: 'orange', next_step_slipped: 'orange', seat_dropped: 'orange',
   budget_discussed: 'purple',
   next_step: 'slate',
 };
@@ -59,9 +61,13 @@ export function signalKindLabel(kind, title = null) {
   return words[0].toUpperCase() + words.slice(1);
 }
 
-/** The latest-signal object of an account row, with the tag and the line the table shows. */
+/**
+ * The latest-signal object of an account row, with the tag and the line the table shows. A next
+ * step agreed is a task, not a signal (GET-954): the overview read sorts it last, so when it comes
+ * back the account has no signal at all.
+ */
 export function latestSignalView(raw) {
-  if (!raw || typeof raw !== 'object') return null;
+  if (!raw || typeof raw !== 'object' || !shownAsSignal(raw.kind)) return null;
   const label = signalKindLabel(raw.kind, raw.title);
   const text = signalText(raw);
   // A custom signal with no content would read its name twice.

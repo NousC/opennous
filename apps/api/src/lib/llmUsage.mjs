@@ -7,89 +7,16 @@
 //
 // Both run. leakTrack stays for the ops view; this is the billing view.
 
-import { claudeIdFromOpenRouter } from '@nous/core';
+import { MODEL_PRICING, computeCost } from '@nous/core';
 
-// $ per 1M tokens, per Anthropic's published pricing.
-//
-// Cached input is a tenth of the uncached rate, and writing to the cache is 1.25x.
-// That spread is the whole reason prompt caching is worth doing: the agent re-sends
-// a ~4,300-token static prefix plus every prior tool_result on each loop, and
-// before caching it paid full price for all of it, every time.
-const PRICING = {
-  'claude-opus-4-8':           { in: 5, out: 25, cacheWrite: 6.25,  cacheRead: 0.50 },
-  'claude-sonnet-5':           { in: 3, out: 15, cacheWrite: 3.75,  cacheRead: 0.30 },
-  'claude-haiku-4-5':          { in: 1, out: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
-  'claude-haiku-4-5-20251001': { in: 1, out: 5,  cacheWrite: 1.25,  cacheRead: 0.10 },
-  // Open models — read off the LIVE OpenRouter catalogue, not written from memory. The first
-  // pass had glm-5.2 about 25% under and kimi-k2.6 under by a third, which would have made
-  // every open model look cheaper than it is in exactly the comparison we were using them for.
-  // (`computeCost` prefers the router's own reported cost anyway; this is the fallback.)
-  // Keyed by
-  // modelId like the rest. The harness DOES cache now, so cacheRead is real on the providers
-  // that honour it — priced at 0.1x input, the rate the ones that publish a cached rate use.
-  // cacheWrite is set equal to input: the automatic-caching providers charge nothing extra to
-  // populate a cache, and pretending otherwise would overstate their cost.
-  //
-  // An unknown model costs 0, which silently under-reports rather than guessing — so a model
-  // added to lib/model.mjs MUST be added here in the same change, or its spend disappears.
-  'z-ai/glm-5.2':                      { in: 0.60, out: 2.00, cacheWrite: 0.60, cacheRead: 0.15 },
-  'z-ai/glm-4.7':                      { in: 0.40, out: 1.75, cacheWrite: 0.40, cacheRead: 0.08 },
-  'minimax/minimax-m2.5':              { in: 0.30, out: 1.20, cacheWrite: 0.30, cacheRead: 0.03 },
-  'moonshotai/kimi-k2.6':              { in: 0.95, out: 4.00, cacheWrite: 0.95, cacheRead: 0.16 },
-  'deepseek/deepseek-v4-pro':          { in: 0.84, out: 1.68, cacheWrite: 0.84, cacheRead: 0.08 },
-  'qwen/qwen3-coder':                  { in: 0.30, out: 1.00, cacheWrite: 0.30, cacheRead: 0.10 },
-  // A local model is absent on purpose: it runs on the operator's infra and costs us $0.
-};
+// The price table and computeCost live in @nous/core (llm/usageCost.mjs, GET-957), shared with the
+// worker and the model door, which meters most calls itself now. Re-exported for the callers here.
+export { computeCost };
 
-/**
- * Cost of one model call, in dollars. An unknown model returns 0 rather than a
- * guess — a wrong number here would quietly corrupt the unit economics, and a
- * zero is at least visibly wrong.
- */
 /** The output $/1M rate for a model — a simple relative-cost signal for the picker so the
  *  user can see a frontier model costs more credits than a cheap one. 0 = free (e.g. local). */
 export function modelOutputRate(modelId) {
-  return PRICING[modelId]?.out ?? 0;
-}
-
-export function computeCost(model, usage) {
-  // OpenRouter returns what the call ACTUALLY cost, in dollars, on every response. When it
-  // does, use it: a router that prices the call is a better source than a table we maintain
-  // by hand, it stays right when a provider changes its rates, and it removes the footgun
-  // where adding a model to lib/model.mjs but not to PRICING makes its spend vanish silently.
-  // Guarded on a finite positive number so a zero or a missing field falls through to the
-  // table rather than recording a free call.
-  const reported = Number(usage?.cost);
-  if (Number.isFinite(reported) && reported > 0) return reported;
-
-  // Claude through OpenRouter (GET-885) may come back as anthropic/claude-sonnet-5 or a dated id:
-  // the same model, the same price.
-  const p = PRICING[model] ?? PRICING[claudeIdFromOpenRouter(model)];
-  if (!p) return 0;
-
-  const input   = usage?.input_tokens ?? 0;
-  const output  = usage?.output_tokens ?? 0;
-  const read    = usage?.cache_read_input_tokens ?? 0;
-
-  // Cache writes are priced by TTL: 1.25x base for the default 5 minutes, 2x for the 1-hour
-  // one the agent uses on its stable system prefix. When the API breaks the write down by
-  // TTL, price each bucket properly; otherwise fall back to the 5-minute rate, which is the
-  // conservative direction for a meter (it under-reports rather than over-charging).
-  const breakdown = usage?.cache_creation ?? null;
-  const write5m = breakdown?.ephemeral_5m_input_tokens ?? null;
-  const write1h = breakdown?.ephemeral_1h_input_tokens ?? null;
-  const written = usage?.cache_creation_input_tokens ?? 0;
-
-  const writeCost = (write5m !== null || write1h !== null)
-    ? ((write5m ?? 0) / 1e6) * p.cacheWrite + ((write1h ?? 0) / 1e6) * (p.in * 2)
-    : (written / 1e6) * p.cacheWrite;
-
-  return (
-    (input   / 1e6) * p.in +
-    (output  / 1e6) * p.out +
-    writeCost +
-    (read    / 1e6) * p.cacheRead
-  );
+  return MODEL_PRICING[modelId]?.out ?? 0;
 }
 
 // ── Credits ─────────────────────────────────────────────────────────────────

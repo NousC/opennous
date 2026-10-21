@@ -72,7 +72,7 @@ const JUDGE_SYSTEM = [
   'If done is true you MUST supply a quote from the evidence. No quote means not done.',
 ].join('\n');
 
-async function judgeCompletion(item, evidence) {
+async function judgeCompletion(item, evidence, workspaceId = null) {
   const lines = evidence.map(e => {
     const when = (e.observed_at ?? '').slice(0, 10);
     return `- [${when}] ${e.property?.replace(/^interaction\./, '')} (${e.source}): ${e.text}`;
@@ -80,6 +80,7 @@ async function judgeCompletion(item, evidence) {
 
   // A yes/no with a quote: the extraction tier.
   const resp = await createMessage({
+    meter: { workspaceId },
     feature: 'action-item-completion',
     max_tokens: 300,
     accept: (t) => /\{[\s\S]*\}/.test(t),
@@ -438,7 +439,7 @@ async function judgeUnjudged(supabase, workspaceId, rows, byEntity, closed, stat
         // email can be matched to the posters that were promised.
         description: v.description ?? null,
         quote: v.quote ?? null,
-      }, evidence);
+      }, evidence, workspaceId);
     } catch (e) {
       // A model failure must never close or drop a task, and it is not a "no" either: nothing is
       // recorded, and when the provider itself is down the rest of the batch waits for the retry

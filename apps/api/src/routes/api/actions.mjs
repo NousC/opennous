@@ -11,6 +11,7 @@ import { isWorkspaceMember } from '../../lib/authz.mjs';
 import { sendProposedAction } from '../../services/actionSend.mjs';
 import { recordVerdict, confirmDecision } from '@nous/core';
 import { withOrigins } from '../../lib/actionOrigin.mjs';
+import { SIGNAL_REC_KEYS } from '../../lib/detectorDrafts.mjs';
 import { sendableMailboxes, chosenMailbox } from '../../lib/automationMailboxes.mjs';
 
 export const actionsRouter = Router();
@@ -169,8 +170,8 @@ actionsRouter.post('/:id/snooze', verifySupabaseAuth, async (req, res) => {
     const { data: rec, error: re } = await supabase.from('ri_recommendations')
       .select('id, rec_key, evidence').eq('id', action.rec_id).eq('workspace_id', action.workspace_id).maybeSingle();
     if (re) throw re;
-    // Only a signal's next move snoozes (the From signals group); other drafts are sent or skipped.
-    if (!rec || rec.rec_key !== 'automation.deal_signal') return res.status(409).json({ error: 'not_snoozable' });
+    // Only a signal's next move snoozes (the From signals group, GET-953); other drafts are sent or skipped.
+    if (!rec || !SIGNAL_REC_KEYS.has(rec.rec_key)) return res.status(409).json({ error: 'not_snoozable' });
     const until = new Date(Date.now() + days * 86_400_000).toISOString();
     const { error } = await supabase.from('ri_recommendations')
       .update({ evidence: { ...(rec.evidence ?? {}), snoozed_until: until, snoozed_action_id: req.params.id }, updated_at: new Date().toISOString() })

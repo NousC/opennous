@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StepMark, ToolLogo, TriggerMark } from "@/components/AutomationMarks";
 import {
-  JOBS, SIGNAL_OPTIONS, FREQUENCY_LABEL, OFFSET_LABEL,
+  JOBS, SIGNAL_OPTIONS, SIGNAL_OPTION_LABELS, FREQUENCY_LABEL, OFFSET_LABEL,
   type Job, type Payload, type Tool,
 } from "@/lib/automations";
 import {
@@ -468,7 +468,8 @@ export function SignalPicker({ value, onChange }: { value: string[]; onChange: (
           !value.length ? "border-foreground bg-foreground text-background" : "border-border/80 text-foreground/80 hover:border-foreground/40")}>
         Any signal
       </button>
-      {SIGNAL_OPTIONS.map(([k, l]) => {
+      {/* A kind no longer offered (a next step, GET-954) still shows while picked, so it can be unpicked. */}
+      {[...SIGNAL_OPTIONS, ...SIGNAL_OPTION_LABELS.filter(([k]) => value.includes(k) && !SIGNAL_OPTIONS.some(([o]) => o === k))].map(([k, l]) => {
         const on = value.includes(k);
         return (
           <button key={k} onClick={() => flip(k)}

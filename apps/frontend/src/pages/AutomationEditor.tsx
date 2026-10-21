@@ -8,6 +8,7 @@
 //
 // Simpler than n8n on purpose: a flow here runs in one order, so there is nothing to drag or
 // wire.
+import { trackProductEvent } from "@/lib/posthog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Check, ChevronLeft, ChevronRight, Loader2, PanelRightClose, PanelRightOpen, Play, Plus, Search, Trash2, X as XIcon, Zap } from "lucide-react";
@@ -569,7 +570,10 @@ export default function AutomationEditor() {
       });
       const out = await res.json().catch(() => ({}));
       if (!res.ok) setError(out.message ?? out.error ?? "Could not change that.");
-      else setSaved(out);
+      else {
+        if (!saved.enabled) trackProductEvent('automation_enabled', { built_in: false, workspace_id: workspaceId ?? null });
+        setSaved(out);
+      }
     } finally { setBusy(null); }
   };
 

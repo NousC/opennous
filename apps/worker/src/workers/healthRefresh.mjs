@@ -35,28 +35,37 @@ export async function refreshWorkspaceHealth(supabase, workspaceId) {
   let changed = 0;
   await mapLimit(companyIds, CONCURRENCY, async (id) => {
     try {
-      const { data: company } = await supabase.from('companies')
-        .select('id, deal_health_score').eq('workspace_id', workspaceId).eq('id', id).maybeSingle();
-      if (!company) return;
-      const inputs = await loadHealthInputs(supabase, workspaceId, id);
-      const dh = computeDealHealth({ company, ...inputs });
-      // Account health's daily snapshot (GET-804): one `account_health_score` state observation a
-      // day, so the account page's trend has a measured point for every day, visited or not. Keyed
-      // by the day, so a page view that already stored today's is left alone.
-      await loadAccountHealthTrend(supabase, workspaceId, id, { backfill: false, persist: true })
-        .catch(err => console.error(`[HEALTH_REFRESH] account health ${id}:`, err.message));
-      // Unchanged means no write: a no-op update would stamp a new observation every night and
-      // turn the history into noise. The trend must carry moves, not heartbeats.
-      if (dh.score == null || dh.score === company.deal_health_score) return;
-      await supabase.from('companies')
-        .update({ deal_health_score: dh.score, deal_health_computed_at: new Date().toISOString() })
-        .eq('id', id);
-      changed++;
+      if (await refreshAccountHealth(supabase, workspaceId, id)) changed++;
     } catch (err) {
       console.error(`[HEALTH_REFRESH] company ${id}:`, err.message);
     }
   });
   return { scanned: companyIds.length, changed };
+}
+
+/**
+ * One account, the same reads and writes as the nightly pass. Also called the moment new evidence
+ * lands (a Slack conversation read, GET-976), so the stored score does not wait for the sweep.
+ * Returns whether the stored score moved.
+ */
+export async function refreshAccountHealth(supabase, workspaceId, id) {
+  const { data: company } = await supabase.from('companies')
+    .select('id, deal_health_score').eq('workspace_id', workspaceId).eq('id', id).maybeSingle();
+  if (!company) return false;
+  const inputs = await loadHealthInputs(supabase, workspaceId, id);
+  const dh = computeDealHealth({ company, ...inputs });
+  // Account health's daily snapshot (GET-804): one `account_health_score` state observation a
+  // day, so the account page's trend has a measured point for every day, visited or not. Keyed
+  // by the day, so a page view that already stored today's is left alone.
+  await loadAccountHealthTrend(supabase, workspaceId, id, { backfill: false, persist: true })
+    .catch(err => console.error(`[HEALTH_REFRESH] account health ${id}:`, err.message));
+  // Unchanged means no write: a no-op update would stamp a new observation every night and
+  // turn the history into noise. The trend must carry moves, not heartbeats.
+  if (dh.score == null || dh.score === company.deal_health_score) return false;
+  await supabase.from('companies')
+    .update({ deal_health_score: dh.score, deal_health_computed_at: new Date().toISOString() })
+    .eq('id', id);
+  return true;
 }
 
 export async function runHealthRefresh() {

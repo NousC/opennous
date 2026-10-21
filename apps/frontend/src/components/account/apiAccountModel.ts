@@ -59,11 +59,11 @@ export function claimText(v: unknown): string {
 const PROVIDERS = [
   "hubspot", "salesforce", "pipedrive", "attio", "gmail", "outlook", "google_calendar", "calendar",
   "linkedin", "fireflies", "fellow", "granola", "fathom", "gong", "ringcentral", "slack",
-  "instantly", "smartlead", "lemlist", "heyreach", "emailbison", "stripe", "apollo",
+  "instantly", "smartlead", "lemlist", "heyreach", "emailbison", "stripe", "apollo", "posthog",
 ];
 const PROVIDER_NAME: Record<string, string> = {
   hubspot: "HubSpot", gmail: "Gmail", google_calendar: "Calendar", calendar: "Calendar", linkedin: "LinkedIn",
-  ringcentral: "RingCentral", heyreach: "HeyReach", emailbison: "EmailBison",
+  ringcentral: "RingCentral", heyreach: "HeyReach", emailbison: "EmailBison", posthog: "PostHog",
 };
 export const providerName = (p: string) => PROVIDER_NAME[p] ?? p.charAt(0).toUpperCase() + p.slice(1);
 

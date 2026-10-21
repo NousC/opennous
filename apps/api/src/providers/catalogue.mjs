@@ -93,6 +93,14 @@ const RINGCENTRAL_FIELDS = [
   { name: 'client_secret', label: 'Client secret (optional)', type: 'password', placeholder: 'Only with your own client ID', description: "Your private app's client secret, if you entered a client ID.", optional: true },
 ];
 
+const POSTHOG_FIELDS = [
+  { name: 'api_key',      label: 'Personal API key',          type: 'password', placeholder: 'phx_…', description: 'PostHog → Settings → Personal API keys → Create. Scopes: Project read, Query read and Hog function write. Not the phc_ project token, which can only send events.' },
+  { name: 'project_id',   label: 'Project ID',                type: 'text',     placeholder: '12345', description: 'The number in your PostHog address after /project/, or Settings → Project → Project ID.' },
+  { name: 'host',         label: 'Region or host (optional)', type: 'text',     placeholder: 'us', description: 'us or eu for PostHog Cloud (defaults to us), or the https address of your own PostHog.', optional: true },
+  { name: 'signup_event', label: 'Signup event (optional)',   type: 'text',     placeholder: 'signed_up', description: 'The event your product sends when someone signs up. Each one adds the person and their company here. Defaults to signed_up.', optional: true },
+  { name: 'key_events',   label: 'Key events (optional)',     type: 'text',     placeholder: 'report_created, invite_sent', description: 'Up to 10 events that mean real use, comma separated. We count them per account every day, and automations can run when one fires.', optional: true },
+];
+
 export const CATALOGUE = {
   // ── Outbound ──────────────────────────────────────────────────────────────
   instantly: {
@@ -370,6 +378,19 @@ export const CATALOGUE = {
   // database (is_active) carries the decision rather than a component.
   gmail:            { display: 'Gmail (SMTP)',      category: 'communication', auth: 'credentials', authFields: SMTP_FIELDS, webhook: 'none', hidden: true, hiddenWhy: 'Superseded by gmail_oauth. Kept for workspaces that connected it before OAuth existed.' },
   notion:           { display: 'Notion',            category: 'productivity',  auth: 'oauth2', webhook: 'none', hidden: true, hiddenWhy: 'No OAuth handler mounted. SettingsModal builds an authorize URL for it that 404s.' },
+  posthog: {
+    display: 'PostHog', category: 'analytics',
+    // Five fields: a personal key alone reaches no project, and the host differs per region or
+    // self-hosted instance. See packages/core/src/integrations/posthog.ts.
+    auth: 'credentials',
+    authFields: POSTHOG_FIELDS,
+    keyUrl:  'https://us.posthog.com/settings/user-api-keys',
+    keyHint: 'Create a personal API key with Project read, Query read and Hog function write. We read your product usage once a day and receive your signup and key events as they happen.',
+    // PostHog's API creates the destination off the key (an HTTP Webhook destination with our
+    // secret as a header). Without Hog function write it cannot, and the daily usage pull still runs.
+    webhook: 'auto',
+    webhookNote: 'One PostHog connection covers the whole project. New signups land as people and accounts right away, and usage per account (active users, last seen, key events) refreshes every day. Free email addresses (gmail.com and the like) become people without an account.',
+  },
   google_analytics: { display: 'Google Analytics',  category: 'analytics',     auth: 'oauth2', webhook: 'none', hidden: true, hiddenWhy: 'No OAuth handler mounted, and not a GTM surface.' },
   outlook_oauth:    { display: 'Outlook',           category: 'communication', auth: 'oauth2', webhook: 'none', hidden: true, hiddenWhy: 'No OAuth handler mounted. Was the one such provider NOT in the old EXCLUDED list, so it rendered a Connect button that 404d.' },
   clickup:          { display: 'ClickUp',           category: 'productivity',  auth: 'api_key', webhook: 'none', hidden: true, hiddenWhy: 'Not a GTM surface.' },

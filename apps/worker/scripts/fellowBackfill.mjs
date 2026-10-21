@@ -522,6 +522,7 @@ async function assertCredit(estimatedCost) {
   let probeOk = false, probeWhy = 'no answer';
   try {
     await createMessage({
+      meter: { workspaceId: WS ?? null },
       feature: 'backfill-preflight',
       max_tokens: PROBE_MAX_TOKENS,
       messages: [{ role: 'user', content: 'Reply with the single word: ok' }],

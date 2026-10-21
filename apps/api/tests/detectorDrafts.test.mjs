@@ -15,7 +15,7 @@ import {
   DETECTORS, quietOpenDeals, staleDealFiring, signalFirings, gateFiring, planDrafts, draftedToday,
   rankRecipients, speakerMatches, originMarker, ledgerKey, runDetectorDraftsForWorkspace, recKeyOf,
   runDetectorDrafts, allowedWorkspaces, dealSignalFirings, DEAL_SIGNALS, DETECTOR_ORDER, draftSystem, voiceFor,
-  isAlreadyHandled, researchLine, HANDLED_OUTCOMES, researchedNameMatches,
+  isAlreadyHandled, researchLine, HANDLED_OUTCOMES, researchedNameMatches, trackMove, nudgeRequest, NUDGE_DAYS, stepLine,
 } from '../src/lib/detectorDrafts.mjs';
 import { parseEmailDraft, EMAIL_DRAFT_SYSTEM } from '../src/lib/emailDraft.mjs';
 import { originOf, signalOf } from '../src/lib/actionOrigin.mjs';
@@ -411,11 +411,13 @@ test('a skipped or sent draft does not come straight back for the same trigger; 
   await run(s, deps, NOW + 2 * DAY);
   assert.equal(calls.model, 3, 'no redraft two days later');
   // 31 days on, the deal is still in the same stage and still quiet: the stale draft returns. The
-  // risk and the ask are older than the signal window by then and do not.
+  // risk and the ask are older than the signal window by then and are not drafted again; their sent
+  // drafts went unanswered, so each gets its one follow-up (GET-949, GET-953).
   await run(s, deps, NOW + 31 * DAY);
-  assert.equal(calls.model, 4);
+  assert.equal(calls.model, 6);
   const fresh = s.db.pending_actions.filter((d) => d.status === 'pending');
-  assert.deepEqual(fresh.map((d) => d.entity_id), ['p_rita']);
+  assert.deepEqual(fresh.map((d) => d.entity_id).sort(), ['p_hollis', 'p_lee', 'p_rita']);
+  assert.equal(fresh.filter((d) => /^Re: /.test(d.subject)).length, 2);
 });
 
 test('a new trigger on the same subject waits out the minimum gap', async () => {
@@ -769,7 +771,7 @@ test('the play researches the person, writes to whoever named them, and the inbo
   s.db.account_signals = [ceo()];
   const asked = [];
   const { deps, calls } = fakeDeps({
-    signalResearch: async (_s, _w, { firing }) => { asked.push(firing.trigger.kind); return { name: 'Andrew Lemoine', title: 'CEO', source_url: 'https://acme.test/team', source_title: 'Team' }; },
+    signalResearch: async (_s, _w, { firing }) => { asked.push(firing.trigger.kind); return { name: 'Dana Whitfield', title: 'CEO', source_url: 'https://acme.test/team', source_title: 'Team' }; },
   });
   const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
   assert.equal(r.drafted, 1, JSON.stringify(r));
@@ -777,15 +779,15 @@ test('the play researches the person, writes to whoever named them, and the inbo
   const [d] = s.db.pending_actions;
   assert.equal(d.recipient_email, 'rita@acme.test');
   const brief = calls.last.messages[0].content;
-  assert.match(brief, /Who that person is \(researched, source https:\/\/acme.test\/team\): Andrew Lemoine, CEO/);
+  assert.match(brief, /Who that person is \(researched, source https:\/\/acme.test\/team\): Dana Whitfield, CEO/);
   assert.match(brief, /ask them to bring that person into the next call/);
   const ledger = s.db.ri_recommendations.find((l) => l.rec_key === recKeyOf('deal_signal'));
-  assert.equal(ledger.evidence.trigger.research.name, 'Andrew Lemoine');
+  assert.equal(ledger.evidence.trigger.research.name, 'Dana Whitfield');
   const sigOut = originOf(d, { recs: new Map([[ledger.id, ledger]]) }).signal;
   assert.equal(sigOut.kind, 'stakeholder_identified');
   assert.equal(sigOut.speaker, 'Rita');
   assert.equal(sigOut.quote, 'Our CEO will want to see this before we sign');
-  assert.deepEqual(sigOut.research, { name: 'Andrew Lemoine', title: 'CEO', source_url: 'https://acme.test/team', source_title: 'Team', contact_id: null });
+  assert.deepEqual(sigOut.research, { name: 'Dana Whitfield', title: 'CEO', source_url: 'https://acme.test/team', source_title: 'Team', contact_id: null });
 });
 
 test('a researched person who is already a contact is never the recipient; one in touch since is already handled', async () => {
@@ -842,13 +844,13 @@ test('only a Deal signals draft carries a signal', () => {
 });
 
 test('a researched name matches a contact only on a full name: middle initials and short forms count, a first name alone never', () => {
-  const andrew = { first_name: 'Andrew', last_name: 'Lemoine' };
-  assert.equal(researchedNameMatches(andrew, 'Andrew Lemoine'), true);
-  assert.equal(researchedNameMatches(andrew, 'Andrew J. Lemoine'), true);
-  assert.equal(researchedNameMatches({ first_name: 'Andy', last_name: 'Lemoine' }, 'Andrew Lemoine'), true);
-  assert.equal(researchedNameMatches(andrew, 'Andrew'), false);
-  assert.equal(researchedNameMatches(andrew, 'Andrew Smith'), false);
-  assert.equal(researchedNameMatches({ first_name: 'Andrew', last_name: null }, 'Andrew Lemoine'), false);
+  const dana = { first_name: 'Dana', last_name: 'Whitfield' };
+  assert.equal(researchedNameMatches(dana, 'Dana Whitfield'), true);
+  assert.equal(researchedNameMatches(dana, 'Dana J. Whitfield'), true);
+  assert.equal(researchedNameMatches({ first_name: 'Dan', last_name: 'Whitfield' }, 'Dana Whitfield'), true);
+  assert.equal(researchedNameMatches(dana, 'Dana'), false);
+  assert.equal(researchedNameMatches(dana, 'Dana Smith'), false);
+  assert.equal(researchedNameMatches({ first_name: 'Dana', last_name: null }, 'Dana Whitfield'), false);
 });
 
 test('the person the play brings in is never the one written to, even when they raised it', async () => {
@@ -866,13 +868,13 @@ test('one search per signal: a retry of the same trigger reuses the research the
   // Rita already has a draft waiting: the play stops before writing, and retries next hour.
   s.db.pending_actions = [{ id: 'old', workspace_id: WS, entity_id: 'p_rita', kind: 'email', status: 'pending' }];
   let searches = 0;
-  const { deps } = fakeDeps({ signalResearch: async () => { searches += 1; return { name: 'Andrew Lemoine', title: 'CEO', source_url: 'https://acme.test/team' }; } });
+  const { deps } = fakeDeps({ signalResearch: async () => { searches += 1; return { name: 'Dana Whitfield', title: 'CEO', source_url: 'https://acme.test/team' }; } });
   for (const at of [NOW, NOW + 3_600_000, NOW + 7_200_000]) {
     const r = await runDetectorDraftsForWorkspace(s, WS, { now: at, deps, opts: { ...OPTS, only: ['deal_signal'] } });
     assert.equal(r.outcomes.recipient_has_open_draft, 1, JSON.stringify(r));
   }
   assert.equal(searches, 1);
-  assert.equal(s.db.ri_recommendations[0].evidence.trigger.research.name, 'Andrew Lemoine');
+  assert.equal(s.db.ri_recommendations[0].evidence.trigger.research.name, 'Dana Whitfield');
   // Nothing found is remembered too.
   const s2 = world();
   s2.db.account_signals = [ceo()];
@@ -903,4 +905,267 @@ test('a snooze holds the draft it was set on; a new draft on the same ledger row
   assert.equal(s.db.pending_actions.length, 2);
   assert.equal(ledger.evidence.snoozed_until, undefined);
   assert.equal(ledger.evidence.snoozed_action_id, undefined);
+});
+
+
+// ─── GET-949: after Send, did the move work? ─────────────────────────────────────────────────────
+
+test('a move is tracked: their reply or a meeting moves it, our own email does not, five quiet days make it due', () => {
+  const sentAt = iso(3);
+  const base = { sentAt, recipientId: 'p_rita', now: NOW };
+  const t = (property, daysAgo, over = {}) => ({ entity_id: 'p_rita', property, observed_at: iso(daysAgo), source: 'gmail', ...over });
+  assert.deepEqual(trackMove({ ...base, touches: [t('interaction.email_received', 1)] }), { state: 'moved', how: 'replied', at: iso(1) });
+  assert.deepEqual(trackMove({ ...base, touches: [t('interaction.meeting_scheduled', 2)] }), { state: 'moved', how: 'meeting', at: iso(2) });
+  assert.equal(trackMove({ ...base, touches: [t('interaction.email_sent', 1)] }).state, 'waiting', 'our own email is not a reply');
+  assert.equal(trackMove({ ...base, touches: [t('interaction.email_received', 1, { is_outbound: true })] }).state, 'waiting');
+  assert.equal(trackMove({ ...base, touches: [t('interaction.email_received', 5)] }).state, 'waiting', 'before the send does not count');
+  assert.equal(trackMove({ ...base, touches: [t('interaction.email_received', 1, { entity_id: 'p_other' })] }).state, 'waiting');
+  assert.equal(trackMove({ ...base, touches: [t('interaction.email_received', 1, { source: 'motion' })] }).state, 'waiting');
+  // The person the play set out to bring in shows up: that is the move.
+  assert.deepEqual(trackMove({ ...base, joinerId: 'p_ceo', touches: [t('interaction.email_sent', 1, { entity_id: 'p_ceo' })] }), { state: 'moved', how: 'joined', at: iso(1) });
+  assert.equal(trackMove({ sentAt: iso(NUDGE_DAYS), recipientId: 'p_rita', now: NOW }).state, 'due');
+  assert.equal(trackMove({ sentAt: iso(NUDGE_DAYS - 1), recipientId: 'p_rita', now: NOW }).state, 'waiting');
+  assert.equal(trackMove({ sentAt: null, recipientId: 'p_rita', now: NOW }).state, 'waiting');
+});
+
+test('the nudge brief quotes the first email and asks for a short follow-up', () => {
+  const req = nudgeRequest({ recipient: 'Rita', subject: 'Bringing your CEO in', body: 'Hi Rita, could you bring Andrew to Thursday?' });
+  assert.match(req, /Recipient: Rita/);
+  assert.match(req, /5 days ago and heard nothing back/);
+  assert.match(req, /subject "Bringing your CEO in"/);
+  assert.match(req, /could you bring Andrew to Thursday/);
+});
+
+/** A signal drafted, then sent `sentDaysAgo` days before NOW. */
+async function sentSignal(sentDaysAgo, research = null) {
+  const s = world();
+  s.db.account_signals = [ceo({ occurred_at: iso(sentDaysAgo + 1) })];
+  const { deps, calls } = fakeDeps({ signalResearch: research ? async () => research : null });
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW - (sentDaysAgo + 0.5) * DAY, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  const [d] = s.db.pending_actions;
+  Object.assign(d, { status: 'sent', decided_at: iso(sentDaysAgo), user_id: d.user_id });
+  s.db.observations = [];
+  return { s, deps, calls, d, ledger: s.db.ri_recommendations[0] };
+}
+const pass = (s, deps, at = NOW) => runDetectorDraftsForWorkspace(s, WS, { now: at, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+
+test('a reply after Send closes the case as moved; nothing is drafted', async () => {
+  const { s, deps, calls, ledger } = await sentSignal(2);
+  s.db.observations.push({ workspace_id: WS, entity_id: 'p_rita', property: 'interaction.email_received', observed_at: iso(1), source: 'gmail' });
+  const before = calls.model;
+  const r = await pass(s, deps);
+  assert.equal(r.tracking.moved, 1, JSON.stringify(r));
+  assert.deepEqual({ state: ledger.evidence.tracking.state, how: ledger.evidence.tracking.how }, { state: 'moved', how: 'replied' });
+  assert.equal(calls.model, before);
+  assert.equal(s.db.pending_actions.length, 1);
+});
+
+test('five quiet days: one follow-up to the same person in From signals; a second quiet window closes it, never a second nudge', async () => {
+  const { s, deps, calls, d, ledger } = await sentSignal(NUDGE_DAYS);
+  const r = await pass(s, deps);
+  assert.equal(r.tracking.nudged, 1, JSON.stringify(r));
+  const nudge = s.db.pending_actions.find((a) => a.id !== d.id);
+  assert.equal(nudge.recipient_email, 'rita@acme.test');
+  assert.equal(nudge.status, 'pending');
+  assert.equal(nudge.rec_id, ledger.id);
+  assert.match(nudge.subject, /^Re: /);
+  assert.match(calls.last.messages[0].content, /heard nothing back/);
+  assert.equal(ledger.evidence.action_id, nudge.id);
+  assert.equal(ledger.evidence.tracking.first_action_id, d.id);
+  const sig = originOf(nudge, { recs: new Map([[ledger.id, ledger]]) }).signal;
+  assert.equal(sig.nudge, true);
+  assert.equal(originOf(d, { recs: new Map([[ledger.id, ledger]]) }).signal.nudge, false);
+
+  // The next hour: the nudge waits on the person, no second draft.
+  const n = calls.model;
+  await pass(s, deps, NOW + 3_600_000);
+  assert.equal(calls.model, n);
+  assert.equal(s.db.pending_actions.length, 2);
+
+  // Sent, and five more quiet days: the case closes as quiet.
+  Object.assign(nudge, { status: 'sent', decided_at: iso(0) });
+  const r2 = await pass(s, deps, NOW + (NUDGE_DAYS + 1) * DAY);
+  assert.equal(r2.tracking.quiet, 1, JSON.stringify(r2));
+  assert.equal(ledger.evidence.tracking.state, 'quiet');
+  await pass(s, deps, NOW + (NUDGE_DAYS + 2) * DAY);
+  assert.equal(s.db.pending_actions.length, 2);
+});
+
+test('the researched person joining any conversation after Send is the move', async () => {
+  const { s, deps, ledger } = await sentSignal(2, { name: 'Cass Champion', title: 'CEO', source_url: 'https://acme.test/cass' });
+  s.db.observations.push({ workspace_id: WS, entity_id: 'p_cass', property: 'interaction.meeting_held', observed_at: iso(1), source: 'granola' });
+  const r = await pass(s, deps);
+  assert.equal(r.tracking.moved, 1, JSON.stringify(r));
+  assert.equal(ledger.evidence.tracking.how, 'joined');
+});
+
+test('a skipped nudge closes the case; a draft still waiting on you is not tracked', async () => {
+  const { s, deps, d, ledger } = await sentSignal(NUDGE_DAYS);
+  await pass(s, deps);
+  const nudge = s.db.pending_actions.find((a) => a.id !== d.id);
+  nudge.status = 'rejected';
+  const r = await pass(s, deps, NOW + 3_600_000);
+  assert.equal(r.tracking.quiet, 1);
+  assert.equal(ledger.evidence.tracking.reason, 'nudge_skipped');
+
+  const s2 = world();
+  s2.db.account_signals = [ceo()];
+  const { deps: d2 } = fakeDeps();
+  await pass(s2, d2, NOW - 6 * DAY);
+  const r2 = await pass(s2, d2);
+  assert.deepEqual(r2.tracking, { moved: 0, nudged: 0, quiet: 0, waiting: 0, spent: 0 });
+});
+
+test('a nudge spends from the day\'s cap', async () => {
+  const { s, deps } = await sentSignal(NUDGE_DAYS);
+  const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, dailyCap: 1, only: ['deal_signal'] } });
+  assert.equal(r.tracking.nudged + r.tracking.waiting, 1);
+});
+
+test('a new signal drafted after a closed case is a new case, and it is tracked', async () => {
+  const { s, deps, ledger } = await sentSignal(2);
+  s.db.observations.push({ workspace_id: WS, entity_id: 'p_rita', property: 'interaction.email_received', observed_at: iso(1), source: 'gmail' });
+  await pass(s, deps);
+  assert.equal(ledger.evidence.tracking.state, 'moved');
+  // Ten days on, a new objection on the account is drafted: the old tracking does not come with it.
+  s.db.account_signals = [sig('s_new', 'a_acme', 'objection_raised', -9, { speaker: 'Rita' })];
+  await pass(s, deps, NOW + 10 * DAY);
+  assert.equal(s.db.pending_actions.length, 2);
+  assert.equal(ledger.evidence.tracking, undefined);
+  const fresh = s.db.pending_actions[1];
+  Object.assign(fresh, { status: 'sent', decided_at: new Date(NOW + 10 * DAY).toISOString() });
+  const r = await pass(s, deps, NOW + 16 * DAY);
+  assert.equal(r.tracking.nudged, 1, JSON.stringify(r));
+});
+
+test('a skipped first draft closes its case and is never looked at again', async () => {
+  const s = world();
+  s.db.account_signals = [ceo()];
+  const { deps } = fakeDeps();
+  await pass(s, deps, NOW - DAY);
+  s.db.pending_actions[0].status = 'rejected';
+  await pass(s, deps);
+  const ledger = s.db.ri_recommendations[0];
+  assert.deepEqual([ledger.evidence.tracking.state, ledger.evidence.tracking.reason], ['skipped', 'draft_skipped']);
+  const r = await pass(s, deps, NOW + 3_600_000);
+  assert.deepEqual(r.tracking, { moved: 0, nudged: 0, quiet: 0, waiting: 0, spent: 0 });
+});
+
+test('a nudge passes the same gates a first draft does', async () => {
+  // The sender switched drafting off: no nudge, no model call, looked at again later.
+  {
+    const { s, deps, calls, d } = await sentSignal(NUDGE_DAYS);
+    s.db.workspace_members.find((m) => m.user_id === d.user_id).agent_prefs = { home: { auto_draft: false } };
+    const n = calls.model;
+    const r = await pass(s, deps);
+    assert.equal(r.tracking.waiting, 1, JSON.stringify(r));
+    assert.equal(calls.model, n);
+  }
+  // A rule against outreach: the case closes.
+  {
+    const { s, deps, calls, ledger } = await sentSignal(NUDGE_DAYS);
+    deps.bindingConstraints = async () => [{ id: 'c1' }];
+    const n = calls.model;
+    await pass(s, deps);
+    assert.deepEqual([ledger.evidence.tracking.state, ledger.evidence.tracking.reason], ['quiet', 'blocked_by_constraint']);
+    assert.equal(calls.model, n);
+  }
+  // Another email already waiting for the person: wait, never stack.
+  {
+    const { s, deps } = await sentSignal(NUDGE_DAYS);
+    s.db.pending_actions.push({ id: 'other', workspace_id: WS, entity_id: 'p_rita', kind: 'email', status: 'pending' });
+    const r = await pass(s, deps);
+    assert.equal(r.tracking.waiting, 1);
+    assert.equal(s.db.pending_actions.length, 2);
+  }
+});
+
+test('a nudge that cannot be written closes the case instead of paying again every hour', async () => {
+  const { s, deps, calls, ledger } = await sentSignal(NUDGE_DAYS);
+  deps.messageText = () => '';
+  await pass(s, deps);
+  assert.deepEqual([ledger.evidence.tracking.state, ledger.evidence.tracking.reason], ['quiet', 'nudge_failed']);
+  const n = calls.model;
+  await pass(s, deps, NOW + 3_600_000);
+  assert.equal(calls.model, n);
+});
+
+// ─── GET-953: churn risk and expansion are signals too ─────────────────────────────────────────
+
+test('a churn risk or an expansion ask carries the signal the From signals pane reads', async () => {
+  const s = world();
+  const { deps } = fakeDeps();
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_risk', 'expansion_signal'] } });
+  const recs = new Map(s.db.ri_recommendations.map((r) => [r.id, r]));
+  const risk = s.db.pending_actions.find((a) => a.recipient_email === 'hollis@birch.test');
+  const sig = originOf(risk, { recs }).signal;
+  assert.equal(sig.kind, 'churn_risk');
+  assert.equal(sig.label, 'Churn risk');
+  assert.equal(sig.quote, 'We are reviewing other vendors');
+  assert.equal(sig.speaker, 'Hollis');
+  const ask = s.db.pending_actions.find((a) => a.recipient_email === 'lee@cedar.test');
+  assert.equal(originOf(ask, { recs }).signal.kind, 'expansion_signal');
+});
+
+test('a sent churn risk draft is tracked and nudged like a deal signal; a stale deal draft is not', async () => {
+  const s = world();
+  const { deps } = fakeDeps();
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW - (NUDGE_DAYS + 1) * DAY, deps, opts: { ...OPTS, only: ['deal_risk', 'stale_deal'] } });
+  for (const a of s.db.pending_actions) Object.assign(a, { status: 'sent', decided_at: iso(NUDGE_DAYS) });
+  s.db.observations = [];
+  const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  const risk = s.db.ri_recommendations.find((l) => l.rec_key === recKeyOf('deal_risk'));
+  const stale = s.db.ri_recommendations.find((l) => l.rec_key === recKeyOf('stale_deal'));
+  assert.equal(risk.evidence.tracking?.state, 'nudged', JSON.stringify(r.tracking));
+  assert.equal(stale?.evidence.tracking, undefined);
+});
+
+
+// ─── GET-956: a next step that went wrong ──────────────────────────────────────────────────────
+
+test('a missed or slipped next step fires with the step, its owner and its dates', () => {
+  const rows = [
+    sig('s_m', 'a1', 'next_step_missed', 1, { title: 'Send the security questionnaire', speaker: 'Rita',
+      detail: { due_at: iso(3), owner: 'Rita Roster', status: 'open' } }),
+    sig('s_s', 'a2', 'next_step_slipped', 1, { title: 'Legal review of the order form',
+      detail: { due_at: iso(-10), first_due_at: iso(4), pushes: 2, owner: 'Rita Roster' } }),
+  ];
+  const f = dealSignalFirings(rows, { now: NOW });
+  const m = f.find((x) => x.accountId === 'a1');
+  assert.match(m.why, /^Next step missed: Send the security questionnaire, due Oct 1/);
+  assert.equal(m.trigger.step, 'Send the security questionnaire');
+  assert.equal(m.trigger.owner, 'Rita Roster');
+  assert.equal(m.raisedBy, 'Rita');
+  const sl = f.find((x) => x.accountId === 'a2');
+  assert.match(sl.why, /^Next step pushed 2 times: Legal review/);
+  assert.equal(sl.trigger.pushes, 2);
+  assert.match(stepLine(sl.trigger), /^The next step: Legal review of the order form; owner: Rita Roster; due Oct 14; pushed 2 times \(first due Sep 30\)$/);
+  assert.equal(stepLine({ kind: 'objection_raised' }), null);
+});
+
+test('a more urgent signal on the account still wins over a missed step', () => {
+  const f = dealSignalFirings([sig('s_m', 'a1', 'next_step_missed', 1), sig('s_o', 'a1', 'objection_raised', 2)], { now: NOW });
+  assert.equal(f[0].trigger.kind, 'objection_raised');
+});
+
+test('a missed next step drafts once, with its own instruction and the step in the brief', async () => {
+  const s = world();
+  s.db.account_signals = [sig('s_m', 'a_acme', 'next_step_missed', 1, { title: 'Send the security questionnaire', speaker: 'Rita',
+    detail: { due_at: iso(3), owner: 'Rita Roster', status: 'open' } })];
+  const { deps, calls } = fakeDeps();
+  const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(r.drafted, 1, JSON.stringify(r));
+  assert.equal(s.db.pending_actions[0].recipient_email, 'rita@acme.test');
+  const brief = calls.last.messages[0].content;
+  assert.match(brief, /If the step was ours \(see the owner\), own it/);
+  assert.match(brief, /The next step: Send the security questionnaire; owner: Rita Roster; due Oct 1/);
+});
+
+test('product signals from PostHog draft a next move without an open deal (GET-751)', async () => {
+  const { DEAL_SIGNALS } = await import('../src/lib/detectorDrafts.mjs');
+  for (const k of ['product_qualified', 'seats_growing', 'account_inactive']) {
+    assert.equal(DEAL_SIGNALS[k].noDealNeeded, true, k);
+    assert.match(DEAL_SIGNALS[k].prompt, /never mention tracking or analytics/i, k);
+  }
+  assert.equal(DEAL_SIGNALS.objection_raised.noDealNeeded, undefined, 'a deal signal still needs its deal');
 });

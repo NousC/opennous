@@ -8,6 +8,7 @@
 // New opens the jobs as templates, plus a blank one. Picking one lands you in the editor with
 // the flow already drawn and the step that still needs you selected — filling in gaps, not
 // building from nothing.
+import { trackProductEvent } from "@/lib/posthog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { STRIP_FOLD, TableBox } from "@/components/reports/parts";
 import { ListCard, ListHeader, ListText, ListTile, listRowClass } from "@/components/ui/list";
@@ -308,7 +309,10 @@ export function BuiltInAutomations({
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) setError(body.message ?? body.error ?? "Could not change that.");
-      else await load();
+      else {
+        if (!a.enabled) trackProductEvent('automation_enabled', { built_in: true, workspace_id: workspaceId ?? null });
+        await load();
+      }
     } finally { setBusy(null); }
   };
 

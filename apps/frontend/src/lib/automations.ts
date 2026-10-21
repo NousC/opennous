@@ -243,14 +243,23 @@ export const TOOL_DOMAIN: Record<string, string> = {
   slack: "slack.com", gmail: "gmail.com", posthog: "posthog.com", gcal: "calendar.google.com",
 };
 
-/** The account signals an automation can listen for (GET-686), in the words the product uses. */
+/**
+ * The account signals an automation can listen for (GET-686), in the words the product uses. A
+ * next step agreed is a task, not a signal (GET-954), so it is not offered; a missed or slipped one is.
+ */
 export const SIGNAL_OPTIONS: [string, string][] = [
   ["objection_raised", "Objection raised"], ["objection_resolved", "Objection resolved"],
   ["competitor_mentioned", "Competitor mentioned"], ["competitor_evaluating", "Competitor evaluated"],
   ["stakeholder_identified", "Key stakeholder"], ["stakeholder_joined", "New stakeholder"], ["stakeholder_left", "Stakeholder left"],
-  ["budget_discussed", "Budget discussed"], ["buying_signal", "Buying signal"], ["next_step", "Next step agreed"],
+  ["budget_discussed", "Budget discussed"], ["buying_signal", "Buying signal"],
+  ["next_step_missed", "Next step missed"], ["next_step_slipped", "Next step slipped"],
   ["expansion_signal", "Expansion signal"], ["expansion_declined", "Expansion declined"], ["churn_risk", "Churn risk"],
+  // Product usage from PostHog (GET-751).
+  ["usage_dropped", "Usage dropped"], ["account_inactive", "Account inactive"], ["feature_adopted", "Feature adopted"], ["seat_dropped", "Seat dropped"],
+  ["product_qualified", "Product-qualified"], ["seats_growing", "Seats growing"], ["account_activated", "Account activated"],
 ];
+/** What a card calls a kind it may already hold: every option, plus a next step from before GET-954. */
+export const SIGNAL_OPTION_LABELS: [string, string][] = [...SIGNAL_OPTIONS, ["next_step", "Next step agreed"]];
 
 export const FREQUENCY_LABEL: Record<string, string> = {
   daily: "Every day", weekly: "Every Monday", monthly: "First of the month", quarterly: "Start of the quarter",

@@ -21,6 +21,7 @@ export type EventsPage = { data: NousEvent[]; has_more: boolean; next_starting_a
 export const EVENT_FILTERS: { id: string; label: string; type: string | null }[] = [
   { id: "all", label: "All", type: null },
   { id: "signal", label: "Signals", type: "signal.*" },
+  { id: "account", label: "Accounts", type: "account.*" },
   { id: "conversation", label: "Calls and replies", type: "conversation.*" },
   { id: "deal", label: "Deals", type: "deal.*" },
   { id: "icp", label: "ICP", type: "icp.*" },
@@ -49,6 +50,14 @@ export function eventSummary(e: NousEvent): string {
   if (e.type === "conversation.reply_received") return str(d.subject) ?? str(d.snippet) ?? "A reply came in";
   if (e.type === "deal.won" || e.type === "deal.lost") return str(e.deal?.name) ?? (e.type === "deal.won" ? "Deal won" : "Deal lost");
   if (e.type === "deal.stage_changed") return str(d.stage) ? `Stage is now ${str(d.stage)}` : "Stage changed";
+  // The interpreted events (GET-950); packages/core/src/services/eventText.mjs says the same.
+  if (e.type === "deal.stalled") return num(d.days_in_stage) != null && str(d.stage) ? `${d.days_in_stage} days in ${str(d.stage)}` : "Deal stalled";
+  if (e.type === "account.champion_left") {
+    const who = str((d.person as { name?: unknown } | null)?.name) ?? "Their champion";
+    const next = str((d.replacement as { name?: unknown } | null)?.name);
+    return next ? `${who} left; ${next} takes over` : `${who} left, no replacement named`;
+  }
+  if (e.type === "account.expansion_requested") return str(d.product) ? `Asked for more ${str(d.product)}` : "Asked for more";
   if (family === "icp") {
     const from = num((d.from as { score?: unknown } | null)?.score);
     const to = num((d.to as { score?: unknown } | null)?.score);
@@ -80,11 +89,23 @@ export const EVENT_LABEL: Record<string, string> = {
   "signal.expansion_signal": "Expansion signal",
   "signal.expansion_declined": "Expansion declined",
   "signal.churn_risk": "Churn risk",
+  "signal.next_step_missed": "Next step missed",
+  "signal.next_step_slipped": "Next step slipped",
+  "signal.usage_dropped": "Usage dropped",
+  "signal.account_inactive": "Account inactive",
+  "signal.feature_adopted": "Feature adopted",
+  "signal.seat_dropped": "Seat dropped",
+  "signal.product_qualified": "Product-qualified",
+  "signal.seats_growing": "Seats growing",
+  "signal.account_activated": "Account activated",
   "conversation.call_ended": "Call ended",
   "conversation.reply_received": "Reply received",
   "deal.won": "Deal won",
   "deal.lost": "Deal lost",
   "deal.stage_changed": "Stage changed",
+  "deal.stalled": "Deal stalled",
+  "account.champion_left": "Champion left",
+  "account.expansion_requested": "Expansion requested",
   "icp.score_changed": "ICP score changed",
   "icp.tier_changed": "ICP tier changed",
   "people.added": "People added",
@@ -102,7 +123,8 @@ export function eventLabel(type: string): string {
 export const EVENT_FILTER_GROUPS: { label: string; family: string; types: string[] }[] = [
   { label: "Signals", family: "signal.*", types: Object.keys(EVENT_LABEL).filter((t) => t.startsWith("signal.")) },
   { label: "Calls and replies", family: "conversation.*", types: ["conversation.call_ended", "conversation.reply_received"] },
-  { label: "Deals", family: "deal.*", types: ["deal.won", "deal.lost", "deal.stage_changed"] },
+  { label: "Accounts", family: "account.*", types: ["account.champion_left", "account.expansion_requested"] },
+  { label: "Deals", family: "deal.*", types: ["deal.won", "deal.lost", "deal.stage_changed", "deal.stalled"] },
   { label: "ICP", family: "icp.*", types: ["icp.score_changed", "icp.tier_changed"] },
   { label: "People", family: "people.*", types: ["people.added"] },
 ];
@@ -116,6 +138,7 @@ export function filterLabel(type: string | null): string {
 
 /** A type (or family) whose events only exist once a webhook subscribes to its family. */
 export function needsSubscription(type: string | null): boolean {
+  if (type && ALWAYS_LOGGED.has(type)) return false;
   return !!type && SUBSCRIBED_ONLY_FAMILIES.has(type.endsWith(".*") ? type : `${type.split(".")[0]}.*`);
 }
 
@@ -128,6 +151,8 @@ export function mergeNewer(loaded: NousEvent[], fresh: NousEvent[]): NousEvent[]
 
 /** Families only computed for a workspace once a webhook subscribes to them (their polls run per subscriber). */
 export const SUBSCRIBED_ONLY_FAMILIES = new Set(["deal.*", "icp.*", "people.*"]);
+/** Types in those families that are computed for every workspace anyway (deal.stalled, GET-950). */
+export const ALWAYS_LOGGED = new Set(["deal.stalled"]);
 
 export type EventTone = "positive" | "risk" | "warning" | "neutral";
 
@@ -138,6 +163,10 @@ const TONE: Record<string, EventTone> = {
   "deal.lost": "risk", "signal.churn_risk": "risk", "signal.stakeholder_left": "risk", "signal.expansion_declined": "risk",
   "signal.objection_raised": "warning", "signal.competitor_mentioned": "warning", "signal.competitor_evaluating": "warning",
   "signal.budget_discussed": "warning", "automation.approval_requested": "warning",
+  "account.champion_left": "risk", "account.expansion_requested": "positive", "deal.stalled": "warning",
+  "signal.next_step_missed": "risk", "signal.next_step_slipped": "warning",
+  "signal.usage_dropped": "risk", "signal.account_inactive": "risk", "signal.seat_dropped": "warning", "signal.feature_adopted": "positive",
+  "signal.product_qualified": "positive", "signal.seats_growing": "positive", "signal.account_activated": "positive",
 };
 
 /** An event type's tone; anything not listed is neutral. */

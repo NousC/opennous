@@ -92,9 +92,10 @@ export function verdictFromAnswers(raw) {
  * so this module stays importable from a test without a model client.
  * Returns the verdict, or 'SKIP' when the call failed (a failed check retires nothing).
  */
-export async function checkAsk(ask, { createMessage, messageText, model }) {
+export async function checkAsk(ask, { createMessage, messageText, model, workspaceId = null }) {
   try {
     const msg = await createMessage({
+      meter: { workspaceId },
       feature: 'cs_expansion_verify', model, max_tokens: 150, system: ASK_CHECK_SYSTEM,
       messages: [{ role: 'user', content: askCheckPrompt(ask) }],
     });

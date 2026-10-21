@@ -62,13 +62,14 @@ test('the insight half is wired — claims are about them, insights are about us
     'extractCallInsights is imported and never called — the insight half is missing again');
 });
 
-test('insights read the WHOLE thread, not only their side', () => {
-  // The section-4 guard narrows CLAIMS to the customer's messages. An insight about us is
-  // legitimately drawn from what we wrote as well as what they answered, so it must not be
-  // narrowed — passing theirSideOf here would silently halve the corpus it reads.
+test('insights read the WHOLE thread, and rest on their side', () => {
+  // The model reads the whole thread: an insight about us is understood from what we wrote as well as
+  // what they answered, so the transcript is never narrowed. What an insight may REST ON is narrowed
+  // (GET-974): its quote is the customer's words, so it is checked against their side only. A line we
+  // wrote is not their evidence about us.
   const call = SRC.slice(SRC.indexOf('extractCallInsights({'), SRC.indexOf('let commitments'));
   assert.ok(/transcript:\s*text\b/.test(call), 'the whole rendered thread is the transcript');
-  assert.ok(!call.includes('theirSideOf'), 'insights must not be narrowed to their side');
+  assert.ok(/groundAgainst:\s*theirSideOf\(text\)/.test(call), 'the quote is checked against their side');
 });
 
 test('commitment extraction reports its cost too', () => {

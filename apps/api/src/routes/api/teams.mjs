@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { getSupabaseClient } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
@@ -176,6 +177,7 @@ teamsRouter.post('/:teamId/invitations', verifySupabaseAuth, async (req, res) =>
       return res.status(status).json({ error: LEGACY_INVITE_ERRORS[code] ?? code, ...extra });
     }
 
+    captureProductEvent({ distinctId: user.id, event: 'invite_sent', properties: { role: role ?? null } });
     return res.json({
       invitation: out.invitation,
       emailSent: out.email.sent,

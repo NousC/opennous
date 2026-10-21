@@ -20,6 +20,7 @@ import { handleCalCom } from './handlers/calcom.mjs';
 import { handleStripe } from './handlers/stripe.mjs';
 import { handleAiArk } from './handlers/aiark.mjs';
 import { handleComposio } from './handlers/composio.mjs';
+import { handlePostHog } from './handlers/posthog.mjs';
 import { enqueueForRetry } from '../utils/webhookInbox.mjs';
 
 // Ops metering note: each webhook handler writes its own workspace_system_log
@@ -257,6 +258,16 @@ webhookRouter.post(['/aiark/:workspaceId/:leadListId', '/aiark/:workspaceId', '/
 webhookRouter.post('/composio', (req, res) => {
   handleComposio(req, res).catch(err => {
     console.error('[WEBHOOK/composio]', err);
+    if (!res.headersSent) res.status(500).json({ error: 'internal_error' });
+  });
+});
+
+// PostHog (GET-751) — the destination is created on connect with a per-workspace secret, sent
+// as X-Nous-Secret. Verification lives in the handler: it needs the stored secret.
+// A throw here came before the secret was checked, so nothing is queued: PostHog retries a 5xx.
+webhookRouter.post('/posthog/:workspaceId', (req, res) => {
+  handlePostHog(req, res, req.params.workspaceId).catch(err => {
+    console.error('[WEBHOOK/posthog]', err.message);
     if (!res.headersSent) res.status(500).json({ error: 'internal_error' });
   });
 });

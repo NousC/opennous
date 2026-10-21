@@ -121,6 +121,8 @@ export * from './services/canonicalProjection.js';
 export * from './integrations/crm/index.js';
 export * from './integrations/crm/portal.js';
 export * from './integrations/ringcentral.js';
+export * from './integrations/posthog.js';
+export { accountUsageSignals, seatDroppedSignal } from './services/usageSignals.mjs';
 // The data audit, shared by the API route (`nous audit`) and the nightly worker sweep.
 export { runAudit } from './audit.mjs';
 // Who owes whom a reply, from the order of touches (GET-255).
@@ -148,11 +150,14 @@ export {
 // so it lives here rather than in either of them (GET-426).
 export {
   runAutomationDailyPoll, runAutomationsForWorkspace, makeArtifactForTest, resendAutomationDocument,
-  emitDealEventsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, icpChanges, previewAutomationVars, composeAutomationEmail, automationEmailPreview, automationContextPreview, searchAutomationAccounts, CONTEXT_PARTS,
-  processAccountSignals, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, reasonWords, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, saveApprovalChoices, testTriggers,
+  emitDealEventsPoll, emitStalledDealsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, icpChanges, previewAutomationVars, composeAutomationEmail, automationEmailPreview, automationContextPreview, searchAutomationAccounts, CONTEXT_PARTS,
+  processAccountSignals, detectNextStepSignalsPoll, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, reasonWords, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, processPostHogEvents, runPostHogEventAutomation, saveApprovalChoices, testTriggers,
   // What an extension's steps reach (GET-910).
   stepHandler,
 } from './services/automationRun.mjs';
+// Interpreted events (GET-950): the rules behind account.champion_left, account.expansion_requested
+// and deal.stalled. The stale-deal rule is shared with the API's stale-deal automation.
+export { championLeftEvent, championWhoLeft, replacementFor, championLeftConfidence, expansionRequestedEvent, stalledDealEvent, quietOpenDeals, staleDealFiring, REPLACEMENT_WINDOW_DAYS } from './services/interpretedEvents.mjs';
 // Slack layouts for automation output (GET-858): the formats, the AI's JSON shape, parse and text.
 export { SLACK_FORMATS, slackFormatOf, structuredSlackFormat, slackFormatInstruction, parseSlackContent, normalizeSlackContent, slackContentText, extractJsonObject } from './services/slackFormats.mjs';
 // Record events (GET-559): every detector emits through one door; the trigger worker delivers.
@@ -162,10 +167,12 @@ export { listEvents, getLoggedEvent, pruneEventLog, EVENT_LOG_RETENTION_DAYS, EV
 // HubSpot fields as automation variables (GET-567): listed from the stored schema, read live.
 export { hubspotFieldList, hubspotTemplateVars, hubspotPropsIn } from './services/hubspotVars.mjs';
 export {
-  createMessage, messageText, parseJsonArray, ModelUnavailableError, registerAnthropicClient,
+  createMessage, messageText, parseJsonArray, ModelUnavailableError, registerAnthropicClient, registerUsageSink,
   pipelineModel, pipelineFallbackModel, writingModel, writingFallbackModel, tierModels, insightBoardModel,
   modelEndpoint, modelRoute, modelSetupStatus,
 } from './llm/modelDoor.mjs';
+// What a model call cost, from one price table for both apps and the door (GET-957).
+export { PRICING as MODEL_PRICING, priceFor, computeCost, usageRow, usageRowsFor } from './llm/usageCost.mjs';
 // Model provider failures sorted for people and ops, and where Claude calls go (GET-885).
 export { classifyProviderError, providerErrorSummary } from './llm/providerError.mjs';
 // Slack trouble named and alerted once (GET-901) is Cloud's, with Slack: '@nous/core/cloud' (GET-910).
@@ -176,7 +183,8 @@ export { computeDealHealth, loadHealthInputs, loadHealthHistory, loadAccountHeal
 // One deal's health from its slice of the account: the deal page and the job that stores a score
 // on every open deal row read the same slice, so the board and the page never disagree.
 export { sliceDealHealth, claimFiledToDeal, loadDealHealthAccount, loadHealthActivity, lastBuyerResponseAt, dealHealthReason, dealHealthForAccount } from './services/dealHealthSlice.mjs';
-export { isEngagementEvent, engagementTrend, medianBuyerResponseDays, multiThread, windowedCounts, ENGAGEMENT_DEFS } from './services/engagement.mjs';
+export { isEngagementEvent, engagementTrend, medianBuyerResponseDays, multiThread, windowedCounts, ENGAGEMENT_DEFS,
+  EVIDENCE_SNAPSHOT_TYPES, isEvidenceSnapshot, activityOutbound, isInboundActivity, isOutboundActivity, isDirectParticipation, isBuyerResponse } from './services/engagement.mjs';
 export { DECISION_ROLES, isTwoWay, decisionMakers, committeeRating, computeAccountHealth, selectNextStep, loadAccountHealthScore,
   isTwoWayTouch, twoWayTouches, engagementWindows, GRADE_METER, gradeMeter, loadEngagementActivity } from './services/accountHealthScore.mjs';
 export { claimValidAt, accountHealthAsOf, backfillAccountHealth, buildHealthSeries, snapshotPoint, snapshotObservation, hasHistory, recordAccountHealthSnapshot, loadAccountHealthSnapshots, loadAccountHealthTrend, loadAccountCalls, loadCustomerForHealth } from './services/accountHealthHistory.mjs';
@@ -250,3 +258,5 @@ export * from './services/routineTriggers.mjs';
 
 // A signal's tag (GET-894): each account-signal kind's tone, label and the line the table shows.
 export * from './services/signalTone.mjs';
+export { TASK_SIGNAL_KINDS, DETECTED_SIGNAL_KINDS, shownAsSignal } from './services/signalLabels.mjs';
+export * from './services/nextStepSignals.mjs';

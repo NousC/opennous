@@ -97,7 +97,7 @@ export async function readSiteText(domain, { maxChars = 12_000 } = {}) {
 
 // Scrape + extract. Returns a structured signal object, or null if the site
 // couldn't be read.
-export async function extractWebsiteSignals(domain) {
+export async function extractWebsiteSignals(domain, { workspaceId = null } = {}) {
   const host = normDomain(domain);
   if (!host) return null;
   const base = `https://${host}`;
@@ -137,6 +137,7 @@ export async function extractWebsiteSignals(domain) {
     `Website content:\n"""${corpus}"""`;
 
   const msg = await createMessage({
+    meter: { workspaceId },
     feature: 'website-signals',
     max_tokens: 1200,
     accept: (t) => /\{[\s\S]*\}/.test(t),
@@ -199,7 +200,7 @@ export async function recordWebsiteSignals(supabase, workspaceId, entityId, sign
 
 // Orchestrate: scrape → extract → record. Returns { signals, recorded } or null.
 export async function extractAndRecordWebsiteSignals(supabase, workspaceId, entityId, domain) {
-  const signals = await extractWebsiteSignals(domain);
+  const signals = await extractWebsiteSignals(domain, { workspaceId });
   if (!signals) return null;
   const recorded = await recordWebsiteSignals(supabase, workspaceId, entityId, signals);
   return { signals, recorded };

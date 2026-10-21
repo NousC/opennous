@@ -37,10 +37,11 @@ export async function upsertCompany(supabase, workspaceId, { name, domain, indus
   // is why the in-app agent could not tell "Harborline" from "Harborline.example" even
   // after finding both records. Attaching the identifier and asserting the claim
   // are one act, not two.
+  let domainEntityId = null;
   if (normalizedDomain) {
     try {
-      const entityId = await getOrCreateEntity(supabase, workspaceId, 'company', [{ kind: 'domain', value: normalizedDomain }]);
-      await assertClaims(supabase, workspaceId, entityId, {
+      domainEntityId = await getOrCreateEntity(supabase, workspaceId, 'company', [{ kind: 'domain', value: normalizedDomain }]);
+      await assertClaims(supabase, workspaceId, domainEntityId, {
         values: { domain: normalizedDomain }, source: 'identity_resolution',
       });
     } catch { /* best-effort; the identifier is already attached either way */ }
@@ -106,10 +107,14 @@ export async function upsertCompany(supabase, workspaceId, { name, domain, indus
   // No name given but we have a real company domain → derive a display name
   // (northpine.example → "Northpine") so the company isn't a blank record.
   const displayName = name || companyNameFromDomain(normalizedDomain) || null;
+  // Onto the entity the domain already resolves to (GET-751). getOrCreateEntity above made or found
+  // it, and with no name it is not in the companies view, so the lookups above miss it. Inserting
+  // without its id made the view's trigger mint a SECOND entity: the name on one, the domain on the
+  // other, and every later lookup by domain landing on the nameless one nobody can see.
   const { data: created } = await supabase.from('companies')
-    .insert({ workspace_id: workspaceId, name: displayName, domain: normalizedDomain })
+    .insert({ ...(domainEntityId ? { id: domainEntityId } : {}), workspace_id: workspaceId, name: displayName, domain: normalizedDomain })
     .select('id').single();
-  return created;
+  return created ?? (domainEntityId ? { id: domainEntityId, name: displayName, domain: normalizedDomain } : null);
 }
 
 // ── Fill empty fields from incoming data ──────────────────────────────────────
@@ -166,7 +171,8 @@ async function mergeContact(supabase, existing, incoming) {
 // createIfMissing=true  → webhook sources that bootstrap contacts (LinkedIn, RB2B, Apollo)
 // createIfMissing=false → update-only sources (Fireflies, Calendly — never create)
 
-export async function resolveContact(supabase, workspaceId, data, { createIfMissing = true } = {}) {
+// enrich=false → bulk paths (the PostHog usage pull) that must not start a paid lookup per person.
+export async function resolveContact(supabase, workspaceId, data, { createIfMissing = true, enrich = true } = {}) {
   const {
     email, full_name, first_name, last_name,
     linkedin_url, company_domain, company_name,
@@ -350,7 +356,7 @@ export async function resolveContact(supabase, workspaceId, data, { createIfMiss
   }
 
   // Fire-and-forget enrichment — never block the webhook response
-  enrichContact(supabase, { ...created, workspace_id: workspaceId }).catch(() => {});
+  if (enrich) enrichContact(supabase, { ...created, workspace_id: workspaceId }).catch(() => {});
 
   return { contact: created, created: true };
 }

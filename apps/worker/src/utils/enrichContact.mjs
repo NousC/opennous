@@ -72,6 +72,7 @@ export async function scoreICP(supabase, workspaceId, contact) {
 
   try {
     const msg = await createMessage({
+      meter: false,
       feature: 'icp-score-on-enrich',
       max_tokens: 150,
       accept: (t) => /\{[\s\S]*\}/.test(t),
@@ -126,6 +127,7 @@ function normalizeDepartment(raw) {
 async function extractRoleFromHeadline(supabase, workspaceId, headline) {
   try {
     const msg = await createMessage({
+      meter: false,
       feature: 'linkedin-headline-extract',
       max_tokens: 150,
       accept: (t) => /\{[\s\S]*\}/.test(t),

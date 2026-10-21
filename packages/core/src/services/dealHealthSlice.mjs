@@ -13,6 +13,7 @@ import { teamReadContext } from '../db/readContext.js';
 import { getDealObservationIds } from '../db/observationDeals.js';
 import { loadDealCandidates } from './crmAgent.js';
 import { computeDealHealth, loadNextSteps } from './dealHealth.mjs';
+import { EVIDENCE_SNAPSHOT_TYPES, isEvidenceSnapshot, isBuyerResponse } from './engagement.mjs';
 
 const DAY = 86_400_000;
 // The same reach the deal page reads (accountDeals.mjs HISTORY_DAYS, listActivities limit 400).
@@ -60,9 +61,11 @@ export function sliceDealHealth(acc, deal, attributedIds = new Set()) {
     : acc.notes.map(n => ({ ...n, filed_to_deal: false }));
   // The implied deal IS the account, so it reads exactly what the account's Deal Health card reads
   // (its people's latest 100). Two numbers for one account would be a bug on screen.
+  // A conversation snapshot is provenance, not a touch: it never counts as a person's activity (GET-976).
+  const rows = acc.activity.filter(a => !isEvidenceSnapshot(a.activity_type));
   const activity = deal.implied
-    ? acc.activity.filter(a => a.contact_id !== acc.company.id).slice(0, 100)
-    : acc.activity.filter(a => attributedIds.has(a.id) || (a.contact_id !== acc.company.id && inScope(a.contact_id)));
+    ? rows.filter(a => a.contact_id !== acc.company.id).slice(0, 100)
+    : rows.filter(a => attributedIds.has(a.id) || (a.contact_id !== acc.company.id && inScope(a.contact_id)));
   const dealStage = deal.status === 'won' ? 'won' : null;
   const stakeholders = people.map(c => ({
     id: c.id, title: c.job_title, seniority: c.seniority, last_activity_at: c.last_activity_at,
@@ -117,15 +120,19 @@ export async function loadHealthActivity(supabase, workspaceId, entityIds) {
   if (!entityIds.length) return [];
   const since = new Date(Date.now() - HISTORY_DAYS * DAY).toISOString();
   const { data, error } = await supabase.from('observations')
-    .select('id, entity_id, property, observed_at')
+    // Direction only, never the body: a Slack message is a response when they wrote it (GET-976).
+    .select('id, entity_id, property, observed_at, is_outbound:raw->is_outbound')
     .eq('workspace_id', workspaceId).in('entity_id', entityIds)
-    .like('property', 'interaction.%').gte('observed_at', since)
+    .like('property', 'interaction.%')
+    .not('property', 'in', `(${EVIDENCE_SNAPSHOT_TYPES.map(t => `interaction.${t}`).join(',')})`)
+    .gte('observed_at', since)
     .order('observed_at', { ascending: false }).limit(ACTIVITY_LIMIT);
   if (error) throw new Error(error.message);
   return (data || []).map(o => ({
     id: o.id, contact_id: o.entity_id,
     activity_type: String(o.property ?? '').replace(/^interaction\./, ''),
     occurred_at: o.observed_at,
+    is_outbound: typeof o.is_outbound === 'boolean' ? o.is_outbound : null,
   }));
 }
 
@@ -137,9 +144,7 @@ export async function loadHealthActivity(supabase, workspaceId, entityIds) {
 export function lastBuyerResponseAt(activity, now = Date.now()) {
   let best = -Infinity;
   for (const a of activity || []) {
-    const t = (a?.activity_type || '').toLowerCase();
-    if (/_sent$|enrichment|deal_won|scheduled|created|updated|scored/.test(t)) continue;
-    if (!/meeting|received|reply|inbound|call|linkedin|message/.test(t)) continue;
+    if (!isBuyerResponse(a)) continue;
     const iso = a.occurred_at || a.created_at;
     if (!iso) continue;
     const ms = new Date(iso).getTime();
@@ -235,6 +240,7 @@ export function dealHealthReason(health, { notes = [], lastResponseAt = null, no
   if (step?.level === 'None') against.push({ rank: 5.5, text: 'No next step agreed' });
   else if (step?.level === 'Overdue') against.push({ rank: step.tone === 'bad' ? 4.5 : 9.5, text: 'Next step overdue' });
   else if (step?.level === 'Agreed') for_.push({ rank: 2.5, text: 'Next step agreed' });
+  else if (step?.level === 'Requested') for_.push({ rank: 7, text: 'Buyer asked for a next step' });
 
   if (sig.budget?.level === 'Discussed') for_.push({ rank: 6, text: 'Budget discussed' });
 
@@ -243,6 +249,7 @@ export function dealHealthReason(health, { notes = [], lastResponseAt = null, no
   if (urg?.level === 'Low') against.push({ rank: 5, text: 'No buying intent stated' });
   else if (urg?.level === 'Moderate' && /gone quiet/i.test(urg.reason || '')) against.push({ rank: 6, text: 'Gave a timeline, then went quiet' });
   else if (urg?.level === 'High' && stated.some(n => (n.category || '').toLowerCase() === 'buying_signal')) for_.push({ rank: 1, text: 'Active buying intent' });
+  else if (urg?.level === 'High' && stated.some(n => (n.category || '').toLowerCase() === 'expansion_signal')) for_.push({ rank: 1.5, text: 'Asked to expand' });
 
   const trend = String(num.engagement_trend?.value || '').toLowerCase();
   if (trend === 'cooling') against.push({ rank: 11, text: 'Engagement cooling' });

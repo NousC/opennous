@@ -2,6 +2,7 @@ import { getSupabaseClient } from '@nous/core';
 import { setUser } from 'useleak';
 import { isSelfHosted } from '../lib/plans.mjs';
 import { getAuthProvider, identityColumn, canBindEmailIdentity, findUserByAuthId } from '../lib/authProvider/index.mjs';
+import { noteActive } from '../lib/productEvents.mjs';
 
 // useleak cost-tracking tags each request with the end user's email + name.
 // That PII must never leave a self-hosted box, so identify() is a no-op there.
@@ -90,6 +91,7 @@ export async function verifyAuth(req, res, next) {
       req.viewerScope = (cached.workspaceRole === 'owner' || cached.workspaceRole === 'admin') ? 'admin' : 'member';
     }
     identify(cached.user);
+    noteActive(cached.internalUserId, cached.user?.email, workspaceId);
     return next();
   }
 
@@ -187,6 +189,7 @@ export async function verifyAuth(req, res, next) {
     workspaceRole,
   });
 
+  noteActive(req.internalUserId, req.user?.email, workspaceId);
   next();
 }
 

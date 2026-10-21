@@ -368,9 +368,15 @@ function SignalPane({ item, ws, token, onActionDecided, onDismissed, onAfterChan
   const first = (a.recipient ?? "").trim().split(/\s+/)[0] || null;
   const [snoozeError, setSnoozeError] = useState<string | null>(null);
   const [snoozing, setSnoozing] = useState(false);
-  const move = s?.kind === "stakeholder_identified"
+  const move = s?.nudge
+    ? `No reply in 5 days. Follow up${first ? ` with ${first}` : ""}`
+    : s?.kind === "stakeholder_identified"
     ? `Ask ${first ?? "your contact"} to bring ${r?.name ?? "them"} into the next call`
-    : draftKind("signal").action(first);
+    : s?.kind === "next_step_missed"
+    ? `Pick the missed next step back up${first ? ` with ${first}` : ""}`
+    : s?.kind === "next_step_slipped"
+    ? `Pin down a firm date${first ? ` with ${first}` : ""}`
+    : draftKind(s?.kind === "churn_risk" ? "risk" : s?.kind === "expansion_signal" ? "expansion" : "signal").action(first);
   const snooze = async () => {
     if (snoozing) return;
     setSnoozing(true);

@@ -3,6 +3,7 @@
 // replaced it. Hover a dot for the fact. No counts and no legend: the colours are the Intel tab's
 // lenses, and the lens picked there narrows the lanes. Public, so the account, the person and the
 // deal all draw it from the account's timeline (GET /api/companies/:id/intel-timeline).
+import { SlackText } from "@/components/record/SlackText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -252,7 +253,7 @@ function FactCard({ fact, at, width, byId, nameOf }: {
       <p className={cn("mt-1 text-[12.5px] leading-snug", fact.live ? "text-foreground" : "text-foreground/60")}>{fact.content}</p>
       {fact.quote && (
         <p className="mt-1 text-[12px] italic leading-snug text-muted-foreground">
-          “{clip(fact.quote, 180)}”{who ? <span className="not-italic"> · {who}</span> : null}
+          “<SlackText text={String(clip(fact.quote, 180))} />”{who ? <span className="not-italic"> · {who}</span> : null}
         </p>
       )}
       {!fact.quote && who && <p className="mt-1 text-[11.5px] text-muted-foreground/70">{who}</p>}

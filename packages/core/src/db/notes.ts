@@ -5,7 +5,7 @@ import { rawVisible, type ReadContext } from './readContext.js';
 import { derivedViewerForContext, filterDerivedForViewer } from '../privacy/messagePrivacy.mjs';
 import { noteFreshness, noteDecaysAt, resolveSaidAt, pairReplacements, DEAL_POSITION_CATEGORIES, type Replacement } from './claimTime.js';
 import type { Freshness } from './claims.js';
-import { normalizeClaimCategory, ACCOUNT_ROLLUP_CATEGORIES, isIntelClaim } from './claimCategories.js';
+import { normalizeClaimCategory, ACCOUNT_ROLLUP_CATEGORIES, isIntelClaim, claimLabel } from './claimCategories.js';
 
 // Build the text we embed for a note claim. MUST match the embeddings worker's
 // rowText() (apps/worker/src/workers/embeddings.mjs) so sync + backfill produce
@@ -91,7 +91,9 @@ function noteFromClaim(c: Record<string, unknown>): Note {
     workspace_id: c.workspace_id as string,
     entity_id: c.entity_id as string,
     category,
-    label: (v.label as string) ?? null,
+    // Built by code where the category says what the chip is (GET-959), on read too, so rows
+    // written before it read the same as new ones. Bookkeeping keeps whatever it stored.
+    label: isIntelClaim(v) ? claimLabel({ category, label: v.label as string, content: v.content as string, metadata: meta }) : ((v.label as string) ?? null),
     about: (meta.about as string) ?? null,
     content: (v.content as string) ?? '',
     source: (v.source as string) ?? 'manual',
@@ -459,7 +461,10 @@ export async function saveNote(
     source: params.source ?? 'manual',
     metadata,
   };
-  if (params.label) value.label = params.label;
+  // The chip, and the title of the signal this claim fires (GET-959): code-built where the
+  // category defines it, else the writer's label, else the start of the fact.
+  if (isIntelClaim(value)) value.label = claimLabel({ category, label: params.label, content: params.content, metadata });
+  else if (params.label) value.label = params.label;
   const { data, error } = await supabase
     .from('claims')
     .insert({

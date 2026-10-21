@@ -296,3 +296,51 @@ export function tidyFactContent(content, ourSide = null) {
   if (out && !/[.!?"')\]]$/.test(out)) out += '.';
   return out;
 }
+
+// ── 4. attribution ───────────────────────────────────────────────────────────
+
+const SAYS = '(?:says|said|explains|explained|notes|noted|mentions|mentioned|states|stated|reports|reported|shares|shared|adds|added|told us)';
+const WANTS = '(?:wants|wanted|plans|planned|needs|expects|hopes|would like|is looking|is trying|prefers|asked)';
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const capitalise = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * The fact first, without "Hollis Vane says Quillmere's …" in front of it (GET-962). Pure.
+ *
+ * Who said it is stored beside the claim (metadata.speaker, the source), so the sentence repeated it
+ * and buried the fact. The subject guard has already checked the model's sentence named who the fact
+ * is about; this runs after it, on what is stored:
+ *   - a COMPANY fact loses the speaker, a "says", and the company's own name in front: it sits on the
+ *     company's record, so "Lead generation is not very strong." says all of it;
+ *   - a PERSON fact keeps the person as its subject (the claim_does_not_name_its_subject invariant
+ *     reads it) and loses only the "says … he": "Hollis Vane would not have more than three users."
+ * Anything else, or a fact with no known names, is left as written.
+ */
+export function factWording(content, { about = 'person', subjectName = null, companyName = null } = {}) {
+  let s = String(content ?? '').trim();
+  const subject = String(subjectName ?? '').trim();
+  if (!s || !subject) return s;
+  const name = `(${escapeRe(subject)}|${escapeRe(subject.split(/\s+/)[0])})`;
+  const company = String(companyName ?? '').trim();
+  const co = company ? escapeRe(company) : null;
+
+  if (about !== 'company') {
+    // "Hollis Vane says he would …" → "Hollis Vane would …". Without a pronoun to fold in, the
+    // sentence keeps its "says": dropping it would leave the fact about someone else.
+    return s.replace(new RegExp(`^${name}\\s+${SAYS}(?:\\s+that)?\\s+(?:he|she|they)\\s+`), '$1 ');
+  }
+  const before = s;
+  if (co) s = s.replace(new RegExp(`^${name}['’]s company\\s+(?:\\(${co}\\)|${co})(?:['’]s)?\\s+`), '');
+  const said = s.match(new RegExp(`^${name}\\s+${SAYS}(?:\\s+that)?\\s+(?:(?:he|she|they)\\s+)?`));
+  if (said) {
+    const rest = s.slice(said[0].length).replace(/^(?:his|her)\s+/i, '');
+    // "… says the outcome he wants is …": the rest still points at the person, so it keeps them.
+    if (/\b(?:he|she|his|her|him)\b/i.test(rest)) return before;
+    s = rest;
+  }
+  // "Hollis Vane wants to …" on the company's record: the want is the fact. Not "Hollis Vane is
+  // pushing …", which without its subject reads as a fragment.
+  s = s.replace(new RegExp(`^${name}\\s+(?=${WANTS}\\b)`), '');
+  if (co) s = s.replace(new RegExp(`^${co}['’]s\\s+`), '');
+  return s === before ? s : capitalise(s);
+}

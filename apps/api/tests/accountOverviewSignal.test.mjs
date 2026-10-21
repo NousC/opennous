@@ -27,3 +27,12 @@ test('an overview from before the migration (kind and title only) still reads', 
   const [row] = accountOverviewRows([{ id: 'a1', latest_signal: { kind: 'budget_discussed', title: 'Monthly Cost Need', at: null } }]);
   assert.deepEqual([row.latest_signal.label, row.latest_signal.tone, row.latest_signal.text], ['Budget discussed', 'purple', 'Monthly Cost Need']);
 });
+
+test('a next step agreed is a task, not a latest signal; a missed one is (GET-954)', () => {
+  const rows = accountOverviewRows([
+    { id: 'a1', latest_signal: { kind: 'next_step', title: 'Send the security questionnaire', content: 'Send the security questionnaire', at: null } },
+    { id: 'a2', latest_signal: { kind: 'next_step_missed', title: 'Send the security questionnaire', content: 'Send the security questionnaire was due 2026-10-12; nothing has happened on the account since it was agreed.', at: null } },
+  ]);
+  assert.equal(rows[0].latest_signal, null);
+  assert.deepEqual([rows[1].latest_signal.label, rows[1].latest_signal.tone], ['Next step missed', 'red']);
+});

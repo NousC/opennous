@@ -3,6 +3,7 @@ import { claimPendingSeat } from './pendingSeats.mjs';
 import { canBindEmailIdentity, canClaimByEmailMatch, identityColumn, findUserByAuthId, getAuthProvider } from './authProvider/index.mjs';
 import { assertMayCreateOwnTeam, SETUP_TOKEN_METADATA_KEY } from './instanceOwner.mjs';
 import { PLANS } from './plans.mjs';
+import { captureProductEvent } from './productEvents.mjs';
 
 // Who is this request, and which team — cached briefly in process (GET-312).
 //
@@ -171,6 +172,7 @@ export async function ensureUserAndTeam(authUser, skipTeamCreation = false, opts
       }
 
       const { data: invitedTeam } = await supabase.from('teams').select('*').eq('id', pendingInvitation.team_id).single();
+      captureProductEvent({ distinctId: newUser.id, event: 'invite_accepted', set: { email, name } });
       return { user: newUser, team: invitedTeam };
     }
 
@@ -245,6 +247,11 @@ export async function ensureUserAndTeam(authUser, skipTeamCreation = false, opts
         await supabase.from('workspace_members').insert({ workspace_id: newWorkspace.id, user_id: user.id, role: 'owner', job_roles: ['founder'], job_role: 'founder' });
       } catch { /* member may already exist via trigger */ }
     }
+
+    // Product analytics (GET-820): the signup, from the server, so cookie consent never hides it.
+    // company_name when they gave one: our own PostHog source reads it to put them on that account.
+    captureProductEvent({ distinctId: user.id, event: 'signed_up', set: { email, name, ...(companyName ? { company_name: companyName } : {}) }, workspaceId: newWorkspace?.id ?? null });
+    if (newWorkspace) captureProductEvent({ distinctId: user.id, event: 'workspace_created', properties: { source: 'signup' }, workspaceId: newWorkspace.id });
 
     // Every new team starts on Free (GET-682). A paid upgrade goes through Stripe, and
     // stripeWebhook.mjs moves this row to the bundle they bought.

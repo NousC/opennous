@@ -25,6 +25,10 @@
 // The detectors behind Home's recommendations, by the automation that names them on the
 // Automations page (lib/templates.ts, the locked defaults). A recommendation kind with no
 // automation of its own is named for what it is.
+// The detectors whose drafts are a signal's next move (GET-953). Kept here, not imported from
+// detectorDrafts.mjs, which pulls in the graph reads.
+const SIGNAL_REC_KEYS = new Set(['automation.deal_signal', 'automation.deal_risk', 'automation.expansion_signal']);
+
 export const REC_ORIGIN = {
   follow_up_call: 'Sales follow-up',
   follow_up_quiet: 'Stale deal detection',
@@ -84,7 +88,7 @@ export function originOf(action, { plays = new Map(), routines = new Map(), recs
     return {
       source: 'rec', name: REC_ORIGIN[rec.rec_key] ?? rec.text ?? 'Recommendation', why: rec.evidence?.why ?? null, at, rec_id: rec.id, builtin: REC_BUILTIN[rec.rec_key] ?? null,
       // A snooze holds the draft it was set on, never a later one on the same ledger row (GET-944).
-      signal: signalOf(rec), snoozed_until: rec.evidence?.snoozed_action_id === action.id ? rec.evidence?.snoozed_until ?? null : null,
+      signal: signalOf(rec, action), snoozed_until: rec.evidence?.snoozed_action_id === action.id ? rec.evidence?.snoozed_until ?? null : null,
     };
   }
   if (action.thread_id && !routineThreads.has(action.thread_id)) {
@@ -100,17 +104,19 @@ export function originOf(action, { plays = new Map(), routines = new Map(), recs
 }
 
 /**
- * The signal behind a Deal signals draft (GET-944), as the inbox's From signals pane reads it: what
+ * The signal behind a Deal signals, Deal risk or Expansion signals draft (GET-944, GET-953), as the inbox's From signals pane reads it: what
  * was said, by whom and when, and what the play found out about the person it named. Pure.
  */
-export function signalOf(rec) {
-  const t = rec?.rec_key === 'automation.deal_signal' ? rec.evidence?.trigger : null;
+export function signalOf(rec, action = null) {
+  const t = SIGNAL_REC_KEYS.has(rec?.rec_key) ? rec.evidence?.trigger : null;
   if (!t?.kind) return null;
   const r = t.research;
   return {
     kind: t.kind, label: t.label ?? null, said_at: t.said_at ?? null, text: t.text ?? null,
     quote: t.quote ?? rec.evidence?.quote ?? null, speaker: t.speaker ?? null, role: t.role ?? null,
     research: r?.name ? { name: r.name, title: r.title ?? null, source_url: r.source_url ?? null, source_title: r.source_title ?? null, contact_id: r.contact_id ?? null } : null,
+    // The 5-day follow-up on a move that went unanswered (GET-949), not the first move.
+    nudge: !!action?.id && rec.evidence?.tracking?.nudge_action_id === action.id,
   };
 }
 

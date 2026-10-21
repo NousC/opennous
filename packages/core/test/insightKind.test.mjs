@@ -6,7 +6,22 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildInsightExtractionPrompt, upsertInsightItems, normalizeInsightKind } from '../dist/db/insights.js';
+import { buildInsightExtractionPrompt, upsertInsightItems, normalizeInsightKind, parseInsightsJson } from '../dist/db/insights.js';
+
+test('the model cannot assign a finding to arbitrary person or company IDs', () => {
+  const [item] = parseInsightsJson(JSON.stringify([{ category: 'product', content: 'Needs field permissions.',
+    quote: 'We need field permissions.', speaker: 'Dana', contactId: 'untrusted-person', companyId: 'untrusted-company' }]));
+  assert.equal(item.contactId, undefined);
+  assert.equal(item.companyId, undefined);
+});
+
+test('checked source adapters preserve the precise person/account on insight rows', async () => {
+  const db = fakeSupabase();
+  await upsertInsightItems(db, 'ws', [{ source: 'external', category: 'product', statement: 'Users need field permissions.',
+    contact_id: 'person', company_id: 'account' }]);
+  assert.equal(db.writes[0][0].contact_id, 'person');
+  assert.equal(db.writes[0][0].company_id, 'account');
+});
 
 test('the insight prompt asks a product insight for its kind', () => {
   const p = buildInsightExtractionPrompt('transcript', { attendees: ['Dana Reyes'], workspaceContext: 'We sell a context graph.' });

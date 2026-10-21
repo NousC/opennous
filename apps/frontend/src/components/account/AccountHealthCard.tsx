@@ -2,6 +2,7 @@
 // account on, and why. The same classifier and reasons as that page, never a score of ours: each
 // line is a CRM field or something the customer said, with where it came from. A prospect has no
 // account health, and the card draws nothing.
+import { SlackText } from "@/components/record/SlackText";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
@@ -49,7 +50,7 @@ function Reason({ r, side }: { r: CsReason; side: Side }) {
       <span className={cn("w-[74px] flex-shrink-0 pt-px text-[11.5px] font-medium", REASON_KIND[kind].chip)}>{REASON_KIND[kind].label}</span>
       <div className="min-w-0 flex-1">
         <p className="text-[13px] leading-snug text-foreground">{r.text}</p>
-        {quote && <p className="mt-0.5 text-[12px] italic leading-snug text-muted-foreground">“{quote}”</p>}
+        {quote && <p className="mt-0.5 text-[12px] italic leading-snug text-muted-foreground">“<SlackText text={String(quote)} />”</p>}
         <p className="mt-0.5 truncate text-[11.5px] text-muted-foreground/70">{sourceOf(r, kind)}</p>
       </div>
     </li>

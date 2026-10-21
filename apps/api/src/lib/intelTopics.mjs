@@ -13,9 +13,10 @@ const inFlight = new Set();
 const lastTry = new Map();           // entityId -> ms of the last rebuild attempt
 const RETRY_MS = 10 * 60 * 1000;     // one rebuild per record per ten minutes, whatever the traffic
 
-async function ask(prompt) {
+async function ask(prompt, workspaceId = null) {
   try {
     const msg = await createMessage({
+      meter: { workspaceId },
       feature: 'intel-topics', model: insightBoardModel(), max_tokens: 8000,
       accept: (t) => t.includes('"topics"'),
       messages: [{ role: 'user', content: prompt }],
@@ -30,7 +31,7 @@ async function ask(prompt) {
 /** Rebuild one record's topics now. `loadNotes` returns its full, unscoped fact set. */
 export async function rebuildIntelTopics(supabase, workspaceId, entityId, loadNotes, { force = false } = {}) {
   const notes = await loadNotes();
-  return refreshIntelTopics(supabase, workspaceId, entityId, notes, ask, { model: insightBoardModel(), force });
+  return refreshIntelTopics(supabase, workspaceId, entityId, notes, (prompt) => ask(prompt, workspaceId), { model: insightBoardModel(), force });
 }
 
 function scheduleRebuild(supabase, workspaceId, entityId, loadNotes) {

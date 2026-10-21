@@ -11,7 +11,7 @@
 // usage — that lives on Adoption.
 
 import { Router } from 'express';
-import { getSupabaseClient } from '@nous/core';
+import { getSupabaseClient, conversationReadMarkers } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 
 export const activityStatsRouter = Router();
@@ -343,7 +343,7 @@ activityStatsRouter.get('/read', verifySupabaseAuth, async (req, res) => {
       return count ?? 0;
     };
 
-    const [emails, meetings, calls, accounts, connections] = await Promise.all([
+    const [emails, meetings, calls, accounts, connections, slack] = await Promise.all([
       countOf(q => q.eq('property', 'noema.read').eq('source', 'gmail')),
       countOf(q => q.eq('property', 'interaction.meeting_held')),
       countOf(q => q.in('property', ['interaction.call_made', 'interaction.call_received'])),
@@ -354,6 +354,7 @@ activityStatsRouter.get('/read', verifySupabaseAuth, async (req, res) => {
         .select('id, provider:workflow_providers(name, display_name, logo_url)')
         .eq('workspace_id', workspaceId)
         .then(r => r.data ?? []),
+      countOf(q => q.eq('property', 'noema.read').eq('source', 'slack')),
     ]);
 
     // One row per tool, deduped: two Gmail connections are one logo, not two.
@@ -373,6 +374,7 @@ activityStatsRouter.get('/read', verifySupabaseAuth, async (req, res) => {
         accounts_analysed: accounts,
         meetings_transcribed: meetings,
         email_threads_read: emails,
+        slack_conversations_read: slack,
         calls_recorded: calls,
       },
     });
@@ -396,6 +398,7 @@ const CREDITS = { email: 1, call: 1, note: 0 };
 const MEETING_MINUTES_PER_CREDIT = 10;
 
 const KIND = {
+  'interaction.slack_message': { kind: 'slack', label: 'Slack conversation' },
   'interaction.email_sent':     { kind: 'email',   label: 'Email thread' },
   'interaction.email_received': { kind: 'email',   label: 'Email thread' },
   'interaction.call_made':      { kind: 'call',    label: 'Call' },
@@ -509,6 +512,29 @@ export function cutItems(items, limit) {
   return { items: items.filter((i) => String(i.when) >= String(edge)), next: { ts: edge, incl: false } };
 }
 
+/** One Slack row per exact conversation version, billed only by its reader receipt. */
+export function slackConversationItems(rows, markers) {
+  const receipts = new Map(markers.map(m => [m.value?.source_ref, m]));
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.source_ref || `message:${r.id}`;
+    const group = groups.get(key) ?? { latest: r, messages: new Set() };
+    if (String(r.observed_at) > String(group.latest.observed_at)) group.latest = r;
+    group.messages.add(r.id);
+    groups.set(key, group);
+  }
+  return [...groups].map(([key, g]) => {
+    const receipt = receipts.get(key), value = receipt?.value;
+    const found = (value?.claims ?? 0) + (value?.insights ?? 0);
+    const summary = String(g.latest.value?.summary ?? g.latest.value?.description ?? '').replace(/<@([UW][A-Z0-9]+)(?:\|([^>]*))?>/g, (_, id, label) => `@${g.latest.slack_mentions?.[id]?.name || label || 'Slack member'}`);
+    return { id: `slack:${key}`, kind: 'slack', label: 'Slack conversation', source: 'slack',
+      when: g.latest.observed_at, summary: summary.slice(0, 160) || null,
+      messages: g.messages.size, minutes: null, estimated: false,
+      credits: receipt ? Number(value?.credits ?? 0) : 0,
+      read_at: receipt?.observed_at ?? null, status: receipt ? (found > 0 ? 'read' : 'nothing_new') : 'waiting', reason: null };
+  });
+}
+
 activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) => {
   try {
     const workspaceId = req.query.workspaceId;
@@ -525,7 +551,7 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
     // its transcript: 0.44 s for a page against 0.09 s without it, GET-903).
     const fetched = Math.min(limit * 5, 1000);
     let q = supabase.from('observations')
-      .select('id, entity_id, property, source, observed_at, summary:value->>summary, description:value->>description, title:value->>title, thread_id:raw->>thread_id, end_time:raw->>end_time')
+      .select('id, entity_id, property, source, observed_at, summary:value->>summary, description:value->>description, title:value->>title, thread_id:raw->>thread_id, source_ref:raw->>source_ref, slack_mentions:raw->slack_mentions, end_time:raw->>end_time')
       .eq('workspace_id', workspaceId)
       .in('property', Object.keys(KIND))
       .order('observed_at', { ascending: false })
@@ -543,9 +569,10 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
     // billed each one a credit, so a three-message thread cost three and an automated notice we
     // never opened cost one. A thread is one credit, and only when it was read.
     const threads = new Map();
-    const others = [];
+    const others = [], slackRows = [];
     for (const r of rows ?? []) {
       const k = KIND[r.property] ?? { kind: 'other', label: r.property };
+      if (k.kind === 'slack') { slackRows.push(r); continue; }
       if (k.kind !== 'email') { others.push(r); continue; }
       const key = r.thread_id ? `tid:${r.thread_id}` : `msg:${r.id}`;
       const t = threads.get(key) ?? { key, threadId: r.thread_id ?? null, messages: [] };
@@ -658,7 +685,9 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
       };
     });
 
-    const sorted = [...emailItems, ...otherItems]
+    const slackMarkers = await conversationReadMarkers(supabase, workspaceId, 'slack', slackRows.map(r => r.source_ref));
+    const slackItems = slackConversationItems(slackRows, slackMarkers);
+    const sorted = [...emailItems, ...otherItems, ...slackItems]
       .sort((a, b) => String(b.when).localeCompare(String(a.when)));
     const page = cutItems(sorted, limit);
 

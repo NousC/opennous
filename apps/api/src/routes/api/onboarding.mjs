@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { workspacePlanLive, workspaceOnFree, backfillOwnerFor, ownerJobFilter } from '../../lib/backfillStart.mjs';
+import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { getPlanFromSubscription, isApiTier } from '../../lib/plans.mjs';
 import { getSupabaseClient } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
@@ -396,9 +397,11 @@ export async function finishOnboarding(supabase, reqUser, workspaceId) {
     const { user, team, workspace } = await resolveUserTeamWorkspace(supabase, reqUser);
     await firstCompletionSideEffects(supabase, { user, team, workspace });
     if (workspaceId) {
-      await supabase.from('workspaces')
+      const { data: done } = await supabase.from('workspaces')
         .update({ onboarding_completed_at: new Date().toISOString(), onboarding_activated_at: new Date().toISOString() })
-        .eq('id', workspaceId).is('onboarding_completed_at', null);
+        .eq('id', workspaceId).is('onboarding_completed_at', null).select('id');
+      // Once per workspace: only the update that actually stamped it.
+      if (done?.length && user?.id) captureProductEvent({ distinctId: user.id, event: 'onboarding_completed', workspaceId });
     }
   } catch (err) {
     console.warn('[onboarding] finish failed:', err?.message || err);

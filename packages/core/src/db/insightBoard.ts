@@ -386,6 +386,7 @@ export async function listUnsortedInsightItems(supabase: SupabaseClient, workspa
     const { data, error } = await supabase.from('insight_items')
       .select('id, statement, quote, speaker, speaker_id, contact_id, occurred_at, source_ref, subtype, tag_ids, company_id, category')
       .eq('workspace_id', workspaceId).eq('source', 'external').is('sorted_at', null)
+      .neq('status', 'source_removed')
       .order('created_at', { ascending: true }).range(from, from + PAGE - 1);
     if (error) throw error;
     out.push(...((data as BoardItem[]) ?? []));
@@ -401,6 +402,7 @@ export async function listBoardItems(supabase: SupabaseClient, workspaceId: stri
     const { data, error } = await supabase.from('insight_items')
       .select('id, statement, quote, speaker, speaker_id, contact_id, occurred_at, source_ref, subtype, tag_ids, company_id, category')
       .eq('workspace_id', workspaceId).eq('source', 'external').not('subtype', 'is', null)
+      .neq('status', 'source_removed')
       .order('id').range(from, from + PAGE - 1);
     if (error) throw error;
     out.push(...((data as BoardItem[]) ?? []));

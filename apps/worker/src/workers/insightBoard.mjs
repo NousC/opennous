@@ -69,7 +69,9 @@ async function place(supabase, ws, items, tags, ctx, internal, stats, bt) {
     await pool(batch, 8, async (it, k) => {
       const p = placed[k];
       if (!p) return;                          // the model skipped it: unplaced, never guessed
-      const acct = (it.source_ref && accounts.get(it.source_ref)) || { contactId: null, companyId: null };
+      // A ref no observation carries (PostHog's product issues, GET-751) resolves to nothing: keep the
+      // account the item was written with instead of clearing it, or the board drops the row.
+      const acct = (it.source_ref && accounts.get(it.source_ref)) || { contactId: it.contact_id ?? null, companyId: it.company_id ?? null };
       const tagIds = p.tags.map((n) => byName.get(n.toLowerCase())).filter(Boolean);
       if (p.subtype === NOT_AN_INSIGHT) stats.dropped = (stats.dropped ?? 0) + 1;
       else if (!tagIds.length) untagged.push(it);

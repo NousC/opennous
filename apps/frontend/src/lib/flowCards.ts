@@ -1,12 +1,12 @@
 // What each card on the automation canvas says about itself (GET-705): a title, and up to three
 // label/value rows that tell you what the step does without opening it — "Signals: Objection,
 // Competitor", "To: the account owner". Pure: the canvas draws these, nothing else decides them.
-import { FREQUENCY_LABEL, OFFSET_LABEL, SIGNAL_OPTIONS } from "@/lib/automations";
+import { FREQUENCY_LABEL, OFFSET_LABEL, SIGNAL_OPTION_LABELS } from "@/lib/automations";
 import { HUBSPOT_ACTIONS, triggerDef, stepSub, stepTitle, stepTool, varLabel, type Flow, type Step } from "@/lib/flows";
 
 export type CardRow = { label: string; value: string };
 
-const SIGNAL = new Map(SIGNAL_OPTIONS);
+const SIGNAL = new Map(SIGNAL_OPTION_LABELS);
 const plain = (t: string | undefined, flow: Flow) =>
   String(t ?? "").replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, k) => varLabel(k, flow)).replace(/\s+/g, " ").trim();
 

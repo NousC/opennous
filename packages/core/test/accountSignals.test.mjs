@@ -6,20 +6,25 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { SIGNAL_KINDS, SIGNAL_LABEL, templateVarsForTest as templateVars } from '../dist/services/automationRun.mjs';
 import { TRIGGER_EVENTS } from '../dist/db/triggers.js';
+import { DETECTED_SIGNAL_KINDS, TASK_SIGNAL_KINDS } from '../dist/services/signalLabels.mjs';
 
 const root = new URL('../../../', import.meta.url).pathname;
 const sql = readFileSync(`${root}supabase/migrations/2026_10_04_account_signals.sql`, 'utf8');
 const kindsInSql = new Set([...sql.slice(sql.indexOf('FUNCTION public.account_signal_kind')).matchAll(/'([a-z]+_[a-z_]+)'/g)]
   .map(m => m[1]).filter(k => SIGNAL_KINDS.includes(k) || /^(objection|competitor|stakeholder|budget|buying|next|expansion|churn)_/.test(k)));
 
-test('every kind the trigger writes has a label, a webhook event and a place in the picker', () => {
+test('every kind the trigger or the next-step pass writes has a label, a webhook event and a place in the picker, except a next step agreed', () => {
   const picker = readFileSync(`${root}apps/frontend/src/lib/automations.ts`, 'utf8');
-  for (const k of kindsInSql) {
+  const options = picker.slice(picker.indexOf('export const SIGNAL_OPTIONS'), picker.indexOf('];', picker.indexOf('export const SIGNAL_OPTIONS')));
+  for (const k of [...kindsInSql, ...DETECTED_SIGNAL_KINDS]) {
     assert.ok(SIGNAL_LABEL[k], `label for ${k}`);
-    assert.ok(TRIGGER_EVENTS.includes(`signal.${k}`), `webhook event signal.${k}`);
-    assert.ok(picker.includes(`["${k}",`), `editor picker offers ${k}`);
+    // A next step agreed is a task (GET-954), and since GET-967 not an event either.
+    if (TASK_SIGNAL_KINDS.includes(k)) assert.ok(!TRIGGER_EVENTS.includes(`signal.${k}`), `no webhook event for ${k}`);
+    else assert.ok(TRIGGER_EVENTS.includes(`signal.${k}`), `webhook event signal.${k}`);
+    if (TASK_SIGNAL_KINDS.includes(k)) assert.ok(!options.includes(`["${k}",`), `editor picker leaves out ${k}`);
+    else assert.ok(options.includes(`["${k}",`), `editor picker offers ${k}`);
   }
-  assert.equal(kindsInSql.size, SIGNAL_KINDS.length, `sql kinds ${[...kindsInSql]} vs labels ${SIGNAL_KINDS}`);
+  assert.equal(kindsInSql.size + DETECTED_SIGNAL_KINDS.length, SIGNAL_KINDS.length, `sql kinds ${[...kindsInSql]} vs labels ${SIGNAL_KINDS}`);
 });
 
 test('an email can say what fired it', async () => {

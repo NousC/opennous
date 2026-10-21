@@ -14,6 +14,7 @@
 // moment a large team identifies itself — so the check qualifies as well as protects.
 
 import { Router } from 'express';
+import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { getSupabaseClient } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { finishOnboarding } from './onboarding.mjs';
@@ -225,6 +226,7 @@ backfillRouter.post('/confirm', verifySupabaseAuth, async (req, res) => {
     const job = { job_id: r.job_id };
     const windowDays = r.window_days;
     console.log(`[BACKFILL_CONFIRM] ws=${workspaceId} job=${job.job_id} started by the customer`);
+    if (req.internalUserId) captureProductEvent({ distinctId: req.internalUserId, event: 'backfill_started', properties: { window_days: windowDays ?? null }, workspaceId });
     // Saying yes to the backfill is the end of onboarding (GET-517).
     finishOnboarding(supabase, req.user, workspaceId).catch(() => {});
     return res.json({ ok: true, job_id: job.job_id, status: 'pending', window_days: windowDays });

@@ -47,14 +47,33 @@ async function emailWorkspaces(supabase) {
   return [...ids];
 }
 
-/** When each thread was last read: its read marker, else the newest claim that cites it. */
+/**
+ * Whether a thread needs reading: it has a message newer than the newest one its last read saw. Pure.
+ *
+ * The watermark is that MESSAGE, not the clock time of the read (GET-961). A thread whose newest email
+ * was stamped hours ahead (a timezone slip upstream) stayed "newer than its read" on every hourly run
+ * until the clock caught up, and each read filed the same facts again: one account had the same fact
+ * eleven times. A marker written before the watermark existed falls back to when it was read.
+ */
+export function threadIsDue(lastMessageAt, read) {
+  if (!lastMessageAt) return false;
+  if (!read) return true;
+  const seen = read.lastMessageAt ?? read.readAt;
+  return !seen || new Date(seen).getTime() < new Date(lastMessageAt).getTime();
+}
+
+/** When each thread was last read: its read marker (and the newest message it saw), else the newest claim that cites it. */
 async function lastReadAt(supabase, workspaceId) {
   const at = new Map();
-  const keep = (ref, t) => { if (ref && t && (!at.has(ref) || at.get(ref) < t)) at.set(ref, t); };
+  const keep = (ref, t, lastMessageAt = null) => {
+    if (!ref || !t) return;
+    const had = at.get(ref);
+    if (!had || had.readAt < t) at.set(ref, { readAt: t, lastMessageAt: lastMessageAt ?? had?.lastMessageAt ?? null });
+  };
   const marks = await pageAll((a, b) => supabase.from('observations')
     .select('value, observed_at').eq('workspace_id', workspaceId).eq('property', 'noema.read').eq('source', SOURCE)
     .order('id').range(a, b));
-  for (const m of marks) keep(m.value?.source_ref, m.value?.read_at ?? m.observed_at);
+  for (const m of marks) keep(m.value?.source_ref, m.value?.read_at ?? m.observed_at, m.value?.last_message_at ?? null);
   // Threads read before the marker existed are proven by their claims (see backfillGmailThreads).
   // A RANGE on property, never a prefix LIKE — the LIKE cannot use the index (GET-396/414).
   const claimed = await pageAll((a, b) => supabase.from('claims')
@@ -85,8 +104,7 @@ export async function threadsToRead(supabase, workspaceId, { days = 3 } = {}) {
   const due = units.filter(u => {
     const last = lastAt(u);
     if (!last || last < since) return false;
-    const read = readAt.get(threadSourceRef(u));
-    return !read || new Date(read).getTime() < new Date(last).getTime();
+    return threadIsDue(last, readAt.get(threadSourceRef(u)) ?? null);
   });
   return {
     due, externalIds, skipped, reread: due.filter(u => readAt.has(threadSourceRef(u))).length,

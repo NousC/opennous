@@ -71,6 +71,16 @@ export const initPostHog = () => {
 // is never loaded and every call below is skipped, so nothing phones home.
 export const posthogReady = () => Boolean((posthog as unknown as { __loaded?: boolean }).__loaded);
 
+/**
+ * A product event from the browser (GET-820, docs/product-events.md). Only the events in the
+ * tracking plan, only after the visitor accepted cookies (the SDK stays opted out until then),
+ * and never customer content: ids, names of our own features, plan ids.
+ */
+export type BrowserProductEvent = 'account_record_opened' | 'automation_enabled' | 'plan_checkout_started';
+export const trackProductEvent = (event: BrowserProductEvent, properties: Record<string, string | number | boolean | null> = {}) => {
+  if (posthogReady()) posthog.capture(event, properties);
+};
+
 // Export PostHog instance for direct use
 export { posthog };
 

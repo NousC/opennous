@@ -22,7 +22,8 @@ import { meterLLM } from '../utils/meterLLM.mjs';
 import { recordPipelineEvent } from '../lib/pipelineEvents.mjs';
 import { read, parseArray, acceptsArray, parseProse, acceptsProse } from '../noema/read.mjs';
 import { groundFacts, spokenByOurSide } from '../noema/grounding.mjs';
-import { splitForExtraction, halveForRetry, loadOurSide, ourSideLabel, ourSideRule, tidyFactContent, ourOfferBlock } from './extractionText.mjs';
+import { externalEvidence } from '../noema/externalEvidence.mjs';
+import { splitForExtraction, halveForRetry, loadOurSide, ourSideLabel, ourSideRule, tidyFactContent, ourOfferBlock, factWording } from './extractionText.mjs';
 
 
 // Activity types that warrant signal extraction — private, content-rich interactions only.
@@ -114,6 +115,21 @@ async function searchSimilarNotes(supabase, workspaceId, query, threshold = NOTE
 
 const SAME_CATEGORY_CANDIDATES = 6;
 const MAX_CANDIDATES = 10;
+
+// A SURE REPEAT IS SETTLED BY CODE (GET-961). The model was asked "new or repeat?" for every fact
+// with a look-alike, and on one account it answered "new" to the same fact from the same email thread
+// eleven times. A look-alike this close, in the same category, is the same fact: measured on that
+// account, known copies sat at a median of 0.94 and no two different facts reached 0.92. It is
+// skipped (and corroborates the claim it repeats) without a model call. Below the bar, the model
+// still decides.
+export const SURE_REPEAT_SIMILARITY = 0.92;
+
+/** The claim a new fact certainly repeats, or null when the model should decide. Pure. */
+export function sureRepeat(category, candidates = []) {
+  const cat = normalizeClaimCategory(category);
+  const hit = candidates.find(c => c?.category === cat && Number(c?.row?.similarity) >= SURE_REPEAT_SIMILARITY);
+  return hit?.id ?? null;
+}
 
 /** What a new fact is compared with: its look-alikes, plus — when its category is time-bound — the live claims of that category. Pure. */
 export function mergeCandidates(category, similar = [], sameCategory = []) {
@@ -272,11 +288,13 @@ async function decideMergeBatch(supabase, workspaceId, factContents, factRows = 
   }
   const withReplaces = (ds) => ds.map((d, i) => ({ ...d, replacesOk: replacesOk[i] }));
 
+  const sure = factContents.map((_, i) => sureRepeat(factCategories[i], candidates[i]));
+  const settled = (ds) => ds.map((d, i) => (sure[i] ? { action: 'SKIP', supersedes: null, restates: sure[i] } : d));
   const contested = [];
   for (let i = 0; i < factContents.length; i++) {
-    if (candidates[i].length > 0) contested.push({ idx: i, saidAt: factSaidAts[i] ?? null, candidates: candidates[i] });
+    if (candidates[i].length > 0 && !sure[i]) contested.push({ idx: i, saidAt: factSaidAts[i] ?? null, candidates: candidates[i] });
   }
-  if (contested.length === 0) return withReplaces(factContents.map(() => ({ action: 'ADD', supersedes: null })));
+  if (contested.length === 0) return withReplaces(settled(factContents.map(() => ({ action: 'ADD', supersedes: null }))));
 
   const result = await read({
     supabase, workspaceId,
@@ -294,9 +312,9 @@ async function decideMergeBatch(supabase, workspaceId, factContents, factRows = 
   // recoverable, a dropped one is not. The failure is a pipeline_events row (GET-320).
   if (!result.ok) {
     console.warn(`[NOTE_MERGE_BATCH] ${result.reason} — ${contested.length} contested fact(s) default to ADD`);
-    return withReplaces(factContents.map(() => ({ action: 'ADD', supersedes: null })));
+    return withReplaces(settled(factContents.map(() => ({ action: 'ADD', supersedes: null }))));
   }
-  return withReplaces(parseMergeDecisions(result.value, contested, factContents.length));
+  return withReplaces(settled(parseMergeDecisions(result.value, contested, factContents.length)));
 }
 
 // ── Graph edge extraction ─────────────────────────────────────────────────────
@@ -886,7 +904,7 @@ ${ourOfferBlock(ourSide)}Categories:
 ${claimCategoryPromptBlock()}
 ${GENERAL_IS_LAST_RESORT}
 Rules:
-- Each fact is one self-contained sentence naming ${contactName} explicitly (no pronouns).
+- Each fact is one self-contained sentence naming ${contactName} explicitly (no pronouns). Name them as the one doing or wanting the thing, never as a speaker: "${contactName} is moving support to Zendesk", not "${contactName} says the company is moving support to Zendesk". Never "${contactName}'s company X's …". Short and plain: the fact, its detail, nothing about who said it (that is stored separately).
 - ${ourSideRule(ourSide)}
 - State only what ${contactName} said or plainly did. Never add your own reading of what it implies — no "indicating…", "suggesting that…", "which shows…", "meaning…", "as evidenced by…". Write "${contactName} offered two references", not "${contactName} offered two references, indicating a strong relationship".
 - ${contactName} is the ONLY possible subject. Other names will appear in the message — the person it greets, a colleague, one of us — and none of them is the subject. If the message opens "Hi <name>", that name is the RECIPIENT, not ${contactName}. Never write a fact whose subject is anyone but ${contactName}.
@@ -894,7 +912,7 @@ Rules:
 - A JOB TITLE ON ITS OWN IS NOT A FACT. "Roland Fisk is the General Manager at Fallowmere Logistics" states what someone IS, not something they said or did, and it does not decay — it is an attribute of the person. Do not emit it as a fact at all. Put it in "job_title" instead, as the bare title: "General Manager". A title plus something they SAID stays a fact, and keeps the title too.
 - Set "category" to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}.
 - Set "about" to "person" for a fact about ${contactName}, or "company" for a fact about their company.
-- Set "label" to a 2–4 word tag that names the SUBSTANCE of the fact — what a rep would skim on a card. NOT the person's name. For a competitor, use the competitor/vendor name (e.g. "Tallowmark", "Brightlist leads"). For an objection, name the objection ("Outbound intent doubts", "Already on Salesforce"). For a pain/goal, name the pain/goal ("Stale Apollo data", "Expand to healthcare"). Title Case, no trailing period.
+- Set "label" to a 2–4 word tag that names the SUBSTANCE of the fact — what a rep would skim on a card. NOT the person's name. For a competitor, use the competitor/vendor name (e.g. "Tallowmark", "Brightlist leads"). For an objection, name the objection ("Outbound intent doubts", "Already on Salesforce"). For a pain/goal, name the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
 - CONTEXT TAGS — these decide whether a signal is a real risk, so be precise:
   - "competitor" means a competitor of ${ourSide?.companyName || 'our company'}: a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. Their CRM, call recorder, meeting-notes or agenda tool, data vendor or automation tool is NOT a competitor unless it does that same job — file it as status_quo (even when they plan to switch off it).
   - If category is "competitor": set "entity" to the competitor/vendor name only (e.g. "Pearl Lantern"), and "stance" to one of: "evaluating" (a live alternative they're weighing against us), "incumbent" (they currently use it FOR THE JOB we sell), "past_failure" (a vendor they TRIED for that job and it failed / they fired — this LOWERS competitive risk, it's an opening), "mentioned" (named in passing, no clear posture).
@@ -964,6 +982,7 @@ export async function extractFactsFromText({
   contactName, company = null, type, text, maxFactsOverride = null, ourSide = null,
   model = null, fallback = undefined, strict = false, onPart = null, onCall = null,
   groundAgainst = null, criteria = '',   // what the workspace adds to the prompt (lib/extractionCriteria.mjs)
+  evidenceMessages = null, evidenceContactId = null,
   // The dated positions on file (GET-770): shown to the model, and its "replaces" resolved to ids.
   positionsOnFile = [],
   // Our side's names as the transcript labels them (GET-417). The meeting path dropped a fact
@@ -985,6 +1004,7 @@ export async function extractFactsFromText({
       contactName, company, type, summary: piece, maxFactsOverride: partBudget, ourSide, part, positionsOnFile,
     });
     const msg = await createMessage({
+      meter: false,   // the caller meters it, through onCall
       feature: 'activity-signals-extract',
       model: model || pipelineModel(),
       fallback,
@@ -1029,8 +1049,10 @@ export async function extractFactsFromText({
           .map(f => ({ ...f, content: tidyFactContent(f.content, ourSide) })),
         groundAgainst ? groundAgainst(shown, index) : shown,
       );
-      const theirs = ourNames.length ? facts.filter(f => !(f.quote && spokenByOurSide(f.quote, shown, ourNames))) : facts;
-      if (theirs.length < facts.length) console.log(`[GROUNDING] activity-signals-extract: dropped ${facts.length - theirs.length} fact(s) quoting our own side`);
+      const theirs = evidenceMessages !== null
+        ? externalEvidence(facts, evidenceMessages, { contactId: evidenceContactId })
+        : ourNames.length ? facts.filter(f => !(f.quote && spokenByOurSide(f.quote, shown, ourNames))) : facts;
+      if (theirs.length < facts.length) console.log(`[GROUNDING] activity-signals-extract: dropped ${facts.length - theirs.length} fact(s) ${evidenceMessages !== null ? 'without confirmed external evidence' : 'quoting our own side'}`);
       out.offered += offered;
       out.grounded += grounded;
       out.facts.push(...theirs);
@@ -1043,7 +1065,7 @@ export async function extractFactsFromText({
 // `sourceRef` is the answer to "has this source already been read". It must reach persistFacts or
 // the claim is born with no link back to what produced it, and a resume check has to guess —
 // which is the GET-359 failure, recurring on the path GET-359 did not cover (GET-375).
-export async function extractActivitySignals({ supabase, activityId, sourceActivityIds, contactId, workspaceId, type, source, summary, maxFactsOverride, dryRun = false, strict = false, sourceRef = null, occurredAt = null, ourNames = [] }) {
+export async function extractActivitySignals({ supabase, activityId, sourceActivityIds, contactId, workspaceId, type, source, summary, maxFactsOverride, dryRun = false, strict = false, sourceRef = null, occurredAt = null, ourNames = [], evidenceMessages = null }) {
   try {
     // THE CREDIT GATE (GET-531). Reading is what spends credits, so this is where the band
     // has to bite — one question per workspace per five minutes, in front of every caller:
@@ -1051,14 +1073,14 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     // recorded by the time we get here; what pauses is the reading of it, which is the promise
     // the billing page makes. Fails open — see lib/creditGate.mjs.
     const gate = await mayReadWorkspace(workspaceId);
-    if (!gate.allowed) return [];
+    if (!gate.allowed) { if (strict) throw new Error('extraction_credit_gate_closed'); return []; }
     setUser({ id: String(workspaceId) });
     // No subject, no extraction. The old fallback — 'the contact' — collided with
     // the rule below that every fact must name its subject explicitly: the model
     // was ordered to name someone it had never been given, so it named whoever the
     // message happened to greet. A placeholder is not a safe default here.
     const contact = await loadSubject(supabase, contactId);
-    if (!contact) return [];
+    if (!contact) { if (strict) throw new Error('extraction_subject_unresolved'); return []; }
     const ourSide = await loadOurSide(supabase, workspaceId, { activityId, text: summary });
     // What is on file about them and their account that this conversation may move (GET-770).
     const positionsOnFile = await loadPositionsOnFile(supabase, workspaceId, [contactId, contact.company_id], { excludeSourceRef: sourceRef });
@@ -1068,6 +1090,7 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     const saved = [];
     await extractFactsFromText({
       contactName: contact.name, company: contact.company, type, text: summary, maxFactsOverride, ourSide, strict, positionsOnFile, ourNames,
+      evidenceMessages, evidenceContactId: contactId,
       criteria: await extractionCriteria(supabase, workspaceId),
       onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-extraction', msg),
       onPart: async (facts, { index, total, model }) => {
@@ -1077,8 +1100,9 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
           return;
         }
         if (!facts.length) return;
-        const kept = facts.map(f => ({ ...f, contactId, activityId, sourceActivityIds, companyId: contact?.company_id ?? null }));
-        saved.push(...await persistFacts(supabase, workspaceId, kept, { type, source, dryRun, sourceRef, occurredAt }));
+        const kept = facts.map(f => ({ ...f, contactId, activityId: f.activityId ?? activityId,
+          sourceActivityIds: f.sourceActivityIds ?? sourceActivityIds, companyId: contact?.company_id ?? null }));
+        saved.push(...await persistFacts(supabase, workspaceId, kept, { type, source, dryRun, sourceRef, occurredAt, strict }));
       },
     });
     return saved;
@@ -1185,7 +1209,7 @@ export async function persistJobTitles(supabase, workspaceId, facts, { source, d
 
 // `occurredAt` is when the source was said (the call, the message). Every claim is filed under it,
 // not under the time we wrote it (GET-770). A fact may carry its own `saidAt` (a thread's message).
-export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, occurredAt = null }) {
+export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, occurredAt = null, strict = false }) {
   // Titles first, and they are filed whether or not the fact survives the guards below: a title is
   // an attribute of the person and does not depend on the claim it arrived with being keepable.
   const titlesFiled = await persistJobTitles(supabase, workspaceId, kept, { source, dryRun });
@@ -1254,6 +1278,13 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
       offSubject.map(f => `${normalizeClaimAbout(f.about) === 'company' ? companyNames.get(f.contactId) : subjectNames.get(f.contactId)} <- "${f.content}"`));
   }
   if (!kept.length) return [];
+
+  // The fact first, without "X says Y's company …" in front (GET-962). After the subject guard, which
+  // reads the model's sentence, and before the merge, so a new fact is compared in the words it will
+  // be stored in. A person fact keeps its person as the subject.
+  kept = kept.map(f => ({ ...f, content: factWording(f.content, {
+    about: claimAboutFor(f.category, f.about), subjectName: subjectNames.get(f.contactId) ?? null, companyName: companyNames.get(f.contactId) ?? null,
+  }) }));
 
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const results = [];
@@ -1376,6 +1407,7 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
       });
     } catch (err) {
       console.warn('[SIGNAL_EXTRACTOR] Insert error:', err.message);
+      if (strict) throw err;
       continue;
     }
 
@@ -1517,7 +1549,7 @@ export async function extractMeetingSignals({
       setImmediate(() =>
         // Bounded as ingest bounded it before facts learned to read long calls in parts:
         // insights run on a larger model and read the transcript in one pass.
-        extractCallInsights({ supabase, workspaceId, transcript: summary.slice(0, 60_000), sourceLabel, attendees, occurredAt, sourceRef, sourceSystem: source })
+        extractCallInsights({ supabase, workspaceId, transcript: summary.slice(0, 60_000), sourceLabel, attendees, occurredAt, sourceRef, sourceSystem: source, groundAgainst: summary, ourNames })
           .catch(err => console.warn('[INSIGHT_HOOK_ERROR]', err.message)),
       );
     }
@@ -1558,6 +1590,7 @@ export async function extractMeetingSignals({
     const criteria = await extractionCriteria(supabase, workspaceId);
     const readPart = async (text, label, allowHalving) => {
       const msg = await createMessage({
+        meter: false,
         feature: 'meeting-signals-extract',
         model: pipelineModel(),
         max_tokens: Math.min(5000, Math.max(1500, partBudget * 200)),   // room to think, see buildActivitySignalsPrompt
@@ -1650,7 +1683,7 @@ Tag each fact with:
 - "person": the NUMBER of the attendee it is about (from the list above).
 - "category": exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}.
 - "about": "person" for a fact about that individual, "company" for a fact about their company.
-- "label": a 2–4 word tag naming the SUBSTANCE (what a rep skims on a card), NOT the person's name. Competitor → the vendor name ("Pearl Lantern"); objection → the objection ("Already on Salesforce"); pain/goal → the pain/goal ("Stale Apollo data", "Expand to healthcare"). Title Case, no trailing period.
+- "label": a 2–4 word tag naming the SUBSTANCE (what a rep skims on a card), NOT the person's name. Competitor → the vendor name ("Pearl Lantern"); objection → the objection ("Already on Salesforce"); pain/goal → the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
 - CONTEXT TAGS (they decide whether a signal is a real risk):
   - competitor → ONLY a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. A tool in their stack that does something else (CRM, call recorder, notes/agenda tool, data vendor) is status_quo, never competitor. Set "entity" (vendor name only) + "stance": "evaluating" (live alternative to us) / "incumbent" (they use it for the job we do) / "past_failure" (tried for that job and failed/fired — LOWERS risk, it's an opening) / "mentioned".
   - objection → "status": "open" / "resolved" / "addressed"; and "hardness": "hard" (budget, authority, security, legal, procurement) / "soft" (info, timing, minor).
@@ -1665,7 +1698,7 @@ ${ourOfferBlock(ourSide)}Categories:
 ${claimCategoryPromptBlock()}
 ${GENERAL_IS_LAST_RESORT}
 Rules:
-- Each fact is one self-contained sentence naming the person explicitly (no pronouns).
+- Each fact is one self-contained sentence naming the person explicitly (no pronouns). Name them as the one doing or wanting the thing, never as a speaker: "Sam is moving support to Zendesk", not "Sam says the company is moving support to Zendesk". Never "Sam's company X's …". Short and plain: the fact, its detail, nothing about who said it (that is stored separately).
 - ${ourSideRule(ourSide)}
 - State only what the attendee said or plainly did. Never add your own reading of what it implies — no "indicating…", "suggesting that…", "which shows…", "meaning…", "as evidenced by…".
 - Attribute each fact to the attendee it is genuinely ABOUT. A fact one person states about another belongs to whoever it describes.
@@ -2020,6 +2053,192 @@ Output ONLY valid JSON, max 4 items:
     if (rec) n++;
   }
   if (n) console.log(`[ACTION_ITEMS] ${n} from ${channel} — contact ${contactId}`);
+}
+
+// ── Conversation action items (Slack) ────────────────────────────────────────
+// A channel conversation has several speakers on both sides, so the per-message miner above, which
+// knows one prospect and "the user", cannot say who asked whom. This reads the whole conversation
+// once and records the same `action_item.*` facts the Tasks page and the Next step read (GET-976),
+// with who asked, who owes it, who else it involves, and the asker's own words.
+//
+// What the model says is checked against the conversation before anything is kept:
+//   quote        verbatim from one message (whitespace aside); that message's author is the asker
+//   owner        a participant or a person mentioned in it; our side owes it, or theirs does
+//   commitment   requested: someone asked and nobody has said yes · accepted: the side that owes
+//                it said yes in a later message (quoted) · scheduled: accepted AND a time was stated.
+//                Anything the conversation does not show is downgraded, never upgraded.
+// No due date is invented: due_at only resolves from a timing phrase found in the conversation.
+
+/** Whitespace-insensitive text for quote matching. */
+const squash = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * Check one model item against the conversation. Pure, so the rules are pinned with fixtures.
+ * `messages`: [{ speaker, side: 'internal'|'external', text, ts, occurredAt, activityId, contactId }]
+ * `people`: [{ name, side, contactId }] — everyone the conversation names, speakers and mentions.
+ * Returns the stored fields, or null when the item is not supported by what was said.
+ */
+export function checkConversationActionItem(item, { messages = [], people = [] } = {}) {
+  if (!item || typeof item.title !== 'string' || !item.title.trim()) return null;
+  const q = squash(item.quote);
+  if (q.length < 8) return null;
+  const said = messages.find(m => squash(m.text).includes(q));
+  if (!said || !['internal', 'external'].includes(said.side)) return null;
+  const byName = (name) => {
+    const n = squash(name).replace(/^@/, '');
+    if (!n) return null;
+    const exact = people.filter(p => squash(p.name) === n);
+    if (exact.length === 1) return exact[0];
+    const first = people.filter(p => squash(p.name).split(' ')[0] === n.split(' ')[0]);
+    return first.length === 1 ? first[0] : null;
+  };
+  const ownerSide = item.owner_kind === 'prospect' ? 'external' : 'internal';
+  const owner = byName(item.owner);
+  // An owner named on the wrong side is a misread; keep the side, drop the name.
+  const ownerPerson = owner && owner.side === ownerSide ? owner : null;
+  const participants = [...new Set((Array.isArray(item.participants) ? item.participants : []).map(byName).filter(Boolean))]
+    .filter(p => p.name !== said.speaker && p.name !== ownerPerson?.name)
+    .map(p => ({ name: p.name, side: p.side, entity_id: p.contactId ?? null }));
+  // Acceptance only counts when the side that owes it said so, after the ask, in its own words.
+  let commitment = 'requested';
+  let acceptedQuote = null;
+  const aq = squash(item.accepted_quote);
+  if (['accepted', 'scheduled'].includes(item.commitment) && aq.length >= 2) {
+    const yes = messages.find(m => m.side === ownerSide && Number(m.ts) > Number(said.ts) && squash(m.text).includes(aq));
+    if (yes) { commitment = 'accepted'; acceptedQuote = String(item.accepted_quote).trim(); }
+  }
+  // When said by the side that owes it, an own promise ("I'll send the deck") is accepted by saying it.
+  if (said.side === ownerSide && commitment === 'requested') commitment = 'accepted';
+  const duePhrase = typeof item.due_phrase === 'string' && item.due_phrase.trim() ? item.due_phrase.trim() : null;
+  const phraseSaid = duePhrase && messages.some(m => squash(m.text).includes(squash(duePhrase)));
+  if (item.commitment === 'scheduled' && commitment === 'accepted' && phraseSaid) commitment = 'scheduled';
+  return {
+    title: item.title.trim().slice(0, 200),
+    owner_kind: ownerSide === 'external' ? 'prospect' : 'user',
+    owner_name: ownerPerson?.name ?? null,
+    owner_entity_id: ownerPerson?.contactId ?? null,
+    asked_by: said.side !== ownerSide ? said.speaker : null,
+    asked_by_entity_id: said.side !== ownerSide ? said.contactId ?? null : null,
+    participants,
+    commitment,
+    accepted_quote: acceptedQuote,
+    due_phrase: phraseSaid ? duePhrase : null,
+    quote: String(item.quote).trim().slice(0, 500),
+    context: typeof item.context === 'string' ? item.context : null,
+    said,
+  };
+}
+
+/** The participant key the model reads: who each speaker and mention is, and which side. */
+function conversationKey(messages, people, mentions) {
+  const lines = people.map(p => `- ${p.name}: ${p.side === 'internal' ? 'our team (the user\'s side)' : 'the customer\'s side'}`);
+  for (const [id, m] of Object.entries(mentions || {})) if (m?.name) lines.push(`- <@${id}> is ${m.name}`);
+  return lines.join('\n');
+}
+
+export async function extractConversationActionItems({
+  supabase, workspaceId, channel = 'slack', messages = [], people = [], mentions = {},
+  sourceRef = null, sourceUrl = null, sourceTitle = null, dryRun = false,
+}, { reader = read, observe = recordObservation } = {}) {
+  const live = messages.filter(m => ['internal', 'external'].includes(m.side) && m.text?.trim());
+  const external = live.filter(m => m.side === 'external' && m.contactId);
+  if (!external.length) return [];
+  const newest = live.at(-1)?.occurredAt ?? null;
+  // Tasks only from a conversation in the last 30 days (GET-514).
+  if (!writesTasks(newest)) return [];
+  const transcript = live.map(m => `[${m.ts}] ${m.speaker}: ${m.text}`).join('\n');
+  if (transcript.length < 24) return [];
+
+  const result = await reader({
+    supabase, workspaceId,
+    feature: `${channel}-action-items`,
+    meterAs: 'signal-extraction',
+    accept: acceptsArray,
+    parse: parseArray,
+    maxTokens: 700,
+    prompt:
+`Extract concrete action items from this team chat between our team (the user's side) and a customer.
+
+Who is who:
+${conversationKey(live, people, mentions)}
+
+Only a CONCRETE ask or commitment with a clear deliverable (set up a call, send X, fix Y, invite Z). Greetings, thanks, FYIs and vague enthusiasm are NOT action items. When in doubt, return [].
+
+For each item:
+- quote: copy the words of the ONE message that asks for or promises it, exactly as written, including any <@...> tokens.
+- owner_kind: "user" if our team owes it, "prospect" if the customer's side owes it.
+- owner: the name of the person who owes it, if the chat names one, else null.
+- participants: names of other people the item involves (for example the person a call is with).
+- commitment: "requested" if it was asked and nobody on the owing side has agreed yet; "accepted" if the owing side agreed in a LATER message; "scheduled" only if it was agreed AND a specific time was stated. Never assume a meeting was booked.
+- accepted_quote: the exact words of that agreeing message, else null.
+- due_phrase: timing words exactly as written in the chat, else null. Never invent one.
+
+Chat:
+"""${transcript.slice(0, 8000)}"""
+
+Output ONLY valid JSON, max 4 items:
+[{"title":"<imperative, names the deliverable>","quote":"...","owner_kind":"user|prospect","owner":"<name or null>","participants":["..."],"commitment":"requested|accepted|scheduled","accepted_quote":"<or null>","due_phrase":"<or null>","context":"<ONE sentence of what and why, for a reader without the chat>"}]`,
+  });
+  if (!result.ok) throw new Error(`${channel}_action_items_${result.reason ?? 'unreadable'}`);
+
+  const timeZone = await getWorkspaceTimezone(supabase, workspaceId).catch(() => undefined);
+  const kept = [];
+  const perMessage = new Map();
+  for (const raw of (result.value || []).slice(0, 4)) {
+    const it = checkConversationActionItem(raw, { messages: live, people });
+    if (!it) continue;
+    // The asker's person when they are the customer, else the customer on the conversation the
+    // ask was made to: the fact lives on a real person at the account, like every other task.
+    const anchorEntity = it.asked_by_entity_id ?? (it.owner_kind === 'prospect' ? it.owner_entity_id : null) ?? external.at(-1).contactId;
+    const sourceActivityId = it.said.activityId ?? external.at(-1).activityId ?? null;
+    // Stable per (message, index within it): a re-read after a new reply overwrites, never duplicates.
+    const n = perMessage.get(it.said.ts) ?? 0;
+    perMessage.set(it.said.ts, n + 1);
+    const key = `${channel}_${String(it.said.ts).replace('.', '_')}_${n}`;
+    const anchorAt = new Date(it.said.occurredAt ?? newest ?? Date.now());
+    const deal = await dealForTask(supabase, workspaceId, { companyEntityId: await companyOfContact(supabase, workspaceId, anchorEntity).catch(() => null) })
+      .catch(() => ({ deal_id: null, deal_link: null }));
+    const value = {
+      ...emptyTaskProvenance(),
+      ...provenanceFromModel({ context: it.context }, it.title),
+      for_name: it.owner_kind === 'user' ? it.asked_by : null,
+      for_entity_id: it.owner_kind === 'user' ? it.asked_by_entity_id : null,
+      asked_by: it.asked_by,
+      asked_by_entity_id: it.asked_by_entity_id,
+      owner_name: it.owner_name,
+      owner_entity_id: it.owner_entity_id,
+      participants: it.participants,
+      commitment: it.commitment,
+      quote: it.quote,
+      accepted_quote: it.accepted_quote,
+      slack_mentions: mentions,
+      source_title: sourceTitle,
+      source_url: it.said.url ?? sourceUrl,
+      source_ref: sourceRef,
+      occurred_at: anchorAt.toISOString(),
+      deal_id: deal.deal_id,
+      deal_link: deal.deal_link,
+      title: it.title,
+      owner_kind: it.owner_kind,
+      status: 'open',
+      due_phrase: it.due_phrase,
+      due_at: it.due_phrase ? dueDateAgreeingWith(resolveDuePhrase(it.due_phrase, anchorAt, timeZone), it.title) : null,
+      source_type: channel,
+      source_id: sourceActivityId,
+    };
+    kept.push({ property: `action_item.${key}`, entityId: anchorEntity, value });
+    if (dryRun) continue;
+    await observe(supabase, {
+      workspaceId, entityId: anchorEntity, kind: 'state',
+      property: `action_item.${key}`, value,
+      source: channel, method: 'extraction',
+      // Versioned by the conversation it was read from: a later read records the newer reading.
+      externalId: `action_item_${key}_${squash(sourceRef ?? '').slice(-16)}`,
+      sourceRef,
+    });
+  }
+  if (kept.length) console.log(`[ACTION_ITEMS] ${kept.length} from ${channel} conversation — ${sourceRef ?? 'no ref'}`);
+  return kept;
 }
 
 // ── Public export — call this after every logActivity ────────────────────────

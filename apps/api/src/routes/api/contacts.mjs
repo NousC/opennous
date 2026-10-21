@@ -1,5 +1,6 @@
 import { viewerReadContext } from '../../lib/messagePrivacy.mjs';
 import { Router } from 'express';
+import { productUsersAmong, personProductUsage, PERSON_USAGE_PROPERTIES } from '../../lib/productUsage.mjs';
 import { randomUUID } from 'crypto';
 import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, getPersonalEntityIds, markEntityPersonal, isEntityPersonal, setEntityInternalManual, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames, getWorkspaceMemberProfiles, effectiveOwnerUserId, assignRelationshipOwner, removeRelationshipMember } from '@nous/core';
 // The funnel lives in ONE place: packages/core/src/pipeline.ts. Never re-declare a
@@ -139,6 +140,7 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
       ]);
       // Who is linked to a CRM record (GET-788), only worth asking when a CRM is connected.
       const inCrm = crmConnected ? await crmLinkedPeople(supabase, workspaceId, rows.map(r => r.entity_id)) : null;
+      const users = await productUsersAmong(supabase, workspaceId, rows.map(r => r.entity_id)).catch(() => new Set());
       const workDomain = (email) => {
         const at = String(email ?? '').split('@')[1]?.trim().toLowerCase();
         return at && !FREEMAIL_DOMAINS.has(at) ? at : null;
@@ -152,6 +154,7 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
           photo_url: photos.get(r.entity_id) ?? null,
           pipeline_stage: r.stage, icp_score: r.icp_score, last_activity_at: r.last_activity_at,
           in_crm: inCrm ? inCrm.has(r.entity_id) : null,
+          product_user: users.has(r.entity_id),
         })),
         total, limit: lim, offset: off, crm_connected: crmConnected,
         country, focus_country: wsRow?.focus_country ?? null, countries: await accountCountries(supabase, workspaceId),
@@ -241,6 +244,7 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
     const ownerMap = await getRelationshipOwners(supabase, workspaceId, ids);
     const crmConnected = await workspaceHasCrm(supabase, workspaceId).catch(() => false);
     const memberNames = await getWorkspaceMemberNames(supabase, workspaceId);
+    const productUsers = await productUsersAmong(supabase, workspaceId, ids).catch(() => new Set());
 
     const contacts = rows.map(c => {
       const ov = icpMap.get(c.id);
@@ -254,6 +258,7 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
         is_personal: personal.has(c.id),
         // Linked to a CRM record (GET-788): the view carries every CRM id column already.
         in_crm: crmConnected ? !!(c.hubspot_id || c.salesforce_id || c.pipedrive_id || c.attio_id || c.crm_record_id) : null,
+        product_user: productUsers.has(c.id),
         owner_user_id: effectiveOwnerUserId(rel),
         owner_name: effectiveOwnerUserId(rel) ? (memberNames.get(effectiveOwnerUserId(rel)) ?? null) : null,
         owner_members: (rel?.members ?? []).map(m => ({
@@ -696,6 +701,10 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     contact.in_crm = crm_connected
       ? (await crmLinkedPeople(supabase, contact.workspace_id, [id]).catch(() => new Set([id]))).has(id)
       : null;
+    // Product usage from PostHog (GET-751): is this person a user, and how much.
+    const { data: usageRows } = await supabase.from('claims').select('property, value')
+      .eq('workspace_id', contact.workspace_id).eq('entity_id', id).in('property', PERSON_USAGE_PROPERTIES).is('invalid_at', null);
+    contact.product_usage = personProductUsage(usageRows);
     return res.json({ contact, activities, company, memories, intel_topics, signals, prediction, crm_connected });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });

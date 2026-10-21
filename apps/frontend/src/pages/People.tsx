@@ -34,7 +34,9 @@ const PIPELINE_STAGES: readonly string[] = ALL_PIPELINE_STAGES;
 // This asks normalizeStage rather than a set lookup because the DB still holds
 // pre-funnel values: a row on `aware` or `client` is a real deal, and a bare set
 // check would mislabel every one of them a product user.
-const isProductUserStage = (s?: string | null) => !!s && normalizeStage(s) === null;
+// It must also NAME a user or a trial: other non-funnel values are not product users. A lead
+// list writes `cold`, and every LinkedIn engager on one was tagged "User" (GET-820).
+const isProductUserStage = (s?: string | null) => !!s && normalizeStage(s) === null && /\buser\b|\btrial\b/i.test(s);
 
 // Intent band → pill classes (the "reach out now?" axis). Mirrors Lists.tsx.
 const INTENT_TAG: Record<string, string> = {
@@ -703,7 +705,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     </th>
   );
   const tag = (c: ContactInfo) =>
-    c.isInternal ? "Team" : c.isPersonal ? "Personal" : isProductUserStage(c.pipelineStage) ? "User" : c.notInCrm ? "Not in CRM" : null;
+    c.isInternal ? "Team" : c.isPersonal ? "Personal" : c.productUser || isProductUserStage(c.pipelineStage) ? "User" : c.notInCrm ? "Not in CRM" : null;
   const locationRows = [{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map(o => ({ ...o, label: o.country }))];
 
   return (

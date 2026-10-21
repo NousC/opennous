@@ -37,6 +37,37 @@ export interface AttentionResult {
 const DAY = 86_400_000;
 const KEY_PROPS = new Set(['email', 'pipeline_stage', 'job_title']);
 
+/**
+ * The scheduled meetings that are still on, one per slot (GET-950 shares this with deal.stalled).
+ * Cancellations are append-only events that reuse the meeting's (entity_id, start time), and the
+ * calendar poller stamps an RSVP into the label ("(Declined)"/"(Cancelled)"), so a declined call
+ * still lands as meeting_scheduled: both take the slot off. Slot = entity + start minute, so a
+ * Cal.com booking and its Google Calendar mirror land on the same one. Rows are observations
+ * ({ entity_id, observed_at = the start time, property, value }); order is kept. Pure.
+ */
+export function meetingsStillOn<T extends { entity_id?: string | null; observed_at?: string | null; property?: string; value?: unknown }>(rows: T[]): T[] {
+  const labelOf = (o: T): string => {
+    const v = o.value as { description?: string; summary?: string } | null;
+    return String(v?.summary || v?.description || '');
+  };
+  const slotKey = (o: T): string =>
+    `${o.entity_id}|${o.observed_at ? Math.floor(new Date(o.observed_at).getTime() / 60_000) : 0}`;
+  const off = new Set<string>();
+  for (const o of rows ?? []) {
+    if (o.property === 'interaction.meeting_cancelled' || /\((declined|cancell?ed)\)/i.test(labelOf(o))) off.add(slotKey(o));
+  }
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const o of rows ?? []) {
+    if (o.property !== 'interaction.meeting_scheduled') continue;
+    const slot = slotKey(o);
+    if (off.has(slot) || seen.has(slot)) continue;
+    seen.add(slot);
+    out.push(o);
+  }
+  return out;
+}
+
 export async function getAttention(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -122,32 +153,12 @@ export async function getAttention(
     .limit(500);
   if (memberScope) meetingQ = meetingQ.or(`owner_user_id.is.null,owner_user_id.eq.${ctx.viewerUserId}`);
   const { data: meetingRaw } = await meetingQ;
-  // Pre-pass: collect slots that are OFF — either a separate meeting_cancelled
-  // event, or a meeting_scheduled whose label carries the RSVP (the calendar
-  // poller stamps "(Declined)"/"(Cancelled)" into the description, so a declined
-  // call still lands as meeting_scheduled). Slot = entity + start time.
-  const offSlots = new Set<string>();
   const labelOf = (o: any): string => {
     const v = o.value as { description?: string; summary?: string } | null;
     return String(v?.summary || v?.description || '');
   };
-  // Slot = entity + start-minute. Bucketing to the minute makes the match robust
-  // to timestamp-format differences between connectors, so a Cal.com booking and
-  // its Google Calendar mirror (or a cancellation) land on the same slot.
-  const slotKey = (o: any): string =>
-    `${o.entity_id}|${o.observed_at ? Math.floor(new Date(o.observed_at).getTime() / 60_000) : 0}`;
-  for (const o of (meetingRaw as any[]) ?? []) {
-    const slot = slotKey(o);
-    if (o.property === 'interaction.meeting_cancelled') { offSlots.add(slot); continue; }
-    if (/\((declined|cancell?ed)\)/i.test(labelOf(o))) offSlots.add(slot);
-  }
   const upcoming: AttentionItem[] = [];
-  const seenSlots = new Set<string>();   // collapse re-imports + cross-source dupes of the same meeting
-  for (const o of (meetingRaw as any[]) ?? []) {
-    if (o.property !== 'interaction.meeting_scheduled') continue;
-    const slot = slotKey(o);
-    if (offSlots.has(slot) || seenSlots.has(slot)) continue;
-    seenSlots.add(slot);
+  for (const o of meetingsStillOn((meetingRaw as any[]) ?? [])) {
     const daysUntil = Math.round((+new Date(o.observed_at) - now) / DAY);
     upcoming.push({
       kind: 'upcoming_meeting', entity_id: o.entity_id, entity_name: null,

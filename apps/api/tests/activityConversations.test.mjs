@@ -92,3 +92,23 @@ test('cursor round-trips, and junk decodes to the first page', () => {
   assert.equal(decodeCursor('not-a-cursor'), null);
   assert.equal(decodeCursor(Buffer.from(JSON.stringify({ ts: 5 })).toString('base64url')), null);
 });
+
+import { slackConversationItems } from '../src/routes/api/activityStats.mjs';
+
+test('captured Slack conversations wait at zero credits and resolve mention names', () => {
+  const row = { id: 's1', observed_at: at, source_ref: 'source://slack/T1/C1/hour-1/version-a',
+    value: { summary: 'Please invite <@U2>.' }, slack_mentions: { U2: { name: 'Morgan' } } };
+  const items = slackConversationItems([row, row, { ...row, id: 's2' }], []);
+  assert.equal(items.length, 1); assert.equal(items[0].messages, 2);
+  assert.equal(items[0].status, 'waiting'); assert.equal(items[0].credits, 0);
+  assert.equal(items[0].summary, 'Please invite @Morgan.');
+});
+
+test('Slack status and credits use exact version receipts', () => {
+  const row = { id: 's1', observed_at: at, source_ref: 'source://slack/T1/C1/hour-1/version-b', value: { summary: 'Thanks.' } };
+  const receipt = { observed_at: at, value: { source_ref: row.source_ref, credits: 1, claims: 0, insights: 0 } };
+  const [read] = slackConversationItems([row], [receipt]);
+  assert.equal(read.status, 'nothing_new'); assert.equal(read.credits, 1);
+  assert.equal(slackConversationItems([row], [{ ...receipt, value: { ...receipt.value, claims: 1 } }])[0].status, 'read');
+  assert.equal(slackConversationItems([row], [{ ...receipt, value: { ...receipt.value, source_ref: 'older-version' } }])[0].status, 'waiting');
+});

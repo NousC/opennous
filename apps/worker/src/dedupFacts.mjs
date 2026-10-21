@@ -21,6 +21,7 @@ const DEFAULT_CONTACT = process.env.CONTACT_ID || '00000000-0000-0000-0000-00000
 async function findDuplicateGroups(facts, supabase, workspaceId) {
   const numbered = facts.map((f, i) => `${i + 1}. ${f.content}`).join('\n');
   const msg = await createMessage({
+    meter: false,
     feature: 'facts-dedup-sweep',
     max_tokens: 600,
     accept: (t) => /\[[\s\S]*\]/.test(t),

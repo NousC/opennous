@@ -62,8 +62,14 @@ test("the feed leaves out one mailbox's reply and an approval's draft; the rest 
   assert.equal(feedView(reply).account.name, 'Acme');
   const approval = { id: 'e2', type: 'automation.approval_requested', data: { run_id: 'r1', automation: { name: 'Follow-up' }, to: 'b@x.example', body: 'draft' } };
   assert.deepEqual(feedView(approval).data, { run_id: 'r1', automation: { name: 'Follow-up' } });
-  const signal = { id: 'e3', type: 'signal.next_step', data: { title: 'Send the questionnaire' } };
+  const signal = { id: 'e3', type: 'signal.budget_discussed', data: { title: 'No number yet' } };
   assert.equal(feedView(signal), signal);
+});
+
+test('a next step agreed logged before GET-967 is not on the feed', async () => {
+  const db = fakeDb([ev(1)]);
+  await listEvents(db, 'ws', {});
+  assert.ok(db.calls.some(([t, op, col, v]) => t === 'event_log' && op === 'neq' && col === 'type' && v === 'signal.next_step'));
 });
 
 test('a page is shown through the feed view', async () => {

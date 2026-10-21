@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient, getWorkspaceMemberProfiles } from '@nous/core';
+import { getSupabaseClient, getWorkspaceMemberProfiles, posthogSettings, posthogRequest, posthogEventNamesQuery, parseEventNames } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { resolveTeamAndPlan } from '../../lib/access.mjs';
 import { CUSTOM_ONLY_INTEGRATIONS, isSelfHosted } from '../../lib/plans.mjs';
@@ -11,6 +11,8 @@ import { isKeyProvider } from '../../providers/catalogue.mjs';
 import { testProviderCredentials, testNamedProvider } from '../../providers/test.mjs';
 import { connectProvider, disconnectProvider } from '../../providers/connect.mjs';
 import { decrypt, encryptCredentials } from '../../providers/crypto.mjs';
+import { updatePostHogEvents } from '../../providers/webhooks.mjs';
+import { assertPublicUrl } from '../../lib/ssrf.mjs';
 import { isWorkspaceMember, isWorkspaceAdmin } from '../../lib/authz.mjs';
 import { sourceScope, canSeeConnection, canManageConnection, connectForbidden } from '../../providers/sourceScope.mjs';
 import { lastSyncedByConnection } from '../../providers/lastSynced.mjs';
@@ -432,6 +434,80 @@ workflowProvidersRouter.delete('/connections/:id', verifySupabaseAuth, async (re
     await disconnectProvider({ supabase, connectionId: id, via: 'disconnect_route',
       actor: { user_id: req.internalUserId ?? null, email: req.user?.email ?? null, ip: req.ip ?? null } });
     return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// ── PostHog events (GET-751): which events the destination sends, changed without a reconnect ──
+
+async function loadPostHogConnection(supabase, id, req) {
+  if (!UUID.test(id)) return { status: 400, body: { error: 'invalid_id' } };
+  const { data: conn } = await supabase.from('workflow_provider_connections')
+    .select('id, workspace_id, name, owner_user_id, encrypted_credentials, provider:workflow_providers(name, category)').eq('id', id).maybeSingle();
+  if (!conn || conn.provider?.name !== 'posthog') return { status: 404, body: { error: 'not_found' } };
+  if (!(await isWorkspaceMember(supabase, conn.workspace_id, req.internalUserId))) return { status: 404, body: { error: 'not_found' } };
+  return { conn };
+}
+
+const postHogEventsOf = (creds) => {
+  const read = posthogSettings(Object.fromEntries(['host', 'project_id', 'signup_event', 'key_events', 'posthog_api_base', 'posthog_project_id']
+    .map(k => [k, decrypt(creds?.[k])])));
+  return read.ok ? { signup_event: read.settings.signupEvent, key_events: read.settings.keyEvents, destination: !!creds?.hog_function_id } : null;
+};
+
+workflowProvidersRouter.get('/connections/:id/posthog-events', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const got = await loadPostHogConnection(supabase, req.params.id, req);
+    if (!got.conn) return res.status(got.status).json(got.body);
+    const creds = got.conn.encrypted_credentials ?? {};
+    const events = postHogEventsOf(creds);
+    if (!events) return res.status(409).json({ error: 'posthog_settings_unreadable' });
+    // What the project actually sends, to tick instead of type. Never fails the read.
+    let available = [];
+    try {
+      const read = posthogSettings(Object.fromEntries(['host', 'project_id', 'posthog_api_base', 'posthog_project_id'].map(k => [k, decrypt(creds[k])])));
+      if (read.ok) {
+        const { apiBase, projectId } = read.settings;
+        if (!apiBase.endsWith('.posthog.com')) await assertPublicUrl(apiBase);
+        const r = await posthogRequest(decrypt(creds.api_key), apiBase, `/api/projects/${projectId}/query/`, {
+          method: 'POST', timeoutMs: 15_000,
+          body: { query: { kind: 'HogQLQuery', query: posthogEventNamesQuery() }, name: 'opennous_event_names' },
+        });
+        available = parseEventNames(r?.results);
+      }
+    } catch (err) {
+      console.warn('[posthog-events] event names:', err.message);
+    }
+    return res.json({ ...events, available });
+  } catch (err) {
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+workflowProvidersRouter.patch('/connections/:id/posthog-events', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const got = await loadPostHogConnection(supabase, req.params.id, req);
+    if (!got.conn) return res.status(got.status).json(got.body);
+    const denied = await manageDenied(supabase, got.conn, req);
+    if (denied) return res.status(denied.status).json(denied.body);
+    const creds = got.conn.encrypted_credentials ?? {};
+    const plain = Object.fromEntries(['host', 'project_id', 'posthog_api_base', 'posthog_project_id', 'hog_function_id'].map(k => [k, decrypt(creds[k])]));
+    let out;
+    try {
+      out = await updatePostHogEvents(decrypt(creds.api_key), plain, {
+        signupEvent: req.body?.signup_event ?? null, keyEvents: req.body?.key_events ?? '',
+      });
+    } catch (err) {
+      return res.status(502).json({ error: 'posthog_update_failed', message: `PostHog answered ${err.status ?? 'an error'}: ${err.message}` });
+    }
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    await supabase.from('workflow_provider_connections').update({
+      encrypted_credentials: { ...creds, signup_event: out.signupEvent, key_events: out.keyEvents.join(', ') },
+    }).eq('id', got.conn.id);
+    return res.json({ signup_event: out.signupEvent, key_events: out.keyEvents, destination: out.destination });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error' });
   }

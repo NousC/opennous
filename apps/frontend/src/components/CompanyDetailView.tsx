@@ -39,6 +39,7 @@ import { DealHealthCard } from "@/components/record/DealHealthCard";
 import { NextStepCard, type NextStep } from "@/components/account/NextStepCard";
 import type { DecisionMaker } from "@/components/account/AccountPane";
 import { CustomerStrip } from "@/components/account/CustomerStrip";
+import { ProductUsageCard, type ProductUsage } from "@/components/account/ProductUsageCard";
 import { AccountHealthCard, useAccountHealth } from "@/components/account/AccountHealthCard";
 import { useAccountHealthTrend } from "@/components/account/useAccountHealthTrend";
 import { AccountActivityTab, RecentActivity, buildAccountFeed } from "@/components/account/AccountActivity";
@@ -47,13 +48,10 @@ import { CommitteeCoverage } from "@/components/account/CommitteeCoverage";
 import { customerKind, num, type CsBag } from "@/components/account/parts";
 import { NewTaskDialog } from "@/components/tasks/NewTaskDialog";
 import { usePlan } from "@/hooks/usePlan";
-import { isApiTier } from "@/config/plans";
-import { EventFeed } from "@/components/events/EventFeed";
-import { ListCard } from "@/components/ui/list";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
-type Tab = "overview" | "intel" | "activity" | "events" | "tasks" | "orgchart";
+type Tab = "overview" | "intel" | "activity" | "tasks" | "orgchart";
 
 type Stakeholder = {
   id: string; name: string; title: string | null; seniority: string | null;
@@ -82,6 +80,8 @@ type CompanyDetail = {
   calls?: any[];
   /** The CRM's customer-health bag (status, MRR, CS owner, its own health score). Null on a prospect or an older server. */
   cs?: CsBag | null;
+  /** Product usage from PostHog (GET-751). Null until the daily pull has read this account. */
+  product_usage?: ProductUsage | null;
   /** The account's record in HubSpot, when it has one. */
   hubspot_url?: string | null;
 };
@@ -171,11 +171,8 @@ export default function CompanyDetailView({
   // A record's own tasks are on every Cloud plan, the API plan included (GET-785): the Tasks tab and
   // Add task live here, while the Tasks PAGE (the worklist) stays the Workspace plan's. Self-host has
   // no tasks API (CLOUD_ONLY_FEATURES), so there is no tab rather than one that can only fail.
-  const { selfHosted, plan } = usePlan();
+  const { selfHosted } = usePlan();
   const tasksOn = !selfHosted;
-  // The API plan and self-host see what happened on the account as events (GET-939, GET-947), the
-  // same feed their webhooks and GET /v2/events carry; the Workspace keeps the CRM-style activity feed.
-  const eventsTab = isApiTier(plan) || selfHosted;
   useEffect(() => {
     if (!token || !wsId || !co.id || !tasksOn) return;
     let cancelled = false;
@@ -242,7 +239,7 @@ export default function CompanyDetailView({
     // sidebar and three capped lists on Overview — 19 of 53 on one account, with no screen
     // anywhere that showed the rest. The count is the honest total.
     { id: "intel", label: "Intel", count: intelCount },
-    eventsTab ? { id: "events", label: "Events" } : { id: "activity", label: "Activity", count: feed.length },
+    { id: "activity", label: "Activity", count: feed.length },
     ...(tasksOn ? [{ id: "tasks" as const, label: "Tasks", count: tasksState === "ready" ? tasks.open.length : undefined }] : []),
     { id: "orgchart", label: "Org chart", count: cd.stakeholders.length || undefined },
   ];
@@ -275,8 +272,6 @@ export default function CompanyDetailView({
             empty="No intel yet. It's learned from calls and email on this account." />
         ) : tab === "activity" ? (
           <AccountActivityTab items={feed} />
-        ) : tab === "events" ? (
-          <ListCard><EventFeed accountId={co.id ?? null} showAccount={false} /></ListCard>
         ) : tab === "tasks" ? (
           <>
             <TaskList
@@ -321,7 +316,9 @@ export default function CompanyDetailView({
               pillTitle="Nous account health, 0 to 100: engagement, decision makers covered, open blockers, risk signals and, for a customer, adoption"
               health={accountHealth} notes={cd.notes ?? []} voicedByName={voicedByName} />}
             <AccountHealthCard health={acctHealthQ.data} />
-            {!eventsTab && <RecentActivity items={feed} onAll={() => setTab("activity")} />}
+            {/* Product usage from PostHog (GET-751), under the account's health. */}
+            <ProductUsageCard usage={cd.product_usage} />
+            <RecentActivity items={feed} onAll={() => setTab("activity")} />
           </div>
         )}
       </TabBody>

@@ -16,6 +16,7 @@
  */
 
 import { getProvider } from './catalogue.mjs';
+import { captureProductEvent } from '../lib/productEvents.mjs';
 import { WEBHOOK_HANDLERS } from './webhooks.mjs';
 import { testProviderCredentials } from './test.mjs';
 import { encryptValue, encryptCredentials, decrypt } from './crypto.mjs';
@@ -154,6 +155,7 @@ export async function connectProvider({
     console.error('[CONNECT] save failed:', error.message);
     return { ok: false, status: 500, error: 'save_failed', message: error.message };
   }
+  if (userId) captureProductEvent({ distinctId: userId, event: 'integration_connected', properties: { provider: row.name, category: row.category ?? null }, workspaceId });
 
   // A new source is connected, so pull what it holds — RIGHT NOW, not when someone
   // remembers to press a button. For a CRM that means importing contacts, companies and

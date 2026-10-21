@@ -1,4 +1,5 @@
 import { hubspotLinker, withDealLinks } from '../../lib/crmLinks.mjs';
+import { PRODUCT_USAGE_PROPERTIES, productUsageFromClaims } from '../../lib/productUsage.mjs';
 import { activeUsersTrendFor } from '../../lib/csHealth.mjs';
 import { buildAccountHealth } from '../../lib/csReport.mjs';
 import { listAccountSignals, filterByCitedClaimsForViewer, assertClaims, upsertIdentifier, normalizeStage, planAccountStage, accountStage, readTitle, roleFromAuthorityClaims, COMMITTEE_ROLE_RANK, listDocuments } from '@nous/core';
@@ -1113,6 +1114,11 @@ companiesApiRouter.get('/:id/detail', verifySupabaseAuth, async (req, res) => {
     // The latest follow-up agreed in the last two weeks, across calls, meetings and emails (GET-804).
     const next_step = selectNextStep({ activity: healthActivity, nextSteps, calls: callPoints });
 
+    // Product usage from PostHog (GET-751): null unless the usage pull wrote it.
+    const { data: usageRows } = await supabase.from('claims').select('property, value, computed_at')
+      .eq('workspace_id', workspaceId).eq('entity_id', id).in('property', PRODUCT_USAGE_PROPERTIES).is('invalid_at', null);
+    const product_usage = productUsageFromClaims(usageRows);
+
     // "Open in HubSpot": the portal + UI domain the sync learned, and the company's HubSpot id.
     const hsLink = await hubspotLinker(supabase, workspaceId).catch(() => null);
     const hubspotUrl = hsLink ? hsLink('company', company?.hubspot_company_id) : null;
@@ -1134,6 +1140,7 @@ companiesApiRouter.get('/:id/detail', verifySupabaseAuth, async (req, res) => {
       calls,
       recent_observations: account?.recent_observations ?? [],
       cs,
+      product_usage,
       // A deep link needs the portal id and its UI domain as well as the record id; null until the
       // sync has learned them (ensureHubspotPortal), rather than a link that lands on a login page.
       hubspot_url: hubspotUrl,
@@ -1164,14 +1171,15 @@ async function gatedCompany(supabase, req, res) {
 // open first, each with its people and its own health. An account with no CRM deal answers its
 // implied deal (id 'account') so there is always one to open.
 // GET /api/companies/:id/signals?workspaceId=&days=7 — what changed on the account (GET-686):
-// objections, competitors, stakeholders, budget, next steps, expansion and churn, newest first.
+// objections, competitors, stakeholders, budget, missed or slipped next steps, expansion and churn,
+// newest first. A next step agreed is a task, not a signal, so it is left out (GET-954).
 companiesApiRouter.get('/:id/signals', verifySupabaseAuth, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const company = await gatedCompany(supabase, req, res);
     if (!company) return;
     const days = Number(req.query.days) || 7;
-    return res.json({ days, signals: await listAccountSignals(supabase, req.query.workspaceId, company.id, { days }) });
+    return res.json({ days, signals: await listAccountSignals(supabase, req.query.workspaceId, company.id, { days, forPeople: true }) });
   } catch (err) {
     console.error('[GET /api/companies/:id/signals]', err);
     return res.status(500).json({ error: 'internal_error' });

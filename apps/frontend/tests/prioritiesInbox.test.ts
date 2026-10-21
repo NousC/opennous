@@ -142,12 +142,12 @@ const signalDraft = (id: string, signal: Record<string, unknown>, extra: Partial
 });
 
 test("a Deal signals draft sits under From signals, between meetings and drafts, named by the signal", () => {
-  const items = buildItems({ ...data, actions: [draft("d1"), signalDraft("s1", { research: { name: "Andrew Lemoine", title: "CEO", source_url: "https://x", source_title: null, contact_id: null } })] }, NOW);
+  const items = buildItems({ ...data, actions: [draft("d1"), signalDraft("s1", { research: { name: "Dana Whitfield", title: "CEO", source_url: "https://x", source_title: null, contact_id: null } })] }, NOW);
   const groups = groupItems(items, new Set());
   assert.deepEqual(groups.map((g) => g.label), ["After your meetings", "From signals", "Drafts to review"]);
   const s = items.find((i) => i.key === "act:s1")!;
   assert.equal(s.kind, "signal");
-  assert.equal(s.sub, "Stakeholder identified: Andrew Lemoine, CEO");
+  assert.equal(s.sub, "Stakeholder identified: Dana Whitfield, CEO");
   assert.equal(items.find((i) => i.key === "act:d1")!.kind, "approve");
 });
 
@@ -167,4 +167,15 @@ test("a snoozed signal waits until its time; a decided one keeps its row", () =>
   const sent = signalDraft("s3", {}, { status: "sent" });
   sent.origin!.snoozed_until = "2026-10-05T09:00:00";
   assert.deepEqual(buildItems({ actions: [sent] }, NOW).map((i) => i.done), ["Sent"]);
+});
+
+test("a 5-day follow-up reads as one (GET-949)", () => {
+  const n = signalDraft("n1", { nudge: true, research: { name: "Dana Whitfield", title: "CEO", source_url: null, source_title: null, contact_id: null } });
+  assert.equal(buildItems({ actions: [n] }, NOW)[0].sub, "Follow-up · Stakeholder identified: Dana Whitfield, CEO");
+});
+
+test("churn risk and expansion drafts sit under From signals; a stale deal draft stays a draft (GET-953)", () => {
+  const by = (id: string, builtin: string) => draft(id, { origin: { source: "rec", name: id, why: null, builtin } });
+  const items = buildItems({ actions: [by("risk", "deal_risk"), by("exp", "expansion"), by("stale", "stale_deal")] }, NOW);
+  assert.deepEqual(items.map((i) => [i.key, i.kind]).sort(), [["act:exp", "signal"], ["act:risk", "signal"], ["act:stale", "approve"]]);
 });

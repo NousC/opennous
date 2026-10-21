@@ -8,6 +8,7 @@
 //
 // Read-only on purpose: a deal is edited in the CRM. What Nous adds is where it is moving, who
 // is actually engaged, and how healthy it is — the same card the account shows.
+import { SlackText } from "@/components/record/SlackText";
 import { useEffect, useState } from "react";
 import { useTopBarCrumbs } from "@/components/shell/topBar";
 import { useQueryClient } from "@tanstack/react-query";
@@ -272,7 +273,7 @@ function WhyItClosed({ record, outcome }: { record: CloseRecord | null; outcome:
                   <span className="text-ink-2"> · {e.text}</span>
                   {e.attribution === "roster" && <span className="text-muted-foreground"> · from the people on it</span>}
                 </div>
-                {e.quote && <div className="mt-0.5 text-[12px] text-muted-foreground">“{e.quote}”</div>}
+                {e.quote && <div className="mt-0.5 text-[12px] text-muted-foreground">“<SlackText text={String(e.quote)} />”</div>}
               </div>
             </li>
           ))}

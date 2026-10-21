@@ -32,6 +32,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useTopBarCrumbs } from "@/components/shell/topBar";
 import { when } from "@/lib/format";
 
+/** A person's product usage from PostHog (GET-751), as the record's API sends it. */
+type PersonProductUsage = { user: boolean; last_seen_at: string | null; active_days_30d: number | null; events_30d: number | null };
+const usageTitle = (u: PersonProductUsage) =>
+  [u.last_seen_at ? `Last used ${new Date(u.last_seen_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : null,
+   u.active_days_30d != null ? `active ${u.active_days_30d} of the last 30 days` : null].filter(Boolean).join(", ") || "Uses the product";
+
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
 // The panel's patch keys are the API's; the record's columns are snake_case.
@@ -81,6 +87,7 @@ export default function PersonDetailView({
   const joined = [c.first_name, c.last_name].filter(Boolean).join(" ");
   const name = (editedName ? joined : "") || c.name || joined || c.email || "—";
   const title = c.job_title || null;
+  const usage = (c as { product_usage?: PersonProductUsage | null }).product_usage ?? null;
   // The top bar names the person under their account, as the account page names itself under Accounts.
   useTopBarCrumbs(c.id ? [
     { label: "Accounts", href: "/accounts" },
@@ -217,10 +224,16 @@ export default function PersonDetailView({
                 <h1 className="truncate text-[18px] font-semibold tracking-[-0.015em] text-foreground">{name}</h1>
                 {/* "Not in CRM" (GET-788): a CRM is connected and no record there is linked to this
                     person — a meeting note-taker created them. The API sends null without a CRM. */}
-                {(title || c.in_crm === false) && (
+                {/* "User" (GET-751): PostHog says they used the product in the last 30 days. */}
+                {(title || c.in_crm === false || usage?.user) && (
                   <div className="truncate text-[12px] text-muted-foreground/70">
                     {title}
                     {c.in_crm === false && <span className="text-muted-foreground/55">{title ? " · " : ""}Not in CRM</span>}
+                    {usage?.user && (
+                      <span className="text-muted-foreground/55" title={usageTitle(usage)}>
+                        {title || c.in_crm === false ? " · " : ""}User
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

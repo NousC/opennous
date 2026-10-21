@@ -53,6 +53,7 @@ async function pageAll(makeQuery) {
 async function preflight() {
   try {
     const msg = await createMessage({
+      meter: { workspaceId: null },
       feature: 'gmail-preflight', model: pipelineModel(), max_tokens: 4000,
       messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
       accept: (t) => typeof t === 'string' && t.length > 0,

@@ -34,6 +34,7 @@
 import AnthropicSDK from '@anthropic-ai/sdk';
 import { claudeClientOptions, claudeProvider, routeClaudeClient } from './claudeRoute.mjs';
 import { classifyProviderError } from './providerError.mjs';
+import { usageRowsFor } from './usageCost.mjs';
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
@@ -63,6 +64,33 @@ let anthropicAcceptsFeature = false;
 export function registerAnthropicClient(client, { acceptsFeature = true, provider = null } = {}) {
   anthropicClient = client && provider ? routeClaudeClient(client, provider) : client;
   anthropicAcceptsFeature = acceptsFeature;
+}
+
+// ── Metering (GET-957) ───────────────────────────────────────────────────────────
+// The door records each call in llm_usage itself, through a writer each app registers at boot
+// (rows => insert). Before this, a call was metered only when its call site remembered to, and
+// about thirty did not: insights, intel topics, enrichment, CS mining, the task-closing judges.
+// A call site that records its own usage (with its own label or request id) passes `meter: false`;
+// every other passes `meter: { workspaceId }`. apps/worker/tests/modelDoorMetering.test.mjs fails
+// on a direct call that says neither. A call that says nothing is not metered here: the door is
+// also handed around as a function (`generate: createMessage`) to code that meters for itself,
+// and guessing there would bill those calls twice.
+let usageSink = null;
+
+/** Register the writer for llm_usage rows: (rows) => Promise|void. Null turns metering off. */
+export function registerUsageSink(sink) {
+  usageSink = typeof sink === 'function' ? sink : null;
+}
+
+function recordUsage(msg, feature, meter) {
+  if (!usageSink || !meter || typeof meter !== 'object' || !msg) return;
+  const { workspaceId = null, userId = null, requestId = null } = meter ?? {};
+  try {
+    Promise.resolve(usageSink(usageRowsFor(msg, { workspaceId, userId, feature: feature || 'pipeline', requestId })))
+      .catch(e => console.warn(`[llm_usage] ${feature} record failed:`, e?.message || e));
+  } catch (e) {
+    console.warn(`[llm_usage] ${feature} record failed:`, e?.message || e);   // metering never breaks a call
+  }
 }
 
 function anthropic() {
@@ -216,6 +244,8 @@ export class ModelUnavailableError extends Error {
  *              answer, or one cut off at the token limit, counts as unusable.
  *   fallback   false → exactly one model; a model id → that fallback; default → the tier's.
  *   temperature optional; open models default to 0
+ *   meter      { workspaceId, userId?, requestId? } → the door records the call in llm_usage;
+ *              false → the call site records it itself (GET-957)
  *
  * When the fallback answers, the response carries `failed_attempts` (model, host, reason, cost)
  * so metering can charge the replaced call. When every model fails with an outage it throws
@@ -224,7 +254,7 @@ export class ModelUnavailableError extends Error {
  */
 export async function createMessage({
   feature, tier = 'extraction', model, max_tokens, system, messages,
-  accept = null, fallback = undefined, temperature,
+  accept = null, fallback = undefined, temperature, meter,
 }) {
   const [tierPrimary, tierFallback] = tierModels(tier);
   const primary = model || tierPrimary;
@@ -245,6 +275,7 @@ export async function createMessage({
           msg.failed_attempts = failed;
           console.warn(`[LLM_FALLBACK] ${feature || 'pipeline'}: ${failed.map(f => `${f.model} ${f.reason}`).join('; ')} → answered by ${m}`);
         }
+        recordUsage(msg, feature, meter);
         return msg;
       }
       failed.push({
@@ -263,6 +294,7 @@ export async function createMessage({
   }
   if (lastMsg) {
     lastMsg.failed_attempts = failed.filter(f => f.model !== lastMsg.model);
+    recordUsage(lastMsg, feature, meter);
     return lastMsg;
   }
   throw lastErr;

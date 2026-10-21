@@ -4,6 +4,7 @@
 // slab under the row that repeated the numbers and never listed what it counted): one line with the
 // factor and its verdict, the actual items as inset rows, then what would improve it. The trend line
 // is always shown (GET-804). The account and every deal draw this one card.
+import { SlackText } from "@/components/record/SlackText";
 import { useMemo, useState, type ReactNode } from "react";
 import { healthColor } from "@/components/mind/entities";
 import { day, when as fmtWhen } from "@/lib/format";
@@ -100,7 +101,7 @@ function ClaimRow({ item }: { item: FactorItem }) {
   return (
     <li className={ROW}>
       <p className="text-[13px] leading-snug text-foreground [overflow-wrap:anywhere]">{item.content || item.label}</p>
-      {item.quote && <p className="mt-1 text-[12.5px] italic leading-snug text-foreground/60 [overflow-wrap:anywhere]">“{item.quote}”</p>}
+      {item.quote && <p className="mt-1 text-[12.5px] italic leading-snug text-foreground/60 [overflow-wrap:anywhere]">“<SlackText text={String(item.quote)} />”</p>}
       {(meta.length > 0 || item.aging) && (
         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-muted-foreground/55">
           {meta.map((x, i) => <span key={i} className="inline-flex items-center gap-x-1.5">{i > 0 && <span aria-hidden>·</span>}{x}</span>)}
@@ -123,7 +124,7 @@ function PersonRow({ item }: { item: FactorItem }) {
         {sub && <span className="min-w-0 truncate text-[11.5px] text-muted-foreground/55">{sub}</span>}
         <span className={cn("ml-auto flex-shrink-0 text-[11.5px]", st.tone)}>{st.label}</span>
       </div>
-      {item.quote && <p className="mt-1 text-[12.5px] italic leading-snug text-foreground/60 [overflow-wrap:anywhere]">“{item.quote}”</p>}
+      {item.quote && <p className="mt-1 text-[12.5px] italic leading-snug text-foreground/60 [overflow-wrap:anywhere]">“<SlackText text={String(item.quote)} />”</p>}
       {item.quote && item.said_at && <p className="mt-0.5 text-[11.5px] text-muted-foreground/55">{day(item.said_at)}</p>}
     </li>
   );

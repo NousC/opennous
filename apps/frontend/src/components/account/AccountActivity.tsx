@@ -4,7 +4,8 @@
 // HubSpot is a meeting AND a CRM row, a call summary is a meeting AND a document).
 //
 // Pages still open where they always opened (/pages/:id); this only changes where you find them.
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { SlackText, hasSlackMention } from "@/components/record/SlackText";
 import { toolLogo, toolOfRef } from "@/lib/toolLogo";
 import { FileText, Phone, Zap } from "lucide-react";
 import { ActivityRow, dedupeActivity } from "@/components/record/RecordParts";
@@ -146,7 +147,7 @@ export function AccountActivityTab({ items }: { items: FeedItem[] }) {
 }
 
 /** One feed item as an Overview row: what kind, what it was, a line of what was said, a link. */
-export function feedEvent(i: FeedItem): { kind: EventKind; title: string; meta: string | null; sub: string | null; href?: string; logo: string | null } {
+export function feedEvent(i: FeedItem): { kind: EventKind; title: string; meta: string | null; sub: ReactNode; href?: string; logo: string | null } {
   if (i.type === "page") {
     return { kind: i.call ? "meeting" : "document", title: i.doc.title || "Untitled", meta: i.call ? "Call summary" : "Document", sub: i.doc.headline ?? null, href: `/pages/${i.doc.id}`, logo: docLogo(i.doc) };
   }
@@ -159,6 +160,13 @@ export function feedEvent(i: FeedItem): { kind: EventKind; title: string; meta: 
   if (type.startsWith("email")) {
     const other = a.contactName || (type === "email_sent" ? nameOfAddress((raw.to ?? [])[0]) : nameOfAddress(raw.from));
     return { kind: "email", title: type === "email_sent" ? `Email to ${other ?? "someone"}` : `${other ?? "Someone"} emailed`, meta: raw.subject ?? null, sub: a.redacted || raw.redacted ? null : body, logo: toolLogo(src) ?? toolLogo("gmail") };
+  }
+  // A Slack message is a Slack message (GET-976): it used to fall into the LinkedIn wording below,
+  // with its mentions as raw ids.
+  if (/^slack_(message|dm)$/.test(type) || (src === "slack" && /message|dm/.test(type))) {
+    const who = a.contactName ?? "someone";
+    return { kind: "message", title: `Slack message ${raw.is_outbound === true ? "to" : "from"} ${who}`, meta: null,
+      sub: body && hasSlackMention(body) ? <SlackText text={body} mentions={raw.slack_mentions} /> : body, logo: toolLogo("slack") };
   }
   const named = a.subject ?? a.title ?? raw.title ?? null;
   const kind = eventKind(type, a.source);

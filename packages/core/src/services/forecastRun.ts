@@ -17,6 +17,7 @@ import {
   encodeWinFeatures, explainWinProbability, type WinDriver,
 } from './winModel.js';
 import { INBOUND_TYPES } from './pipelineFeatures.js';
+import { loadCrmDealStatesByAccount } from './crmAgent.js';
 
 // The deal scoring every forecast consumer shares: the assembly (rates, timing curves, each
 // account's stage) and scoreOpenDeals, then the deal outlook on top. The revenue forecast that
@@ -250,6 +251,9 @@ export interface ScoredPipeline {
   asm: ForecastAssembly;
   deals: ScoredDeal[];
   winModel: WinModelInfo;
+  /** Accounts the CRM says are closed although their activity ladder looks open (GET-835):
+   *  'won' when any of their CRM deals was won, else 'lost'. */
+  crmClosedByAccount: Map<string, 'won' | 'lost'>;
 }
 
 /**
@@ -263,9 +267,23 @@ export async function scoreOpenDeals(
   opts: { now?: number } = {},
 ): Promise<ScoredPipeline> {
   const now = opts.now ?? Date.now();
-  const asm = await assembleForecast(supabase, workspaceId, { now });
+  const [asm, crmStates] = await Promise.all([
+    assembleForecast(supabase, workspaceId, { now }),
+    loadCrmDealStatesByAccount(supabase, workspaceId),
+  ]);
+  // The ladder is rebuilt from activity, so a customer who keeps having calls looks like a
+  // deal stuck in discovery forever. When the CRM holds deals for the account, the CRM decides:
+  // open only if one of them is open. No CRM deal at all keeps the implied deal (GET-835).
+  // Closed accounts stay in `asm`, so the rates and timing still learn from them.
+  const crmClosedByAccount = new Map<string, 'won' | 'lost'>();
   const openAccounts = [...asm.accounts.values()]
-    .filter(a => !DONE_STAGES.has(a.stage) && !isTerminalStage(a.stage));
+    .filter(a => !DONE_STAGES.has(a.stage) && !isTerminalStage(a.stage))
+    .filter(a => {
+      const s = crmStates.get(a.entityId);
+      if (!s || s.has('open')) return true;
+      crmClosedByAccount.set(a.entityId, s.has('won') ? 'won' : 'lost');
+      return false;
+    });
   const openIds = openAccounts.map(a => a.entityId);
   const contactIds = [...asm.contactCompany.keys()];
 
@@ -461,6 +479,7 @@ export async function scoreOpenDeals(
   return {
     asm,
     deals,
+    crmClosedByAccount,
     winModel: {
       basis: useFitted ? 'fitted' : 'default',
       applied: true,
@@ -519,7 +538,7 @@ export interface DealOutlookResult {
   /** How much the stage conversion rates rest on assumption rather than this workspace's history. */
   stageRatesBasis: StageRatesBasis;
   winModel: WinModelInfo;
-  /** Stage of every account with a reconstructed ladder, open or closed. */
+  /** Stage of every account with a reconstructed ladder, open or closed (the CRM's won/lost wins). */
   stageByAccount: Map<string, string>;
 }
 
@@ -584,7 +603,7 @@ export async function runDealOutlook(
   opts: { now?: number; horizons?: number[] } = {},
 ): Promise<DealOutlookResult> {
   const now = opts.now ?? Date.now();
-  const { asm, deals, winModel } = await scoreOpenDeals(supabase, workspaceId, { now });
+  const { asm, deals, winModel, crmClosedByAccount } = await scoreOpenDeals(supabase, workspaceId, { now });
   const timingWinsByStage: Record<string, number> = {};
   for (const [stage, rows] of Object.entries(asm.winRowsByStage)) {
     timingWinsByStage[stage] = rows.filter(r => !r.censored).length;
@@ -595,6 +614,8 @@ export async function runDealOutlook(
   );
   const stageByAccount = new Map<string, string>();
   for (const a of asm.accounts.values()) stageByAccount.set(a.entityId, a.stage);
+  // The CRM's verdict beats the rebuilt ladder, so a won customer reads as won, not "closed (Discovery)".
+  for (const [id, v] of crmClosedByAccount) stageByAccount.set(id, v === 'won' ? 'closed_won' : 'closed_lost');
   return { ...out, winModel, stageByAccount };
 }
 

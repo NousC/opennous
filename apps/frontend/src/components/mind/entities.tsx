@@ -44,6 +44,8 @@ export interface ContactInfo {
   /** A CRM is connected and this person has no CRM record linked (GET-788): a meeting note-taker
    *  created them. False when linked, and when there is no CRM to be linked to. */
   notInCrm: boolean;
+  /** Uses the product, per PostHog (GET-751). */
+  productUser: boolean;
   /** The rep currently carrying this account (most recent to touch it). */
   ownerUserId: string | null;
   ownerName: string | null;
@@ -235,6 +237,8 @@ export function ActivityIcon({ source, type }: { source: string | null; type: st
   // email-icon check below would otherwise win and we'd render the Gmail logo.
   // `nous-mark.svg` is the brand mark; pinning a versioned filename also forces
   // a fresh download when the underlying svg gets updated.
+  // PostHog first (GET-751): its signup is the customer's own product, not ours.
+  if (s === "posthog"         || t.includes("product_used"))      return logo("/provider-logos/posthog.svg");
   if (t.includes("signed_up") || t.includes("welcome_email"))     return logo("/provider-logos/nous-mark.svg");
   if (s === "stripe"          || t.includes("subscription"))      return logo("/provider-logos/stripe.svg");
   // Outbound-tool sources own their events before the generic email/linkedin
@@ -294,6 +298,7 @@ const LOGO_FALLBACK: Record<string, string> = {
   granola: "/provider-logos/granola.svg",
   fellow: "/provider-logos/fellow.png",
   ringcentral: "/provider-logos/ringcentral.svg",
+  posthog: "/provider-logos/posthog.svg",
   calendly: "/provider-logos/calendly.svg",
   cal_com: "/provider-logos/cal_com.svg",
   "cal.com": "/provider-logos/cal_com.svg",
@@ -388,6 +393,7 @@ export function mapContact(c: any): ContactInfo {
     isInternal: c.is_internal === true,
     isPersonal: c.is_personal === true,
     notInCrm: c.in_crm === false,
+    productUser: c.product_user === true,
     ownerUserId: c.owner_user_id ?? null,
     ownerName: c.owner_name ?? null,
     ownerMembers: Array.isArray(c.owner_members) ? c.owner_members : [],

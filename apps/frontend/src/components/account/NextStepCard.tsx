@@ -3,13 +3,15 @@
 // emails (an action item from a call page, a commitment in an email), else a meeting already
 // booked. It says what it is and when: "Friday follow-up: send the revised proposal", agreed 7 Oct
 // on the call. With nothing agreed in two weeks it says so, instead of surfacing a month-old open
-// task as if it were the plan.
+// task as if it were the plan. A step someone asked for that nobody has agreed to yet says
+// "Requested", with who asked, who owes it and who it involves, and never a date nobody said (GET-976).
+import { SlackText } from "@/components/record/SlackText";
 import { ListCard } from "@/components/ui/list";
 import { H3 } from "@/components/record/OverviewParts";
 import { day } from "@/lib/format";
 
 export type NextStep = {
-  status: "agreed" | "scheduled" | "none";
+  status: "agreed" | "requested" | "scheduled" | "none";
   title: string | null;
   due_at: string | null;
   said_at?: string | null;
@@ -17,11 +19,16 @@ export type NextStep = {
   agreed_at?: string | null;
   quote?: string | null;
   items?: string[];
-  conversation: { kind: "meeting" | "call" | "email" | "conversation"; at: string; title: string | null } | null;
+  conversation: { kind: "meeting" | "call" | "email" | "slack" | "conversation"; at: string; title: string | null } | null;
   reason?: string | null;
+  commitment?: "requested" | "accepted" | "scheduled" | null;
+  asked_by?: string | null;
+  owner_name?: string | null;
+  participants?: { name: string }[];
+  slack_mentions?: Record<string, { name?: string | null; personId?: string | null }> | null;
 };
 
-const KIND: Record<string, string> = { meeting: "call", call: "call", email: "email" };
+const KIND: Record<string, string> = { meeting: "call", call: "call", email: "email", slack: "Slack" };
 const WEEKDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** "Friday follow-up" when it is due within the week ahead, else "Follow-up due 21 Oct", else "Follow-up". */
@@ -39,7 +46,8 @@ export function NextStepCard({ step }: { step: NextStep | null | undefined }) {
   const conv = step.conversation;
   const more = (step.items ?? []).filter(t => t !== step.title);
   const agreed = step.agreed_at ?? step.said_at ?? null;
-  const where = conv && KIND[conv.kind] ? ` on the ${KIND[conv.kind]}${conv.title ? `, ${conv.title}` : ""}` : "";
+  const where = conv && KIND[conv.kind] ? (conv.kind === "slack" ? " in Slack" : ` on the ${KIND[conv.kind]}${conv.title ? `, ${conv.title}` : ""}`) : "";
+  const withWho = (step.participants ?? []).map(p => p.name).filter(Boolean);
   return (
     <ListCard className="min-w-0">
       <div className="flex min-h-8 items-center gap-2 px-2 pb-1 pt-0.5">
@@ -49,6 +57,18 @@ export function NextStepCard({ step }: { step: NextStep | null | undefined }) {
         <div className="px-2 pb-1.5">
           <p className="text-[13px] text-foreground/85">{step.reason ?? "No next step agreed in the last two weeks"}</p>
           {conv && <p className="mt-0.5 text-[11.5px] text-muted-foreground/60">Last conversation {day(conv.at)}</p>}
+        </div>
+      ) : step.status === "requested" ? (
+        <div className="px-2 pb-1.5">
+          <p className="text-[13px] leading-snug text-foreground">
+            <span className="text-muted-foreground">Requested:</span> {step.title}
+          </p>
+          {step.quote && <p className="mt-0.5 text-[12px] italic leading-snug text-muted-foreground">“<SlackText text={String(step.quote)} mentions={step.slack_mentions} />”</p>}
+          <p className="mt-0.5 text-[11.5px] text-muted-foreground/60">
+            {[step.asked_by ? `Asked by ${step.asked_by}` : "Asked", agreed ? day(agreed) : null].filter(Boolean).join(" ")}{where}
+            {step.owner_name ? ` · ${step.owner_name} to do it` : ""}{withWho.length ? ` · with ${withWho.join(", ")}` : ""}
+          </p>
+          <p className="mt-0.5 text-[11.5px] text-muted-foreground/60">Not agreed or scheduled yet</p>
         </div>
       ) : step.status === "scheduled" ? (
         <div className="px-2 pb-1.5">
@@ -60,7 +80,7 @@ export function NextStepCard({ step }: { step: NextStep | null | undefined }) {
           <p className="text-[13px] leading-snug text-foreground">
             <span className="text-muted-foreground">{whenLabel(step.due_at)}:</span> {step.title}
           </p>
-          {step.quote && <p className="mt-0.5 text-[12px] italic leading-snug text-muted-foreground">“{step.quote}”</p>}
+          {step.quote && <p className="mt-0.5 text-[12px] italic leading-snug text-muted-foreground">“<SlackText text={String(step.quote)} />”</p>}
           {agreed && <p className="mt-0.5 text-[11.5px] text-muted-foreground/60">Agreed {day(agreed)}{where}</p>}
           {more.length > 0 && (
             <ul className="mt-1.5 space-y-0.5">

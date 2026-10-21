@@ -305,7 +305,7 @@ function ApiLedger({ rows, loading, empty, days, creditTotal, showCredits, more,
                 <TableCell className={cn(td, "max-w-[280px] truncate")}>
                   {c.label}
                   {c.minutes != null && <span className="text-[11.5px] text-muted-foreground/70"> · {c.minutes}m</span>}
-                  {(c.messages ?? 0) > 1 && <span className="text-[11.5px] text-muted-foreground/70"> · {c.messages} emails</span>}
+                  {(c.messages ?? 0) > 1 && <span className="text-[11.5px] text-muted-foreground/70"> · {c.messages} {c.kind === "slack" ? "messages" : "emails"}</span>}
                 </TableCell>
                 <TableCell className={cn(td, "max-w-[360px] truncate text-[12px] text-muted-foreground/70")}>{c.summary ?? ""}</TableCell>
                 {showCredits && (
@@ -315,7 +315,7 @@ function ApiLedger({ rows, loading, empty, days, creditTotal, showCredits, more,
                 )}
                 <TableCell
                   className={cn(td, "text-right text-[12px]", c.status ? STATUS_TONE_API[c.status] : "text-muted-foreground")}
-                  title={c.read_at ? `Read ${format(new Date(c.read_at), "MMM d, HH:mm")}` : c.status === "waiting" ? "Read at the next run (02:45 or 14:45 UTC)" : undefined}
+                  title={c.read_at ? `Read ${format(new Date(c.read_at), "MMM d, HH:mm")}` : c.status === "waiting" ? (c.kind === "slack" ? "Waiting for channel reading" : "Read at the next run (02:45 or 14:45 UTC)") : undefined}
                 >
                   {c.status === "skipped" ? (c.reason ?? "Skipped") : c.status ? STATUS_TEXT[c.status] : "—"}
                 </TableCell>

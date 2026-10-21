@@ -184,8 +184,9 @@ export function parseEmailVerdict(text) {
   };
 }
 
-async function defaultEmailJudge(task, emails) {
+async function defaultEmailJudge(task, emails, workspaceId = null) {
   const resp = await createMessage({
+    meter: { workspaceId },
     feature: 'task-email-completion',
     max_tokens: 300,
     accept: (t) => /\{[\s\S]*\}/.test(t),
@@ -402,7 +403,7 @@ export async function closeTasksBySentEmail(supabase, workspaceId, rows, { judge
 
     let verdict;
     try {
-      verdict = await judgeFn(t, shown);
+      verdict = await judgeFn(t, shown, workspaceId);
     } catch (err) {
       // The model could not be reached (credit, rate limit, outage) or answered with an error.
       // That is not a "no": record nothing, so the next pass reads this task again, and stop

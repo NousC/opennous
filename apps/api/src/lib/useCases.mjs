@@ -136,6 +136,7 @@ export async function classifyChatTurn(question, tools = [], meta = null) {
 
   try {
     const resp = await createMessage({
+      meter: false,
       feature: 'usage-classify',
       max_tokens: 12,
       accept: (t) => USE_CASE_KEYS.includes(String(t).trim().toLowerCase().replace(/[^a-z_]/g, '')),
@@ -194,6 +195,7 @@ export async function titleForThread(question, answer = '', meta = null) {
 
   try {
     const resp = await createMessage({
+      meter: false,
       feature: 'thread-title',
       max_tokens: 24,
       system: TITLE_SYSTEM,

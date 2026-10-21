@@ -113,6 +113,8 @@ export interface CloudRegistry {
     };
   };
 
+  /** Optional setup controls below an integration's connection status. */
+  integrationSetup?: ComponentType<{ provider: string; token: string; workspaceId: string; canManage: boolean }>;
   /** <Route> elements mounted inside the app shell (sidebar and top bar). */
   routes?: ReactNode;
   /** <Route> elements mounted signed in but outside the app shell (the admin tools). */

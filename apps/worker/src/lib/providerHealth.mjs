@@ -53,6 +53,7 @@ export async function providerFailures(supabase, workspaceId, sinceIso) {
 export async function probeProvider(createMessage) {
   try {
     await createMessage({
+      meter: { workspaceId: null },
       feature: 'provider-probe', tier: 'extraction', max_tokens: 8, fallback: false,
       messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
       accept: () => true,

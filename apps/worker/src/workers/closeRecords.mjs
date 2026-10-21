@@ -24,7 +24,7 @@ const DAY = 86_400_000;
 
 // A real touch: the buyer and us actually talking. Mirrors apps/api/src/lib/activityKinds.mjs,
 // which the worker cannot import; the two lists are checked against each other by test.
-export const NOT_A_TOUCH = /_opened$|_scheduled$|_cancelled$|_no_show$|_missed$|^added_to_campaign$|^enrichment_run$|^icp_scored$|^contact_created$|^website_visit$|^pricing_page_visit$|^deal_(won|lost|disqualified)$|^signed_up$|^trial_started$|^subscription_|^proposal_viewed$|^meeting_interest$/;
+export const NOT_A_TOUCH = /_opened$|_scheduled$|_cancelled$|_no_show$|_missed$|^added_to_campaign$|^enrichment_run$|^icp_scored$|^contact_created$|^website_visit$|^pricing_page_visit$|^deal_(won|lost|disqualified)$|^signed_up$|^product_used$|^trial_started$|^subscription_|^proposal_viewed$|^meeting_interest$/;
 const typeOf = (o) => String(o.property ?? '').replace(/^interaction\./, '');
 export const isTouch = (o) => String(o.property ?? '').startsWith('interaction.') && !NOT_A_TOUCH.test(typeOf(o));
 

@@ -130,6 +130,8 @@ export async function markThreadRead(supabase, workspaceId, thread, contactId, {
   const value = {
     source_ref: threadSourceRef(thread),
     read_at: new Date(now).toISOString(),
+    // The newest message this read saw: what decides the next read, not the clock (GET-961).
+    last_message_at: lastAt(thread),
     treatment,
     claims: facts.length,
     commitments: commitments.length,
@@ -524,6 +526,8 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
       attendees: [contact.name].filter(Boolean),
       occurredAt: lastAt(thread),
       sourceRef, sourceSystem: SOURCE,
+      // A quote must be in what THEY wrote (GET-974): our own lines are not their evidence.
+      groundAgainst: theirSideOf(text),
     }).catch(err => { console.warn('[GMAIL] insight pass failed:', err.message); insightStatus = { ok: false, reason: 'error' }; return 0; });
   }
 

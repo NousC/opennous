@@ -16,6 +16,7 @@ export const SYSTEM_LOGOS: Record<string, string> = {
   Granola:    "/provider-logos/granola.svg",
   Fellow:     "/provider-logos/fellow.png",
   RingCentral: "/provider-logos/ringcentral.svg",
+  PostHog:    "/provider-logos/posthog.svg",
   HubSpot:    "/provider-logos/hubspot.svg",
   Salesforce: "/provider-logos/salesforce.svg",
   Attio:      "/provider-logos/attio.svg",

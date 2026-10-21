@@ -21,6 +21,10 @@ const CONNECTED_TYPES = new Set([
   'linkedin_view', 'social_engagement', 'pricing_page_visit', 'trial_started',
 ]);
 const REPLY_TYPES = new Set(['email_reply', 'email_received', 'slack_message', 'linkedin_message']);
+// Someone who signed up for the product, or used it this week (GET-751: the PostHog source writes
+// both), has shown interest the way a reply does: on People, and their account on Accounts. The
+// nightly decay keeps them there while they keep using it (2026_10_19_product_users_stay_interested).
+const PRODUCT_USER_TYPES = new Set(['signed_up', 'product_used']);
 const LOST_TYPES = new Set(['deal_lost']);
 const DISQUALIFIED_TYPES = new Set(['deal_disqualified']);
 
@@ -75,6 +79,7 @@ function stageForType(type: string): string | null {
   if (DISCOVERY_TYPES.has(type))      return 'discovery';
   if (MEETING_BOOKED_TYPES.has(type)) return 'meeting_booked';
   if (NEGOTIATION_TYPES.has(type))    return 'negotiation';
+  if (PRODUCT_USER_TYPES.has(type))   return 'interested';
   if (CONNECTED_TYPES.has(type))      return 'connected';
   return null;
 }
@@ -87,7 +92,7 @@ function stageForType(type: string): string | null {
 export const STAGE_DRIVING_TYPES: ReadonlySet<string> = new Set<string>([
   ...WON_TYPES, ...CHURN_TYPES, ...LOST_TYPES, ...DISQUALIFIED_TYPES,
   ...DISCOVERY_TYPES, ...MEETING_BOOKED_TYPES, ...NEGOTIATION_TYPES,
-  ...CONNECTED_TYPES, ...REPLY_TYPES,
+  ...CONNECTED_TYPES, ...REPLY_TYPES, ...PRODUCT_USER_TYPES,
 ]);
 
 /** The same set as substrate observation properties (`interaction.<type>`). */
