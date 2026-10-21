@@ -1133,26 +1133,32 @@ export function createServer() {
     "record_insight",
     "Record what a call or email taught us about OUR OWN business — our product, positioning, " +
     "market, or buyer. This is the MIRROR of record: record captures facts about the CONTACT; this " +
-    "captures what we learned about US. Workspace-level — there is no focus (it's not about one " +
-    "account). category is one of product | positioning | market | buyer. Include the verbatim quote " +
-    "and who said it whenever you can. These feed the Insights page and its theme clustering. Send " +
-    "all insights from one source in a single call. Do NOT put contact facts here — use record.",
+    "captures what we learned about US. It is always heard from someone: focus is who said it or " +
+    "their account (email, domain, LinkedIn URL or entity id, never a bare name), which ties the " +
+    "insight to that account so it counts there and get_insights returns it. Pass the call's " +
+    "source_ref (the one you sent record) when there is one. category is one of product | " +
+    "positioning | market | buyer. Include the verbatim quote and who said it whenever you can. " +
+    "Send all insights from one source in a single call. Do NOT put contact facts here — use record.",
     {
       insights: z.array(z.object({
         category: z.enum(["product", "positioning", "market", "buyer"]).describe("which lens this is about"),
         content: z.string().describe("the insight in one clear sentence, stated from OUR perspective"),
         quote: z.string().optional().describe("the verbatim thing they said that supports it"),
         speaker: z.string().optional().describe("who said it — a name or a role"),
+        focus: z.string().optional().describe("this insight's person or account, when it differs from the top-level focus"),
       })).describe("one or more insights extracted from the same call/email"),
+      focus: z.string().describe("who said it or their account: email, domain, LinkedIn URL or entity id"),
+      source_ref: z.string().optional().describe("where it was said: the call or email's source_ref, as sent to record"),
       source_label: z.string().optional().describe("where these came from, e.g. 'Acme discovery call'"),
       occurred_at: z.string().optional().describe("ISO timestamp of the call/email"),
     },
-    async ({ insights, source_label, occurred_at }) => {
-      const r = await post("/v2/insights", { insights, source_label, occurred_at });
+    async ({ insights, focus, source_ref, source_label, occurred_at }) => {
+      const r = await post("/v2/insights", { insights, focus, source_ref, source_label, occurred_at });
       return { content: [{ type: "text", text:
         `Recorded ${r.written} insight${r.written !== 1 ? "s" : ""}` +
         (r.submitted && r.written < r.submitted ? ` (${r.submitted - r.written} were duplicates)` : "") +
-        ` into the workspace's product/positioning/market/buyer docs.` }] };
+        (r.accounts?.length ? `, tied to ${r.accounts.length === 1 ? "account " + r.accounts[0] : r.accounts.length + " accounts"}` : "") +
+        ". They show in get_insights once the nightly sort places them." }] };
     }
   );
 

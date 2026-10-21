@@ -4,6 +4,8 @@ import {
   INSIGHT_CATEGORIES, INSIGHT_CATEGORY_KEYS, insightCategoryLabel, insightCategoryPromptBlock, normalizeInsightCategory,
   TEAM_INSIGHT_CATEGORY_KEYS, normalizeTeamCategory, teamInsightCategoryPromptBlock, teamInsightCategoryLabel,
 } from './insightCategories.js';
+import { detectIdentifier, resolveFocus } from './entities.js';
+import { loadInternalSpeakers } from './insightBoard.js';
 
 // The statuses an insight moves through. Product gaps run the full lane; softer
 // categories (buyer/market, team learnings) use the lighter subset — the UI offers
@@ -42,10 +44,15 @@ export interface InsightItem {
 // say the same thing in the same words was dropped as a duplicate of the first, which erased
 // exactly the repetition that makes something a pattern. Re-running extraction over one call
 // still maps to one row, because that call's ref is the same both times.
-export function insightItemDedupKey(source: string, category: string, statement: string, sourceRef?: string | null): string {
+//
+// With no call behind it (an agent's insight, GET-970), the account stands in for the call: the
+// same point heard from a second account is that account's, not a duplicate of the first.
+export function insightItemDedupKey(source: string, category: string, statement: string, sourceRef?: string | null, accountId?: string | null): string {
   const stem = String(statement || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80);
   const ref = String(sourceRef || '').trim();
-  return createHash('sha1').update(ref ? `${source}|${category}|${stem}|${ref}` : `${source}|${category}|${stem}`).digest('hex');
+  const acct = String(accountId || '').trim();
+  const key = ref ? `${source}|${category}|${stem}|${ref}` : acct ? `${source}|${category}|${stem}|acct:${acct}` : `${source}|${category}|${stem}`;
+  return createHash('sha1').update(key).digest('hex');
 }
 
 // Insights — the workspace's self-knowledge, learned from calls.
@@ -71,6 +78,8 @@ export interface ExtractedInsight {
   /** Resolved by a source adapter from checked evidence, never guessed by the model. */
   contactId?: string | null;
   companyId?: string | null;
+  /** The person who said it, when known as an entity (an agent's person focus). */
+  speakerId?: string | null;
   saidAt?: string | null;
   /** One of the INSIGHT_CATEGORY_KEYS. */
   category: string;
@@ -359,12 +368,151 @@ export async function appendInsights(
     statement: it.content, quote: it.quote ?? null, speaker: it.speaker ?? null,
     ...(it.contactId ? { contact_id: it.contactId } : {}),
     ...(it.companyId ? { company_id: it.companyId } : {}),
+    ...(it.speakerId ? { speaker_id: it.speakerId } : {}),
     occurred_at: it.saidAt ?? opts.occurredAt ?? null,
     source_ref: opts.sourceRef ?? null,
     source_system: opts.sourceSystem ?? null,
     kind: normalizeInsightKind((it as { kind?: string }).kind),
   }))).catch(error => { if (opts.strict) throw error; return 0; });
   return Math.max(stored, written);
+}
+
+// ── Agent-written insights (GET-970) ─────────────────────────────────────────
+
+export interface AgentInsightInput {
+  category?: unknown; content?: unknown; quote?: unknown; speaker?: unknown;
+  /** Who said it or which account it is about, when it differs from the request's focus. */
+  focus?: unknown;
+}
+export type PreparedAgentInsights =
+  | { ok: true; items: ExtractedInsight[]; sourceRef: string | null; sourceSystem: string | null; submitted: number }
+  | { ok: false; status: number; error: string; detail: string; focus?: string };
+
+type AgentFocus = { ok: true; contactId: string | null; companyId: string; names: string[] } | { ok: false; status: number; error: string; detail: string };
+
+const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+/**
+ * Tie insights an agent writes (POST /v2/insights, MCP record_insight, the in-app agent) to the
+ * account they came from. A call's insights get their account from the call's attendees; an agent's
+ * have no call behind them, so without a focus they reached no account and `GET /v2/insights`, which
+ * lists account-tied insights only, never showed the agent what it wrote.
+ *
+ * `focus` is an identifier (entity id, email, domain, LinkedIn URL), never a bare name, and a read
+ * never mints an entity. A person is the contact, and their one current company the account; a
+ * company is the account. A focus with no account, on our own side, or out of the caller's sight
+ * (`canSee`) is refused, since an insight there could never be read back or would count us as a
+ * customer. A per-insight focus overrides the request's. Every insight needs one, or nothing is
+ * written: a half-written batch is worse than a clear error.
+ */
+export async function prepareAgentInsights(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  body: { insights?: unknown; focus?: unknown; source_ref?: unknown },
+  opts: { canSee?: (entityId: string) => Promise<boolean> } = {},
+): Promise<PreparedAgentInsights> {
+  const raw = Array.isArray(body.insights) ? (body.insights as AgentInsightInput[]) : [];
+  const valid = raw.filter(i => i && typeof i.content === 'string' && i.content.trim().length >= 8);
+  if (!valid.length) {
+    return { ok: false, status: 400, error: 'no_valid_insights', detail: 'each insight needs a category and content (8+ characters)' };
+  }
+  const shared = text(body.focus);
+  const resolved = new Map<string, AgentFocus>();
+  let internal: Awaited<ReturnType<typeof loadInternalSpeakers>> | null = null;
+  const items: ExtractedInsight[] = [];
+  for (const i of valid) {
+    const own = text(i.focus);
+    const focus = own ?? shared;
+    if (!focus) {
+      return { ok: false, status: 400, error: 'focus_required', detail: 'name who said it or the account it is about: an email, domain, LinkedIn URL or entity id, on the request or on each insight' };
+    }
+    if (!detectIdentifier(focus)) {
+      return { ok: false, status: 400, error: 'invalid_focus', focus, detail: 'provide an entity id, email, LinkedIn URL or domain, not a bare name' };
+    }
+    if (!resolved.has(focus)) {
+      internal ??= await loadInternalSpeakers(supabase, workspaceId);
+      resolved.set(focus, await insightAccountOf(supabase, workspaceId, focus, internal, opts.canSee));
+    }
+    const acct = resolved.get(focus)!;
+    if (!acct.ok) return { ok: false, status: acct.status, error: acct.error, focus, detail: acct.detail };
+    const speaker = text(i.speaker);
+    items.push({
+      category: String(i.category ?? ''),
+      content: String(i.content).trim(),
+      quote: text(i.quote),
+      speaker,
+      contactId: acct.contactId,
+      companyId: acct.companyId,
+      // The focus person is the speaker unless the insight credits someone else: a shared focus on
+      // the champion must not claim the line said by "their CFO".
+      speakerId: acct.contactId && (own || !speaker || acct.names.includes(speaker.toLowerCase())) ? acct.contactId : null,
+    });
+  }
+  const sourceRef = text(body.source_ref);
+  // A source:// ref names its system (source://fireflies/<id>); a git:// or other ref names none.
+  const sourceSystem = /^source:\/\/([a-z0-9_-]+)\//i.exec(sourceRef ?? '')?.[1]?.toLowerCase() ?? null;
+  return { ok: true, items, sourceRef, sourceSystem, submitted: raw.length };
+}
+
+const NOT_FOUND: AgentFocus = { ok: false, status: 404, error: 'focus_not_found', detail: 'no person or company in this workspace has that identifier' };
+
+/** The live entity behind a merged one, or null when the chain ends nowhere. */
+async function liveEntity(supabase: SupabaseClient, workspaceId: string, id: string): Promise<{ id: string; type: string } | null> {
+  let cur: string | null = id;
+  for (let hop = 0; cur && hop < 5; hop++) {
+    const { data } = await supabase.from('entities').select('id, type, status, merged_into')
+      .eq('workspace_id', workspaceId).eq('id', cur).maybeSingle();
+    const e = data as { id: string; type: string; status: string; merged_into: string | null } | null;
+    if (!e) return null;
+    if (e.status !== 'merged') return { id: e.id, type: e.type };
+    cur = e.merged_into;
+  }
+  return null;
+}
+
+/** A focus → the contact and company an insight is tied to, or why it can't be. */
+async function insightAccountOf(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  focus: string,
+  internal: { ids: Set<string>; emails: Set<string>; domains: Set<string> },
+  canSee?: (entityId: string) => Promise<boolean>,
+): Promise<AgentFocus> {
+  const ours: AgentFocus = { ok: false, status: 400, error: 'focus_is_internal', detail: 'that is one of our own people or our own company; name the customer or prospect who said it' };
+  const f = focus.trim().toLowerCase();
+  if (internal.emails.has(f) || internal.domains.has(f.includes('@') ? f.split('@')[1] : f)) return ours;
+  const r = await resolveFocus(supabase, workspaceId, focus);
+  if (r.status !== 'resolved') return NOT_FOUND;
+  const entity = await liveEntity(supabase, workspaceId, r.entity_id);
+  if (!entity || (entity.type !== 'person' && entity.type !== 'company')) return NOT_FOUND;
+  if (internal.ids.has(entity.id)) return ours;
+  let contactId: string | null = null, companyId: string | null = null;
+  const names: string[] = [];
+  if (entity.type === 'company') companyId = entity.id;
+  else {
+    contactId = entity.id;
+    const { data } = await supabase.from('relationships').select('to_entity_id')
+      .eq('workspace_id', workspaceId).eq('type', 'works_at').is('valid_to', null)
+      .eq('from_entity_id', entity.id).limit(10);
+    const employers = [...new Set(((data as { to_entity_id: string }[] | null) ?? []).map(x => x.to_entity_id))];
+    if (employers.length !== 1) {
+      return { ok: false, status: 422, error: 'focus_has_no_account', detail: employers.length ? 'that person works at more than one company; focus the company (its domain) instead' : 'that person has no company on record; focus their company (its domain) instead' };
+    }
+    companyId = employers[0];
+    const { data: cl } = await supabase.from('claims').select('property, value')
+      .eq('workspace_id', workspaceId).eq('entity_id', entity.id).in('property', ['name', 'first_name', 'last_name']).is('invalid_at', null);
+    const part = Object.fromEntries(((cl as { property: string; value: unknown }[] | null) ?? [])
+      .filter(c => typeof c.value === 'string').map(c => [c.property, String(c.value).trim().toLowerCase()]));
+    const full = part.name || [part.first_name, part.last_name].filter(Boolean).join(' ');
+    for (const n of [full, part.first_name]) if (n) names.push(n);
+  }
+  if (internal.ids.has(companyId)) return ours;
+  const { data: doms } = await supabase.from('entity_identifiers').select('value')
+    .eq('workspace_id', workspaceId).eq('entity_id', companyId).eq('kind', 'domain').eq('status', 'active');
+  if (((doms as { value: string }[] | null) ?? []).some(d => internal.domains.has(String(d.value).toLowerCase()))) return ours;
+  // Out of sight reads as not found, so a member key learns nothing about accounts it can't see.
+  if (canSee && !(await canSee(companyId))) return NOT_FOUND;
+  return { ok: true, contactId, companyId, names };
 }
 
 // ── Structured store (insight_items) ─────────────────────────────────────────
@@ -378,6 +526,7 @@ const THEME_ID_BATCH = 50;
 export interface NewInsightItem {
   contact_id?: string | null;
   company_id?: string | null;
+  speaker_id?: string | null;
   source: InsightSource;
   category: string;
   statement: string;
@@ -437,10 +586,11 @@ export async function upsertInsightItems(
         speaker: it.speaker?.trim() || null,
         ...(it.contact_id ? { contact_id: it.contact_id } : {}),
         ...(it.company_id ? { company_id: it.company_id } : {}),
+        ...(it.speaker_id ? { speaker_id: it.speaker_id } : {}),
         occurred_at: it.occurred_at || null,
         source_ref: it.source_ref || null,
         source_system: it.source_system || null,
-        dedup_key: insightItemDedupKey(it.source, it.category, statement, it.source_ref),
+        dedup_key: insightItemDedupKey(it.source, it.category, statement, it.source_ref, it.company_id ?? it.contact_id),
         ...(normalizeInsightKind(it.kind) ? { kind: normalizeInsightKind(it.kind) } : {}),
       };
     });

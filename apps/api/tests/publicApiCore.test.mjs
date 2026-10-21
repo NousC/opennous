@@ -1,4 +1,5 @@
-// The public API core: POST /v2/people/:id/enrich and the board read behind GET /v2/insights.
+// The public API core: POST /v2/people/:id/enrich, the board read behind GET /v2/insights, and the
+// agent's write into it (POST /v2/insights).
 //
 // Both routes are exercised end to end through Express against an in-process fake PostgREST
 // (globalThis.fetch answers the Supabase REST calls from in-memory tables), so the tests pin the
@@ -188,6 +189,7 @@ beforeEach(() => {
     observations: [],
     claims: [],
     entity_identifiers: [],
+    relationships: [],
     insight_tags: [],
     insight_items: [],
   };
@@ -399,6 +401,127 @@ test('insights: errors — bad taxonomy is 400, unknown or bare-name focus is 40
   const c = await call('GET', '/v2/insights?focus=99999999-9999-4999-8999-999999999999');
   assert.equal(c.status, 404);
   assert.equal(c.body.error, 'focus_not_found');
+});
+
+// ── POST /v2/insights: tied to an account (GET-970) ─────────────────────────
+
+test('insights: POST with a person focus ties the insight to them and their company, and GET reads it back', async () => {
+  tables.entity_identifiers.push({ entity_id: PERSON, workspace_id: WS, kind: 'email', value: 'sarah@acme.com', status: 'active' });
+  tables.relationships.push({ workspace_id: WS, type: 'works_at', from_entity_id: PERSON, to_entity_id: COMPANY, valid_to: null });
+  tables.claims.push(
+    { id: 'cl1', workspace_id: WS, entity_id: COMPANY, property: 'name', value: 'Acme', invalid_at: null },
+    { id: 'cl3', workspace_id: WS, entity_id: PERSON, property: 'name', value: 'Sarah Lee', invalid_at: null },
+  );
+  const w = await call('POST', '/v2/insights', {
+    focus: 'sarah@acme.com', source_ref: 'source://fireflies/m1', occurred_at: '2026-10-20T10:00:00Z',
+    insights: [{ category: 'product', content: 'Wants activity pushed into Slack', quote: 'if it is in Slack they read it', speaker: 'Sarah Lee' }],
+  });
+  assert.equal(w.status, 201, JSON.stringify(w.body));
+  assert.deepEqual(w.body.accounts, [COMPANY]);
+  const row = tables.insight_items.find((i) => i.statement === 'Wants activity pushed into Slack');
+  assert.equal(row.company_id, COMPANY);
+  assert.equal(row.contact_id, PERSON);
+  assert.equal(row.speaker_id, PERSON);
+  assert.equal(row.source_ref, 'source://fireflies/m1');
+  assert.equal(row.source_system, 'fireflies');
+  // The nightly sort places it on the board; then the agent reads back what it wrote.
+  Object.assign(row, { subtype: 'feature', lane: 'product' });
+  const r = await call('GET', `/v2/insights?focus=${COMPANY}`);
+  assert.deepEqual(r.body.insights.map((i) => i.content), ['Wants activity pushed into Slack']);
+  assert.equal(r.body.insights[0].account.name, 'Acme');
+});
+
+test('insights: POST with a company domain ties it to the company; a per-insight focus overrides', async () => {
+  tables.entity_identifiers.push(
+    { entity_id: COMPANY, workspace_id: WS, kind: 'domain', value: 'acme.com', status: 'active' },
+    { entity_id: OTHER_CO, workspace_id: WS, kind: 'domain', value: 'globex.com', status: 'active' },
+  );
+  const w = await call('POST', '/v2/insights', {
+    focus: 'acme.com',
+    insights: [
+      { category: 'market', content: 'Agencies need a shared data layer' },
+      { category: 'buyer', content: 'RevOps owns the tooling budget', focus: 'globex.com' },
+    ],
+  });
+  assert.equal(w.status, 201, JSON.stringify(w.body));
+  const by = Object.fromEntries(tables.insight_items.map((i) => [i.category, i]));
+  assert.equal(by.market.company_id, COMPANY);
+  assert.equal(by.market.contact_id ?? null, null);
+  assert.equal(by.buyer.company_id, OTHER_CO);
+});
+
+test('insights: POST without a focus, with a bare name, or with an unknown one writes nothing', async () => {
+  const one = [{ category: 'product', content: 'Wants activity pushed into Slack' }];
+  const none = await call('POST', '/v2/insights', { insights: one });
+  assert.equal(none.status, 400);
+  assert.equal(none.body.error, 'focus_required');
+  const name = await call('POST', '/v2/insights', { focus: 'Sarah Lee', insights: one });
+  assert.equal(name.status, 400);
+  assert.equal(name.body.error, 'invalid_focus');
+  const unknown = await call('POST', '/v2/insights', { focus: '99999999-9999-4999-8999-999999999999', insights: one });
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.body.error, 'focus_not_found');
+  // One insight in a batch without a focus refuses the whole batch.
+  tables.entity_identifiers.push({ entity_id: COMPANY, workspace_id: WS, kind: 'domain', value: 'acme.com', status: 'active' });
+  const half = await call('POST', '/v2/insights', { insights: [{ ...one[0], focus: 'acme.com' }, { category: 'market', content: 'Agencies need a data layer' }] });
+  assert.equal(half.status, 400);
+  assert.equal(tables.insight_items.length, 0);
+});
+
+test('insights: POST refuses a focus that could never be read back, and one of our own', async () => {
+  const one = [{ category: 'product', content: 'Wants activity pushed into Slack' }];
+  // A person with no company: GET lists account-tied insights only, so it would vanish.
+  tables.entity_identifiers.push({ entity_id: PERSON, workspace_id: WS, kind: 'email', value: 'sarah@acme.com', status: 'active' });
+  const lone = await call('POST', '/v2/insights', { focus: 'sarah@acme.com', insights: one });
+  assert.equal(lone.status, 422);
+  assert.equal(lone.body.error, 'focus_has_no_account');
+  // Two current employers: no guessing which.
+  tables.relationships.push(
+    { workspace_id: WS, type: 'works_at', from_entity_id: PERSON, to_entity_id: COMPANY, valid_to: null },
+    { workspace_id: WS, type: 'works_at', from_entity_id: PERSON, to_entity_id: OTHER_CO, valid_to: null },
+  );
+  const two = await call('POST', '/v2/insights', { focus: 'sarah@acme.com', insights: one });
+  assert.equal(two.status, 422);
+  // Our own domain is not a customer.
+  tables.workspace_own_domains = [{ workspace_id: WS, domain: 'acme.com' }];
+  const ours = await call('POST', '/v2/insights', { focus: 'acme.com', insights: one });
+  assert.equal(ours.status, 400);
+  assert.equal(ours.body.error, 'focus_is_internal');
+  assert.equal(tables.insight_items.length, 0);
+});
+
+test('insights: the same point from two accounts is two insights; a merged id lands on the live one', async () => {
+  const MERGED = '66666666-6666-4666-8666-666666666666';
+  tables.entities.push({ id: MERGED, workspace_id: WS, type: 'company', status: 'merged', merged_into: OTHER_CO });
+  const one = [{ category: 'product', content: 'Wants activity pushed into Slack' }];
+  const a = await call('POST', '/v2/insights', { focus: COMPANY, insights: one });
+  const b = await call('POST', '/v2/insights', { focus: MERGED, insights: one });
+  assert.equal(a.status, 201, JSON.stringify(a.body));
+  assert.equal(b.status, 201, JSON.stringify(b.body));
+  assert.deepEqual(tables.insight_items.map((i) => i.company_id).sort(), [COMPANY, OTHER_CO].sort());
+});
+
+test('insights: a shared person focus is not the speaker of a line credited to someone else', async () => {
+  tables.entity_identifiers.push({ entity_id: PERSON, workspace_id: WS, kind: 'email', value: 'sarah@acme.com', status: 'active' });
+  tables.relationships.push({ workspace_id: WS, type: 'works_at', from_entity_id: PERSON, to_entity_id: COMPANY, valid_to: null });
+  const w = await call('POST', '/v2/insights', { focus: 'sarah@acme.com', insights: [
+    { category: 'buyer', content: 'Finance signs off on every tool', speaker: 'their CFO' },
+    { category: 'product', content: 'Wants activity pushed into Slack' },
+  ] });
+  assert.equal(w.status, 201, JSON.stringify(w.body));
+  const by = Object.fromEntries(tables.insight_items.map((i) => [i.category, i]));
+  assert.equal(by.buyer.speaker_id ?? null, null);
+  assert.equal(by.buyer.contact_id, PERSON);
+  assert.equal(by.product.speaker_id, PERSON);
+});
+
+test('insights: a member key cannot write onto an account it cannot see, and learns nothing about it', async () => {
+  tables.workspaces[0].open_account_visibility = false;
+  tables.entity_identifiers.push({ entity_id: COMPANY, workspace_id: WS, kind: 'domain', value: 'acme.com', status: 'active' });
+  const r = await call('POST', '/v2/insights', { focus: 'acme.com', insights: [{ category: 'product', content: 'Wants activity pushed into Slack' }] }, { 'x-test-scope': 'member' });
+  assert.equal(r.status, 404);
+  assert.equal(r.body.error, 'focus_not_found');
+  assert.equal(tables.insight_items.length, 0);
 });
 
 test('insights: a service business reads the service labels', async () => {

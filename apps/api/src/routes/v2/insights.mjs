@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  getSupabaseClient, getInsight, appendInsights,
+  getSupabaseClient, getInsight, appendInsights, prepareAgentInsights,
   BOARD_LANES, INSIGHT_SUBTYPES, laneOfSubtype, boardTaxonomy, loadBusinessType,
   listInsightTags, companyNames, loadInternalSpeakers, isInternalSpeaker,
   detectIdentifier, resolveFocus, getEntity,
@@ -195,36 +195,35 @@ insightsV2Router.get('/', async (req, res) => {
 
 // POST /v2/insights — record insights the agent extracted from a call/email about
 // OUR product / positioning / market / buyer. Body: {
-//   insights: [ { category:'product'|'positioning'|'market'|'buyer', content, quote?, speaker? } ],
+//   insights: [ { category:'product'|'positioning'|'market'|'buyer', content, quote?, speaker?, focus? } ],
+//   focus,            who said it or the account it is about (email · domain · LinkedIn URL · entity id)
+//   source_ref?,      where it was said, e.g. the interaction's source_ref from record
 //   source_label?, occurred_at?
 // }
-// appendInsights normalizes the category, skips near-duplicates already in the doc,
-// writes both the Vault-editable markdown and the structured insight_items store
-// (source:'external') that the Insights page + theme clustering read. Workspace-level
-// — insights are about US, so there is no focus/entity.
+// Every insight is tied to an account through its focus (GET-970): without one, GET /v2/insights,
+// which lists account-tied insights only, never returned what the agent wrote. No focus is a 400,
+// an identifier nothing has (or the key can't see) a 404, a person with no single company a 422,
+// one of our own a 400 focus_is_internal; in each case nothing is written.
 insightsV2Router.post('/', async (req, res) => {
   try {
     const supabase = getSupabaseClient();
-    const { insights, source_label, occurred_at } = req.body ?? {};
+    const { insights, focus, source_ref, source_label, occurred_at } = req.body ?? {};
     if (!Array.isArray(insights) || insights.length === 0) {
       return res.status(400).json({ error: 'insights_required' });
     }
-    const items = insights
-      .filter((i) => i && typeof i.content === 'string' && i.content.trim().length >= 8)
-      .map((i) => ({
-        category: i.category,
-        content: String(i.content).trim(),
-        quote: i.quote ?? null,
-        speaker: i.speaker ?? null,
-      }));
-    if (items.length === 0) {
-      return res.status(400).json({ error: 'no_valid_insights', detail: 'each insight needs a category and content (≥8 chars)' });
-    }
-    const written = await appendInsights(supabase, req.workspaceId, items, {
+    // A member key writes only onto accounts it can see, as it reads (GET above).
+    const viewerId = req.memberUserId ?? req.internalUserId ?? null;
+    const canSee = (id) => entityVisibleToMember(supabase, req.workspaceId, viewerId, id, { isAdmin: req.viewerScope === 'admin' });
+    const p = await prepareAgentInsights(supabase, req.workspaceId, { insights, focus, source_ref }, { canSee });
+    if (!p.ok) return res.status(p.status).json({ error: p.error, detail: p.detail, ...(p.focus ? { focus: p.focus } : {}) });
+    const written = await appendInsights(supabase, req.workspaceId, p.items, {
       sourceLabel: source_label ?? null,
       occurredAt: occurred_at ?? null,
+      sourceRef: p.sourceRef,
+      sourceSystem: p.sourceSystem,
     });
-    return res.status(201).json({ written, submitted: items.length });
+    const accounts = [...new Set(p.items.map((i) => i.companyId).filter(Boolean))];
+    return res.status(201).json({ written, submitted: p.items.length, accounts });
   } catch (err) {
     console.error('[POST /v2/insights]', err);
     return res.status(500).json({ error: 'internal_error' });

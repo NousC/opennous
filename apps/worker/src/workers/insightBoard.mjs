@@ -55,6 +55,18 @@ async function proposeTags(supabase, ws, statements, existing, ctx, stats) {
 }
 
 /** Place a set of insights. Returns the ones that ended up with no tag. */
+/**
+ * The account a placed insight sits on: its call's attendees when they give one, so a re-sort still
+ * recomputes it, and otherwise the account the item was written with (an agent's focus, GET-970;
+ * PostHog's product issues, GET-751). A ref no observation carries resolves to no account, and used
+ * to clear the one the item had, so the board dropped the row.
+ */
+export function placementAccount(it, accounts) {
+  const hit = it.source_ref ? accounts.get(it.source_ref) : null;
+  if (hit?.companyId) return hit;
+  return { contactId: it.contact_id ?? hit?.contactId ?? null, companyId: it.company_id ?? null };
+}
+
 async function place(supabase, ws, items, tags, ctx, internal, stats, bt) {
   const byName = new Map(tags.map((t) => [t.name.toLowerCase(), t.id]));
   const names = tags.map((t) => t.name);
@@ -69,9 +81,7 @@ async function place(supabase, ws, items, tags, ctx, internal, stats, bt) {
     await pool(batch, 8, async (it, k) => {
       const p = placed[k];
       if (!p) return;                          // the model skipped it: unplaced, never guessed
-      // A ref no observation carries (PostHog's product issues, GET-751) resolves to nothing: keep the
-      // account the item was written with instead of clearing it, or the board drops the row.
-      const acct = (it.source_ref && accounts.get(it.source_ref)) || { contactId: it.contact_id ?? null, companyId: it.company_id ?? null };
+      const acct = placementAccount(it, accounts);
       const tagIds = p.tags.map((n) => byName.get(n.toLowerCase())).filter(Boolean);
       if (p.subtype === NOT_AN_INSIGHT) stats.dropped = (stats.dropped ?? 0) + 1;
       else if (!tagIds.length) untagged.push(it);

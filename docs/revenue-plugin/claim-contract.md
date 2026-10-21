@@ -13,7 +13,7 @@ real today and the (small, additive) fields the plugin needs exposed.
 | Door | Route | Carries |
 |---|---|---|
 | `record` | `POST /v2/observations` | structured observations — attributes, interactions, signals, deal state |
-| `record_insight` | `POST /v2/insights` | workspace-level insights about US (product/positioning/market/buyer) |
+| `record_insight` | `POST /v2/insights` | insights about US (product/positioning/market/buyer), tied to the account they were heard from (`focus`) |
 
 Nous stores ONLY structured, distilled data. It does **NOT** store documents — no transcripts, no
 prose briefs. Both the raw transcript AND the prose meeting brief live in the operator's **git**;
@@ -85,18 +85,25 @@ briefs/<account-slug>/<...>.md                              ← prose briefs
     { "category": "product" | "positioning" | "market" | "buyer",
       "content": "They want native Salesforce write-back, not Zapier",   // one sentence, OUR perspective
       "quote": "we'd buy tomorrow if it wrote back to SFDC",              // verbatim, optional
-      "speaker": "VP RevOps" }                                             // name or role, optional
+      "speaker": "VP RevOps",                                              // name or role, optional
+      "focus": "ops@acme.com" }                                            // optional: overrides the top-level focus
   ],
+  "focus": "ops@acme.com",                    // who said it or their account: email, domain, LinkedIn URL or entity id
+  "source_ref": "git://<repo>/raw/acme/2026-03-14-fireflies-abc.md",  // optional: the call's ref, as sent to record
   "source_label": "Acme discovery call",
   "occurred_at": "2026-03-14T15:00:00Z"
 }
 ```
 
-Workspace-level — no `focus` (insights are about us, not an account). The engine normalizes the
-category, skips near-duplicates already present, and writes both the Vault-editable markdown doc
-and the structured `insight_items` store (`source: 'external'`) that the Insights page + theme
-clustering read. Idempotency is content-based dedup today (skip if the leading clause already
-appears); an `external_id` can be added later.
+An insight is about us, but it is always heard from someone, so every insight needs a `focus`
+(GET-970). A person is the contact and the speaker, and their company the account; a domain or
+company id is the account. A bare name is refused (400 `invalid_focus`), no focus is 400
+`focus_required`, an identifier nothing has is 404 `focus_not_found`, and in each case nothing is
+written. The account is what lets `GET /v2/insights` (account-tied insights only) return it, once
+the nightly sort places it on the board. The engine normalizes the category, skips near-duplicates
+already present, and writes both the Vault-editable markdown doc and the structured
+`insight_items` store (`source: 'external'`). Idempotency is content-based dedup today; an
+`external_id` can be added later.
 
 ---
 
