@@ -60,6 +60,10 @@ export const TRIGGER_EVENTS = [
   'account.expansion_requested',
   'deal.stalled',
   'automation.approval_requested',
+  // Insights (GET-971): a pattern across accounts, from the insight engine. Workspace-wide, so no
+  // account record rides along.
+  'insight.emerged',
+  'insight.rising',
 ] as const;
 
 /** What each event means, for the catalog endpoint and the docs. */
@@ -97,6 +101,8 @@ export const EVENT_CATALOG: { type: TriggerEvent; description: string; record: b
   { type: 'account.expansion_requested', record: true, description: 'A customer asked for more of a named product, in their words: the product, the quote, who said it and when.' },
   { type: 'deal.stalled', record: true, description: 'An open deal sat in its stage past the window with no touch. A meeting with anyone at the account counts as a touch, and one booked ahead means it is waiting, not stalled. Carries the stage, days in stage, days since the last touch and the dates behind them. Checked every six hours, for every workspace.' },
   { type: 'automation.approval_requested', record: true, description: 'An automation step waits for approval: the run id, the automation, the step and what it would do. Decide it with POST /v2/approvals/:runId/approve or /reject.' },
+  { type: 'insight.emerged', record: false, description: 'A pattern across accounts crossed its bar: the same feature request, objection, competitor or friction heard from 5 or more accounts. Carries the insight, its type, the teams it is for and its counts. Checked hourly; once per insight.' },
+  { type: 'insight.rising', record: false, description: 'An insight is rising: 2 or more accounts more in the last 30 days than the 30 before, and half again. Checked hourly; at most once a week per insight.' },
   { type: 'people.added',                record: false, description: 'New people landed in the workspace. At most one an hour: the count and up to 100 person ids, so a scorer can score them.' },
   { type: 'interaction.email_received',  record: false, description: 'An email arrived from a contact (sequencing tools). Person snapshot only.' },
   { type: 'interaction.email_bounced',   record: false, description: 'An email bounced or the contact unsubscribed. Person snapshot only.' },

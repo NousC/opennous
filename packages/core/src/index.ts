@@ -38,6 +38,8 @@ export * from './db/claimTime.js';
 export * from './db/insightCategories.js';
 export * from './db/insights.js';
 export * from './db/insightBoard.js';
+export * from './db/aboutUsClaims.js';
+export * from './db/insightEngine.js';
 export * from './db/flags.js';
 export * from './db/features.js';
 export * from './db/canonicalAxes.js';

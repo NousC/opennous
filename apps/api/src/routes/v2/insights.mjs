@@ -4,6 +4,7 @@ import {
   BOARD_LANES, INSIGHT_SUBTYPES, laneOfSubtype, boardTaxonomy, loadBusinessType,
   listInsightTags, companyNames, loadInternalSpeakers, isInternalSpeaker,
   detectIdentifier, resolveFocus, getEntity,
+  listInsightPatterns, getInsightPattern, setInsightPatternStatus, isPatternStatus, PATTERN_STATUSES, INSIGHT_TYPES, AUDIENCES,
 } from '@nous/core';
 import { entityVisibleToMember, viewerVisibleAccountSet } from '../../lib/visibility.mjs';
 import { sendTopic } from '../../lib/linearSend.mjs';
@@ -241,6 +242,72 @@ insightsV2Router.post('/', async (req, res) => {
 // as the app's button, so the API plan (no insights pages) can send from an agent or a skill.
 // :key is the topic_key get_insights returns, URL-encoded ('feature|<tag id>' → 'feature%7C<tag id>').
 // 201 a new issue, 200 an existing one updated, 409 Linear not connected or no team picked.
+// ── The insight engine (GET-971) ─────────────────────────────────────────────
+//
+// GET /v2/insights/patterns — insights over their bar: the same point heard from 5+ accounts, built
+// and counted by code. Filter by audience (product, cs, gtm, lead), type, status. GET .../:id adds
+// the claims each rests on; PATCH .../:id sets its one status (new, seen, acting, done).
+const TYPE_KEYS = new Set(INSIGHT_TYPES.map((t) => t.key));
+const AUDIENCE_KEYS = new Set(AUDIENCES.map((a) => a.key));
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Validate the patterns query. Pure, for the tests. */
+export function parsePatternsQuery(query = {}) {
+  const allowed = new Set(['audience', 'type', 'status', 'limit']);
+  const unknown = Object.keys(query).filter((k) => !allowed.has(k));
+  if (unknown.length) return { error: 'unknown_query_param', detail: `unsupported query param(s): ${unknown.join(', ')}`, supported: [...allowed] };
+  const audience = str(query.audience), type = str(query.type), status = str(query.status);
+  if (audience && !AUDIENCE_KEYS.has(audience)) return { error: 'invalid_audience', supported: [...AUDIENCE_KEYS] };
+  if (type && !TYPE_KEYS.has(type)) return { error: 'invalid_type', supported: [...TYPE_KEYS] };
+  if (status && !isPatternStatus(status)) return { error: 'invalid_status', supported: [...PATTERN_STATUSES] };
+  const lim = parseInt(one(query.limit), 10);
+  return { audience, type, status, limit: Number.isNaN(lim) ? 100 : Math.min(Math.max(lim, 1), 500) };
+}
+
+insightsV2Router.get('/patterns', async (req, res) => {
+  try {
+    const q = parsePatternsQuery(req.query);
+    if (q.error) return res.status(400).json(q);
+    const supabase = getSupabaseClient();
+    const insights = await listInsightPatterns(supabase, req.workspaceId, q);
+    if (insights === null) return res.status(503).json({ error: 'insight_engine_not_ready' });
+    res.json({ insights, readiness: await insightReadiness(supabase, req.workspaceId).catch(() => null) });
+  } catch (err) {
+    console.error('[v2/insights/patterns]', err?.message ?? err);
+    res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+insightsV2Router.get('/patterns/:id', async (req, res) => {
+  try {
+    if (!UUID.test(req.params.id)) return res.status(404).json({ error: 'not_found' });
+    const supabase = getSupabaseClient();
+    const p = await getInsightPattern(supabase, req.workspaceId, req.params.id);
+    if (!p) return res.status(404).json({ error: 'not_found' });
+    // A member who may see only some accounts sees the evidence from those; the counts are the team's.
+    const visible = await viewerVisibleAccountSet(supabase, req.workspaceId, req.memberUserId ?? req.internalUserId ?? null, { isAdmin: req.viewerScope === 'admin' });
+    const evidence = visible.unrestricted ? p.evidence : p.evidence.filter((e) => (e.account_id && visible.ids.has(e.account_id)) || (e.person_id && visible.ids.has(e.person_id)));
+    res.json({ insight: { ...p, evidence } });
+  } catch (err) {
+    console.error('[v2/insights/patterns/:id]', err?.message ?? err);
+    res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+insightsV2Router.patch('/patterns/:id', async (req, res) => {
+  try {
+    const status = req.body?.status;
+    if (!isPatternStatus(status)) return res.status(400).json({ error: 'invalid_status', supported: [...PATTERN_STATUSES] });
+    if (!UUID.test(req.params.id)) return res.status(404).json({ error: 'not_found' });
+    const ok = await setInsightPatternStatus(getSupabaseClient(), req.workspaceId, req.params.id, status, req.memberUserId ?? req.internalUserId ?? null);
+    if (!ok) return res.status(404).json({ error: 'not_found' });
+    res.json({ id: req.params.id, status });
+  } catch (err) {
+    console.error('[v2/insights/patterns PATCH]', err?.message ?? err);
+    res.status(500).json({ error: 'internal_error' });
+  }
+});
+
 insightsV2Router.post('/topics/:key/linear', async (req, res) => {
   try {
     const { status, body } = await sendTopic({

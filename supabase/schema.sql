@@ -4907,6 +4907,41 @@ $$;
 
 
 --
+-- Name: about_us_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.about_us_claims (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    company_id uuid,
+    contact_id uuid,
+    home text DEFAULT 'our_product'::text NOT NULL,
+    kind text NOT NULL,
+    content text NOT NULL,
+    quote text,
+    quote_private boolean DEFAULT false NOT NULL,
+    speaker text,
+    what text,
+    use_case text,
+    product_area text,
+    asked_by text,
+    job text,
+    source_ref text,
+    source_system text,
+    occurred_at timestamp with time zone,
+    origin text DEFAULT 'claim_read'::text NOT NULL,
+    legacy_item_id uuid,
+    embedding public.vector(1536),
+    retired_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT about_us_claims_home_check CHECK ((home = ANY (ARRAY['our_product'::text, 'market'::text]))),
+    CONSTRAINT about_us_claims_kind_check CHECK ((kind = ANY (ARRAY['bug'::text, 'friction'::text, 'feature'::text, 'objection'::text, 'pricing'::text, 'pitch'::text, 'setup'::text, 'training'::text, 'partners'::text, 'buyers'::text, 'praise'::text]))),
+    CONSTRAINT about_us_claims_origin_check CHECK ((origin = ANY (ARRAY['claim_read'::text, 'insight_read'::text]))),
+    CONSTRAINT about_us_claims_quote_check CHECK (((origin = 'insight_read'::text) OR (quote IS NOT NULL)))
+);
+
+
+--
 -- Name: account_memory; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6719,6 +6754,55 @@ CREATE TABLE public.insight_items (
 --
 
 COMMENT ON COLUMN public.insight_items.subtype IS 'The one board button this insight sits under: bug, friction, feature, objection, pricing, pitch, setup, training, partners, buyers.';
+
+
+--
+-- Name: insight_pattern_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.insight_pattern_members (
+    workspace_id uuid NOT NULL,
+    pattern_id uuid NOT NULL,
+    source_table text NOT NULL,
+    source_id uuid NOT NULL,
+    company_id uuid,
+    contact_id uuid,
+    occurred_at timestamp with time zone,
+    CONSTRAINT insight_pattern_members_source_table_check CHECK ((source_table = ANY (ARRAY['about_us_claims'::text, 'claims'::text])))
+);
+
+
+--
+-- Name: insight_patterns; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.insight_patterns (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    topic_key text NOT NULL,
+    type text NOT NULL,
+    label text,
+    title text,
+    title_account_count integer,
+    account_count integer DEFAULT 0 NOT NULL,
+    people_count integer DEFAULT 0 NOT NULL,
+    mention_count integer DEFAULT 0 NOT NULL,
+    first_heard_at date,
+    last_heard_at date,
+    weeks integer[] DEFAULT '{}'::integer[] NOT NULL,
+    recent_accounts integer DEFAULT 0 NOT NULL,
+    prior_accounts integer DEFAULT 0 NOT NULL,
+    rising boolean DEFAULT false NOT NULL,
+    at_bar boolean DEFAULT false NOT NULL,
+    emerged_at timestamp with time zone,
+    rising_at timestamp with time zone,
+    status text DEFAULT 'new'::text NOT NULL,
+    status_changed_at timestamp with time zone,
+    status_changed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT insight_patterns_status_check CHECK ((status = ANY (ARRAY['new'::text, 'seen'::text, 'acting'::text, 'done'::text])))
+);
 
 
 --
@@ -9283,6 +9367,22 @@ ALTER TABLE ONLY public.pipeline_events ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
+-- Name: about_us_claims about_us_claims_legacy_item_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.about_us_claims
+    ADD CONSTRAINT about_us_claims_legacy_item_id_key UNIQUE (legacy_item_id);
+
+
+--
+-- Name: about_us_claims about_us_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.about_us_claims
+    ADD CONSTRAINT about_us_claims_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: account_memory account_memory_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9928,6 +10028,30 @@ ALTER TABLE ONLY public.insight_items
 
 ALTER TABLE ONLY public.insight_items
     ADD CONSTRAINT insight_items_workspace_id_dedup_key_key UNIQUE (workspace_id, dedup_key);
+
+
+--
+-- Name: insight_pattern_members insight_pattern_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insight_pattern_members
+    ADD CONSTRAINT insight_pattern_members_pkey PRIMARY KEY (pattern_id, source_table, source_id);
+
+
+--
+-- Name: insight_patterns insight_patterns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insight_patterns
+    ADD CONSTRAINT insight_patterns_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: insight_patterns insight_patterns_workspace_id_topic_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insight_patterns
+    ADD CONSTRAINT insight_patterns_workspace_id_topic_key_key UNIQUE (workspace_id, topic_key);
 
 
 --
@@ -11136,6 +11260,27 @@ ALTER TABLE ONLY public.workspaces
 
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_slug_key UNIQUE (slug);
+
+
+--
+-- Name: about_us_claims_ws_company_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX about_us_claims_ws_company_idx ON public.about_us_claims USING btree (workspace_id, company_id);
+
+
+--
+-- Name: about_us_claims_ws_kind_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX about_us_claims_ws_kind_idx ON public.about_us_claims USING btree (workspace_id, kind) WHERE (retired_at IS NULL);
+
+
+--
+-- Name: about_us_claims_ws_ref_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX about_us_claims_ws_ref_idx ON public.about_us_claims USING btree (workspace_id, source_ref);
 
 
 --
@@ -12399,6 +12544,20 @@ CREATE INDEX insight_items_ws_unsorted_idx ON public.insight_items USING btree (
 
 
 --
+-- Name: insight_pattern_members_ws_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX insight_pattern_members_ws_idx ON public.insight_pattern_members USING btree (workspace_id);
+
+
+--
+-- Name: insight_patterns_ws_bar_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX insight_patterns_ws_bar_idx ON public.insight_patterns USING btree (workspace_id, at_bar, account_count DESC);
+
+
+--
 -- Name: insight_tags_ws_name_uq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13493,6 +13652,14 @@ CREATE TRIGGER ws_skills_touch BEFORE UPDATE ON public.workspace_skills FOR EACH
 
 
 --
+-- Name: about_us_claims about_us_claims_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.about_us_claims
+    ADD CONSTRAINT about_us_claims_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: account_memory account_memory_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14026,6 +14193,30 @@ ALTER TABLE ONLY public.github_dispatches
 
 ALTER TABLE ONLY public.insight_items
     ADD CONSTRAINT insight_items_theme_id_fkey FOREIGN KEY (theme_id) REFERENCES public.insight_themes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: insight_pattern_members insight_pattern_members_pattern_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insight_pattern_members
+    ADD CONSTRAINT insight_pattern_members_pattern_id_fkey FOREIGN KEY (pattern_id) REFERENCES public.insight_patterns(id) ON DELETE CASCADE;
+
+
+--
+-- Name: insight_pattern_members insight_pattern_members_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insight_pattern_members
+    ADD CONSTRAINT insight_pattern_members_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: insight_patterns insight_patterns_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insight_patterns
+    ADD CONSTRAINT insight_patterns_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
 
 
 --
@@ -15100,6 +15291,12 @@ CREATE POLICY "Users can view their teams" ON public.teams FOR SELECT USING ((EX
 
 
 --
+-- Name: about_us_claims; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.about_us_claims ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: account_memory; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -15482,6 +15679,18 @@ ALTER TABLE public.identity_proposals ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.insight_items ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: insight_pattern_members; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.insight_pattern_members ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: insight_patterns; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.insight_patterns ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: insight_rows; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17363,6 +17572,15 @@ GRANT ALL ON FUNCTION public.workspace_ops_used(p_workspace_id uuid, p_since tim
 
 
 --
+-- Name: TABLE about_us_claims; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.about_us_claims TO anon;
+GRANT ALL ON TABLE public.about_us_claims TO authenticated;
+GRANT ALL ON TABLE public.about_us_claims TO service_role;
+
+
+--
 -- Name: TABLE account_memory; Type: ACL; Schema: public; Owner: -
 --
 
@@ -17768,6 +17986,24 @@ GRANT ALL ON TABLE public.identity_proposals TO service_role;
 --
 
 GRANT ALL ON TABLE public.insight_items TO service_role;
+
+
+--
+-- Name: TABLE insight_pattern_members; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.insight_pattern_members TO anon;
+GRANT ALL ON TABLE public.insight_pattern_members TO authenticated;
+GRANT ALL ON TABLE public.insight_pattern_members TO service_role;
+
+
+--
+-- Name: TABLE insight_patterns; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.insight_patterns TO anon;
+GRANT ALL ON TABLE public.insight_patterns TO authenticated;
+GRANT ALL ON TABLE public.insight_patterns TO service_role;
 
 
 --

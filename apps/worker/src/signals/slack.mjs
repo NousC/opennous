@@ -85,6 +85,8 @@ export async function extractSlackConversation({ supabase, source, messages, aut
       type, source: 'slack', summary: prepared.transcript,
       sourceRef: prepared.sourceRef, occurredAt: mine.at(-1).occurredAt,
       evidenceMessages: prepared.evidence, dryRun, strict: true,
+      // Claims about us follow the source's insights switch, as the insight read does (GET-969).
+      aboutUs: insightsEnabled,
     }));
   }
   let count = 0;

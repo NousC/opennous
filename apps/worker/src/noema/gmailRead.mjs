@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import {
   ARCHIVAL_AFTER_DAYS, writesTasks, resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, recordObservation,
   emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact,
-  isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment,
+  isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, saveAboutUsClaims,
 } from '@nous/core';
 import { read, parseArray, acceptsArray } from './read.mjs';
 import { theirSideOf, groundQuote } from './grounding.mjs';
@@ -501,6 +501,11 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
     // Filed under the thread's newest message, not under the day we read it (GET-770).
     type: 'email_thread', source: SOURCE, dryRun, sourceRef, occurredAt: lastAt(thread),
   });
+  // What they said about us (GET-969): the same read, their side of the thread only.
+  if (!dryRun && out.aboutUs?.length) {
+    await saveAboutUsClaims(supabase, workspaceId, out.aboutUs.map(f => ({ ...f, contactId, companyId: contact.company_id ?? null })),
+      { sourceRef, sourceSystem: SOURCE, occurredAt: lastAt(thread), quotePrivate: true });
+  }
 
   // INSIGHTS — the half that was never wired. Claims are about THEM; insights are about US, and
   // the Gmail Read filed only the first. Every market signal, product ask and positioning

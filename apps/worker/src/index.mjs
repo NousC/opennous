@@ -53,6 +53,7 @@ import { scoreIntentCron } from './intentScore.mjs';
 import { runPipelineStageStats } from './workers/pipelineStageStats.mjs';
 import { runInsightThemes } from './workers/insightThemes.mjs';
 import { runInsightBoard } from './workers/insightBoard.mjs';
+import { runInsightPatterns } from './workers/insightPatterns.mjs';
 import { runEmailThreadsDaily } from './workers/emailThreadsDaily.mjs';
 import { runReadLedger } from './workers/readLedger.mjs';
 import { computeClaimPatternsCron } from './computeClaimPatterns.mjs';
@@ -534,6 +535,13 @@ console.log('[WORKER] Insight clustering — daily at 05:00 UTC');
 cron.schedule('30 5 * * *', () => runInsightBoard().catch(err =>
   console.error('[INSIGHT_BOARD] failed', err.message)), { timezone: 'UTC' });
 console.log('[WORKER] Insights board — daily at 05:30 UTC');
+
+// ── Insight engine — hourly ──────────────────────────────────────────────────
+// Rebuilds a workspace's insights (GET-971) when something new landed, and once a day; fires
+// insight.emerged / insight.rising. See workers/insightPatterns.mjs.
+cron.schedule('25 * * * *', () => runInsightPatterns().catch(err =>
+  console.error('[INSIGHT_PATTERNS] failed', err.message)));
+console.log('[WORKER] Insight engine — hourly at :25');
 
 // ── Lead reply classification — every 15 minutes ─────────────────────────────
 // Classifies inbound replies and graduates matched leads into People.

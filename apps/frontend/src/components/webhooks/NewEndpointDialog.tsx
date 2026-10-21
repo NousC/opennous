@@ -1,7 +1,7 @@
 // The "add an outbound webhook" dialog (a trigger_subscriptions row via POST /api/triggers).
 // Shared by the Webhooks page (GET-632, "Add endpoint") and the headless Triggers page.
 import { useEffect, useMemo, useState } from "react";
-import { Briefcase, Calendar, Check, ExternalLink, Gauge, Github, Link2, Mail, MessageSquare, Phone, Radio, Search, TrendingUp, UserMinus, UserPlus, Webhook } from "lucide-react";
+import { Briefcase, Calendar, Check, ExternalLink, Gauge, Github, Lightbulb, Link2, Mail, MessageSquare, Phone, Radio, Search, TrendingUp, UserMinus, UserPlus, Webhook } from "lucide-react";
 import { TONE_DOT, eventTone } from "@/lib/events";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -134,6 +134,17 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
       { id: "people.added", label: "People added",
         description: "New people landed. At most once an hour, with up to 100 of them, so a scorer can score them.",
         icon: UserPlus, logo: null },
+    ],
+  },
+  {
+    group: "Insights",
+    items: [
+      { id: "insight.emerged", label: "New insight",
+        description: "The same point heard from 5 or more accounts: a feature request, objection, competitor or friction. Checked hourly; once per insight.",
+        icon: Lightbulb, logo: null },
+      { id: "insight.rising", label: "Insight rising",
+        description: "An insight is heard from more accounts: 2 or more and half again, the last 30 days against the 30 before. At most once a week.",
+        icon: TrendingUp, logo: null },
     ],
   },
   {

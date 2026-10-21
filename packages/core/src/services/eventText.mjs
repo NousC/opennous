@@ -19,6 +19,7 @@ const LABEL = {
   'account.champion_left': 'Champion left', 'account.expansion_requested': 'Expansion requested',
   'icp.score_changed': 'ICP score changed', 'icp.tier_changed': 'ICP tier changed',
   'people.added': 'People added', 'automation.approval_requested': 'Approval requested',
+  'insight.emerged': 'New insight', 'insight.rising': 'Insight rising',
   'webhook.test': 'Test event',
 };
 

@@ -110,6 +110,8 @@ export const EVENT_LABEL: Record<string, string> = {
   "icp.tier_changed": "ICP tier changed",
   "people.added": "People added",
   "automation.approval_requested": "Approval requested",
+  "insight.emerged": "New insight",
+  "insight.rising": "Insight rising",
 };
 
 /** "signal.stakeholder_left" → "Stakeholder left"; an unknown type reads from its own name. */
@@ -127,6 +129,7 @@ export const EVENT_FILTER_GROUPS: { label: string; family: string; types: string
   { label: "Deals", family: "deal.*", types: ["deal.won", "deal.lost", "deal.stage_changed", "deal.stalled"] },
   { label: "ICP", family: "icp.*", types: ["icp.score_changed", "icp.tier_changed"] },
   { label: "People", family: "people.*", types: ["people.added"] },
+  { label: "Insights", family: "insight.*", types: ["insight.emerged", "insight.rising"] },
 ];
 
 /** What a chosen filter is called on the button and in the empty line. */
