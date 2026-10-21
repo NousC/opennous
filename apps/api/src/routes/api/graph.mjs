@@ -669,8 +669,9 @@ graphApiRouter.get('/claims', verifySupabaseAuth, async (req, res) => {
       .map(r => ({ r, cat: LEARNED[String(r.value?.category ?? '').trim().toLowerCase()] }))
       .filter(x => x.cat && !internal.has(x.r.entity_id) && String(x.r.value?.content ?? '').trim().length >= 8);
     const viewer = await requestMessageViewer(supabase, req, workspaceId);
-    const readable = new Set(await filterDerivedForViewer(supabase, workspaceId, learned.map(x => x.r), viewer));
-    const visible = learned.filter(x => readable.has(x.r));
+    // Every fact is the team's; a quote from a message this viewer can't open comes back stripped (GET-985).
+    const shown = await filterDerivedForViewer(supabase, workspaceId, learned.map(x => x.r), viewer);
+    const visible = learned.map((x, i) => ({ ...x, r: shown[i] ?? x.r }));
 
     // Who each claim is about: the account, or the person's employer when it is about a person.
     const list = new Map();

@@ -65,7 +65,7 @@ actionItemsV2Router.get('/', async (req, res) => {
     else if (status === 'open') q = q.or('value->>status.is.null,value->>status.eq.open');
     const { data: rows, error } = await q;
     if (error) throw error;
-    // An action item read out of an email follows the email (GET-253).
+    // An action item read out of a private message is the team's; its quote follows the message (GET-985).
     const visibleRows = await filterDerivedForViewer(supabase, workspaceId, rows || [],
       await derivedViewerForContext(supabase, readContextFromReq(req)));
 
@@ -150,15 +150,17 @@ actionItemsV2Router.post('/status', async (req, res) => {
     if (unique.length > STATUS_MAX) return res.status(400).json({ error: 'too_many_ids', max: STATUS_MAX });
     const asked = unique.map((id) => ({ id, parsed: parseTaskId(id) }));
 
-    // Only the tasks this key can SEE can be closed by it: a commitment read out of an email follows
-    // the email (GET-253), so a member key that can't read it can't close it either. Unseen = not found.
+    // Only tasks that exist can be closed. A commitment read out of a private message is the team's
+    // (GET-985), so any member may close it; only its quote stays with the message. Unseen = not found.
     const rows = await readTaskClaims(supabase, workspaceId, asked.filter((a) => a.parsed).map((a) => a.parsed),
       'id, entity_id, property, value, supporting_observation_ids');
     const visible = await filterDerivedForViewer(supabase, workspaceId, rows,
       await derivedViewerForContext(supabase, readContextFromReq(req)));
 
     const results = await applyBulkStatus(supabase, workspaceId, asked, status, {
-      claimRows: visible,
+      // The write starts from the stored rows, never the viewer's copy: that copy has the quote
+      // stripped, and writing it back would erase the owner's quote for good (GET-985).
+      claimRows: rows,
       reason: typeof reason === 'string' ? reason : null,
       // A task Nous created in HubSpot follows its close there, as from the Tasks page. Never fatal.
       onWritten: async ({ entityId, property, prev }) => {

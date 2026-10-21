@@ -261,7 +261,7 @@ const API_TIER_OFF = {
  */
 // The CRMs are open to every plan (GET-517): connecting one is the first onboarding step on the
 // API plan as much as on Workspace. Slack stays a team integration.
-export const CUSTOM_ONLY_INTEGRATIONS = new Set(['slack']);
+export const CUSTOM_ONLY_INTEGRATIONS = new Set(['slack', 'slack_personal']);
 
 export const PLANS = {
   // ── API — $99. Bring your own agent. We read the tools and resolve the graph; the

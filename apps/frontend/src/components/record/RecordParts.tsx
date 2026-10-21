@@ -620,7 +620,7 @@ export function ActivityRow({ a }: { a: any }) {
       )}
       {!hidden && body && (
         <div className="mt-0.5 pl-[34px]">
-          <p className={cn("text-[12.5px] leading-relaxed text-muted-foreground/90 whitespace-pre-wrap", !open && "line-clamp-2")}>{type === "slack_message" ? <SlackText text={body} mentions={raw.slack_mentions} /> : body}</p>
+          <p className={cn("text-[12.5px] leading-relaxed text-muted-foreground/90 whitespace-pre-wrap", !open && "line-clamp-2")}>{isSlack ? <SlackText text={body} mentions={raw.slack_mentions} /> : body}</p>
           {long && (
             <button onClick={() => setOpen(o => !o)} className="mt-1 text-[11.5px] text-muted-foreground/60 hover:text-foreground transition-colors">
               {open ? "Show less" : "Show more"}

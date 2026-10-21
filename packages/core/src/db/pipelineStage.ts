@@ -16,11 +16,11 @@ const DISCOVERY_TYPES = new Set(['meeting_held']);
 const MEETING_BOOKED_TYPES = new Set(['meeting_scheduled']);
 const NEGOTIATION_TYPES = new Set(['proposal_sent', 'proposal_viewed']);
 const CONNECTED_TYPES = new Set([
-  'linkedin_connected', 'email_reply', 'email_received', 'slack_message',
+  'linkedin_connected', 'email_reply', 'email_received', 'slack_message', 'slack_dm',
   'content_download', 'website_revisit', 'website_visit', 'email_opened',
   'linkedin_view', 'social_engagement', 'pricing_page_visit', 'trial_started',
 ]);
-const REPLY_TYPES = new Set(['email_reply', 'email_received', 'slack_message', 'linkedin_message']);
+const REPLY_TYPES = new Set(['email_reply', 'email_received', 'slack_message', 'slack_dm', 'linkedin_message']);
 // Someone who signed up for the product, or used it this week (GET-751: the PostHog source writes
 // both), has shown interest the way a reply does: on People, and their account on Accounts. The
 // nightly decay keeps them there while they keep using it (2026_10_19_product_users_stay_interested).

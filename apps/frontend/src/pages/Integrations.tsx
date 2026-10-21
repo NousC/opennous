@@ -112,7 +112,7 @@ const HARDCODED_PROVIDERS: AvailableProvider[] = [
 // plans see it locked rather than getting an error on connect. Must match
 // CUSTOM_ONLY_INTEGRATIONS in apps/api/src/lib/plans.mjs.
 // CRMs are open to every plan (GET-517); Slack stays a team integration.
-const CUSTOM_ONLY_INTEGRATIONS = new Set(["slack"]);
+const CUSTOM_ONLY_INTEGRATIONS = new Set(["slack", "slack_personal"]);
 
 // A few hardcoded cards are NOT active rows in the workflow_providers catalogue: "nous"
 // is the self-integration, "linkedin" connects natively via Unipile, and "stripe" is a

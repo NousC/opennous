@@ -11,7 +11,7 @@
 // usage — that lives on Adoption.
 
 import { Router } from 'express';
-import { getSupabaseClient, conversationReadMarkers } from '@nous/core';
+import { getSupabaseClient, conversationReadMarkers, loadMessageViewer, canReadMessage, isPrivateMessageType } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 
 export const activityStatsRouter = Router();
@@ -399,6 +399,7 @@ const MEETING_MINUTES_PER_CREDIT = 10;
 
 const KIND = {
   'interaction.slack_message': { kind: 'slack', label: 'Slack conversation' },
+  'interaction.slack_dm':      { kind: 'slack', label: 'Slack conversation' },
   'interaction.email_sent':     { kind: 'email',   label: 'Email thread' },
   'interaction.email_received': { kind: 'email',   label: 'Email thread' },
   'interaction.call_made':      { kind: 'call',    label: 'Call' },
@@ -551,7 +552,7 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
     // its transcript: 0.44 s for a page against 0.09 s without it, GET-903).
     const fetched = Math.min(limit * 5, 1000);
     let q = supabase.from('observations')
-      .select('id, entity_id, property, source, observed_at, summary:value->>summary, description:value->>description, title:value->>title, thread_id:raw->>thread_id, source_ref:raw->>source_ref, slack_mentions:raw->slack_mentions, end_time:raw->>end_time')
+      .select('id, entity_id, property, source, observed_at, summary:value->>summary, description:value->>description, title:value->>title, thread_id:raw->>thread_id, source_ref:raw->>source_ref, slack_mentions:raw->slack_mentions, end_time:raw->>end_time, owner_user_id, mailbox_owner_ids:raw->mailbox_owner_ids, participants:raw->participants')
       .eq('workspace_id', workspaceId)
       .in('property', Object.keys(KIND))
       .order('observed_at', { ascending: false })
@@ -562,7 +563,13 @@ activityStatsRouter.get('/conversations', verifySupabaseAuth, async (req, res) =
     const { data: raw, error } = await q;
     if (error) throw error;
     const paged = pageRows(raw ?? [], fetched);
-    const rows = paged.rows.map(({ summary, description, title, ...r }) => ({ ...r, value: { summary, description, title } }));
+    // A message's words belong to the people in it (GET-244, GET-985): a teammate's private email or
+    // Slack DM is listed, read and billed like any other, and shows no preview to anyone else.
+    const viewer = req.internalUserId ? await loadMessageViewer(supabase, workspaceId, req.internalUserId) : null;
+    const rows = paged.rows.map(({ summary, description, title, owner_user_id, mailbox_owner_ids, participants, ...r }) => {
+      const hidden = isPrivateMessageType(r.property) && !canReadMessage({ owner_user_id, raw: { mailbox_owner_ids, participants } }, viewer);
+      return { ...r, value: hidden ? { summary: null, description: null, title: null } : { summary, description, title } };
+    });
     const ids = rows.map((r) => r.id);
 
     // ONE ROW PER EMAIL THREAD (GET-503). The page listed every message as an "Email thread" and

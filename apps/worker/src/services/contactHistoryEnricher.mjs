@@ -1145,48 +1145,9 @@ async function scanInstantly(supabase, workspaceId, contact, apiKey) {
 }
 
 // ── Slack ─────────────────────────────────────────────────────────────────────
-// Uses user token to search messages mentioning the contact's email.
-
-async function scanSlack(supabase, workspaceId, contact, slackConn) {
-  if (!contact.email) return 0;
-  try {
-    const userToken = decrypt(slackConn.encrypted_credentials?.user_token);
-    if (!userToken) return 0;
-
-    const headers = { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json' };
-
-    // Search messages that mention this email
-    const searchRes = await fetch(
-      `https://slack.com/api/search.messages?query=${encodeURIComponent(contact.email)}&count=50`,
-      { headers }
-    );
-    if (!searchRes.ok) return 0;
-    const searchData = await searchRes.json();
-    if (!searchData.ok) return 0;
-
-    const messages = searchData.messages?.matches || [];
-    let logged = 0;
-
-    for (const msg of messages) {
-      const occurredAt = msg.ts ? new Date(parseFloat(msg.ts) * 1000).toISOString() : new Date().toISOString();
-      const r = await logActivity(supabase, {
-        workspaceId, contactId: contact.id, companyId: contact.company_id || null,
-        type: 'slack_message', source: 'slack',
-        externalId:  `slack_msg_${msg.ts}_${msg.channel?.id}`,
-        occurredAt,
-        description: `Slack: #${msg.channel?.name || 'message'}`,
-        summary:     msg.text ? msg.text.slice(0, 200) : null,
-      });
-      if (r) logged++;
-    }
-
-    console.log(`[ENRICH_SLACK] ${maskEmail(contact.email)}: ${logged} logged`);
-    return logged;
-  } catch (e) {
-    console.error(`[ENRICH_SLACK] ${maskEmail(contact.email)}:`, e.message);
-    return 0;
-  }
-}
+// No Slack lane (GET-985). It searched Slack with the installer's own token, which reaches their
+// DMs, and filed every match for the whole team. A person's Slack DMs now come only through their
+// own "Slack messages" connection (cloud/workers/slackPersonalDms.mjs), as their private messages.
 
 // ── Fireflies ─────────────────────────────────────────────────────────────────
 
@@ -1542,7 +1503,6 @@ const LANES = {
   cal_com:   3,
   fathom:    3,
   instantly: 3,
-  slack:     3,
   linkedin:  2,
 };
 
@@ -1665,7 +1625,6 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
   const gmailConn      = connections.gmail_oauth || null;
   const calendarConns  = await calendarConnections(supabase, workspaceId);
   const smtpConn       = connections.smtp        || null;
-  const slackConn      = connections.slack       || null;
   const instantlyKey   = connections.instantly?.encrypted_credentials?.api_key
     ? decrypt(connections.instantly.encrypted_credentials.api_key) : null;
   const firefliesKey   = connections.fireflies?.encrypted_credentials?.api_key
@@ -1699,7 +1658,6 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
           smtp:      makeSource(!!smtpConn),
           linkedin:  makeSource(!!connections.linkedin?.account_id),
           instantly: makeSource(!!instantlyKey),
-          slack:     makeSource(!!slackConn),
           fireflies: makeSource(!!firefliesKey),
           fathom:    makeSource(!!fathomKey),
           granola:   makeSource(!!connections.granola),
@@ -1888,7 +1846,6 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
     await Promise.all([
       runLane('calendly',  !!(calendlyPat && calendlyUserUri), LANES.calendly, c => scanCalendly(supabase, workspaceId, c, calendlyPat, calendlyUserUri)),
       runLane('cal_com',   !!calComPat,   LANES.cal_com,   c => scanCalCom(supabase, workspaceId, c, calComPat)),
-      runLane('slack',     !!slackConn,   LANES.slack,     c => scanSlack(supabase, workspaceId, c, slackConn)),
       runLane('linkedin',  !!connections.linkedin?.account_id, LANES.linkedin, c => scanLinkedIn(supabase, workspaceId, c, connections.linkedin.account_id, attendeeMap)),
     ]);
 

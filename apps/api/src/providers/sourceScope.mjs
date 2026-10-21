@@ -20,7 +20,7 @@ import { isWorkspaceAdmin } from '../lib/authz.mjs';
 
 // Personal by name. Note-takers are personal by CATEGORY (every `meetings` provider), so a
 // new one lands on the right side without an edit here.
-const PERSONAL_BY_NAME = new Set(['gmail_oauth', 'google_calendar', 'smtp', 'linkedin', 'outlook']);
+const PERSONAL_BY_NAME = new Set(['gmail_oauth', 'google_calendar', 'smtp', 'linkedin', 'outlook', 'slack_personal']);
 const PERSONAL_CATEGORIES = new Set(['meetings']);
 // Company by name, ahead of the category. Fellow is a note-taker, but one Super Admin key
 // reads every meeting in the Fellow workspace and a workspace-scoped webhook receives every

@@ -167,3 +167,27 @@ test('activity mention labels preserve original Slack evidence and link only res
   assert.equal(saved.rawData.text, 'Please invite <@U4>.');
   assert.deepEqual(saved.rawData.slack_mentions.U4, { name: 'Morgan', personId: 'person-4' });
 });
+
+test("a teammate's own DM is filed as theirs: private type, owned snapshot, no workspace insights, tasks still read (GET-985)", async () => {
+  const calls = [];
+  const dmSource = { ...source, slack_channel_id: 'D1', channel_visibility: 'dm', owner_user_id: 'member-1' };
+  await extractSlackConversation({ supabase: {}, source: dmSource, messages, authors, owner: { userId: 'member-1' } }, {
+    activity: async (_db, p) => { calls.push(['activity', p]); return { id: 'observation-2' }; },
+    observation: async (_db, p) => { calls.push([p.property === 'noema.read' ? 'read' : 'snapshot', p]); return { id: 'snapshot' }; },
+    signals: async p => { calls.push(['signals', p]); return []; },
+    insights: async () => { throw new Error('a DM must never write workspace insights'); },
+    actionItems: async p => { calls.push(['tasks', p]); return []; },
+  });
+  assert.deepEqual(calls.map(([name]) => name), ['activity', 'snapshot', 'signals', 'tasks', 'read']);
+  const activity = calls.find(([n]) => n === 'activity')[1];
+  assert.equal(activity.type, 'slack_dm');
+  assert.equal(activity.ownerUserId, 'member-1');
+  assert.deepEqual(activity.rawData.mailbox_owner_ids, ['member-1']);
+  const snapshot = calls.find(([n]) => n === 'snapshot')[1];
+  assert.equal(snapshot.property, 'evidence.slack_dm_conversation');
+  assert.equal(snapshot.ownerUserId, 'member-1');
+  assert.deepEqual(snapshot.raw.mailbox_owner_ids, ['member-1']);
+  assert.equal(calls.find(([n]) => n === 'signals')[1].type, 'slack_dm');
+  const read = calls.find(([n]) => n === 'read')[1];
+  assert.equal(read.value.credits, 1, 'one credit per read, like a channel');
+});

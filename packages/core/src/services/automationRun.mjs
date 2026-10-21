@@ -3442,6 +3442,8 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
       const runnable = [];
       for (const s of signals) {
         const ok = readable.has(s.id);
+        const wordingPrivate = readable.privateWording?.has(s.id) ?? false;
+        if (wordingPrivate) s.quote = null;
         const fresh = s.occurred_at && Date.now() - new Date(s.occurred_at).getTime() <= SIGNAL_FRESH_HOURS * 3_600_000;
         if (ok && fresh) {
           // A next step agreed is a task, not an event (GET-967, finishing GET-954): it is on the Tasks
@@ -3457,7 +3459,8 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
           });
           runnable.push(s);
         }
-        await supabase.from('account_signals').update({ processed_at: new Date().toISOString(), team_readable: ok }).eq('id', s.id);
+        await supabase.from('account_signals').update({ processed_at: new Date().toISOString(), team_readable: ok,
+          ...(wordingPrivate ? { quote: null } : {}) }).eq('id', s.id);
       }
       // What those signals mean for the account (GET-950): the champion left, they asked for more.
       emitted += await emitInterpretedSignalEvents(supabase, ws, runnable, readable);
@@ -3787,7 +3790,13 @@ export async function detectNextStepSignalsPoll({ now = Date.now(), onlyWorkspac
   return { written: total };
 }
 
-/** Which of these signals the whole team may read: their source fact passes message privacy. */
+/**
+ * Which of these signals the whole team may read: every one whose source fact still exists, since
+ * facts are the team's (GET-985). The returned set carries `privateWording`: the signals whose
+ * quote comes from a message the team can't open. Those keep their fact and lose their quote, in
+ * the event and in account_signals itself, so no later reader (events, webhooks, RevBoxes, drafts)
+ * can pass a teammate's private words on.
+ */
 async function teamReadableSignals(supabase, workspaceId, signals) {
   const props = [...new Set(signals.map(s => s.claim_property))];
   const facts = [];
@@ -3799,7 +3808,10 @@ async function teamReadableSignals(supabase, workspaceId, signals) {
   }
   const visible = await filterDerivedForViewer(supabase, workspaceId, facts, TEAM_VIEWER, { isDerived: () => true });
   const ok = new Set(visible.map(f => `${f.entity_id}|${f.property}`));
-  return new Set(signals.filter(s => ok.has(`${s.entity_id}|${s.claim_property}`)).map(s => s.id));
+  const quotePrivate = new Set(visible.filter(f => f.quote_private).map(f => `${f.entity_id}|${f.property}`));
+  const readable = new Set(signals.filter(s => ok.has(`${s.entity_id}|${s.claim_property}`)).map(s => s.id));
+  readable.privateWording = new Set(signals.filter(s => quotePrivate.has(`${s.entity_id}|${s.claim_property}`)).map(s => s.id));
+  return readable;
 }
 
 /** One automation, run once for one signal: the write-up about that moment, then delivery. */

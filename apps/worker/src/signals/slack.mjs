@@ -30,12 +30,18 @@ export function prepareSlackConversation({ source, messages, authors, conversati
     occurredAt: external.at(-1)?.occurredAt ?? null };
 }
 
-export async function extractSlackConversation({ supabase, source, messages, authors, conversationId, dryRun = false, insightsEnabled = true }, {
+// `owner` is set for a teammate's own DM (GET-985): { userId }. The conversation is then theirs:
+// its messages are slack_dm (private, like their email), the snapshot is owned by them, and
+// workspace insights (which quote what was said) are not written from it. Facts and tasks still
+// are, and they are the team's; their quotes follow the message.
+export async function extractSlackConversation({ supabase, source, messages, authors, conversationId, dryRun = false, insightsEnabled = true, owner = null }, {
   signals = extractActivitySignals, insights = extractCallInsights, activity = logActivity, existingActivity = activityByExternalId,
   observation = recordObservation, refreshActivity = refreshActivityEvidence, actionItems = extractConversationActionItems,
 } = {}) {
   const prepared = prepareSlackConversation({ source, messages, authors, conversationId });
   if (!prepared.external.length) return { ...prepared, facts: [], insights: 0, skipped: 'no_confirmed_external_author' };
+  const type = owner ? 'slack_dm' : 'slack_message';
+  const mailbox = owner ? { mailbox_owner_ids: [owner.userId] } : {};
   // The timeline preview is short; the extraction input remains the full text.
   if (!dryRun) {
     for (const m of prepared.external) {
@@ -45,9 +51,9 @@ export async function extractSlackConversation({ supabase, source, messages, aut
       const rawData = { text: m.text, user: m.authorId, channel_id: source.slack_channel_id,
         ts: m.ts, source_ref: prepared.sourceRef, is_outbound: false,
         slack_mentions: Object.fromEntries([...authors].map(([id, author]) => [id, { name: author.name, personId: author.contactId ?? null }])),
-        url: m.url };
+        url: m.url, ...mailbox };
       const logged = await activity(supabase, { workspaceId: source.workspace_id,
-        contactId: m.contactId, type: 'slack_message', source: 'slack',
+        contactId: m.contactId, type, source: 'slack', ...(owner ? { ownerUserId: owner.userId } : {}),
         externalId,
         occurredAt: m.occurredAt, summary: m.text.slice(0, 500), description: m.text.slice(0, 500),
         rawData,
@@ -63,11 +69,12 @@ export async function extractSlackConversation({ supabase, source, messages, aut
     await observation(supabase, { workspaceId: source.workspace_id, entityId: prepared.external[0].contactId,
       // evidence.*, not interaction.*: the snapshot is what a finding cites, not something that
       // happened, so no timeline, touch count or last-activity reader sees it (GET-976).
-      kind: 'event', property: 'evidence.slack_conversation', source: 'slack', method: 'connector',
+      kind: 'event', property: owner ? 'evidence.slack_dm_conversation' : 'evidence.slack_conversation', source: 'slack', method: 'connector',
+      ...(owner ? { ownerUserId: owner.userId } : {}),
       externalId: `slack_conversation_${prepared.fingerprint}`, sourceRef: prepared.sourceRef,
       observedAt: prepared.occurredAt, value: { summary: 'Slack conversation' },
       raw: { text: prepared.transcript, channel_id: source.slack_channel_id,
-        messages: prepared.evidence.filter(m => m.side !== 'unknown') },
+        messages: prepared.evidence.filter(m => m.side !== 'unknown'), ...mailbox },
     });
   }
   const facts = [];
@@ -75,13 +82,13 @@ export async function extractSlackConversation({ supabase, source, messages, aut
     const mine = prepared.external.filter(m => m.contactId === contactId);
     facts.push(...await signals({ supabase, workspaceId: source.workspace_id,
       contactId, activityId: mine[0].activityId ?? null, sourceActivityIds: mine.map(m => m.activityId).filter(Boolean),
-      type: 'slack_message', source: 'slack', summary: prepared.transcript,
+      type, source: 'slack', summary: prepared.transcript,
       sourceRef: prepared.sourceRef, occurredAt: mine.at(-1).occurredAt,
       evidenceMessages: prepared.evidence, dryRun, strict: true,
     }));
   }
   let count = 0;
-  if (!dryRun && insightsEnabled && prepared.transcript.length >= 20) {
+  if (!dryRun && insightsEnabled && !owner && prepared.transcript.length >= 20) {
     let result;
     count = await insights({ supabase, workspaceId: source.workspace_id,
       transcript: prepared.transcript, attendees: [...new Set(prepared.external.map(m => m.speaker))],
@@ -95,7 +102,7 @@ export async function extractSlackConversation({ supabase, source, messages, aut
   // Asks and promises go through the shared action-item store the Tasks page and Next step read
   // (GET-976). Part of this conversation's one read, so no extra credit.
   let tasks = [];
-  if (insightsEnabled) {
+  if (insightsEnabled || owner) {
     const people = [...new Map([...authors.values()].filter(a => a.name && a.side !== 'unknown').map(a => [a.name, { name: a.name, side: a.side, contactId: a.contactId ?? null }])).values()];
     tasks = await actionItems({ supabase, workspaceId: source.workspace_id, channel: 'slack',
       messages: prepared.evidence, people, sourceRef: prepared.sourceRef, dryRun,

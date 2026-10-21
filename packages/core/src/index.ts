@@ -142,7 +142,7 @@ export {
   redactObservationRowsForViewer, canReadMeetingRaw,
   // What was derived from a message follows the message (GET-253).
   TEAM_VIEWER, derivedSources, loadDerivedSources, canReadDerived, isDerivedProperty,
-  filterDerivedForViewer, derivedViewerForContext, filterByCitedClaimsForViewer, derivedAudienceKey,
+  filterDerivedForViewer, derivedViewerForContext, filterByCitedClaimsForViewer, derivedAudienceKey, redactDerivedText,
 } from './privacy/messagePrivacy.mjs';
 // The one model door (GET-242): every single-turn model call in the API and the worker goes
 // through createMessage. Plain JS, carried into dist by allowJs.

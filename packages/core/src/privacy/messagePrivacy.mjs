@@ -27,11 +27,15 @@ export const PRIVATE_MESSAGE_TYPES = new Set([
   'linkedin_message', 'linkedin_message_sent', 'linkedin_message_received',
   'linkedin_replied', 'linkedin_reply',
   'linkedin_inmail', 'linkedin_inmail_sent', 'linkedin_inmail_received',
+  // A teammate's own Slack DMs (GET-985). Channel messages stay shared: a channel is a room the
+  // team was invited into, a DM is somebody's conversation. The snapshot a DM read files as
+  // evidence is the same conversation, so it follows the same rule.
+  'slack_dm', 'slack_dm_conversation',
 ]);
 
-/** `interaction.email_sent` or `email_sent` → is it a private message? */
+/** `interaction.email_sent`, `evidence.slack_dm_conversation` or `email_sent` → a private message? */
 export function isPrivateMessageType(typeOrProperty) {
-  return PRIVATE_MESSAGE_TYPES.has(String(typeOrProperty || '').replace(/^interaction\./, ''));
+  return PRIVATE_MESSAGE_TYPES.has(String(typeOrProperty || '').replace(/^(interaction|evidence)\./, ''));
 }
 
 const lower = (v) => (typeof v === 'string' && v.trim() ? v.trim().toLowerCase() : null);
@@ -77,8 +81,9 @@ export function messageDirection(type, raw, summary) {
 
 /** The label a redacted message shows. Never the subject. */
 export function redactedMessageLabel(type, raw, summary) {
-  const t = String(type || '').replace(/^interaction\./, '');
+  const t = String(type || '').replace(/^(interaction|evidence)\./, '');
   const dir = messageDirection(t, raw, summary);
+  if (t.startsWith('slack_')) return `Slack message ${dir}`;
   return t.startsWith('email_') ? `Email ${dir}` : `LinkedIn message ${dir}`;
 }
 
@@ -211,13 +216,16 @@ export function messageViewerForContext(supabase, ctx) {
   return ctx?.viewerUserId ? loadMessageViewer(supabase, ctx.workspaceId, ctx.viewerUserId) : Promise.resolve(null);
 }
 
-// ── What was DERIVED from a message (GET-253) ───────────────────────────────
-// A fact, an action item or a reply disposition pulled out of an email says what the email said.
-// It follows the email: a member reads it when they may read at least one message it came from.
-// Derived from something that is not a message (a meeting, the CRM, a person typing it) → shared,
-// as before. The check follows the pointer to the source AT READ TIME rather than copying an access
-// list onto the fact, because a teammate's mailbox copy is merged onto the message after the fact
-// was extracted (addMailboxCopy) and a copied list would go stale.
+// ── What was DERIVED from a message (GET-253, GET-985) ──────────────────────
+// A fact, an action item or a reply disposition pulled out of a private message (an email, a
+// LinkedIn message, a Slack DM) is the TEAM's: everyone sees the fact, health and automations count
+// it, so nobody acts on an account as if a teammate's live conversation did not exist. What the
+// message SAID stays with the people in it: the verbatim quote a fact carries is shown only to a
+// member who may read at least one message it came from; everyone else gets the fact with
+// `quote_private: true` and no quote (a founder decision, 2026-10-21, superseding GET-253's
+// "facts follow the email"). The check follows the pointer to the source AT READ TIME rather than
+// copying an access list onto the fact, because a teammate's mailbox copy is merged onto the
+// message after the fact was extracted (addMailboxCopy) and a copied list would go stale.
 
 /**
  * The viewer an aggregate is written for: the whole team. It reads shared material only — a
@@ -227,7 +235,7 @@ export function messageViewerForContext(supabase, ctx) {
 export const TEAM_VIEWER = Object.freeze({ userId: '__team__', emails: new Set() });
 
 /** Signal types that name a message as the source, for a fact whose source row is gone. */
-const MESSAGE_SIGNAL_RE = /^(email_|linkedin_|conversation_thread$|reply$|positive_reply$|email$|linkedin$)/;
+const MESSAGE_SIGNAL_RE = /^(email_|linkedin_|slack_dm|conversation_thread$|reply$|positive_reply$|email$|linkedin$)/;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -283,7 +291,8 @@ export async function loadDerivedSources(supabase, workspaceId, rows) {
 }
 
 /**
- * May this viewer read a derived row, given its loaded sources?
+ * May this viewer read a derived row's WORDING (its quotes), given its loaded sources? The fact
+ * itself is shared either way (GET-985).
  *   - system viewer → yes;
  *   - any source that is not a private message (a meeting, a CRM row) → yes, it is shared evidence;
  *   - any readable message source → yes;
@@ -311,9 +320,36 @@ export function isDerivedProperty(property) {
   return p.startsWith('note.') || p.startsWith('action_item.') || p === 'reply_signal';
 }
 
+// The fields a derived row copies verbatim out of its source message. Everything else on it (the
+// title, the fact, who asked, the due date) is the team's.
+const QUOTE_FIELDS = ['quote', 'accepted_quote', 'evidence_quote', 'source_quote', 'excerpt', 'snippet'];
+const stripQuotes = (o) => {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return o;
+  let out = o;
+  for (const k of QUOTE_FIELDS) if (out[k] != null) { if (out === o) out = { ...o }; out[k] = null; }
+  return out;
+};
+
 /**
- * Keep the derived rows this viewer may read. Rows that aren't derived (a claim like `name`, a
- * document with doc_type) pass through untouched; pass `isDerived` to change which rows are judged.
+ * A derived row as a viewer who may not read its source sees it: the fact, without the words it
+ * was lifted from. Quotes live on the row, its value, its metadata and its value's metadata.
+ */
+export function redactDerivedText(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = { ...stripQuotes(row), quote_private: true };
+  if (row.metadata && typeof row.metadata === 'object') out.metadata = stripQuotes(row.metadata);
+  if (row.value && typeof row.value === 'object' && !Array.isArray(row.value)) {
+    const v = stripQuotes(row.value);
+    out.value = v.metadata && typeof v.metadata === 'object' ? { ...v, metadata: stripQuotes(v.metadata) } : v;
+  }
+  return out;
+}
+
+/**
+ * Every derived row, with its quotes removed where this viewer may not read the message it came
+ * from (GET-985). Rows that aren't derived (a claim like `name`, a document with doc_type) pass
+ * through untouched; pass `isDerived` to change which rows are judged. The array keeps its order
+ * and length: facts are shared, only their wording is private.
  */
 export async function filterDerivedForViewer(supabase, workspaceId, rows, viewer, { isDerived } = {}) {
   if (!viewer || !viewer.userId || !rows?.length) return rows || [];
@@ -321,8 +357,8 @@ export async function filterDerivedForViewer(supabase, workspaceId, rows, viewer
   const targets = rows.filter(judged);
   if (!targets.length) return rows;
   const sources = await loadDerivedSources(supabase, workspaceId, targets);
-  const hidden = new Set(targets.filter((r) => !canReadDerived(r, sources, viewer)));
-  return hidden.size ? rows.filter((r) => !hidden.has(r)) : rows;
+  const wordingHidden = new Set(targets.filter((r) => !canReadDerived(r, sources, viewer)));
+  return wordingHidden.size ? rows.map((r) => (wordingHidden.has(r) ? redactDerivedText(r) : r)) : rows;
 }
 
 /** The viewer derived rows are judged for, from a ReadContext: team-only, a member, or system. */
@@ -333,8 +369,8 @@ export function derivedViewerForContext(supabase, ctx) {
 
 /**
  * Rows that cite a claim by id (a graph edge's `source_memory_id`, a concept's `claim_ids`): keep
- * those whose cited claims this viewer may read. A row citing no claim passes; a row citing several
- * passes when any one is readable. `claimIdsOf` returns the ids a row cites.
+ * those whose cited claims this viewer may see. Since facts are the team's (GET-985) that is every
+ * claim that still exists; a failed lookup still fails closed. `claimIdsOf` returns the ids a row cites.
  */
 export async function filterByCitedClaimsForViewer(supabase, workspaceId, rows, viewer, claimIdsOf) {
   if (!viewer || !viewer.userId || !rows?.length) return rows || [];

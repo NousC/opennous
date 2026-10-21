@@ -182,7 +182,7 @@ export async function getAttention(
     .like('property', 'action_item.%')
     .is('invalid_at', null)
     .limit(300);
-  // A commitment read out of an email follows the email (GET-253).
+  // A commitment read out of a private message is the team's; its quote follows the message (GET-985).
   const aiViewer = await derivedViewerForContext(supabase, ctx);
   const aiVisible = aiViewer ? await filterDerivedForViewer(supabase, workspaceId, (aiRows as any[]) ?? [], aiViewer) : aiRows;
   const commitments: AttentionItem[] = [];

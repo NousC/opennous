@@ -18,7 +18,11 @@ export async function revokeConnectionTokens(conn) {
         });
       }
     } else if (name.startsWith('slack')) {
-      const token = decrypt(creds.bot_token || creds.access_token || creds.token || '');
+      // A personal connection holds only that person's user token (GET-985): revoking it signs
+      // them out of us and nothing else. The workspace install's bot token uninstalls the bot.
+      const token = name === 'slack_personal'
+        ? decrypt(creds.user_token || '')
+        : decrypt(creds.bot_token || creds.access_token || creds.token || '');
       if (token) {
         await fetch('https://slack.com/api/auth.revoke', {
           method: 'POST',

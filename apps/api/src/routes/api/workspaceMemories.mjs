@@ -100,10 +100,10 @@ workspaceMemoriesRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     const memory = await getNote(supabase, workspaceId, id);
     if (!memory) return res.status(404).json({ error: 'not_found' });
     const viewer = await requestMessageViewer(supabase, req, workspaceId);
-    if (!(await filterDerivedForViewer(supabase, workspaceId, [memory], viewer)).length) {
-      return res.status(404).json({ error: 'not_found' });
-    }
-    return res.json({ memory });
+    // The fact is the team's; its quote only for someone who can open the source message (GET-985).
+    const [shown] = await filterDerivedForViewer(supabase, workspaceId, [memory], viewer);
+    if (!shown) return res.status(404).json({ error: 'not_found' });
+    return res.json({ memory: shown });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error' });
   }

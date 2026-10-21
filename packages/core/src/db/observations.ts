@@ -25,6 +25,7 @@ export interface ObservationInput {
   raw?: unknown;             // raw payload, kept for provenance
   sourceRef?: string;        // explicit pointer to the raw (vault path / git sha); else derived
   contentHash?: string;      // explicit hash of the raw; else derived from `raw`
+  ownerUserId?: string | null; // whose private conversation this is (a Slack DM snapshot); null = shared
 }
 
 export interface Observation {
@@ -72,6 +73,8 @@ function toRow(input: ObservationInput) {
     raw: input.raw ?? null,
     source_ref: input.sourceRef ?? deriveSourceRef(input.source, input.externalId),
     content_hash: input.contentHash ?? hashRaw(input.raw),
+    // Only when given, so a caller that never names an owner writes exactly the row it always did.
+    ...(input.ownerUserId ? { owner_user_id: input.ownerUserId } : {}),
   };
 }
 

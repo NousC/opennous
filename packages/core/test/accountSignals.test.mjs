@@ -67,7 +67,7 @@ function fakeDb(tables) {
   return { from, writes };
 }
 
-test('a fresh signal from a call goes to the webhook; private mail and history stay home', async () => {
+test('a fresh signal goes to the webhook, one from private mail without its words; history stays home (GET-985)', async () => {
   const now = new Date().toISOString();
   const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
   const sig = (id, prop, occurred_at) => ({
@@ -89,14 +89,18 @@ test('a fresh signal from a call goes to the webhook; private mail and history s
   });
   const out = await processAccountSignals({ supabase: db });
   assert.equal(out.processed, 3);
-  const sent = db.writes.filter(w => w.table === 'outbound_events');
-  assert.equal(sent.length, 1, 'only the fresh call signal is sent');
-  assert.equal(sent[0].payload[0].event_type, 'signal.objection_raised');
-  assert.equal(sent[0].payload[0].payload.data.quote, 'That is above our budget');
+  const sent = db.writes.filter(w => w.table === 'outbound_events').flatMap(w => w.payload);
+  assert.equal(sent.length, 2, 'both fresh signals are sent; the old one is not');
+  assert.ok(sent.every(e => e.event_type === 'signal.objection_raised'));
+  const quotes = new Set(sent.map(e => e.payload.data.quote));
+  assert.deepEqual(quotes, new Set([null, 'That is above our budget']), "the private email's words never leave");
+  assert.ok(sent.every(e => e.payload.data.text === 'Too expensive for 12 sites'), 'the fact itself is the team\'s');
   const marked = db.writes.filter(w => w.table === 'account_signals' && w.op === 'update');
   assert.equal(marked.length, 3, 'every signal is marked processed');
-  const byId = Object.fromEntries(marked.map(w => [w.filters.find(([k]) => k === 'id')[1], w.payload.team_readable]));
-  assert.deepEqual(byId, { 's-call': true, 's-mail': false, 's-old': true });
+  const byId = Object.fromEntries(marked.map(w => [w.filters.find(([k]) => k === 'id')[1], w.payload]));
+  assert.deepEqual(Object.fromEntries(Object.entries(byId).map(([k, p]) => [k, p.team_readable])), { 's-call': true, 's-mail': true, 's-old': true });
+  assert.equal(byId['s-mail'].quote, null, 'and its stored quote is cleared, so no later reader passes it on');
+  assert.equal('quote' in byId['s-call'], false);
 });
 
 test('five signals from one call start ONE run of a signal automation, not five (GET-834)', async () => {

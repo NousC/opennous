@@ -347,6 +347,14 @@ export const CATALOGUE = {
     webhook: 'none',
     // Back in the catalogue (GET-787): automations post to channels and people through it.
   },
+  // A teammate's own Slack (GET-985): the workspace install above is the company's room; this
+  // is one person's DMs with customers, read like their mailbox. Signs in with user scopes only,
+  // so it never installs or changes the workspace bot.
+  slack_personal: {
+    display: 'Slack messages', category: 'communication', auth: 'oauth2',
+    keyHint: 'Sign in with Slack. Reads only your own DMs with customers. Only you see the messages; what is learned from them builds the shared account record.',
+    webhook: 'none',
+  },
   smtp: {
     display: 'Custom SMTP / IMAP', category: 'communication', auth: 'credentials',
     authFields: SMTP_FIELDS,
@@ -493,8 +501,9 @@ const SCOPE_OVERRIDES = {
   calendly: 'personal',
   cal_com: 'personal',
   smtp: 'personal',
-  // Slack is the company's room, not a person's.
+  // Slack is the company's room, not a person's. A person's own Slack DMs are theirs (GET-985).
   slack: 'workspace',
+  slack_personal: 'personal',
   // Linear is the company's issue tracker: one connection, issues filed for the team (GET-825).
   linear: 'workspace',
 };
@@ -507,6 +516,7 @@ const LOGO_EXCEPTIONS = {
   anthropic: 'claude.svg',
   google: 'gemini.svg',
   gmail_oauth: 'gmail.svg',
+  slack_personal: 'slack.svg',
   google_calendar: 'google-calendar.svg',
   cal_com: 'cal_com.svg',
   aiark: 'aiark.png',

@@ -18,7 +18,7 @@ const DAY = 86_400_000;
 //   chat message       a Slack message or DM. What the customer wrote in a channel is a reply.
 
 /** Activity types that are provenance copies of a conversation, not something that happened. */
-export const EVIDENCE_SNAPSHOT_TYPES = Object.freeze(['slack_conversation']);
+export const EVIDENCE_SNAPSHOT_TYPES = Object.freeze(['slack_conversation', 'slack_dm_conversation']);
 export function isEvidenceSnapshot(activityType) {
   return EVIDENCE_SNAPSHOT_TYPES.includes(String(activityType ?? '').toLowerCase().replace(/^interaction\./, ''));
 }

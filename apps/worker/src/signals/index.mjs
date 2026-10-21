@@ -262,11 +262,11 @@ async function decideMergeBatch(supabase, workspaceId, factContents, factRows = 
     return mergeCandidates(factCategories[i], similar, sameCategory);
   }));
 
-  // A fact only merges with facts written for the same readers (GET-253). A fact from one founder's
-  // private thread must not retire the team's copy, and the team's copy must not be what a
-  // private fact is "already captured by" — so candidates for another audience are not offered.
-  // The extractor's "replaces" target is held to the same rule: a private fact never retires the
-  // team's claim (both would vanish for the team: the old retired, the new one unreadable).
+  // A fact only merges with facts written for the same readers (GET-253). Facts are shared since
+  // GET-985, but a fact's QUOTE still follows its sources: merged, a private message's quote would
+  // sit on a row a shared source makes readable to everyone. So candidates for another audience
+  // are not offered, and the extractor's "replaces" target is held to the same rule. The price is
+  // that the team's fact and a private one can both stand, each with its own source.
   const replaceIds = [...new Set(factReplaces.filter(Boolean))];
   const replaceRows = new Map();
   if (replaceIds.length) {

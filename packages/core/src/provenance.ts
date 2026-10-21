@@ -23,7 +23,7 @@ import { listConflicts } from './db/conflicts.js';
 import type { EpistemicClass, Freshness } from './db/claims.js';
 import type { ReadContext } from './db/readContext.js';
 import {
-  derivedViewerForContext, loadDerivedSources, canReadDerived, isDerivedProperty, isPrivateMessageType,
+  derivedViewerForContext, loadDerivedSources, canReadDerived, isDerivedProperty, isPrivateMessageType, redactDerivedText,
   canReadMessage, redactedMessageLabel,
 } from './privacy/messagePrivacy.mjs';
 
@@ -89,7 +89,7 @@ export async function getClaimProvenance(
   property: string,
   ctx?: ReadContext,
 ): Promise<ClaimProvenance | null> {
-  const { data: claim, error } = await supabase
+  const { data: stored, error } = await supabase
     .from('claims')
     .select('property, value, confidence, epistemic_class, freshness, observation_count, last_observed_at, supporting_observation_ids')
     .eq('workspace_id', workspaceId)
@@ -98,14 +98,15 @@ export async function getClaimProvenance(
     .is('invalid_at', null)
     .maybeSingle();
   if (error) throw error;
-  if (!claim) return null;
+  if (!stored) return null;
+  let claim = stored;
 
-  // A fact from a message the viewer can't read has no provenance for them — it isn't theirs to
-  // see (GET-253). Answered as "no live claim", the same as a claim that doesn't exist.
+  // A fact from a message the viewer can't read is still the team's (GET-985): explained in full,
+  // minus the quote it carries. Its sources below are cited by label, never quoted (GET-244).
   const viewer = await derivedViewerForContext(supabase, ctx);
   if (viewer && isDerivedProperty(property)) {
     const src = await loadDerivedSources(supabase, workspaceId, [claim]);
-    if (!canReadDerived(claim, src, viewer)) return null;
+    if (!canReadDerived(claim, src, viewer)) claim = redactDerivedText(claim);
   }
 
   const ids: string[] = Array.isArray(claim.supporting_observation_ids)

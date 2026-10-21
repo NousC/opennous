@@ -663,9 +663,8 @@ async function detectSignals(supabase, workspaceId, { now, lookbackDays, deps })
     if (error) throw new Error(`accounts read failed: ${error.message}`);
     for (const c of data ?? []) names.set(c.id, c.name ?? null);
   }
-  // Team-readable only (GET-253): the trigger's words go into a draft, its rationale and the
-  // ledger, and GET /api/actions shows a draft to every member. A risk read out of one rep's
-  // private email thread must not surface in a teammate's inbox, so it never fires here.
+  // Read as the whole team (GET-985): GET /api/actions shows a draft to every member, so a risk read
+  // out of one rep's private thread fires on its fact, and its quote comes back stripped.
   const onAccounts = await deps.filterDerivedForViewer(supabase, workspaceId, rows.filter((r) => names.has(r.entity_id)), TEAM_VIEWER);
   return [
     ...signalFirings(onAccounts, 'deal_risk', { now, lookbackDays, names }),

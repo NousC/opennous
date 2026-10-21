@@ -174,7 +174,7 @@ observationsLogRouter.get('/', verifySupabaseAuth, async (req, res) => {
     // A message's content only for the people who were on it (GET-244). This feed showed every
     // teammate's email snippet to anyone on the team.
     const viewer = await requestMessageViewer(supabase, req, workspace_id);
-    // And what was read out of a message (an action item, a fact) follows it (GET-253).
+    // What was read out of a message (an action item, a fact) is shared; its quote follows the message (GET-985).
     const visibleObs = await filterDerivedForViewer(supabase, workspace_id,
       await redactObservationRowsForViewer(supabase, workspace_id, obsData || [], viewer), viewer);
     const visibleClaims = await filterDerivedForViewer(supabase, workspace_id, claimRes.data || [], viewer);
