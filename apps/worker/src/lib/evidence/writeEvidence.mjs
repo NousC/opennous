@@ -14,7 +14,7 @@ import { pushEvidenceFile } from './pushEvidence.mjs';
 // and we do NOT scatter it into vault files. So the writer is gated to API-plan workspaces.
 // Cached per workspace (5-min TTL) so it's not a plan lookup on every single touch.
 const _planCache = new Map();   // workspaceId -> { planId, at }
-async function isApiPlanWorkspace(supabase, workspaceId) {
+export async function isApiPlanWorkspace(supabase, workspaceId) {
   const hit = _planCache.get(workspaceId);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.planId === 'api';
   let planId = 'free';
