@@ -86,7 +86,10 @@ export function EntityAvatar({
   return (
     <span className={`inline-flex items-center justify-center overflow-hidden bg-muted text-muted-foreground ${className}`}>
       {src
-        ? <img src={src} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" onError={() => setStep((s) => s + 1)} />
+        ? <img src={src} alt="" referrerPolicy="no-referrer" className="h-full w-full object-cover" onError={() => setStep((s) => s + 1)}
+            // Google answers a domain it has no logo for with a tiny default globe, not an error: an image
+            // under 32px is no logo, so the initials come back (the same rule as the sidebar's Space mark).
+            onLoad={(e) => { if (src.includes("favicon") && e.currentTarget.naturalWidth < 32) setStep((s) => s + 1); }} />
         : <span className={textClassName}>{initials}</span>}
     </span>
   );
