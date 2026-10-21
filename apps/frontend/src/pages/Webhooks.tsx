@@ -25,6 +25,8 @@ interface WebhookUrl {
   active?: boolean;
   // Purely user-added (removable), vs. backed by a live integration.
   manual?: boolean;
+  /** False for a source only connecting can set up (PostHog). */
+  addable?: boolean;
 }
 
 // Nicer labels for the few sources whose slug doesn't title-case cleanly.
@@ -34,6 +36,7 @@ const SOURCE_LABELS: Record<string, string> = {
   emailbison: "EmailBison",
   heyreach: "HeyReach",
   linkedin: "LinkedIn",
+  posthog: "PostHog",
 };
 const label = (s: string) => SOURCE_LABELS[s] ?? s.replace(/_/g, " ");
 
@@ -180,6 +183,15 @@ const WEBHOOK_GUIDES: Record<string, WebhookGuide> = {
       { source_event: "BOOKING_RESCHEDULED", nous_activity: "meeting_rescheduled" },
     ],
     docsUrl: "https://docs.opennous.cloud/providers/cal-com",
+  },
+
+  posthog: {
+    mode: "auto",
+    modeNote: "Set up automatically when you connected: we created an HTTP Webhook destination called OpenNous in your PostHog project, signed with a secret only this workspace knows. It sends your signup event and your key events as they happen. Change which events in Integrations → PostHog → Edit events. Usage is also read once a day, so nothing is lost if a delivery is missed.",
+    events: [
+      { source_event: "your signup event (signed_up)", nous_activity: "signed_up, the person and their account" },
+      { source_event: "your key events", nous_activity: "product event (feature adopted, automations)" },
+    ],
   },
 
   granola: {
@@ -733,7 +745,8 @@ export default function Webhooks({ embedded = false }: { embedded?: boolean } = 
   // under "Add" — a source with no integration behind it yet (e.g. RB2B) or one you want
   // to surface before connecting.
   const activeUrls = urls.filter(u => u.active);
-  const available = urls.filter(u => !u.active);
+  // A connect-only source (PostHog) is never offered here: its webhook needs the connection's secret.
+  const available = urls.filter(u => !u.active && u.addable !== false);
 
   const addButton = (
     <Popover open={addOpen} onOpenChange={setAddOpen}>

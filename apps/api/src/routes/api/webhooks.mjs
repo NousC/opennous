@@ -21,9 +21,13 @@ const WEBHOOK_PATHS = {
   calendly:   (b, w) => `${b}/inbound/calendly/${w}`,
   cal_com:    (b, w) => `${b}/inbound/cal_com/${w}`,
   granola:    (b, w) => `${b}/inbound/granola/${w}`,
+  posthog:    (b, w) => `${b}/inbound/posthog/${w}`,
 };
 const WEBHOOK_SOURCES = Object.keys(WEBHOOK_PATHS);
-const VALID_SOURCES = WEBHOOK_SOURCES;
+// PostHog's destination carries the connection's secret, which only connecting creates (GET-751):
+// it is shown here once connected and can never be added by hand.
+const CONNECT_ONLY = new Set(['posthog']);
+const VALID_SOURCES = WEBHOOK_SOURCES.filter(s => !CONNECT_ONLY.has(s));
 
 // GET /api/webhooks/subscriptions
 webhooksRouter.get('/subscriptions', async (req, res) => {
@@ -162,6 +166,7 @@ webhooksRouter.get('/urls', async (req, res) => {
       }
       if (name === 'lemlist'  && creds.webhook_id)                proven.add('lemlist');
       if (name === 'granola'  && creds.webhook_id)                proven.add('granola');
+      if (name === 'posthog'  && creds.hog_function_id)           proven.add('posthog');
     }
   } catch { /* fall through */ }
 
@@ -208,6 +213,7 @@ webhooksRouter.get('/urls', async (req, res) => {
       // Purely user-added (no integration behind it, no events yet) — so it can be
       // removed from the page. Connection/event-backed rows can't be "removed" here.
       manual: subscribed.has(entry.source) && !connected.has(entry.source) && !proven.has(entry.source) && !last,
+      addable: !CONNECT_ONLY.has(entry.source),
     };
   });
 
