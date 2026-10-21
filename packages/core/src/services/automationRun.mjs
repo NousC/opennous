@@ -1298,8 +1298,12 @@ function textToHtml(text) {
  * so the preview is the email, not a picture of one (GET-664).
  */
 export async function composeAutomationEmail(automation, doc, { stage = null, at = null, ctx = null } = {}) {
-  // To first, the rest Cc — one thread, so a reply-all reaches everyone (GET-426).
-  const [to, ...cc] = String(automation.destination_target ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  // To first, the rest Cc — one thread, so a reply-all reaches everyone (GET-426). The email
+  // step's own people when it names them (GET-999): destination_target is the job's FIRST
+  // destination, so a Slack step before the email would make it the recipient.
+  const own = emailStep(automation)?.config;
+  const people = String(own?.to ?? '').trim() ? [own.to, own.cc].map(x => String(x ?? '').trim()).filter(Boolean).join(',') : automation.destination_target;
+  const [to, ...cc] = String(people ?? '').split(',').map(s => s.trim()).filter(Boolean);
 
   const appUrl = (process.env.APP_URL || 'https://app.opennous.cloud').replace(/\/$/, '');
   const link = `${appUrl}/pages/${doc.id}`;

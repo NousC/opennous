@@ -51,7 +51,7 @@ import { faviconUrl } from "@/lib/externalImages";
 // Colours stay deliberately quiet — grey ink on our warm near-white surface — so
 // the content, not the chrome, carries the weight. The rail collapses to an icon
 // strip via the top-left toggle; the choice sticks per browser.
-type NavItem = { title: string; url: string; icon: React.ElementType; end?: boolean; children?: NavItem[] };
+type NavItem = { title: string; url: string; icon: React.ElementType; end?: boolean; children?: NavItem[]; action?: React.ReactNode };
 
 // PEOPLE IS NOT A DESTINATION (GET-426). It was a nav row whose list view rendered the
 // Accounts page — the only real thing behind it was /people/:id, and you reach a person the
@@ -244,12 +244,12 @@ export function AppSidebar() {
   const renderOpenItem = (item: NavItem, activeOverride?: boolean, lead?: React.ReactNode) => {
     const active = activeOverride ?? isItemActive(item.url, item.end);
     return (
-      <li key={item.title}>
+      <li key={item.url} className={item.action && !collapsed ? "group relative" : undefined}>
         {withTip(
           <NavLink
             to={item.url}
             end={item.end || item.url === "/"}
-            className={`${rowBase} ${rowPad} ${active ? activeBg : idleBg}`}
+            className={`${rowBase} ${rowPad} ${item.action && !collapsed ? "pr-8" : ""} ${active ? activeBg : idleBg}`}
             activeClassName=""
           >
             {lead && !collapsed ? lead : (
@@ -259,6 +259,8 @@ export function AppSidebar() {
           </NavLink>,
           item.title
         )}
+        {/* A row's own actions (a RevBox's ⋯ menu, GET-997), on the right edge, shown on hover. */}
+        {item.action && !collapsed && <div className="absolute right-1 top-[3px]">{item.action}</div>}
         {item.children && !collapsed && (active || item.children.some((c) => isItemActive(c.url, c.end))) && (
           <ul className="mt-0.5 flex flex-col gap-0.5 pl-[24px]">
             {item.children.map((child) => {

@@ -141,3 +141,19 @@ test('email preview: the AI\'s words in the body, nothing attached', async () =>
   assert.equal(out.email.text, 'Signed for 12 locations.\n\nNext\nKickoff Monday.');
   assert.equal(out.written, true);
 });
+
+// GET-999: the email step's own people, not the job's first destination. A job that posts to
+// Slack and then emails someone used to mail the Slack channel's name.
+import { composeAutomationEmail } from '../dist/services/automationRun.mjs';
+test('an email step after a Slack step goes to its own to and cc', async () => {
+  const automation = { destination: 'slack', destination_target: 'deals', steps: [
+    { id: 'post', type: 'slack', config: { channel: 'deals' } },
+    { id: 'mail', type: 'email', config: { to: 'riley@harborline.example', cc: 'sam@harborline.example' } },
+  ] };
+  const mail = await composeAutomationEmail(automation, { id: 'doc1', title: 'Corrigan Analytics — closed_won' }, { stage: 'closed_won' });
+  assert.equal(mail.to, 'riley@harborline.example');
+  assert.deepEqual(mail.cc, ['sam@harborline.example']);
+  // A legacy email automation with no step keeps reading its destination column.
+  const legacy = await composeAutomationEmail({ destination: 'email', destination_target: 'a@x.example, b@x.example', steps: [] }, { id: 'doc1', title: 'X' });
+  assert.equal(legacy.to, 'a@x.example'); assert.deepEqual(legacy.cc, ['b@x.example']);
+});

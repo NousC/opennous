@@ -74,7 +74,7 @@ export interface NavGroupProps {
   tier: string;
   collapsed: boolean;
   sectionLabel: (text: string, fold?: { open: boolean; toggle: () => void }, action?: ReactNode) => ReactNode;
-  renderItem: (item: { title: string; url: string; icon: ElementType }) => ReactNode;
+  renderItem: (item: { title: string; url: string; icon: ElementType; action?: ReactNode }) => ReactNode;
   withTip: (node: ReactNode, label: string) => ReactNode;
 }
 
