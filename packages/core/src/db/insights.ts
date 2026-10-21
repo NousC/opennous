@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   INSIGHT_CATEGORIES, INSIGHT_CATEGORY_KEYS, insightCategoryLabel, insightCategoryPromptBlock, normalizeInsightCategory,
-  normalizeTeamCategory, teamInsightCategoryLabel,
+  normalizeTeamCategory, teamInsightCategoryLabel, HIDDEN_INSIGHT_STATUS_LIST,
 } from './insightCategories.js';
 import { detectIdentifier, resolveFocus } from './entities.js';
 import { loadInternalSpeakers } from './insightBoard.js';
@@ -650,7 +650,7 @@ export async function listInsightItems(
     let q = supabase
       .from('insight_items')
       .select(ITEM_COLS)
-      .eq('workspace_id', workspaceId).neq('status', 'source_removed');
+      .eq('workspace_id', workspaceId).not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST);
     if (opts.source) q = q.eq('source', opts.source);
     const { data, error } = await q
       .order('occurred_at', { ascending: false, nullsFirst: false })
@@ -680,7 +680,7 @@ export async function listUnclusteredInsightItems(
       .from('insight_items')
       .select(ITEM_COLS)
       .eq('workspace_id', workspaceId)
-      .neq('status', 'source_removed')
+      .not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST)
       .eq('source', source)
       .is('theme_id', null);
     if (category) q = q.eq('category', category);
@@ -712,7 +712,7 @@ export async function listInsightItemsByTheme(
         .from('insight_items')
         .select(`${ITEM_COLS}, theme_id`)
         .eq('workspace_id', workspaceId)
-        .neq('status', 'source_removed')
+        .not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST)
         .in('theme_id', batch)
         .order('id', { ascending: true })
         .range(from, from + INSIGHT_PAGE - 1);

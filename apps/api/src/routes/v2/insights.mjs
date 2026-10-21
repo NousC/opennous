@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  getSupabaseClient, getInsight, appendInsights, prepareAgentInsights, insightReadiness,
+  getSupabaseClient, getInsight, appendInsights, prepareAgentInsights, insightReadiness, HIDDEN_INSIGHT_STATUS_LIST,
   BOARD_LANES, INSIGHT_SUBTYPES, laneOfSubtype, boardTaxonomy, loadBusinessType,
   listInsightTags, companyNames, loadInternalSpeakers, isInternalSpeaker,
   detectIdentifier, resolveFocus, getEntity,
@@ -152,7 +152,8 @@ insightsV2Router.get('/', async (req, res) => {
     const fetchPage = async (from, to) => {
       let qb = supabase.from('insight_items').select(BOARD_COLS)
         .eq('workspace_id', workspaceId).eq('source', 'external')
-        .not('subtype', 'is', null).not('company_id', 'is', null);
+        .not('subtype', 'is', null).not('company_id', 'is', null)
+        .not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST);
       if (q.subtype) qb = qb.eq('subtype', q.subtype);
       else if (q.lane) qb = qb.in('subtype', INSIGHT_SUBTYPES.filter((s) => s.lane === q.lane).map((s) => s.key));
       if (q.since) qb = qb.gte('occurred_at', q.since);

@@ -374,6 +374,14 @@ test('insights: GET returns placed, account-tied insights newest first with the 
   assert.equal(bug.label, 'Bug');
 });
 
+test('insights: a retired duplicate, or one whose source was removed, is not listed (0.7)', async () => {
+  seedBoard();
+  tables.insight_items.find((i) => i.id === 'i-bug').status = 'duplicate';
+  tables.insight_items.find((i) => i.id === 'i-old').status = 'source_removed';
+  const r = await call('GET', '/v2/insights');
+  assert.deepEqual(r.body.insights.map((i) => i.id), ['i-obj']);
+});
+
 test('insights: lane, subtype, since, focus and paging filter the board', async () => {
   seedBoard();
   const sales = await call('GET', '/v2/insights?lane=sales');

@@ -65,3 +65,31 @@ test('two copies inside one read become one', () => {
   const items = [{ category: 'product', content: 'Slack digests' }, { category: 'product', content: 'Digests in Slack' }];
   assert.equal(newInsights(items, [v(1, 0), v(0.99, 0.05)], [], []).length, 1);
 });
+
+// ── Phase 0.7: repeats already stored ────────────────────────────────────────
+import { storedRepeats } from '../src/signals/insights.mjs';
+
+const row = (id, o) => ({ id, workspace_id: 'w1', source: 'external', category: 'product', source_ref: 'source://gmail/t1', company_id: 'c1', created_at: `2026-10-1${id.length}T00:00:00Z`, ...o });
+
+test('stored repeats from one source collapse to the oldest, chaining through rewordings', () => {
+  const rows = [row('a', { created_at: '2026-10-12T05:00:00Z' }), row('b', { created_at: '2026-10-12T06:00:00Z' }), row('c', { created_at: '2026-10-12T07:00:00Z' })];
+  // a~b and b~c, but a and c are not close: still one point, reworded a little each time.
+  const vec = { a: [1, 0, 0], b: [0.9, 0.44, 0], c: [0.6, 0.8, 0] };
+  const out = storedRepeats(rows, (id) => vec[id]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].keep.id, 'a');
+  assert.deepEqual(out[0].repeats.map((r) => r.id), ['b', 'c']);
+});
+
+test('the same point from another account, source or category is not a repeat', () => {
+  const rows = [
+    row('a'), row('b', { source_ref: 'source://gmail/t2', company_id: 'c2' }),
+    row('c', { category: 'market' }), row('d', { source_ref: null, company_id: null }), row('e', { source_ref: null, company_id: null }),
+  ];
+  assert.deepEqual(storedRepeats(rows, () => [1, 0]), []);
+});
+
+test('with no ref, the account stands in for the source', () => {
+  const rows = [row('a', { source_ref: null }), row('bb', { source_ref: null })];
+  assert.equal(storedRepeats(rows, () => [1, 0]).length, 1);
+});

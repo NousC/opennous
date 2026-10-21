@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getInternalEntityIds, getInternalIdentities } from './teamMembers.js';
 import { loadOwnDomains } from './workspaceDomains.js';
+import { HIDDEN_INSIGHT_STATUS_LIST } from './insightCategories.js';
 import { emailDomain, isFreeEmailDomain } from '../utils/identity.js';
 
 // The Insights board — every customer insight under exactly one button, grouped by the concrete
@@ -386,7 +387,7 @@ export async function listUnsortedInsightItems(supabase: SupabaseClient, workspa
     const { data, error } = await supabase.from('insight_items')
       .select('id, statement, quote, speaker, speaker_id, contact_id, occurred_at, source_ref, subtype, tag_ids, company_id, category')
       .eq('workspace_id', workspaceId).eq('source', 'external').is('sorted_at', null)
-      .neq('status', 'source_removed')
+      .not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST)
       .order('created_at', { ascending: true }).range(from, from + PAGE - 1);
     if (error) throw error;
     out.push(...((data as BoardItem[]) ?? []));
@@ -402,7 +403,7 @@ export async function listBoardItems(supabase: SupabaseClient, workspaceId: stri
     const { data, error } = await supabase.from('insight_items')
       .select('id, statement, quote, speaker, speaker_id, contact_id, occurred_at, source_ref, subtype, tag_ids, company_id, category')
       .eq('workspace_id', workspaceId).eq('source', 'external').not('subtype', 'is', null)
-      .neq('status', 'source_removed')
+      .not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST)
       .order('id').range(from, from + PAGE - 1);
     if (error) throw error;
     out.push(...((data as BoardItem[]) ?? []));

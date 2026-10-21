@@ -50,6 +50,40 @@ export function newInsights(items, itemVecs, existing, existingVecs, threshold =
   return out;
 }
 
+/**
+ * Stored insights that repeat an older one (Phase 0.7): the rule newInsights applies to new ones,
+ * run over what is already filed. Same workspace, source, category and source ref (or, with no
+ * ref, the same account), and close to ANY member of the group, as the live check compares a new
+ * insight with everything from its source. The oldest of a group is kept. A row with neither a ref
+ * nor an account has nothing to repeat within, so it is left alone. Pure: `vecOf(id)` → vector.
+ * Returns [{ keep, repeats: [row] }].
+ */
+export function storedRepeats(rows, vecOf, threshold = INSIGHT_REPEAT_SIMILARITY) {
+  const groups = new Map();
+  for (const r of rows ?? []) {
+    const anchor = r.source_ref ? `ref:${r.source_ref}` : r.company_id ? `acct:${r.company_id}` : null;
+    if (!anchor) continue;
+    const k = `${r.workspace_id}|${r.source}|${r.category}|${anchor}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  const out = [];
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
+    const parent = g.map((_, i) => i);
+    const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    for (let i = 0; i < g.length; i++) for (let j = 0; j < i; j++) {
+      const a = vecOf(g[i].id), b = vecOf(g[j].id);
+      if (a && b && cosine(a, b) >= threshold) { const x = find(i), y = find(j); if (x !== y) parent[Math.max(x, y)] = Math.min(x, y); }
+    }
+    const by = new Map();
+    g.forEach((r, i) => { const k = find(i); if (!by.has(k)) by.set(k, []); by.get(k).push(r); });
+    for (const [keep, ...repeats] of by.values()) if (repeats.length) out.push({ keep, repeats });
+  }
+  return out;
+}
+
 async function withoutRepeats(supabase, workspaceId, items, sourceRef) {
   if (!items.length) return items;
   const { data: existing } = sourceRef

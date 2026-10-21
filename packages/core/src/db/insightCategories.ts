@@ -163,3 +163,10 @@ export function teamInsightCategoryLabel(key: string): string {
 export function teamInsightCategoryPromptBlock(): string {
   return TEAM_INSIGHT_CATEGORIES.map(c => `- ${c.key} — ${c.description} e.g. "${c.example}"`).join('\n');
 }
+
+// Statuses no read shows or counts: the source was deleted (a Slack message removed), or the insight
+// repeats an older one from the same source (Phase 0.7). Rows are kept, never deleted, so either can
+// be undone by setting the status back.
+export const HIDDEN_INSIGHT_STATUSES = ['source_removed', 'duplicate'] as const;
+/** For `.not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST)`. */
+export const HIDDEN_INSIGHT_STATUS_LIST = `(${HIDDEN_INSIGHT_STATUSES.join(',')})`;
