@@ -524,6 +524,17 @@ test('insights: a member key cannot write onto an account it cannot see, and lea
   assert.equal(tables.insight_items.length, 0);
 });
 
+test('insights: GET says why there is nothing yet: no ICP, and where to set one up (0.5)', async () => {
+  const r = await call('GET', '/v2/insights');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.readiness.ready, false);
+  assert.equal(r.body.readiness.reason, 'no_icp');
+  assert.deepEqual(r.body.readiness.fix, { app: '/settings?section=context', mcp: 'set_icp', api: 'PUT /v2/icp' });
+  tables.foundations = [{ workspace_id: WS, kind: 'icp', title: 'ICP', body_md: 'We sell revenue infrastructure to B2B SaaS teams of 10 to 200 people who run sales on HubSpot and want one record per account.' }];
+  const ok = await call('GET', '/v2/insights');
+  assert.deepEqual(ok.body.readiness, { ready: true, reason: null, detail: null, fix: null });
+});
+
 test('insights: a service business reads the service labels', async () => {
   seedBoard();
   tables.workspaces[0].business_type = 'service';

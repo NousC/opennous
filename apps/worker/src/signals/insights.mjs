@@ -7,7 +7,7 @@
 // Insights docs (never onto a contact's account). Runs once per call.
 
 import { setUser } from 'useleak';
-import { appendInsights, buildInsightExtractionPrompt, parseInsightsJson, loadWorkspaceContext, buildTeamInsightExtractionPrompt, appendTeamInsights, listInsightTopics, formatWatchTopics, embedBatch } from '@nous/core';
+import { appendInsights, buildInsightExtractionPrompt, parseInsightsJson, loadWorkspaceContext, listInsightTopics, formatWatchTopics, embedBatch } from '@nous/core';
 import { read, parseArray, acceptsArray } from '../noema/read.mjs';
 import { externalEvidence } from '../noema/externalEvidence.mjs';
 import { groundQuote, spokenByOurSide } from '../noema/grounding.mjs';
@@ -158,28 +158,6 @@ export async function extractCallInsights({ supabase, workspaceId, transcript, s
   } catch (err) {
     console.warn('[INSIGHT_EXTRACTOR_ERROR]', err.message);
     onResult?.({ ok: false, reason: /unavailable|402|429|5\d\d/i.test(String(err?.message)) || err?.name === 'ModelUnavailableError' ? 'unavailable' : 'error' });
-    return 0;
-  }
-}
-
-/**
- * Extract TEAM insights from an INTERNAL call (all attendees on our side — a founders'
- * sync, a standup) and append them to the structured store as source='team'. This is the
- * counterpart to extractCallInsights: no prospect, no attribution to who-we-are, just what
- * the team DECIDED, what is BLOCKING them, and what they LEARNED. Returns the count written.
- */
-export async function extractTeamInsights({ supabase, workspaceId, transcript, occurredAt, sourceRef, sourceSystem }) {
-  try {
-    if (!transcript || transcript.length < 200) return 0;
-    setUser({ id: String(workspaceId) });
-    const watchTopics = formatWatchTopics(await listInsightTopics(supabase, workspaceId, 'team').catch(() => []), 'team');
-    const result = await readInsights(buildTeamInsightExtractionPrompt(transcript, watchTopics), supabase, workspaceId);
-    if (!result.ok) return 0;
-    const items = result.value;
-    if (!items.length) return 0;
-    return await appendTeamInsights(supabase, workspaceId, items.slice(0, 8), { occurredAt, sourceRef, sourceSystem });
-  } catch (err) {
-    console.warn('[TEAM_INSIGHT_EXTRACTOR_ERROR]', err.message);
     return 0;
   }
 }

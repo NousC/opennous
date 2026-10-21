@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  getSupabaseClient, getInsight, appendInsights, prepareAgentInsights,
+  getSupabaseClient, getInsight, appendInsights, prepareAgentInsights, insightReadiness,
   BOARD_LANES, INSIGHT_SUBTYPES, laneOfSubtype, boardTaxonomy, loadBusinessType,
   listInsightTags, companyNames, loadInternalSpeakers, isInternalSpeaker,
   detectIdentifier, resolveFocus, getEntity,
@@ -102,7 +102,8 @@ const BOARD_COLS = 'id, statement, quote, speaker, speaker_id, contact_id, occur
 //   ?since=<ISO date>   ?limit (default 50, max 200)   ?offset
 // Same membership as the app's board: placed external insights, tied to an account, never a line
 // one of our own people said. Newest first. `taxonomy` carries the labels in this workspace's own
-// terms (a service business sees Delivery → Missed results, not Product → Bug).
+// terms (a service business sees Delivery → Missed results, not Product → Bug). `readiness` says
+// whether extraction runs at all (no ICP: it doesn't, and says where to set one up).
 insightsV2Router.get('/', async (req, res) => {
   try {
     const supabase = getSupabaseClient();
@@ -134,13 +135,14 @@ insightsV2Router.get('/', async (req, res) => {
       focusEntity = entity;
     }
 
-    let internal, tags, bt, visible;
+    let internal, tags, bt, visible, readiness;
     try {
-      [internal, tags, bt, visible] = await Promise.all([
+      [internal, tags, bt, visible, readiness] = await Promise.all([
         loadInternalSpeakers(supabase, workspaceId),
         listInsightTags(supabase, workspaceId),
         loadBusinessType(supabase, workspaceId),
         viewerVisibleAccountSet(supabase, workspaceId, viewerId, { isAdmin }),
+        insightReadiness(supabase, workspaceId),
       ]);
     } catch (e) {
       if (/insight_tags/.test(String(e?.message))) return res.status(503).json({ error: 'insights_board_not_ready' });
@@ -182,6 +184,8 @@ insightsV2Router.get('/', async (req, res) => {
       limit: q.limit,
       offset: q.offset,
       has_more: window.has_more,
+      // Why there may be nothing here: extraction waits for an ICP. A page shows the fix, not a blank.
+      readiness,
       taxonomy: {
         lanes: tax.lanes.map(({ key, label }) => ({ key, label })),
         subtypes: tax.subtypes.map(({ key, lane, label, definition }) => ({ key, lane, label, definition })),

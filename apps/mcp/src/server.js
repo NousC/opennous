@@ -1871,7 +1871,10 @@ export function createServer() {
         else if (i.speaker) lines.push(`    ${i.speaker}`);
         if (i.source_ref) lines.push(`    ref ${i.source_ref}`);
       }
-      if (!items.length) lines.push("No placed insights match. New insights reach the board after the nightly sort.");
+      const rd = r.readiness;
+      if (rd && !rd.ready) {
+        lines.push(`Not extracting insights yet: ${rd.detail} Set the ICP with ${rd.fix?.mcp ?? "set_icp"} (or in the app at ${rd.fix?.app ?? "/settings?section=context"}).`);
+      } else if (!items.length) lines.push("No placed insights match. New insights reach the board after the nightly sort.");
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
   );

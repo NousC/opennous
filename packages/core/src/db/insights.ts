@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   INSIGHT_CATEGORIES, INSIGHT_CATEGORY_KEYS, insightCategoryLabel, insightCategoryPromptBlock, normalizeInsightCategory,
-  TEAM_INSIGHT_CATEGORY_KEYS, normalizeTeamCategory, teamInsightCategoryPromptBlock, teamInsightCategoryLabel,
+  normalizeTeamCategory, teamInsightCategoryLabel,
 } from './insightCategories.js';
 import { detectIdentifier, resolveFocus } from './entities.js';
 import { loadInternalSpeakers } from './insightBoard.js';
@@ -202,6 +202,31 @@ export async function loadWorkspaceContext(
   const text = parts.join('\n\n').trim();
   // Guard: a stub ICP that is just the empty template scaffold is not real context.
   return text.length >= 80 ? text : null;
+}
+
+export interface InsightReadiness {
+  /** Whether extraction runs on this workspace's calls and emails. */
+  ready: boolean;
+  reason: 'no_icp' | null;
+  detail: string | null;
+  /** Where to set it up: the app's Context settings, the MCP tool, the REST route. */
+  fix: { app: string; mcp: string; api: string } | null;
+}
+
+/**
+ * Why a workspace has no insights, when the answer is setup rather than silence. Extraction skips
+ * every source until the workspace says who WE are (loadWorkspaceContext), so a new workspace saw
+ * an empty page with no reason. Read live, so it is never stale: the moment an ICP is saved, ready.
+ */
+export async function insightReadiness(supabase: SupabaseClient, workspaceId: string): Promise<InsightReadiness> {
+  const context = await loadWorkspaceContext(supabase, workspaceId).catch(() => null);
+  if (context) return { ready: true, reason: null, detail: null, fix: null };
+  return {
+    ready: false,
+    reason: 'no_icp',
+    detail: 'Insights start once your ICP says who you sell to and what you sell. Until then calls and emails are not read for insights.',
+    fix: { app: '/settings?section=context', mcp: 'set_icp', api: 'PUT /v2/icp' },
+  };
 }
 
 /** Parse the model's JSON array of insights out of raw text. Tolerant of prose around it. */
@@ -724,28 +749,6 @@ export async function setInsightItemStatus(
   return (data as InsightItem) || null;
 }
 
-/** Append team insights (internal calls) to the structured store. Team-only. */
-export async function appendTeamInsights(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  items: ExtractedInsight[],
-  opts: { occurredAt?: string | null; sourceRef?: string | null; sourceSystem?: string | null } = {},
-): Promise<number> {
-  const rows: NewInsightItem[] = [];
-  for (const it of items) {
-    const cat = normalizeTeamCategory(it.category);
-    if (!cat || !it?.content || it.content.trim().length < 8) continue;
-    rows.push({
-      source: 'team', category: cat, statement: it.content,
-      quote: it.quote ?? null, speaker: it.speaker ?? null, occurred_at: opts.occurredAt ?? null,
-      // The internal-call path had the same hole as the external one: eight verbatim quotes
-      // from a founders' sync, and no way to reach the call they came out of.
-      source_ref: opts.sourceRef ?? null, source_system: opts.sourceSystem ?? null,
-    });
-  }
-  return rows.length ? upsertInsightItems(supabase, workspaceId, rows) : 0;
-}
-
 // ── Synthesis: insight_themes ────────────────────────────────────────────────
 //
 // Hundreds of raw insights are noise; the recurring patterns across them are the signal. A
@@ -818,7 +821,7 @@ export async function listInsightThemes(
 
 // ── Durable themes: open, route, refresh ─────────────────────────────────────
 //
-// What replaced replaceInsightThemes. A theme is now a row that persists and accumulates:
+// What replaced replaceInsightThemes (deleted every theme on each rebuild, orphaning their status rows; removed). A theme is now a row that persists and accumulates:
 // new insights are ROUTED into it, and it keeps its id — which is what reporting_insight_state
 // (status + notes, keyed by that id) needs in order to survive a rebuild. It never did before.
 
@@ -941,46 +944,6 @@ export async function refreshThemeAggregates(
     if (data) out.push(data as InsightTheme);
   }
   return out.filter(t => !t.retired_at);
-}
-
-/**
- * Replace all themes for (workspace, source) with a fresh synthesis.
- *
- * @deprecated 2026-09-20 — DO NOT CALL. This deletes every theme and re-inserts with new
- * uuids, which orphans every reporting_insight_state row (status + notes are keyed by the
- * theme id). Measured before the fix: OpenNous had 12 status rows and 12 orphans — a 100%
- * loss on every rebuild, and a rebuild fired on every single new insight.
- *
- * Use openInsightThemes + assignInsightsToTheme + refreshThemeAggregates instead, which
- * let a theme keep its identity. Kept only so the one-time bootstrap in the worker can
- * clear a workspace's pre-fix themes before the first durable build.
- */
-export async function replaceInsightThemes(
-  supabase: SupabaseClient,
-  workspaceId: string,
-  source: InsightSource,
-  themes: NewInsightTheme[],
-  buildKey: string,
-): Promise<InsightTheme[]> {
-  await supabase.from('insight_themes').delete().eq('workspace_id', workspaceId).eq('source', source);
-  if (!themes.length) return [];
-  const now = new Date().toISOString();
-  const rows = themes.map((t, i) => ({
-    workspace_id: workspaceId,
-    source,
-    category: t.category ?? null,
-    title: t.title,
-    takeaway: t.takeaway ?? null,
-    item_ids: t.item_ids,
-    item_count: t.item_ids.length,
-    rank: t.rank ?? i,
-    build_key: buildKey,
-    status: (INSIGHT_STATUSES as readonly string[]).includes(t.status || '') ? t.status : 'new',
-    updated_at: now,
-  }));
-  const { data, error } = await supabase.from('insight_themes').insert(rows).select(THEME_COLS);
-  if (error) throw error;
-  return (data as InsightTheme[]) || [];
 }
 
 /**
@@ -1136,36 +1099,6 @@ export async function setInsightThemeStatus(
   return (data as InsightTheme) || null;
 }
 
-/**
- * The extractor prompt for an INTERNAL / team call. Unlike the customer prompt, both
- * sides are "us" — we are mining what the TEAM decided, what is blocking them, and what
- * they learned. No prospect, no ICP attribution.
- */
-export function buildTeamInsightExtractionPrompt(transcript: string, watchTopics?: string | null): string {
-  return `You are mining an INTERNAL team call (founders / colleagues, no customer present) for durable, useful takeaways for the team itself. Read the WHOLE transcript first.
-
-Capture only what matters weeks from now, in one of three kinds:
-${teamInsightCategoryPromptBlock()}
-
-${watchTopics ? `ALSO specifically watch for these topics the team asked us to track — capture any that come up:\n${watchTopics}\n\n` : ''}Aim for a BALANCED read — a team call is not only decisions. Actively hunt for LEARNINGS (something you figured out, realized, or now understand differently — about the product, the market, a tool, a process) and BLOCKERS (what is stuck, at risk, or slowing you down), not just decisions. If a call surfaced a realization or a problem, capture it as a learning or blocker; do not force it into a decision.
-
-Do NOT capture: small talk, scheduling, restating an agenda, or anything a customer said (this is an internal call). Do not invent — only what was actually said.
-
-Transcript: "${transcript}"
-
-Each item must be: SPECIFIC (names the actual decision/blocker/learning, not a vague theme) and DURABLE (still useful later). For a blocker that threatens a named deal or account, say which in the content.
-
-Tag each with:
-- "category": exactly one of: ${TEAM_INSIGHT_CATEGORY_KEYS.join(', ')}.
-- "content": ONE tight sentence, MAX ~20 words. Assert it plainly.
-- "quote": the single most telling verbatim fragment from the call, MAX ~20 words. Use "" if none fits.
-- "speaker": the NAME of who said it, or "" if unclear.
-
-Output ONLY the raw JSON array — no code fences, no commentary. Begin with [ and end with ]:
-[{"category":"<key>","content":"...","quote":"...","speaker":"..."}]
-If nothing meaningful: []`;
-}
-
 // ── Insight extraction topics (Settings → Insights) ──────────────────────────
 //
 // The watch-topics that steer extraction, per (source, category). Defaults mirror the
@@ -1254,9 +1187,17 @@ export function formatWatchTopics(topics: InsightTopic[], source: InsightSource)
   const enabled = topics.filter(t => t.source === source && t.enabled);
   if (!enabled.length) return null;
   const byCat = new Map<string, string[]>();
-  for (const t of enabled) { if (!byCat.has(t.category)) byCat.set(t.category, []); byCat.get(t.category)!.push(t.keyword); }
+  // A topic added in Settings has no category ('general'): it is a keyword to watch for in any of
+  // them. Printed under its raw key it read as a category, and an insight the model filed there was
+  // dropped as unknown.
+  const normalize = source === 'team' ? normalizeTeamCategory : normalizeInsightCategory;
+  for (const t of enabled) {
+    const cat = normalize(t.category) ?? '';
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat)!.push(t.keyword);
+  }
   const labelFn = source === 'team' ? teamInsightCategoryLabel : insightCategoryLabel;
-  return [...byCat.entries()].map(([cat, kws]) => `- ${labelFn(cat)}: ${kws.join(', ')}`).join('\n');
+  return [...byCat.entries()].map(([cat, kws]) => `- ${cat ? labelFn(cat) : 'Any category'}: ${kws.join(', ')}`).join('\n');
 }
 
 export { INSIGHT_CATEGORIES, INSIGHT_CATEGORY_KEYS, insightCategoryLabel };
