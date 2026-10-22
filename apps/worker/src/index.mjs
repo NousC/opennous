@@ -54,6 +54,7 @@ import { runPipelineStageStats } from './workers/pipelineStageStats.mjs';
 import { runInsightThemes } from './workers/insightThemes.mjs';
 import { runInsightBoard } from './workers/insightBoard.mjs';
 import { runInsightPatterns } from './workers/insightPatterns.mjs';
+import { runInsightInterpretations } from './workers/insightInterpretations.mjs';
 import { runEmailThreadsDaily } from './workers/emailThreadsDaily.mjs';
 import { runReadLedger } from './workers/readLedger.mjs';
 import { computeClaimPatternsCron } from './computeClaimPatterns.mjs';
@@ -542,6 +543,13 @@ console.log('[WORKER] Insights board — daily at 05:30 UTC');
 cron.schedule('25 * * * *', () => runInsightPatterns().catch(err =>
   console.error('[INSIGHT_PATTERNS] failed', err.message)));
 console.log('[WORKER] Insight engine — hourly at :25');
+
+// ── Insight interpretations — daily ─────────────────────────────────────────
+// What each insight over its bar means for us (GET-1006), written at 5 accounts and again at 10,
+// 15, 20. See workers/insightInterpretations.mjs.
+cron.schedule('45 6 * * *', () => runInsightInterpretations().catch(err =>
+  console.error('[INSIGHT_INTERPRET] failed', err?.message ?? err)), { timezone: 'UTC' });
+console.log('[WORKER] Insight interpretations — daily at 06:45 UTC');
 
 // ── Lead reply classification — every 15 minutes ─────────────────────────────
 // Classifies inbound replies and graduates matched leads into People.

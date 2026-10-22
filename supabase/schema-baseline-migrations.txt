@@ -263,6 +263,7 @@
 2026_10_21_about_us_claims.sql
 2026_10_21_insight_patterns.sql
 2026_10_21_slack_dm_privacy.sql
+2026_10_22_insight_pattern_interpretations.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql

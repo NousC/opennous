@@ -40,6 +40,10 @@ export * from './db/insights.js';
 export * from './db/insightBoard.js';
 export * from './db/aboutUsClaims.js';
 export * from './db/insightEngine.js';
+export {
+  INTERPRET_MIN_ACCOUNTS, INTERPRET_STEP, interpretStep, registerCompanyContextSource, ourCompanyContext, buildInterpretationPrompt,
+  parseInterpretation, needsInterpretation, patternSources, interpretPattern, patternsToInterpret, INTERPRET_RETRY_DAYS,
+} from './db/insightInterpretation.mjs';
 export * from './db/flags.js';
 export * from './db/features.js';
 export * from './db/canonicalAxes.js';

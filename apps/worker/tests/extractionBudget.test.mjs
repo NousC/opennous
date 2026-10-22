@@ -23,5 +23,6 @@ test('the output budget leaves room to think and answer', () => {
   const message = buildActivitySignalsPrompt({ contactName: 'Dana Reyes', type: 'email_received', summary: 't' });
   assert.ok(message.maxTokens >= 1500, `message budget ${message.maxTokens}`);
   const deep = buildActivitySignalsPrompt({ contactName: 'Dana Reyes', type: 'meeting_held', summary: 't', maxFactsOverride: 40 });
-  assert.ok(deep.maxTokens <= 4000);
+  // At most 4,000 for the facts about them, plus the 800 the claims about us get (GET-969).
+  assert.ok(deep.maxTokens <= 4000 + 800, `deep budget ${deep.maxTokens}`);
 });

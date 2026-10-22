@@ -498,6 +498,8 @@ export interface PatternView {
   accounts: number; people: number; mentions: number;
   first_heard: string | null; last_heard: string | null; weeks: number[];
   accounts_last_30_days: number; accounts_prior_30_days: number; rising: boolean; emerged_at: string | null;
+  /** What it means for us and where it points (insightInterpretation.mjs), once written. */
+  interpretation: { meaning: string; direction: string | null; refs: string[]; account_count: number | null; written_at: string | null } | null;
 }
 
 export const patternView = (p: any): PatternView => {
@@ -509,6 +511,11 @@ export const patternView = (p: any): PatternView => {
     first_heard: p.first_heard_at ?? null, last_heard: p.last_heard_at ?? null, weeks: p.weeks ?? [],
     accounts_last_30_days: p.recent_accounts ?? 0, accounts_prior_30_days: p.prior_accounts ?? 0,
     rising: !!p.rising, emerged_at: p.emerged_at ?? null,
+    // Under its bar the reading no longer stands on enough accounts: not shown.
+    interpretation: p.interpretation_meaning && p.at_bar ? {
+      meaning: p.interpretation_meaning, direction: p.interpretation_direction ?? null, refs: p.interpretation_refs ?? [],
+      account_count: p.interpretation_account_count ?? null, written_at: p.interpreted_at ?? null,
+    } : null,
   };
 };
 
