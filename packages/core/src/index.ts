@@ -93,6 +93,7 @@ export * from './services/callReviewStore.js';
 export * from './db/workspaces.js';
 // Note: db/memories.ts removed in Phase 1 — superseded by db/notes.ts (claim-shaped).
 export * from './utils/identity.js';
+export * from './utils/photoUrl.js';
 export * from './utils/email.js';
 export * from './utils/linkedin.js';
 export * from './utils/encryption.js';

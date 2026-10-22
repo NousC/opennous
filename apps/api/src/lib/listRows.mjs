@@ -14,6 +14,7 @@
 
 import { dealWindowFilter, accountWindowFilter } from './dealListWindow.mjs';
 import { ownerFilter } from './ownerScope.mjs';
+import { isUsablePhotoUrl } from '@nous/core';
 
 /** Has this workspace been flattened yet? */
 export async function hasListRows(supabase, workspaceId, kind) {
@@ -306,7 +307,8 @@ export async function photosForPeople(supabase, workspaceId, personIds) {
       .in('entity_id', personIds.slice(i, i + ID_BATCH));
     for (const c of (data ?? []).sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))) {
       const url = typeof c.value === 'string' ? c.value : c.value?.value;
-      if (typeof url === 'string' && /^https:\/\//.test(url) && !byId.has(c.entity_id)) byId.set(c.entity_id, url);
+      // An expired LinkedIn link is no photo (GET-1010).
+      if (isUsablePhotoUrl(url) && !byId.has(c.entity_id)) byId.set(c.entity_id, url);
     }
   }
   return byId;

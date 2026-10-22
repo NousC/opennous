@@ -14,6 +14,7 @@ import { faviconUrl } from "@/lib/externalImages";
 import { AccountLogo } from "@/components/pipeline/DealBits";
 import { ForceCanvas, type CanvasLink, type CanvasNode } from "./ForceCanvas";
 import { useGraphApi } from "./graphApi";
+import { useDealPages } from "@/hooks/useDealPages";
 
 export type Lens = "account" | "person" | "deal";
 type NodeType = Lens;
@@ -194,6 +195,7 @@ function RecordPanel({ node, graph, claims, claimsLoading, setFocus }: {
   node: GNode; graph: Graph; claims: Claim[]; claimsLoading: boolean; setFocus: (id: string | null) => void;
 }) {
   const navigate = useNavigate();
+  const dealPages = useDealPages();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const t = TYPES[node.type];
 
@@ -259,8 +261,9 @@ function RecordPanel({ node, graph, claims, claimsLoading, setFocus }: {
 
   const dealAccount = node.type === "deal" ? m.account : null;
   const href = node.type === "account" ? `/accounts/${node.id}` : node.type === "person" ? `/people/${node.id}`
-    // An account's own (implied) deal opens as /deals/account, as on the account page.
-    : node.type === "deal" && dealAccount ? `/accounts/${dealAccount.id}/deals/${node.id.startsWith("implied:") ? "account" : node.id}` : null;
+    // An account's own (implied) deal opens as /deals/account, as on the account page. Only where
+    // deals have pages (the workspace plans on Cloud, GET-1008); elsewhere a deal does not open.
+    : node.type === "deal" && dealAccount && dealPages ? `/accounts/${dealAccount.id}/deals/${node.id.startsWith("implied:") ? "account" : node.id}` : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">

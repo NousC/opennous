@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { usablePhotoUrl } from '../utils/photoUrl.js';
 
 // v2 → v1 overlay — OPEN substrate (part of the context graph). Extracted from entities.ts to
 // keep the identity primitive pure, but it ships in the open context graph: it SURFACES the
@@ -110,7 +111,8 @@ export function applyContactOverlay(
     country:            pick(claims.country,                 row.country),
     phone:              pick(claims.phone,                   row.phone),
     company:            pick(claims.company,                 row.company),
-    photo_url:          pick(claims.photo_url,               row.photo_url),
+    // An expired LinkedIn link is no photo (GET-1010): the app falls back to Gravatar or initials.
+    photo_url:          usablePhotoUrl(pick(claims.photo_url,               row.photo_url)),
     // Pipeline / lifecycle
     pipeline_stage:     pick(claims.pipeline_stage,          row.pipeline_stage),
     stage_locked:       pick(claims.stage_locked,            row.stage_locked),

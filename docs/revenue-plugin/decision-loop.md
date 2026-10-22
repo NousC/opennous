@@ -121,7 +121,7 @@ webhook, so a recommendation acted on by hand — from a phone, from the Gmail w
 later — still closes the loop. This lane is not a fallback; for the draft-then-send-yourself
 flow it is the *primary* one.
 
-**Inside our app.** `studio.mjs` mirrors every draft into `ri_decisions` as it is created, and
+**Inside our app.** `studio.mjs` (Nous Cloud) mirrors every draft into `ri_decisions` as it is created, and
 `actions.mjs` closes it on approve or reject. The approve handler is the one place in the
 product holding *both* bodies — what we drafted and what the human actually sent — so the
 edit distance is measured there rather than guessed.
@@ -261,7 +261,7 @@ writing down its recommendation), and it should be visible in the data instead o
 | Service | `packages/core/src/db/decisions.mjs` (shared: the API writes, the worker confirms) |
 | API | `apps/api/src/routes/v2/decisions.mjs` |
 | Write door | `apps/api/src/routes/v2/observations.mjs` (`decision.*`, `decision_id`) |
-| App lane | `apps/api/src/routes/api/studio.mjs`, `apps/api/src/routes/api/actions.mjs` |
+| App lane | `apps/api/src/cloud/routes/api/studio.mjs` (Nous Cloud), `apps/api/src/routes/api/actions.mjs` |
 | Ingest confirmation | `apps/worker/src/webhooks/handlers/composio.mjs` (outbound Gmail) |
 | Outcome resolver | `apps/worker/src/intelligence/decisionTraces.mjs` |
 | Learning job | `apps/worker/src/intelligence/jobs/decisionQuality.mjs` |

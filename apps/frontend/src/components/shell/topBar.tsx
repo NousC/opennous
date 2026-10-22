@@ -14,6 +14,7 @@ import { isApiTier } from "@/config/plans";
 import { apiTopBarRoute } from "@/components/shell/ApiTopBar";
 import { usePlan } from "@/hooks/usePlan";
 import { cloud } from "@/lib/cloud";
+import { useDealPages } from "@/hooks/useDealPages";
 
 type Override = { crumbs: Crumb[] } | null;
 const TopBarContext = createContext<{
@@ -75,6 +76,7 @@ export function AppTopBar() {
   const { pathname } = useLocation();
   const [params] = useSearchParams();
   const { plan } = usePlan();
+  const dealPages = useDealPages();
 
   const inChat = pathname === "/" && ["thread", "ask", "chat"].some((k) => params.has(k));
   const section = SECTIONS.find((s) => pathname === s.prefix || pathname.startsWith(s.prefix + "/"));
@@ -84,7 +86,7 @@ export function AppTopBar() {
     : section
       ? pathname === section.prefix
         ? [{ label: section.label }]
-        : [{ label: section.label, href: section.prefix }, { label: pathname.includes("/deals/") ? "Deal" : "Details" }]
+        : [{ label: section.label, href: section.prefix }, { label: dealPages && pathname.includes("/deals/") ? "Deal" : "Details" }]
       : [{ label: pathname === "/" ? "Home" : "Nous" }];
   const crumbs = ctx?.override?.crumbs ?? fallback;
   // The API plan's pages draw their own bar (ApiTopBar, GET-621) with the same title; two bars

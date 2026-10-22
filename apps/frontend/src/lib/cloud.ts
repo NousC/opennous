@@ -165,6 +165,10 @@ export interface CloudRegistry {
     /** Workspace-layer pages where typing is the point (a job chat): single-key shortcuts stay off. */
     typingPage?: (pathname: string) => boolean;
   };
+  /** Deals open as their own page (/accounts/:id/deals/:dealId, GET-1008) on the workspace plans.
+   *  Absent → a deal is listed on its account and never opens (the API plan, the open-source build).
+   *  Public code asks hooks/useDealPages, which adds the plan check. */
+  dealPages?: boolean;
   /** The Accounts list narrowed to a Workspace-layer object's accounts (?<param>=<id>, GET-873). */
   accounts?: { scope?: AccountScope };
   /** The graph narrowed the same way (GET-858). Null when the URL names none. */

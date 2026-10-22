@@ -3,8 +3,8 @@ import { externalImagesOn, faviconUrl } from "@/lib/externalImages";
 
 // A profile image with graceful fallback — no Unipile required.
 //
-//   person  → photo_url (real, from sync/enrichment when present)
-//           → Gravatar (the email is SHA-256 hashed, never sent in clear)
+//   person  → photo_url (real, from Slack, sync or enrichment when present)
+//           → Gravatar, also when the photo link fails (the email is SHA-256 hashed, never sent in clear)
 //           → initials
 //   company → photo_url
 //           → domain logo (Google favicon — the same source the app already uses)
@@ -63,11 +63,13 @@ export function EntityAvatar({
   useEffect(() => {
     let alive = true;
     setGrav(null);
-    if (externalImagesOn && kind === "person" && email && !photoUrl && typeof crypto !== "undefined" && crypto.subtle) {
+    // Asked for even when there is a photo: a photo link that has stopped working (GET-1010) then
+    // falls through to their Gravatar, not straight to initials.
+    if (externalImagesOn && kind === "person" && email && typeof crypto !== "undefined" && crypto.subtle) {
       gravatarUrl(email).then((u) => alive && setGrav(u)).catch(() => {});
     }
     return () => { alive = false; };
-  }, [kind, email, photoUrl]);
+  }, [kind, email]);
 
   const sources = useMemo(() => {
     const s: string[] = [];

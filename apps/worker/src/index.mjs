@@ -75,6 +75,7 @@ import { runAdoptOwnership } from './workers/adoptOwnership.mjs';
 import { runListRowsRefresh } from './workers/listRowsRefresh.mjs';
 import { runDealHealthRefresh } from './workers/dealHealthRefresh.mjs';
 import { runApiRequestLogRetention } from './workers/apiRequestLogRetention.mjs';
+import { apiInternalBase } from './lib/apiInternal.mjs';
 initSentry('worker'); // no-op unless SENTRY_DSN is set
 
 // Wire webhook-driven activity logging → CRM push at module load.
@@ -91,8 +92,9 @@ void registerCrmPushHandler; void pushActivityToAllCrms;
 // here (a signal, a finished call, a deal) is posted by the API, which holds the bot token.
 const viaApi = (path, failed) => async ({ supabase: _s, ...args }) => {
   const secret = process.env.WORKER_SECRET;
-  if (!secret || !process.env.API_URL) return failed('not_available_here');
-  const resp = await fetch(`${process.env.API_URL}/internal/automation-steps/${path}`, {
+  const base = apiInternalBase();
+  if (!secret || !base) return failed('not_available_here');
+  const resp = await fetch(`${base}/internal/automation-steps/${path}`, {
     method: 'POST',
     headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
     body: JSON.stringify(args),
@@ -917,7 +919,7 @@ async function runLedgerRebuildSafe() {
     return;
   }
   try {
-    const resp = await fetch(`${process.env.API_URL}/internal/automations/rebuild-ledger`, {
+    const resp = await fetch(`${apiInternalBase()}/internal/automations/rebuild-ledger`, {
       method: 'POST',
       headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
     });
@@ -997,7 +999,7 @@ async function runDetectorDraftsTickSafe(body = {}) {
   const secret = process.env.WORKER_SECRET;
   if (!secret) return;
   try {
-    const resp = await fetch(`${process.env.API_URL}/internal/detector-drafts/tick`, {
+    const resp = await fetch(`${apiInternalBase()}/internal/detector-drafts/tick`, {
       method: 'POST',
       headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -1022,7 +1024,7 @@ async function runVaultSyncTickSafe() {
   const secret = process.env.WORKER_SECRET;
   if (!secret) return;
   try {
-    const resp = await fetch(`${process.env.API_URL}/internal/personal-sync/tick`, {
+    const resp = await fetch(`${apiInternalBase()}/internal/personal-sync/tick`, {
       method: 'POST',
       headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
     });

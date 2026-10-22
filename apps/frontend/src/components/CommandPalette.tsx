@@ -7,6 +7,8 @@ import {
 import { useAuth } from "@/hooks/useAuth";
 import { usePlan } from "@/hooks/usePlan";
 import { isApiTier } from "@/config/plans";
+import { useDealPages } from "@/hooks/useDealPages";
+import { dealOrAccountPath } from "@/lib/dealPages";
 import type { DealsPayload, PipelineDeal } from "@/components/pipeline/dealModel";
 import { fetchPipelineDeals, pipelineDealsKey, readRememberedCountry } from "@/components/pipeline/usePipelineData";
 import { faviconUrl } from "@/lib/externalImages";
@@ -86,6 +88,8 @@ export function CommandPalette() {
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { plan, selfHosted } = usePlan();
   const api = isApiTier(plan);
+  // A deal opens as its page on the workspace plans on Cloud; elsewhere its account (GET-1008).
+  const dealPages = useDealPages();
   const queryClient = useQueryClient();
   const workspaceId = userData?.workspace?.id ?? "";
   const token = session?.access_token ?? "";
@@ -166,7 +170,7 @@ export function CommandPalette() {
       sublabel: [d.company_name, d.status === "won" ? "Won" : d.status === "lost" ? "Lost" : d.stage?.trim()].filter(Boolean).join(" · ") || undefined,
       group: "Deals", badge: (d.company_name || d.name || "?").charAt(0).toUpperCase(),
       domain: d.company_domain ?? null,
-      action: () => go(`/accounts/${d.company_id}/deals/${d.id}`),
+      action: () => go(dealOrAccountPath(dealPages, d.company_id, d.id)),
     }));
 
     const contactItems: Item[] = contacts.map((c: any) => ({
@@ -186,7 +190,7 @@ export function CommandPalette() {
     const all = [...companyItems, ...dealItems, ...contactItems, ...navItems];
     setResults(all);
     setIdx(0);
-  }, [navigate, companies, deals, api]);
+  }, [navigate, companies, deals, api, dealPages]);
 
   useEffect(() => {
     if (!open) return;

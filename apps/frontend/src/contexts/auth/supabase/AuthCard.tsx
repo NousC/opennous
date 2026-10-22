@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
-import { BOX_SHADOW } from "@/lib/authTheme";
 
-// The card the Supabase sign-in / sign-up forms sit in (self-host auth), in the OpenNous brand:
-// Geist, warm off-white, hairline borders, ink type, Signal Orange only for focus and hover.
-// The mark and wordmark sit above the card, the card holds the heading and the form, and
-// `footer` is one quiet line under it (what happens next, or the way to the other form).
+// The self-host sign-in / sign-up forms' heading and footer (Supabase Auth). The page draws the
+// frame, in the website v2 design (components/auth/AuthLayout.tsx, GET-958): the card on sign-in,
+// the left column on sign-up. This draws what sits inside it: the heading in the website's light
+// Host Grotesk, the form, and `footer`, one quiet line under it (what happens next, or the way to
+// the other form).
 export function AuthCard({ heading, sub, footer, children }: {
   /** No longer drawn (the card dropped its title bar); kept so callers need not change. */
   title?: string;
@@ -15,17 +15,11 @@ export function AuthCard({ heading, sub, footer, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="relative z-10 w-full max-w-[400px] font-sans">
-      <div className="mb-7 flex items-center justify-center gap-2">
-        <img src="/nous-logo.svg" alt="" className="h-6 w-6 object-contain" />
-        <span className="text-[17px] font-semibold tracking-[-0.02em] text-[#1C1A17]">OpenNous</span>
-      </div>
-      <div className="rounded-2xl border border-[#E9E6DC] bg-white px-6 pb-7 pt-6 sm:px-8 sm:pb-8 sm:pt-7" style={BOX_SHADOW}>
-        <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-[#1C1A17]">{heading}</h1>
-        {sub && <p className="mt-1.5 text-[13.5px] leading-relaxed text-[#787369]">{sub}</p>}
-        {children}
-      </div>
-      {footer && <div className="mt-6 text-center text-[13px] leading-relaxed text-[#787369]">{footer}</div>}
+    <div className="relative z-10 w-full">
+      <h1 className="m-0 text-[30px] font-light leading-[1.1] tracking-[-0.03em] text-[#0E1116]">{heading}</h1>
+      {sub && <p className="mt-2 text-[15px] leading-normal text-[#6E7480]">{sub}</p>}
+      {children}
+      {footer && <div className="mt-6 border-t border-[rgba(14,17,22,0.06)] pt-[18px] text-center text-[15px] text-[#6E7480]">{footer}</div>}
     </div>
   );
 }
@@ -34,22 +28,28 @@ export function AuthCard({ heading, sub, footer, children }: {
 export function Field({ label, hint, htmlFor, children }: { label: string; hint?: string; htmlFor: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-[13px] font-medium text-[#4A463F]">{label}</label>
+      <label htmlFor={htmlFor} className="block text-[13.5px] font-normal text-[#2B303A]">{label}</label>
       {children}
-      {hint && <p className="text-[12px] text-[#A49D90]">{hint}</p>}
+      {hint && <p className="text-[12px] text-[#9AA0AA]">{hint}</p>}
     </div>
   );
 }
 
+// The website's fields and buttons (canvas Sign in / Sign up boards).
 export const inputCls =
-  "h-10 rounded-lg border-[#E9E6DC] bg-white px-3 text-[14px] text-[#1C1A17] shadow-none placeholder:text-[#A49D90] " +
-  "focus-visible:border-[#E85B3D] focus-visible:ring-2 focus-visible:ring-[#F7E2DA] focus-visible:ring-offset-0";
+  "h-11 rounded-md border-0 bg-white px-3.5 text-[15px] font-normal text-[#0E1116] shadow-[inset_0_0_0_1px_rgba(14,17,22,0.12)] placeholder:font-light placeholder:text-[#9AA0AA] " +
+  "focus-visible:shadow-[inset_0_0_0_1px_#C2410C,0_0_0_3px_rgba(194,65,12,0.14)] focus-visible:ring-0 focus-visible:ring-offset-0";
 
-export const submitCls =
-  "mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#1C1A17] px-4 text-[14px] font-medium text-white " +
-  "shadow-none transition-colors hover:bg-[#2E2B26] focus-visible:ring-2 focus-visible:ring-[#F7E2DA] disabled:opacity-60";
+const submitBase =
+  "mt-2 flex h-[46px] w-full items-center justify-center gap-2 rounded-md px-4 text-[16px] font-normal text-white " +
+  "transition-transform hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-[rgba(194,65,12,0.3)] disabled:opacity-60 disabled:hover:translate-y-0";
 
-export const linkCls = "font-medium text-[#1C1A17] underline-offset-4 hover:text-[#E85B3D] hover:underline";
+/** Sign in: ink. */
+export const submitCls = `${submitBase} bg-[#0E1116] shadow-[0_13px_27px_-12px_rgba(14,17,22,0.5)] hover:bg-[#0E1116]`;
+/** Sign up: the accent, as on the website's "Start for free". */
+export const submitAccentCls = `${submitBase} bg-[#C2410C] shadow-[0_13px_27px_-12px_rgba(194,65,12,0.45),inset_0_1px_0_rgba(255,255,255,0.16)] hover:bg-[#C2410C]`;
+
+export const linkCls = "font-normal text-[#C2410C] underline-offset-4 hover:underline";
 
 export function SubmitArrow() {
   return <ArrowRight className="h-4 w-4" aria-hidden="true" />;
