@@ -148,5 +148,11 @@ jobs:
           if ! docker compose version >/dev/null 2>&1; then echo "no docker compose on this runner"; exit 0; fi
           docker compose --env-file nous.env config --quiet
 
+      # Windows resolves only "localhost" itself; docs/self-host-bundled.md has Windows operators
+      # add the subdomains to the hosts file, so do the same here (GET-1015).
+      - name: Hosts file names *.localhost (Windows, as the docs say)
+        if: runner.os == 'Windows'
+        run: Add-Content "$env:SystemRoot\System32\drivers\etc\hosts" "`n127.0.0.1 api.localhost mcp.localhost"
+
       - name: '*.localhost resolves for Node (the CLI talks to https://api.localhost)'
         run: node -e "require('dns').lookup('api.localhost',(e,a)=>{console.log('api.localhost ->',e?e.code:a);process.exit(e?1:0)})"

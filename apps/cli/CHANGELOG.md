@@ -8,6 +8,9 @@ Against a self-hosted install with Caddy's local certificate, the CLI used to cr
 a Node stack trace (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`). It now says to point
 `NODE_EXTRA_CA_CERTS` at the root certificate and links the self-host guide (GET-1011).
 
+On Windows, where `api.localhost` doesn't resolve until the hosts file names it, it says which
+line to add (GET-1015).
+
 ## 0.10.1
 
 ### Changed — new default vault folder structure

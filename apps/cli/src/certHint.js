@@ -20,8 +20,24 @@ export function untrustedCertCode(err) {
   return null;
 }
 
-/** One line telling the user how to trust their server's certificate, or null when the error is something else. */
+/** The *.localhost name on a "not found" error down the cause chain, else null. */
+function unresolvedLocalhost(err) {
+  for (let e = err, depth = 0; e && depth < 5; e = e.cause, depth++) {
+    if (e.code === "ENOTFOUND" && /\.localhost$/i.test(e.hostname || "")) return e.hostname;
+  }
+  return null;
+}
+
+/** One line naming the fix for a laptop self-host the CLI can't reach (untrusted certificate, or a
+ *  *.localhost name Windows doesn't resolve), or null when the error is something else. */
 export function certHint(err) {
+  // Windows resolves only "localhost" itself; the subdomains need the hosts file (GET-1015).
+  const host = unresolvedLocalhost(err);
+  if (host) {
+    return `Couldn't connect: ${host} doesn't resolve on this machine (Windows only resolves "localhost" itself). ` +
+      `Add "127.0.0.1 api.localhost mcp.localhost" to your hosts file and run it again. ` +
+      `How: ${CERT_DOCS_URL}`;
+  }
   const code = untrustedCertCode(err);
   if (!code) return null;
   return `Couldn't connect: this server's TLS certificate isn't trusted by Node (${code}). ` +

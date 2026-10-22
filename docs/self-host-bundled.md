@@ -291,7 +291,16 @@ Members then see **Connect with Google** on the Integrations page.
 
 Works on macOS (Docker Desktop, Colima or OrbStack), Windows (Docker Desktop with WSL2) and
 Linux, on Intel and ARM. Set `APP_DOMAIN=localhost`, `API_DOMAIN=api.localhost`,
-`MCP_DOMAIN=mcp.localhost`. Nothing else changes: `*.localhost` points at your own machine.
+`MCP_DOMAIN=mcp.localhost`. On macOS and Linux nothing else changes: `*.localhost` points at
+your own machine.
+
+Windows resolves only `localhost` itself. Chrome and Edge open `https://localhost` anyway, but
+the CLI and MCP clients can't find `api.localhost` until the hosts file names it. Once, in
+PowerShell run as administrator:
+
+```powershell
+Add-Content "$env:SystemRoot\System32\drivers\etc\hosts" "`n127.0.0.1 api.localhost mcp.localhost"
+```
 
 Caddy serves those names with its own local certificate authority, which your machine does
 not trust yet. So the browser warns the first time (continue past it, or trust the CA below),
