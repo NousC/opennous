@@ -355,7 +355,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
   });
   const rawCompanies = companiesPage?.companies ?? NO_COMPANIES;
-  const accountOverview = useQuery<{ accounts: { id: string; deal_count: number; latest_signal: LatestSignal | null }[] }>({
+  const accountOverview = useQuery<{ accounts: { id: string; deal_count: number; latest_signal: LatestSignal | null; is_personal?: boolean }[] }>({
     queryKey: ['account-overview', workspaceId, rawCompanies.map(c => c.id)],
     // Deals and the latest signal per account: the API plan's table, and the Workspace table since GET-864.
     enabled: !!token && rawCompanies.length > 0,
@@ -370,6 +370,8 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
   });
   const overviewById = new Map((accountOverview.data?.accounts ?? []).map(a => [a.id, a]));
+  // Someone we know, not a deal (GET-1016): tagged, and no deals, pipeline or signal shown.
+  const isPersonal = (id: string) => overviewById.get(id)?.is_personal === true;
   const accountsTotal = companiesPage?.total ?? 0;
   // What the server actually filtered by, so the control shows the truth on first load — before the
   // user has chosen anything, that is the workspace's own focus.
@@ -707,6 +709,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const markPersonal = async (companyId: string) => {
     await post(companyId, "personal", { personal: true });
     queryClient.invalidateQueries({ queryKey: ["companies-list", workspaceId] });
+    queryClient.invalidateQueries({ queryKey: ["account-overview", workspaceId] });
   };
   const deleteCompany = async (companyId: string) => {
     queryClient.setQueryData(["companies-list", workspaceId], (prev: any[] = []) => prev.filter((c) => c.id !== companyId));
@@ -848,6 +851,9 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
             {/* The palette's row: the name at 13px regular, what it is in the quiet tone on the same line. */}
             <span className="flex min-w-0 items-baseline gap-2">
               <span className="truncate text-foreground">{c.name}</span>
+              {isPersonal(c.id) && (
+                <span title="Someone you know, not a deal" className="flex-shrink-0 text-[11.5px] text-ink-2">Personal</span>
+              )}
               {segment === "all" && meta?.status === "client" && (
                 <span className="flex-shrink-0 text-[11.5px] text-ink-2">Customer</span>
               )}
@@ -873,7 +879,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
     {
       key: "pipeline", header: "Pipeline", align: "right",
-      cell: (c) => { const pl = pipelineByCompany.get(c.id); return pl && pl.value > 0 ? money(pl.value) : dash; },
+      cell: (c) => { const pl = pipelineByCompany.get(c.id); return pl && pl.value > 0 && !isPersonal(c.id) ? money(pl.value) : dash; },
     },
     {
       key: "won", header: "Closed revenue", align: "right",
@@ -910,6 +916,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const dealsColumn: Column<AccountRow> = { key: 'deals', header: 'Deals', cell: c => {
     const total = overviewById.get(c.id)?.deal_count;
     if (total === undefined) return accountOverview.error ? 'Unavailable' : accountOverview.isLoading ? '…' : dash;
+    if (isPersonal(c.id)) return dash;
     // Workspace shows how many are still open beside the total; the API plan, the total alone.
     const open = api ? 0 : (pipelineByCompany.get(c.id)?.count ?? 0);
     return total ? <span className="tabular-nums">{total}{open ? <span className="text-muted-foreground"> · {open} open</span> : null}</span> : dash;

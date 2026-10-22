@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assertClaims } from './claims.js';
 import { normalizeStage } from '../pipeline.js';
+import { retirePersonalFacts, restorePersonalFacts } from './personalFacts.js';
 
 // The sales funnel — the only stages that are a DEAL. Every stage on the canonical
 // ladder counts, plus its terminals: `closed_won` (a paying customer, set by the
@@ -30,8 +31,9 @@ import { normalizeStage } from '../pipeline.js';
 
 export const IS_PERSONAL = 'is_personal';
 
-/** Mark (on=true) or unmark (on=false) a person as personal/network — not a deal.
- *  Idempotent. Unmark invalidates the claim (assertClaims treats null as soft-delete). */
+/** Mark (on=true) or unmark (on=false) a person or company as personal/network — not a deal.
+ *  Idempotent. Unmark invalidates the claim (assertClaims treats null as soft-delete). Marking
+ *  retires the deal facts already on file for them; unmarking brings those back (GET-1016). */
 export async function markEntityPersonal(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -42,6 +44,8 @@ export async function markEntityPersonal(
     values: { [IS_PERSONAL]: on ? true : null },
     source: 'user',
   });
+  if (on) await retirePersonalFacts(supabase, workspaceId, entityId);
+  else await restorePersonalFacts(supabase, workspaceId, entityId);
 }
 
 /** The entity ids on this workspace currently flagged personal. Used to exclude
