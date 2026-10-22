@@ -80,6 +80,6 @@ test("All lists tools in the rail's order, stable inside a category", () => {
 test("Slack messages says it reads only personal messages with customers, and never teammates' chats (GET-985)", () => {
   const p = { name: "slack_personal", display_name: "Slack messages", category: "communication" };
   assert.equal(catalogCategoryOf(p), "chat");
-  assert.match(readsFor(p)[0], /personal Slack messages with customers/);
-  assert.match(neverFor(p) ?? "", /Never reads chats with teammates/);
+  assert.match(readsFor(p)[0], /personal Slack messages and group DMs with customers/);
+  assert.match(neverFor(p) ?? "", /Never reads chats with only teammates/);
 });

@@ -107,7 +107,7 @@ export async function extractSlackConversation({ supabase, source, messages, aut
   if (insightsEnabled || owner) {
     const people = [...new Map([...authors.values()].filter(a => a.name && a.side !== 'unknown').map(a => [a.name, { name: a.name, side: a.side, contactId: a.contactId ?? null }])).values()];
     tasks = await actionItems({ supabase, workspaceId: source.workspace_id, channel: 'slack',
-      messages: prepared.evidence, people, sourceRef: prepared.sourceRef, dryRun, twoParty: !!owner,
+      messages: prepared.evidence, people, sourceRef: prepared.sourceRef, dryRun, twoParty: !!owner && !owner.group,
       mentions: Object.fromEntries([...authors].map(([id, a]) => [id, { name: a.name, personId: a.contactId ?? null }])),
       sourceTitle: "Slack conversation" });
   }

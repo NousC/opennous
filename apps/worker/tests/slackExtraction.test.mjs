@@ -193,3 +193,19 @@ test("a teammate's own DM is filed as theirs: private type, owned snapshot, no w
   const read = calls.find(([n]) => n === 'read')[1];
   assert.equal(read.value.credits, 1, 'one credit per read, like a channel');
 });
+
+test("a teammate's group DM is filed as theirs like a DM, but never guesses a task owner: a group can hold silent people (GET-1012)", async () => {
+  const calls = [];
+  const groupSource = { ...source, slack_channel_id: 'G1', channel_visibility: 'dm', owner_user_id: 'member-1' };
+  await extractSlackConversation({ supabase: {}, source: groupSource, messages, authors, owner: { userId: 'member-1', group: true } }, {
+    activity: async (_db, p) => { calls.push(['activity', p]); return { id: 'observation-2' }; },
+    observation: async () => ({ id: 'snapshot' }),
+    signals: async () => [],
+    insights: async () => { throw new Error('a group DM must never write workspace insights'); },
+    actionItems: async p => { calls.push(['tasks', p]); return []; },
+  });
+  const activity = calls.find(([n]) => n === 'activity')[1];
+  assert.equal(activity.type, 'slack_dm');
+  assert.equal(activity.ownerUserId, 'member-1');
+  assert.equal(calls.find(([n]) => n === 'tasks')[1].twoParty, false);
+});

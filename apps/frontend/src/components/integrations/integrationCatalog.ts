@@ -69,7 +69,7 @@ export function readsFor(p: CatalogProvider): string[] {
   if (name === "cal_com" || name === "calendly") return ["Bookings and cancellations"];
   if (name === "linkedin") return ["Messages on the LinkedIn account you connect"];
   // A person's own Slack (GET-985): slackPersonalDms.mjs reads only DMs with someone matched to a customer.
-  if (name === "slack_personal") return ["Your personal Slack messages with customers", "The last 30 days when you connect, then new messages as they arrive"];
+  if (name === "slack_personal") return ["Your personal Slack messages and group DMs with customers", "The last 30 days when you connect, then new messages as they arrive"];
   if (name === "stripe") return ["Payments, from the webhook you add in Stripe"];
   if (name === "nous") return ["Signups and subscription events from your own product"];
   if (cat === "meetings") return ["Meeting transcripts and summaries"];
@@ -83,7 +83,7 @@ export function readsFor(p: CatalogProvider): string[] {
 /** The one thing this tool's connection never does, where the code guarantees it; else null. */
 export function neverFor(p: CatalogProvider): string | null {
   const cat = (p.category ?? "").toLowerCase();
-  if (p.name.toLowerCase() === "slack_personal") return "Never reads chats with teammates, and never posts or replies for you";
+  if (p.name.toLowerCase() === "slack_personal") return "Never reads chats with only teammates, and never posts or replies for you";
   if (cat === "crm") return "Never creates, edits or deletes a deal";
   return null;
 }
