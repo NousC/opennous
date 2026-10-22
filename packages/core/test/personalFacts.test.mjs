@@ -115,6 +115,25 @@ test('unmarking a person whose company is still personal keeps their facts retir
   assert.equal(await restorePersonalFacts(db, WS, ACME), 4);
 });
 
+test('the last unmarked person at a company: the company\'s own deal facts go too', async () => {
+  const db = fakeDb(fixtures());
+  db.tables.claims.push(fact('budget-co', ACME, 'budget'));
+  db.tables.claims.push({ id: 'mark-ida', workspace_id: WS, entity_id: IDA, property: 'is_personal', value: true, invalid_at: null });
+  await retirePersonalFacts(db, WS, ROWAN);
+  assert.equal(db.tables.claims.find(c => c.id === 'budget-co').invalid_at !== null, true);
+  assert.equal(db.tables.claims.find(c => c.id === 'blocker-co-by-ida').invalid_at !== null, true);
+  // Unmarking them brings the company's facts back: the company itself is not marked.
+  await restorePersonalFacts(db, WS, ROWAN);
+  assert.equal(db.tables.claims.find(c => c.id === 'budget-co').invalid_at, null);
+});
+
+test('with a coworker still a deal, only what they voiced on the company goes', async () => {
+  const db = fakeDb(fixtures());
+  db.tables.claims.push(fact('budget-co', ACME, 'budget'));
+  await retirePersonalFacts(db, WS, ROWAN);
+  assert.equal(db.tables.claims.find(c => c.id === 'budget-co').invalid_at, null);
+});
+
 test('marking twice retires once', async () => {
   const db = fakeDb(fixtures());
   await retirePersonalFacts(db, WS, ROWAN);

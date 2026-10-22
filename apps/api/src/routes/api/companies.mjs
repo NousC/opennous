@@ -11,7 +11,7 @@ import {
   computeAccountHealth, selectNextStep, loadEngagementActivity, loadAccountHealthTrend,
   getAccountRecord, fetchEntityOverlays, applyCompanyOverlay,
   getRelationshipOwners, getWorkspaceMemberProfiles, effectiveOwnerUserId, accountOwnerIds,
-  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, getPersonalEntityIds,
+  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, getPersonalEntityIds, personalAccountIds,
 } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { intelTopicsFor } from '../../lib/intelTopics.mjs';
@@ -341,10 +341,13 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
       // accounts touched 50 or 80 days ago were hidden, and the page showed a handful of its accounts. For the first
       // 30 days, no window.
       const isNew = wsRow?.created_at && Date.now() - Date.parse(wsRow.created_at) < 30 * 86_400_000;
-      let { rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: !isNew, owner });
+      // A Network account (marked personal, or all its people are) is someone we know, not an
+      // account we sell to: off this list; its people stay on People (GET-1017).
+      const excludeIds = [...await personalAccountIds(supabase, workspaceId)];
+      let { rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: !isNew, owner, excludeIds });
       // And when the window holds nothing at all, show the accounts there are.
       if (!isNew && !total && !q && !offset) {
-        ({ rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: false, owner }));
+        ({ rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: false, owner, excludeIds }));
       }
       const vis = await getVisibilityScope(supabase, workspaceId, req);
       let visible = rows;
@@ -371,6 +374,8 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
       // the deals it already loads; an account's own figure needs a stored projection, not a view.
       .select('id, name, domain, industry, employee_count, location, revenue_range, enrichment_status, deal_health_score, icp_score', { count: 'exact' })
       .eq('workspace_id', workspaceId);
+    const network = [...await personalAccountIds(supabase, workspaceId)];
+    if (network.length) query = query.not('id', 'in', `(${network.join(',')})`);
     if (q) {
       const like = `%${q.replace(/[%,()]/g, ' ')}%`;
       query = query.or(`name.ilike.${like},domain.ilike.${like}`);
@@ -1126,8 +1131,12 @@ companiesApiRouter.get('/:id/detail', verifySupabaseAuth, async (req, res) => {
     const hsLink = await hubspotLinker(supabase, workspaceId).catch(() => null);
     const hubspotUrl = hsLink ? hsLink('company', company?.hubspot_company_id) : null;
 
+    // Network (GET-1017): marked personal, or all its people are. The page drops the sales parts.
+    const network = (await personalAccountIds(supabase, workspaceId, [id]).catch(() => new Set())).has(id);
+
     return res.json({
       company,
+      network,
       icp: icp || null,
       stakeholders,
       edges,

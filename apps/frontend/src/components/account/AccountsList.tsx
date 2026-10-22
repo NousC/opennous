@@ -852,7 +852,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
             <span className="flex min-w-0 items-baseline gap-2">
               <span className="truncate text-foreground">{c.name}</span>
               {isPersonal(c.id) && (
-                <span title="Someone you know, not a deal" className="flex-shrink-0 text-[11.5px] text-ink-2">Personal</span>
+                <span title="Someone you know, not a deal" className="flex-shrink-0 text-[11.5px] text-ink-2">Network</span>
               )}
               {segment === "all" && meta?.status === "client" && (
                 <span className="flex-shrink-0 text-[11.5px] text-ink-2">Customer</span>

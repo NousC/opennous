@@ -98,7 +98,7 @@ function qualification(intel: Note[], people: PanePerson[]): { label: string; ki
 
 export function AccountPane({
   co, companyId, name, domain, tier, kind, owners, csOwner, nousScore, nousBand = null, nousTitle, crmScore, saving,
-  people, intel, decisionMakers = [], onOpenPerson, getVal, onPatch,
+  people, intel, decisionMakers = [], onOpenPerson, getVal, onPatch, network = false,
 }: {
   co: Record<string, unknown> & { name?: string; tech_stack?: unknown; enrichment_status?: string | null; last_activity_at?: string | null; employee_count?: number | null; industry?: string | null; location?: string | null; revenue_range?: string | null };
   companyId: string | null;
@@ -121,6 +121,8 @@ export function AccountPane({
   onOpenPerson: (id: string) => void;
   getVal: (key: string, fallback: string | null | undefined) => string | null;
   onPatch: (key: string, value: string) => void;
+  /** Someone we know, not an account we sell to (GET-1017): tagged Network, no pipeline, deals or qualification. */
+  network?: boolean;
 }) {
   const dealsQ = useAccountDeals(companyId);
   const t = dealTotals(dealsQ.data?.deals ?? []);
@@ -138,7 +140,9 @@ export function AccountPane({
             {/* The account health tag beside the name (GET-807), tinted by state; it used to sit under the owners. */}
             <div className="flex min-w-0 items-center gap-2">
               <h1 className="min-w-0 truncate text-[18px] font-semibold tracking-[-0.015em] text-foreground">{name}</h1>
-              <AccountHealthTag score={nousScore} band={nousBand} title={nousTitle} />
+              {network
+                ? <span title="Someone you know, not an account you sell to" className="flex-shrink-0 text-[12px] text-ink-2">Network</span>
+                : <AccountHealthTag score={nousScore} band={nousBand} title={nousTitle} />}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12px] text-muted-foreground/70">
               {domain && <a href={`https://${domain}`} target="_blank" rel="noreferrer" className="truncate hover:text-foreground">{domain}</a>}
@@ -149,13 +153,17 @@ export function AccountPane({
           </div>
         </div>
 
-        <div className="mt-[18px] flex items-baseline gap-2">
-          <span className="text-[22px] font-semibold tabular-nums tracking-[-0.02em] text-foreground">{dealsQ.data ? money(t.pipeline) : "—"}</span>
-          <span className="text-[12px] text-muted-foreground/70">open pipeline</span>
-        </div>
-        <div className="mt-0.5 text-[12px] tabular-nums text-muted-foreground/70">
-          {t.open} open {t.open === 1 ? "deal" : "deals"}{t.wonCount > 0 ? ` · ${money(t.won)} won` : ""}
-        </div>
+        {!network && (
+          <>
+            <div className="mt-[18px] flex items-baseline gap-2">
+              <span className="text-[22px] font-semibold tabular-nums tracking-[-0.02em] text-foreground">{dealsQ.data ? money(t.pipeline) : "—"}</span>
+              <span className="text-[12px] text-muted-foreground/70">open pipeline</span>
+            </div>
+            <div className="mt-0.5 text-[12px] tabular-nums text-muted-foreground/70">
+              {t.open} open {t.open === 1 ? "deal" : "deals"}{t.wonCount > 0 ? ` · ${money(t.won)} won` : ""}
+            </div>
+          </>
+        )}
 
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           {owners.map(o => (
@@ -168,12 +176,12 @@ export function AccountPane({
               <MemberAvatar name={csOwner} size={18} />{csOwner.split(" ")[0]}<span className="text-muted-foreground/70">CS</span>
             </span>
           )}
-          <TypeChip kind={kind} />
-          {kind !== "prospect" && <CrmHealthBadge score={crmScore} />}
+          {!network && <TypeChip kind={kind} />}
+          {kind !== "prospect" && !network && <CrmHealthBadge score={crmScore} />}
         </div>
       </div>
 
-      {companyId && <AccountDealsSection companyId={companyId} accountName={name} />}
+      {companyId && !network && <AccountDealsSection companyId={companyId} accountName={name} />}
 
       <PaneSection title="Contacts" count={people.length}>
         {people.length === 0
@@ -199,7 +207,7 @@ export function AccountPane({
         )}
       </PaneSection>
 
-      <PaneSection title="Qualification">
+      {!network && <PaneSection title="Qualification">
         {qual.length ? qual.map(q => (
           <PropRow key={q.label} label={q.label}>
             <span className="flex flex-wrap gap-1">
@@ -232,7 +240,7 @@ export function AccountPane({
           </PropRow>
         )}
         {!qual.length && !decisionMakers.length && <p className="px-2 py-1 text-[12.5px] text-muted-foreground/60">Nothing raised yet</p>}
-      </PaneSection>
+      </PaneSection>}
 
       <CompanyDetailsSection co={co} domain={domain} getVal={getVal} onPatch={onPatch} />
     </>

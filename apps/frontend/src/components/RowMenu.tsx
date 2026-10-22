@@ -25,7 +25,7 @@ export function RowMenu({ onMarkClient, onMarkPersonal, onDelete }: { onMarkClie
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded-xl border border-border/70 bg-popover p-1 shadow-pop">
           <button className={item} onClick={() => { setOpen(false); onMarkClient(); }}>Mark as client</button>
-          <button className={item} onClick={() => { setOpen(false); onMarkPersonal(); }}>Mark as personal</button>
+          <button className={item} onClick={() => { setOpen(false); onMarkPersonal(); }}>Mark as network</button>
           <div className="-mx-1 my-1 h-px bg-hairline" />
           {confirming ? (
             <button className="flex w-full items-center rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-risk transition-colors duration-fast hover:bg-risk/10"

@@ -63,6 +63,8 @@ type Stakeholder = {
 };
 type CompanyDetail = {
   company: Record<string, any>;
+  /** Someone we know, not an account we sell to (GET-1017): no pipeline, deals, health or ICP. */
+  network?: boolean;
   icp: { score: number; reason: string | null } | null;
   stakeholders: Stakeholder[];
   edges: { subject_id: string; relationship: string; object_id: string | null; object_label: string | null; confidence?: number | null; source_memory_id?: string | null; metadata?: any }[];
@@ -100,6 +102,7 @@ export default function CompanyDetailView({
 }) {
   const [tab, setTab] = useState<Tab>("overview");
   const co = cd.company || {};
+  const network = cd.network === true;
   // A new account opens on its Overview, not on whichever tab the last one was left on.
   useEffect(() => { setTab("overview"); }, [co.id]);
 
@@ -107,7 +110,7 @@ export default function CompanyDetailView({
   useTopBarCrumbs(co.id ? [{ label: "Accounts", href: "/accounts" }, { label: name }] : null);
   const domain = getVal("domain", co.domain) ?? co.domain ?? null;
   const icpScore: number | null = co.icp_score ?? cd.icp?.score ?? null;
-  const tier = icpScore != null ? tierFromScore(icpScore) : null;
+  const tier = icpScore != null && !network ? tierFromScore(icpScore) : null;
   const cs: CsBag | null = (cd.cs ?? co.cs ?? null) as CsBag | null;
   const kind = customerKind(cs);
   const hubspotUrl: string | null = cd.hubspot_url ?? co.hubspot_url ?? null;
@@ -248,7 +251,7 @@ export default function CompanyDetailView({
     <RecordShell
       left={
         <AccountPane
-          co={co} companyId={co.id ?? null} name={name} domain={domain} tier={tier} kind={kind}
+          co={co} companyId={co.id ?? null} name={name} domain={domain} tier={tier} kind={kind} network={network}
           owners={owners.map(o => o.name).filter((n): n is string => !!n).concat(!owners.length && ae ? [ae] : [])}
           csOwner={csOwner} nousScore={health} nousBand={accountHealth?.band ?? null} nousTitle={nousTitle} crmScore={num(cs?.health_score)} saving={saving}
           people={cd.stakeholders} intel={intel} decisionMakers={decisionMakers} onOpenPerson={onOpenPerson} getVal={getVal} onPatch={onPatch}
@@ -302,7 +305,7 @@ export default function CompanyDetailView({
           // The workspace-redesign Overview (restored 2026-10-06): the AI Overview, then the work
           // beside the reference. Deals, contacts and company details stay in the left pane.
           <div className="min-w-0 space-y-6">
-            {kind !== "prospect" && <CustomerStrip cs={cs} customerSince={customerSince} ae={ae} />}
+            {kind !== "prospect" && !network && <CustomerStrip cs={cs} customerSince={customerSince} ae={ae} />}
 
             {/* One summary, three to five sentences (GET-792, GET-797). */}
             <AiOverviewCard summary={summaryText} at={summaryAt} state={summaryState} onRefresh={refreshSummary} />
@@ -312,10 +315,10 @@ export default function CompanyDetailView({
             <FollowUpReady recs={followUps} />
             <NextStepCard step={cd.next_step} />
             {/* The account's health, not a deal's (GET-800). Each deal's health is on its own page. */}
-            {accountHealth && <DealHealthCard title="Account health"
+            {accountHealth && !network && <DealHealthCard title="Account health"
               pillTitle="Nous account health, 0 to 100: engagement, decision makers covered, open blockers, risk signals and, for a customer, adoption"
               health={accountHealth} notes={cd.notes ?? []} voicedByName={voicedByName} />}
-            <AccountHealthCard health={acctHealthQ.data} />
+            {!network && <AccountHealthCard health={acctHealthQ.data} />}
             {/* Product usage from PostHog (GET-751), under the account's health. */}
             <ProductUsageCard usage={cd.product_usage} />
             <RecentActivity items={feed} onAll={() => setTab("activity")} />

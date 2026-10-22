@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { assertClaims } from './claims.js';
 import { normalizeStage } from '../pipeline.js';
+// @ts-ignore -- a plain .mjs module, carried into dist by allowJs
+import { personalAccountIds } from './accountOverview.mjs';
 import { retirePersonalFacts, restorePersonalFacts } from './personalFacts.js';
 
 // The sales funnel — the only stages that are a DEAL. Every stage on the canonical
@@ -48,8 +50,9 @@ export async function markEntityPersonal(
   else await restorePersonalFacts(supabase, workspaceId, entityId);
 }
 
-/** The entity ids on this workspace currently flagged personal. Used to exclude
- *  personal/network contacts from deal-risk, scoring, and pipeline surfaces. */
+/** The entity ids on this workspace currently flagged personal, plus the Network accounts: a
+ *  company whose people are all marked is someone we know too (GET-1017). Used to exclude
+ *  personal/network contacts and accounts from deal-risk, scoring, events and pipeline surfaces. */
 export async function getPersonalEntityIds(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -65,6 +68,7 @@ export async function getPersonalEntityIds(
   for (const row of (data as { entity_id: string; value: unknown }[]) ?? []) {
     if (row.value === true) ids.add(row.entity_id);
   }
+  for (const id of await personalAccountIds(supabase, workspaceId) as Set<string>) ids.add(id);
   return ids;
 }
 

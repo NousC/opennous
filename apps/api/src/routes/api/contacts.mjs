@@ -141,6 +141,8 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
       // Who is linked to a CRM record (GET-788), only worth asking when a CRM is connected.
       const inCrm = crmConnected ? await crmLinkedPeople(supabase, workspaceId, rows.map(r => r.entity_id)) : null;
       const users = await productUsersAmong(supabase, workspaceId, rows.map(r => r.entity_id)).catch(() => new Set());
+      // Network (marked personal): the list tags them (GET-1017). This path never said so.
+      const personal = await getPersonalEntityIds(supabase, workspaceId).catch(() => new Set());
       const workDomain = (email) => {
         const at = String(email ?? '').split('@')[1]?.trim().toLowerCase();
         return at && !FREEMAIL_DOMAINS.has(at) ? at : null;
@@ -155,6 +157,7 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
           pipeline_stage: r.stage, icp_score: r.icp_score, last_activity_at: r.last_activity_at,
           in_crm: inCrm ? inCrm.has(r.entity_id) : null,
           product_user: users.has(r.entity_id),
+          is_personal: personal.has(r.entity_id),
         })),
         total, limit: lim, offset: off, crm_connected: crmConnected,
         country, focus_country: wsRow?.focus_country ?? null, countries: await accountCountries(supabase, workspaceId),

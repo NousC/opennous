@@ -5,7 +5,7 @@
 // Run: cd packages/core && node --test test/accountOverviewRpc.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { accountOverview, registerAccountOverviewFallback } from '../src/db/accountOverview.mjs';
+import { accountOverview, personalAccountIds, registerAccountOverviewFallback } from '../src/db/accountOverview.mjs';
 
 const row = { id: 'a1', deal_count: 2, won_deals: 1, lost_deals: 0, latest_signal: null };
 const out = { ...row, is_personal: false };
@@ -78,7 +78,7 @@ const mark = (entity_id) => ({ entity_id, property: 'is_personal', value: true, 
 
 test('an account marked personal has no latest signal and says it is personal', async () => {
   registerAccountOverviewFallback(null);
-  const sb = fakeSb({ account_overview: [{ ...row, latest_signal: signal }] }, { claims: [mark('a1')] });
+  const sb = fakeSb({ account_overview: [{ ...row, latest_signal: signal }] }, { claims: [mark('a1')], entity_list_rows: [account('a1', 0)] });
   const [a] = await accountOverview(sb, 'ws', ['a1']);
   assert.equal(a.is_personal, true);
   assert.equal(a.latest_signal, null);
@@ -93,4 +93,12 @@ test('an account whose people are all personal is personal; one with a deal cont
   });
   const got = await accountOverview(sb, 'ws', ['a1', 'a2', 'a3']);
   assert.deepEqual(got.map(a => [a.id, a.is_personal]), [['a1', true], ['a2', false], ['a3', false]]);
+});
+
+test('the whole workspace: marked accounts and accounts whose people are all marked', async () => {
+  const sb = fakeSb({}, {
+    entity_list_rows: [account('a1', 0), account('a2', 1), account('a3', 2), person('p1', 'a2'), person('p2', 'a3'), person('p3', 'a3')],
+    claims: [mark('a1'), mark('p1'), mark('p2')],
+  });
+  assert.deepEqual([...await personalAccountIds(sb, 'ws')].sort(), ['a1', 'a2']);
 });

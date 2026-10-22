@@ -185,10 +185,13 @@ export function RecordOverview({
     { label: "Email",       key: "email",          val: c.email ?? null },
     { label: "Phone",       key: "phone",          val: c.phone ?? null },
     { label: "LinkedIn",    key: "linkedinUrl",    val: c.linkedin_url ?? null, type: "link" },
-    { label: "Stage",       key: "pipeline_stage", val: stageVal, type: "select", opts: STAGE_OPTS },
-    { label: "Deal stage",  key: "dealStage",      val: c.deal_stage ?? null },
-    { label: "Deal value",  key: "dealValue",      val: c.deal_value != null ? String(c.deal_value) : null, type: "number" },
-    { label: "Source",      key: "lead_source",    val: c.lead_source ?? null },
+    // Network (GET-1017): someone we know, not a deal, so none of the pipeline fields.
+    ...(isPersonal ? [] : [
+      { label: "Stage",       key: "pipeline_stage", val: stageVal, type: "select", opts: STAGE_OPTS },
+      { label: "Deal stage",  key: "dealStage",      val: c.deal_stage ?? null },
+      { label: "Deal value",  key: "dealValue",      val: c.deal_value != null ? String(c.deal_value) : null, type: "number" },
+      { label: "Source",      key: "lead_source",    val: c.lead_source ?? null },
+    ] as F[]),
     { label: "Industry",    key: "industry",       val: c.industry ?? null },
     { label: "Department",  key: "department",     val: c.department ?? null },
     { label: "Seniority",   key: "seniority",      val: c.seniority ?? null },
@@ -204,7 +207,7 @@ export function RecordOverview({
              fields are always shown. */
           <div className="flex min-h-7 min-w-0 items-center gap-1.5 px-2 text-[11.5px] font-medium text-muted-foreground/60">
             <span>Details</span>
-            {isPersonal && <span className="ml-auto font-normal">Personal, not a deal</span>}
+            {isPersonal && <span className="ml-auto font-normal">Network</span>}
           </div>
         ) : (
           <button onClick={() => setDetailsOpen(v => !v)} className="flex items-center gap-1.5 mb-2 w-full text-left">
@@ -212,7 +215,7 @@ export function RecordOverview({
             <span className="text-[13.5px] font-medium text-foreground">Details</span>
             {isPersonal && (
               <span className="ml-1 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium bg-muted text-muted-foreground/80">
-                Personal · not a deal
+                Network
               </span>
             )}
           </button>
@@ -226,6 +229,7 @@ export function RecordOverview({
           </Row>
         )}
         {/* Read-only, because the model owns it. A score you can type over is not a score. */}
+        {!isPersonal && (<>
         <Row label="ICP">
           {score != null ? (
             <span className="inline-flex items-center gap-2">
@@ -239,7 +243,8 @@ export function RecordOverview({
             ? <span>{c.intent_band}{c.intent_score != null && <span className="text-muted-foreground/60 tabular-nums"> · {Math.round(Number(c.intent_score))}</span>}</span>
             : <span className="text-muted-foreground/40">—</span>}
         </Row>
-        {c.reply_signal && (
+        </>)}
+        {c.reply_signal && !isPersonal && (
           <Row label="Reply">
             <span className="inline-flex items-center gap-2">
               <span className={REPLY_UI[c.reply_signal]?.text ?? "text-muted-foreground"}>
@@ -304,7 +309,7 @@ export function RecordOverview({
         ))}
 
         <div className="mt-5 flex items-center gap-4">
-          {onMarkLost && (
+          {onMarkLost && !isPersonal && (
             <button
               onClick={onMarkLost}
               disabled={lostState?.marking || lostState?.marked}
@@ -321,7 +326,7 @@ export function RecordOverview({
               disabled={personalSaving}
               className="text-[12px] text-muted-foreground/50 hover:text-foreground/70 disabled:opacity-50 transition-colors"
             >
-              {personalSaving ? "Saving…" : isPersonal ? "Mark as a deal" : "Not a deal (personal)"}
+              {personalSaving ? "Saving…" : isPersonal ? "Mark as a deal" : "Mark as network"}
             </button>
           )}
         </div>

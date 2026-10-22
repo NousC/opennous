@@ -45,7 +45,7 @@ export function isFocusCountry(country, focusCountry) {
 //   detail   also select industry, won_deals and (once migrated) last_inbound_at
 //   refine   (query, { ready, inbound }) => query — extra PostgREST filters, ANDed with the rest
 //   orderBy  { col, ascending } — the primary order; entity_id stays the tie-break
-export async function listRows(supabase, workspaceId, kind, { q = '', limit = 200, offset = 0, companyId = null, country = null, focusCountry = null, windowed = false, owner = null, detail = false, refine = null, orderBy = null } = {}) {
+export async function listRows(supabase, workspaceId, kind, { q = '', limit = 200, offset = 0, companyId = null, country = null, focusCountry = null, windowed = false, owner = null, detail = false, refine = null, orderBy = null, excludeIds = [] } = {}) {
   const [ready, inbound] = await Promise.all([hasOwnershipColumns(supabase), hasInboundColumn(supabase)]);
   let cols = ready ? `${LEGACY_ACCOUNT_COLS}, owner_name, owner_email` : LEGACY_ACCOUNT_COLS;
   if (detail) cols += `, industry${ready ? ', won_deals' : ''}${inbound ? ', last_inbound_at' : ''}`;
@@ -54,6 +54,8 @@ export async function listRows(supabase, workspaceId, kind, { q = '', limit = 20
     .eq('workspace_id', workspaceId).eq('kind', kind);
   if (refine) query = refine(query, { ready, inbound });
   if (companyId) query = query.eq('company_id', companyId);
+  // Left off the list (the Network accounts, GET-1017). Few, so one `not in` fits the URL.
+  if (excludeIds.length) query = query.not('entity_id', 'in', `(${excludeIds.join(',')})`);
   // An account earns its place by holding a deal the lists would show (dealListWindow.mjs), or by
   // having answered us recently. Only accounts: a person is not filtered by someone else's deals.
   if (ready && windowed && kind === 'account') query = query.or(accountWindowFilter(new Date(), { inbound }));

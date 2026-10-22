@@ -705,7 +705,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     </th>
   );
   const tag = (c: ContactInfo) =>
-    c.isInternal ? "Team" : c.isPersonal ? "Personal" : c.productUser || isProductUserStage(c.pipelineStage) ? "User" : c.notInCrm ? "Not in CRM" : null;
+    c.isInternal ? "Team" : c.isPersonal ? "Network" : c.productUser || isProductUserStage(c.pipelineStage) ? "User" : c.notInCrm ? "Not in CRM" : null;
   const locationRows = [{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map(o => ({ ...o, label: o.country }))];
 
   return (

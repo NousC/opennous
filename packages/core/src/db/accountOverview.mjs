@@ -21,24 +21,26 @@ async function overviewRows(sb, ws, ids) {
   throw error;
 }
 
-/** The account ids among these that are personal: marked so, or every one of their people is (GET-1016).
- *  Starts from the workspace's marks, which are few, so no list of everyone at 200 accounts goes in a URL. */
-export async function personalAccountIds(sb, ws, ids) {
-  const marked = new Set((await rows(sb.from('claims').select('entity_id,value').eq('workspace_id', ws).eq('property', 'is_personal').is('invalid_at', null)))
-    .filter(c => c.value === true).map(c => c.entity_id));
-  if (!marked.size) return new Set();
-  const asked = new Set(ids);
-  const out = new Set(ids.filter(id => marked.has(id)));
-  // Marked people per account on screen, against how many people the account has (people_count).
+/** The Network accounts (GET-1016, GET-1017): marked personal, or every one of their people is.
+ *  `ids` narrows it to those accounts; null asks for the whole workspace (the Accounts list leaves
+ *  them out). Starts from the workspace's marks, which are few, so no long id list goes in a URL. */
+export async function personalAccountIds(sb, ws, ids = null) {
+  const marked = [...new Set((await rows(sb.from('claims').select('entity_id,value').eq('workspace_id', ws).eq('property', 'is_personal').is('invalid_at', null)))
+    .filter(c => c.value === true).map(c => c.entity_id))];
+  if (!marked.length) return new Set();
+  const asked = ids ? new Set(ids) : null;
+  const out = new Set();
   const markedAt = new Map();
-  const people = [...marked].filter(id => !asked.has(id));
-  for (let i = 0; i < people.length; i += 100) {
-    for (const p of await rows(sb.from('entity_list_rows').select('entity_id,company_id').eq('workspace_id', ws).eq('kind', 'person').in('entity_id', people.slice(i, i + 100)))) {
-      if (asked.has(p.company_id)) markedAt.set(p.company_id, (markedAt.get(p.company_id) ?? 0) + 1);
+  for (let i = 0; i < marked.length; i += 100) {
+    for (const r of await rows(sb.from('entity_list_rows').select('entity_id,kind,company_id').eq('workspace_id', ws).in('entity_id', marked.slice(i, i + 100)))) {
+      if (r.kind === 'account' && (!asked || asked.has(r.entity_id))) out.add(r.entity_id);
+      // Marked people per account, against how many people the account has (people_count).
+      if (r.kind === 'person' && r.company_id && (!asked || asked.has(r.company_id))) markedAt.set(r.company_id, (markedAt.get(r.company_id) ?? 0) + 1);
     }
   }
-  if (markedAt.size) {
-    for (const a of await rows(sb.from('entity_list_rows').select('entity_id,people_count').eq('workspace_id', ws).eq('kind', 'account').in('entity_id', [...markedAt.keys()]))) {
+  const counted = [...markedAt.keys()].filter(id => !out.has(id));
+  for (let i = 0; i < counted.length; i += 100) {
+    for (const a of await rows(sb.from('entity_list_rows').select('entity_id,people_count').eq('workspace_id', ws).eq('kind', 'account').in('entity_id', counted.slice(i, i + 100)))) {
       if (a.people_count > 0 && markedAt.get(a.entity_id) >= a.people_count) out.add(a.entity_id);
     }
   }

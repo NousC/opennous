@@ -50,6 +50,16 @@ async function allRows<T>(query: () => any): Promise<T[]> {
 
 const chunks = <T>(xs: T[]): T[][] => Array.from({ length: Math.ceil(xs.length / CHUNK) }, (_, i) => xs.slice(i * CHUNK, (i + 1) * CHUNK));
 
+/** True when every one of these people is marked personal (and true for none). */
+async function everyoneMarked(supabase: SupabaseClient, workspaceId: string, ids: string[]): Promise<boolean> {
+  let marked = 0;
+  for (const chunk of chunks(ids)) {
+    marked += (await rows<{ value: unknown }>(supabase.from('claims').select('value').eq('workspace_id', workspaceId)
+      .eq('property', 'is_personal').is('invalid_at', null).in('entity_id', chunk))).filter(c => c.value === true).length;
+  }
+  return marked >= ids.length;
+}
+
 /** The live deal facts a mark on this entity retires: its own, and for a company its people's;
  *  for a person, also what they voiced that was filed on their company. */
 export async function personalFactsFor(supabase: SupabaseClient, workspaceId: string, entityId: string): Promise<FactRow[]> {
@@ -70,8 +80,15 @@ export async function personalFactsFor(supabase: SupabaseClient, workspaceId: st
       .eq('workspace_id', workspaceId).eq('id', entityId));
     const companyId = me[0]?.company_id;
     if (companyId) {
-      found.push(...await allRows<FactRow>(() => notes().eq('entity_id', companyId)
-        .eq('value->metadata->>voiced_by_contact_id', entityId)));
+      // When they were the last of the company's people not marked, the company is Network now
+      // (GET-1017) and its own deal facts go too: older and agent-written company facts carry no
+      // voiced_by_contact_id, so the voiced ones alone left the account's budget on file.
+      const coworkers = (await allRows<{ id: string }>(() => supabase.from('contacts').select('id')
+        .eq('workspace_id', workspaceId).eq('company_id', companyId))).map(c => c.id).filter(id => id !== entityId);
+      const allNetwork = await everyoneMarked(supabase, workspaceId, coworkers);
+      found.push(...await allRows<FactRow>(() => allNetwork
+        ? notes().eq('entity_id', companyId)
+        : notes().eq('entity_id', companyId).eq('value->metadata->>voiced_by_contact_id', entityId)));
     }
   }
   return found.filter(f => isPersonalRetirable(f.value));
