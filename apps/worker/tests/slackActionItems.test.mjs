@@ -92,3 +92,26 @@ test('internal-only chat and stale conversations read nothing', async () => {
   const old = { ...ask, occurredAt: '2025-01-01T00:00:00Z' };
   assert.deepEqual(await extractConversationActionItems({ workspaceId: 'ws', messages: [old], people }, { reader: fail }), []);
 });
+
+// GET-1003: a teammate's own DM has one person per side, so an unnamed owner is not a mystery.
+test('in a two-person DM an unowned task goes to the one person on the owing side', () => {
+  const dm = { messages: [ask, yes], people, twoParty: true };
+  const ours = checkConversationActionItem(item({ owner: null }), dm);
+  assert.equal(ours.owner_name, 'Morgan Reyes');
+  assert.equal(ours.owner_entity_id, null);
+  const reply = { id: 'm4', speaker: 'Morgan Reyes', side: 'internal', contactId: null, ts: '1790000300.000100', occurredAt: later,
+    text: 'Could you enable the transcripts permission on your side so we can re-pull the demos?' };
+  const theirs = checkConversationActionItem(item({ title: 'Enable the transcripts permission', owner_kind: 'prospect', owner: null, participants: [],
+    quote: 'Could you enable the transcripts permission on your side' }), { messages: [ask, reply], people, twoParty: true });
+  assert.equal(theirs.owner_name, 'Dana Whitfield', 'the customer who is in the DM, not a person merely mentioned');
+  assert.equal(theirs.owner_entity_id, 'person-dana');
+});
+
+test('outside a DM, or with a named owner, nothing is filled in', () => {
+  assert.equal(checkConversationActionItem(item({ owner: null }), { messages: [ask, yes], people }).owner_name, null, 'a channel can hold silent teammates');
+  assert.equal(checkConversationActionItem(item({ owner: 'Morgan' }), { messages: [ask, yes], people, twoParty: true }).owner_name, 'Morgan Reyes');
+  // A named owner we cannot place is someone else, not the DM owner.
+  assert.equal(checkConversationActionItem(item({ owner: 'Sam from engineering' }), { messages: [ask, yes], people, twoParty: true }).owner_name, null);
+  // Our side never spoke: no speaker to give it to.
+  assert.equal(checkConversationActionItem(item({ owner: null }), { messages: [ask, thanks], people, twoParty: true }).owner_name, null);
+});

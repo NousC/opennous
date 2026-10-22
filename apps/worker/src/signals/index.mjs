@@ -2130,7 +2130,7 @@ const squash = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
  * `people`: [{ name, side, contactId }] — everyone the conversation names, speakers and mentions.
  * Returns the stored fields, or null when the item is not supported by what was said.
  */
-export function checkConversationActionItem(item, { messages = [], people = [] } = {}) {
+export function checkConversationActionItem(item, { messages = [], people = [], twoParty = false } = {}) {
   if (!item || typeof item.title !== 'string' || !item.title.trim()) return null;
   const q = squash(item.quote);
   if (q.length < 8) return null;
@@ -2147,7 +2147,15 @@ export function checkConversationActionItem(item, { messages = [], people = [] }
   const ownerSide = item.owner_kind === 'prospect' ? 'external' : 'internal';
   const owner = byName(item.owner);
   // An owner named on the wrong side is a misread; keep the side, drop the name.
-  const ownerPerson = owner && owner.side === ownerSide ? owner : null;
+  let ownerPerson = owner && owner.side === ownerSide ? owner : null;
+  // A teammate's own DM has one speaker per side, so an unnamed owner can only be that person
+  // (GET-1003). A channel can hold silent teammates, so it never guesses. Only a blank owner is
+  // filled: a name we could not place ("get Priya from engineering to…") is someone else.
+  if (!ownerPerson && twoParty && !String(item.owner ?? '').trim()) {
+    const speakers = [...new Map(messages.filter(m => m.side === ownerSide && m.speaker)
+      .map(m => [m.speaker, { name: m.speaker, side: m.side, contactId: m.contactId ?? null }])).values()];
+    if (speakers.length === 1) ownerPerson = speakers[0];
+  }
   const participants = [...new Set((Array.isArray(item.participants) ? item.participants : []).map(byName).filter(Boolean))]
     .filter(p => p.name !== said.speaker && p.name !== ownerPerson?.name)
     .map(p => ({ name: p.name, side: p.side, entity_id: p.contactId ?? null }));
@@ -2190,7 +2198,7 @@ function conversationKey(messages, people, mentions) {
 
 export async function extractConversationActionItems({
   supabase, workspaceId, channel = 'slack', messages = [], people = [], mentions = {},
-  sourceRef = null, sourceUrl = null, sourceTitle = null, dryRun = false,
+  sourceRef = null, sourceUrl = null, sourceTitle = null, dryRun = false, twoParty = false,
 }, { reader = read, observe = recordObservation } = {}) {
   const live = messages.filter(m => ['internal', 'external'].includes(m.side) && m.text?.trim());
   const external = live.filter(m => m.side === 'external' && m.contactId);
@@ -2237,7 +2245,7 @@ Output ONLY valid JSON, max 4 items:
   const kept = [];
   const perMessage = new Map();
   for (const raw of (result.value || []).slice(0, 4)) {
-    const it = checkConversationActionItem(raw, { messages: live, people });
+    const it = checkConversationActionItem(raw, { messages: live, people, twoParty });
     if (!it) continue;
     // The asker's person when they are the customer, else the customer on the conversation the
     // ask was made to: the fact lives on a real person at the account, like every other task.

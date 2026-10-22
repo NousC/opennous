@@ -84,6 +84,7 @@ test('Slack calls the same signal and insight readers with checked-author eviden
   assert.equal(tasks.messages, calls.find(([n]) => n === 'signals')[1].evidenceMessages);
   assert.deepEqual(tasks.people.map(p => [p.name, p.side]), [['Morgan', 'internal'], ['Dana', 'external'], ['Alex', 'external']]);
   assert.equal(tasks.sourceRef, calls.find(([n]) => n === 'signals')[1].sourceRef);
+  assert.equal(tasks.twoParty, false, 'a channel never guesses an owner');
   // One conversation, one read receipt, one credit: the task read rides on it.
   assert.equal(calls.filter(([n]) => n === 'read').length, 1);
   assert.equal(calls.find(([n]) => n === 'read')[1].value.credits, 1);
@@ -188,6 +189,7 @@ test("a teammate's own DM is filed as theirs: private type, owned snapshot, no w
   assert.equal(snapshot.ownerUserId, 'member-1');
   assert.deepEqual(snapshot.raw.mailbox_owner_ids, ['member-1']);
   assert.equal(calls.find(([n]) => n === 'signals')[1].type, 'slack_dm');
+  assert.equal(calls.find(([n]) => n === 'tasks')[1].twoParty, true, 'a DM names the obvious owner (GET-1003)');
   const read = calls.find(([n]) => n === 'read')[1];
   assert.equal(read.value.credits, 1, 'one credit per read, like a channel');
 });
