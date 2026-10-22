@@ -103,10 +103,33 @@ const stageQueryValues = (raw) => {
 };
 
 // GET /api/contacts
+// The People filter's types (GET-1018), as a filter on the flattened list. The same words as the
+// row's tag: Network (marked personal), Team (a member of the workspace), User (a product signup:
+// a user or trial stage outside the sales funnel, or PostHog's product.user), Client (won).
+const EMPTY = Symbol('no one');
+const SALES_STAGES = [...ALL_PIPELINE_STAGES, ...Object.keys(LEGACY_STAGE_MAP)];
+const CLIENT_STAGES = ['closed_won', ...Object.keys(LEGACY_STAGE_MAP).filter(k => LEGACY_STAGE_MAP[k] === 'closed_won')];
+export async function peopleTypeRefine(supabase, workspaceId, type) {
+  const among = (ids) => (ids.length ? (q) => q.in('entity_id', ids) : EMPTY);
+  if (type === 'network') return among([...await getPersonalEntityIds(supabase, workspaceId)]);
+  if (type === 'team') return among([...await getInternalEntityIds(supabase, workspaceId)]);
+  if (type === 'client') return (q) => q.in('stage', CLIENT_STAGES);
+  if (type === 'user') {
+    // PostHog's users by id while there are few enough to name in one URL; past that, by stage.
+    const { data } = await supabase.from('claims').select('entity_id, value').eq('workspace_id', workspaceId)
+      .eq('property', 'product.user').is('invalid_at', null).limit(301);
+    const ids = (data ?? []).filter(r => (r.value?.value ?? r.value) === true).map(r => r.entity_id);
+    // The tag's rule (People.tsx isProductUserStage): a stage outside the funnel that names a user or a trial.
+    const byStage = `and(stage.not.in.(${SALES_STAGES.join(',')}),or(stage.ilike.*user*,stage.ilike.*trial*))`;
+    return (q) => q.or(ids.length && ids.length <= 300 ? `${byStage},entity_id.in.(${ids.join(',')})` : byStage);
+  }
+  return null;
+}
+
 contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
-    const { workspaceId, search, limit = 50, offset = 0, filter, source, sort, status, include_team } = req.query;
+    const { workspaceId, search, limit = 50, offset = 0, filter, source, sort, status, include_team, type } = req.query;
     const includeTeam = include_team === '1' || include_team === 'true';
     if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
     if (!UUID.test(workspaceId)) return res.status(400).json({ error: 'invalid_workspace_id' });
@@ -128,8 +151,11 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
       const { data: wsRow } = await supabase.from('workspaces').select('focus_country').eq('id', workspaceId).maybeSingle();
       const asked = String(req.query.country ?? '').trim();
       const country = asked === 'all' ? null : (asked || wsRow?.focus_country || null);
+      // `type` (GET-1018): the People filter — network, team, user or client. Unknown = everyone.
+      const refine = await peopleTypeRefine(supabase, workspaceId, String(type ?? ''));
+      if (refine === EMPTY) return res.json({ contacts: [], total: 0, limit: lim, offset: off, country, focus_country: wsRow?.focus_country ?? null, countries: await accountCountries(supabase, workspaceId) });
       const { rows, total } = await listRows(supabase, workspaceId, 'person', {
-        q: String(search ?? '').trim(), limit: lim, offset: off, country, focusCountry: wsRow?.focus_country ?? null,
+        q: String(search ?? '').trim(), limit: lim, offset: off, country, focusCountry: wsRow?.focus_country ?? null, refine,
       });
       // The logo and the face: the employer's domain (off its account row, else a work address)
       // and any photo on file. The flattened person row carries neither.

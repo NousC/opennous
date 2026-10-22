@@ -36,6 +36,12 @@ const PIPELINE_STAGES: readonly string[] = ALL_PIPELINE_STAGES;
 // check would mislabel every one of them a product user.
 // It must also NAME a user or a trial: other non-funnel values are not product users. A lead
 // list writes `cold`, and every LinkedIn engager on one was tagged "User" (GET-820).
+// The People filter's types (GET-1018): the row tags, filtered by the server (GET /api/contacts?type=).
+type PeopleType = "all" | "network" | "user" | "client" | "team";
+const PEOPLE_TYPES: { value: PeopleType; label: string }[] = [
+  { value: "all", label: "Everyone" }, { value: "network", label: "Network" }, { value: "user", label: "User" },
+  { value: "client", label: "Client" }, { value: "team", label: "Team" },
+];
 const isProductUserStage = (s?: string | null) => !!s && normalizeStage(s) === null && /\buser\b|\btrial\b/i.test(s);
 
 // Intent band → pill classes (the "reach out now?" axis). Mirrors Lists.tsx.
@@ -308,16 +314,19 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     try { localStorage.setItem(countryKey, v); } catch { /* a filter that forgets is still a filter */ }
   };
   useEffect(() => { const t = setTimeout(() => setServerQ(q.trim()), 250); return () => clearTimeout(t); }, [q]);
+  // Who to list (GET-1018): everyone, or one of the row tags. Filtered by the server, so the total is true.
+  const [ptype, setPtype] = useState<PeopleType>("all");
 
   // Newest activity first, LOAD_SIZE at a time. The server orders the whole list (not just what is
   // loaded), so "Load more" always continues the same order instead of reshuffling.
   const peopleQuery = useInfiniteQuery({
-    queryKey: [...contactsKey, serverQ, country ?? "__ws_default__"],
+    queryKey: [...contactsKey, serverQ, country ?? "__ws_default__", ptype],
     initialPageParam: 0,
     queryFn: async ({ pageParam }): Promise<PeoplePage> => {
       const params = new URLSearchParams({ workspaceId, limit: String(LOAD_SIZE), offset: String(pageParam), include_team: "1" });
       if (serverQ) params.set("search", serverQ);
       if (country) params.set("country", country);
+      if (ptype !== "all") params.set("type", ptype);
       const res = await fetch(`${apiUrl}/api/contacts?${params}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = res.ok ? await res.json() : {};
       return {
@@ -447,9 +456,12 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     await fetch(`${apiUrl}/api/contacts/${cid}/mark-client`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
     queryClient.invalidateQueries({ queryKey: contactsKey });
   };
-  const markContactPersonalRow = async (cid: string) => {
-    await fetch(`${apiUrl}/api/contacts/${cid}/personal`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ personal: true }) }).catch(() => {});
+  // Mark as network, or take them back out of it (GET-1018). Optimistic, then reconcile.
+  const markContactPersonalRow = async (cid: string, on = true) => {
+    updateLoaded(rows => rows.map(c => c.id === cid ? { ...c, isPersonal: on } : c));
+    await fetch(`${apiUrl}/api/contacts/${cid}/personal`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ personal: on }) }).catch(() => {});
     queryClient.invalidateQueries({ queryKey: contactsKey });
+    queryClient.invalidateQueries({ queryKey: ["companies-list", workspaceId] });
   };
 
   // Multi-select delete. The delete cascades server-side — every claim, activity,
@@ -705,17 +717,26 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     </th>
   );
   const tag = (c: ContactInfo) =>
-    c.isInternal ? "Team" : c.isPersonal ? "Network" : c.productUser || isProductUserStage(c.pipelineStage) ? "User" : c.notInCrm ? "Not in CRM" : null;
+    c.isInternal ? "Team" : c.isPersonal ? "Network" : c.productUser || isProductUserStage(c.pipelineStage) ? "User"
+      : normalizeStage(c.pipelineStage) === "closed_won" ? "Client" : c.notInCrm ? "Not in CRM" : null;
   const locationRows = [{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map(o => ({ ...o, label: o.country }))];
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       {showImport && <PeopleImportModal workspaceId={workspaceId} token={token} onClose={()=>setShowImport(false)} onDone={()=>{ setShowImport(false); refetch(); }}/>}
 
-      {inApiShell && countryOptions.length > 0 && (
-        <ApiTopBarFilter active={appliedCountry ? 1 : 0}>
-          <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>
-          {locationRows.map(o => {
+      {inApiShell && (
+        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (ptype !== "all" ? 1 : 0)}>
+          <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Type</div>
+          {PEOPLE_TYPES.map(o => (
+            <button key={o.value} onClick={() => setPtype(o.value)}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-hover">
+              <Check className={cn("h-3.5 w-3.5 flex-shrink-0", ptype === o.value ? "text-foreground" : "opacity-0")} />
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+            </button>
+          ))}
+          {countryOptions.length > 0 && <div className="mt-1 border-t border-hairline px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>}
+          {countryOptions.length > 0 && locationRows.map(o => {
             const on = o.country === "all" ? !appliedCountry : appliedCountry === o.country;
             return (
               <button key={o.country} onClick={() => chooseCountry(o.country)}
@@ -745,6 +766,12 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
           />
         )}
         <span className="flex-1" />
+        {!inApiShell && (
+          <select value={ptype} onChange={e => setPtype(e.target.value as PeopleType)} aria-label="Filter people by type"
+            className="h-7 rounded-lg border border-border bg-card px-2 text-[12.5px] font-medium text-foreground">
+            {PEOPLE_TYPES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        )}
         {!inApiShell && <LocationFilter applied={appliedCountry} options={countryOptions} onChange={chooseCountry} />}
         <label className="relative flex h-7 w-full items-center sm:w-[200px]">
           <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
@@ -822,7 +849,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
                   )}
                   <td className="text-muted-foreground">{c.lastActivityAt ? when(c.lastActivityAt) : "—"}</td>
                   <td className="!pr-4 text-right" onClick={e => e.stopPropagation()}>
-                    <RowMenu onMarkClient={() => markContactClientRow(c.id)} onMarkPersonal={() => markContactPersonalRow(c.id)} onDelete={() => deleteContactRow(c.id)} />
+                    <RowMenu isPersonal={c.isPersonal} onMarkClient={() => markContactClientRow(c.id)} onMarkPersonal={(on) => markContactPersonalRow(c.id, on)} onDelete={() => deleteContactRow(c.id)} />
                   </td>
                 </tr>
               );

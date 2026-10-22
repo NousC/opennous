@@ -4,7 +4,7 @@ import { MoreHorizontal } from "lucide-react";
 // The quiet row kebab. Handoffs are automatic, so this is the manual layer the model
 // can't decide: is this a client, a personal contact, or not a real account (delete).
 // Delete asks for a second click inline — no native confirm dialog.
-export function RowMenu({ onMarkClient, onMarkPersonal, onDelete }: { onMarkClient: () => void; onMarkPersonal: () => void; onDelete: () => void }) {
+export function RowMenu({ onMarkClient, onMarkPersonal, onDelete, isPersonal = false }: { onMarkClient: () => void; onMarkPersonal: (on: boolean) => void; onDelete: () => void; isPersonal?: boolean }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -25,7 +25,8 @@ export function RowMenu({ onMarkClient, onMarkPersonal, onDelete }: { onMarkClie
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-44 overflow-hidden rounded-xl border border-border/70 bg-popover p-1 shadow-pop">
           <button className={item} onClick={() => { setOpen(false); onMarkClient(); }}>Mark as client</button>
-          <button className={item} onClick={() => { setOpen(false); onMarkPersonal(); }}>Mark as network</button>
+          {/* Network is reversible (GET-1018): one already in it can be taken back out. */}
+          <button className={item} onClick={() => { setOpen(false); onMarkPersonal(!isPersonal); }}>{isPersonal ? "Remove from network" : "Mark as network"}</button>
           <div className="-mx-1 my-1 h-px bg-hairline" />
           {confirming ? (
             <button className="flex w-full items-center rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-risk transition-colors duration-fast hover:bg-risk/10"
