@@ -88,6 +88,18 @@ test('history: an insight item becomes a claim about us with its kind and its bo
   assert.deepEqual([rowFromItem({ ...base, category: 'market' }).kind, rowFromItem({ ...base, category: 'market' }).home], ['partners', 'market']);
 });
 
+test('history: words stay private unless the source is known to be shared', async () => {
+  const { rowFromItem } = await import('../scripts/backfillAboutUsClaims.mjs');
+  const base = { id: 'i1', workspace_id: 'ws', category: 'product', statement: 'Wants Slack alerts', quote: 'q', created_at: '2026-10-01T00:00:00Z' };
+  const priv = (it) => rowFromItem({ ...base, ...it }).quote_private;
+  assert.equal(priv({ source_system: 'fellow', source_ref: 'source://fellow/m1' }), false, 'a meeting');
+  assert.equal(priv({ source_system: 'gmail', source_ref: 'source://gmail/t1' }), true, 'a mailbox');
+  assert.equal(priv({ source_system: null, source_ref: null }), true, 'unknown source');
+  assert.equal(priv({ source_system: 'slack', source_ref: 'source://slack/T1/C123/hour-1/f1' }), false, 'a channel');
+  assert.equal(priv({ source_system: 'slack', source_ref: 'source://slack/T1/D123/hour-1/f1' }), true, 'a DM');
+  assert.equal(priv({ source_system: 'slack', source_ref: 'source://slack/T1/G123/hour-1/f1' }), true, 'a group DM');
+});
+
 test('a LinkedIn DM thread is private and has an identity, and our own "You:" lines are not theirs', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../src/signals/index.mjs', import.meta.url), 'utf8');

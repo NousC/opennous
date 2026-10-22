@@ -5,7 +5,8 @@
 // held them. This copies the customer ones (source external), filed before --before, that are not
 // hidden (HIDDEN_INSIGHT_STATUSES: duplicate, source removed) and that the board did not sort out as "not an insight". Each row
 // keeps its insight_items id (legacy_item_id), so a re-run copies nothing twice, and the board's
-// first tag becomes `what`, the field the engine groups on. Nothing in insight_items changes.
+// first tag becomes `what`, the field the engine groups on. Words from a mailbox, a DM or an unknown
+// source stay private. Nothing in insight_items changes.
 //
 //   node apps/worker/scripts/backfillAboutUsClaims.mjs --before=ISO [--write] [--workspace=UUID]
 //
@@ -37,9 +38,18 @@ export function rowFromItem(it, tagName) {
     home, kind: normalizeAboutUsKind(kind, home), content: it.statement, quote: it.quote ?? null, speaker: it.speaker ?? null,
     what: tagName ?? null, source_ref: it.source_ref ?? null, source_system: it.source_system ?? null,
     occurred_at: it.occurred_at ?? it.created_at ?? null, origin: 'insight_read', legacy_item_id: it.id,
-    // Read out of someone's mailbox: the words stay private (GET-985).
-    quote_private: PRIVATE_SYSTEMS.has(String(it.source_system ?? '').toLowerCase()),
+    quote_private: quoteIsPrivate(it),
   };
+}
+
+/** Read out of someone's mailbox or DMs: the words stay private (GET-985). So do the words of an
+ *  item with no source on record (filed before the insight read kept one): it may be an email. */
+function quoteIsPrivate(it) {
+  const system = String(it.source_system ?? '').toLowerCase();
+  if (!system) return true;
+  if (PRIVATE_SYSTEMS.has(system)) return true;
+  // slack://<team>/<channel>/…: a D… channel is a DM, a G… one a group DM.
+  return system === 'slack' && /\/slack\/[^/]+\/[DG]/.test(String(it.source_ref ?? ''));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
