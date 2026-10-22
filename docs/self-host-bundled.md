@@ -20,9 +20,7 @@ Routing:
 
 - `https://$APP_DOMAIN/auth/v1/*` goes to GoTrue. The browser's Supabase URL is
   `https://$APP_DOMAIN`. Everything else on that domain is the frontend.
-- `https://$API_DOMAIN` is the API (`/inbound/*` goes to the worker). `/internal/*` answers
-  404 from outside: those routes are for the worker, which calls the API on the compose
-  network (`NOUS_API_INTERNAL_URL=http://api:3000`), never through Caddy.
+- `https://$API_DOMAIN` is the API (`/inbound/*` goes to the worker).
 - `https://$MCP_DOMAIN` is the hosted MCP server.
 - `http://supabase:8000` exists only inside the compose network. The API, worker
   and MCP use it as `SUPABASE_URL`: `/rest/v1` goes to PostgREST, `/auth/v1` to GoTrue.
@@ -49,7 +47,7 @@ empty instance, so whoever reaches the page first cannot take it over. Lost the 
 The token is `SELFHOST_SETUP_TOKEN` in `nous.env`, and
 `docker compose --env-file nous.env logs db-schema` prints the link for as long as
 there is no owner. After that the instance is closed: nobody else gets an account
-unless you invite them with a join link (Settings → Members → Create invite). See
+unless you invite them with a join link (Settings → Team → Create invite). See
 [Who can sign up](#who-can-sign-up).
 
 `./update.sh` works the same way: it runs `docker compose --env-file nous.env`,
@@ -60,21 +58,6 @@ The key script refuses an env file that looks like a Nous Cloud or external-Supa
 one (`SUPABASE_URL` on `*.supabase.co`, or any `CLERK_*` key set), since it would
 overwrite its URL, auth provider and secrets. Give the bundled stack its own file.
 It leaves `nous.env` readable by its owner only (mode 600).
-
-One install, one workspace per team: creating a second workspace is refused
-(`self_hosted_workspace_limit`). The fictional demo workspace (`supabase/seed/demo.sql`,
-removed again by `supabase/seed/demo-reset.sql`) has its own team, so it does not count.
-
-### Ports
-
-Caddy publishes 80 and 443 on the host. If something else already holds them, set
-`HTTP_PORT` and `HTTPS_PORT` in `nous.env` (for example `8080` and `8443`). The app still
-builds every link, redirect and email URL as `https://$APP_DOMAIN` (and `https://$API_DOMAIN`,
-`https://$MCP_DOMAIN`), with no port, so on another HTTPS port those links only work when
-something in front (a load balancer, a router port-forward) serves them on 443.
-
-The api, worker, mcp and frontend containers have health checks (`docker compose ps` shows
-`healthy`): the api, worker and mcp answer `GET /health`, the frontend its index page.
 
 ## Environment
 
@@ -96,7 +79,6 @@ use that on an install that already has data.
 | `COMPOSE_FILE` | `docker-compose.yaml:docker-compose.selfhost.yaml` (use `;` instead of `:` on Windows). |
 | `DISABLE_SIGNUPS` | `true` (only if unset). Only the setup-token sign-up becomes the owner; after that only invitees. |
 | `GOTRUE_MAILER_AUTOCONFIRM` | Only if unset: `false` when `SMTP_HOST` is set, else `true`. |
-| `APP_COMMIT` | The checkout's short commit, for the sidebar's version widget (`./update.sh` keeps it current). Skipped outside a git checkout. |
 
 Optional, read by the compose file:
 
@@ -107,8 +89,6 @@ Optional, read by the compose file:
 | `GOTRUE_DISABLE_SIGNUP` | `false` | `true` closes sign-up at the auth server, which also stops the owner and invitees from creating their login. Leave it `false`; `DISABLE_SIGNUPS` is the gate. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | unset, `587` | Mail server GoTrue sends through. |
 | `SMTP_ADMIN_EMAIL`, `SMTP_SENDER_NAME` | unset, `Nous` | From address and name. |
-| `HTTP_PORT`, `HTTPS_PORT` | `80`, `443` | Host ports Caddy listens on. See [Ports](#ports). |
-| `VITE_EXTERNAL_IMAGES` | `true` | Company favicons (Google) and people photos (Gravatar). `false` keeps every image request on your host. Rebuild the frontend after changing it. |
 
 ## Who can sign up
 
@@ -121,7 +101,7 @@ create their login there. What a login gets is decided by the API:
 - With `DISABLE_SIGNUPS=true` (the default), any other login that does not hold an
   invitation gets no account: no team, no workspace, nothing that spends your
   AI keys. The login page shows no "Create account" link.
-- A teammate joins with a join token: Settings → Members → Create invite gives a
+- A teammate joins with a join token: Settings → Team → Create invite gives a
   `npx @opennous/cli join <token>` command (add `--url https://$API_DOMAIN`). They
   run it, the browser opens on the approval page, they create a login there (the
   sign-up page stays reachable from it), approve, and land in your workspace. The
@@ -301,8 +281,7 @@ certificate. Copy it out of the Caddy container once:
 docker compose --env-file nous.env cp caddy:/data/caddy/pki/authorities/local/root.crt caddy-root.crt
 ```
 
-Point Node at it (the CLI, `npx @opennous/cli init --url https://api.localhost`, any MCP client).
-Until you do, the CLI stops with a one-line "certificate isn't trusted" message that links here:
+Point Node at it (the CLI, `npx @opennous/cli init --url https://api.localhost`, any MCP client):
 
 ```bash
 export NODE_EXTRA_CA_CERTS="$PWD/caddy-root.crt"        # macOS, Linux, WSL2

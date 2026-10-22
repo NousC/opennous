@@ -336,18 +336,3 @@ test('rules list, pause and remove; checks lists the catalogue', async () => {
   const bad = await callTool('rules', { action: 'pause' }, {});
   assert.match(bad.text, /Pass `id`/);
 });
-
-test('whoami counts accounts as companies and names an MCP tool next (GET-1011)', async () => {
-  const { text, calls: sent } = await callTool('whoami', {}, {
-    'GET /v2/workspace/whoami': () => [200, {
-      workspace: { id: UUID, name: 'Acme' },
-      you: { user_id: UUID, name: 'Dana Example', scope: 'admin', roles: ['founder'], capability: 'read_write' },
-      setup: { onboarded: true, accounts: 12, people: 1340, has_icp: true },
-      usage: null,
-    }],
-  });
-  assert.equal(sent[0].path, '/v2/workspace/whoami');
-  assert.match(text, /12 accounts · 1,340 people/);
-  assert.match(text, /NEXT → call `attention`/);
-  assert.doesNotMatch(text, /`focus`/);
-});

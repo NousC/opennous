@@ -46,25 +46,16 @@ export async function resolveWhoami(supabase, { workspaceId, memberUserId = null
   // Setup state — so the agent's FIRST call orients itself: onboard vs work. `onboarded` is
   // the SHARED expression (lib/onboardingState.mjs), the same one the app's router gate reads.
   // It used to be a hand-rolled copy that claimed to mirror the app and quietly didn't.
-  // `accounts`/`has_icp` let the agent say something specific. `accounts` is companies (the
-  // active company entities, as the onboarding checklist counts them); `people` is contacts,
-  // which is what the shared setup gate has always read (GET-1011: whoami used to call the
-  // people count "accounts").
-  let setup = { onboarded: false, accounts: 0, people: 0, has_icp: false };
+  // `accounts`/`has_icp` let the agent say something specific.
+  let setup = { onboarded: false, accounts: 0, has_icp: false };
   try {
-    const [{ count: companies }, { count: contacts }, { data: icp }] = await Promise.all([
-      supabase.from('entities').select('id', { count: 'exact', head: true })
-        .eq('workspace_id', workspaceId).eq('type', 'company').eq('status', 'active'),
+    const [{ count: accounts }, { data: icp }] = await Promise.all([
       supabase.from('contacts').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId),
       supabase.from('foundations').select('kind').eq('workspace_id', workspaceId).eq('kind', 'icp').maybeSingle(),
     ]);
-    const accounts = companies ?? 0;
-    const people = contacts ?? 0;
+    const n = accounts ?? 0;
     const has_icp = !!icp;
-    setup = {
-      onboarded: isWorkspaceSetUp({ activatedAt: ws?.onboarding_activated_at, hasIcp: has_icp, accounts: people }),
-      accounts, people, has_icp,
-    };
+    setup = { onboarded: isWorkspaceSetUp({ activatedAt: ws?.onboarding_activated_at, hasIcp: has_icp, accounts: n }), accounts: n, has_icp };
   } catch { /* non-fatal — leave the fresh-workspace defaults */ }
 
   return { workspace: { id: ws?.id ?? workspaceId, name: ws?.name ?? null }, you, setup };

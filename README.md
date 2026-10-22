@@ -38,7 +38,7 @@
 - **Unified account records:** Resolve emails, meetings, transcripts, product activity and CRM fields to the right person, company and deal. Uncertain matches go to review, never to a guess.
 - **Buying signals from every activity:** Extract pain, goals, objections, competitors, buying intent, risk, expansion and staff changes, each linked to its account.
 - **Source citations:** Each claim carries its source, confidence and validity. New evidence updates it, conflicts stay reviewable, manual entries stay protected, and the whole graph can be rebuilt from its raw history.
-- **Built for agents:** 35 REST endpoints and an MCP server. One `get_context` call returns the account, shaped for meeting prep, follow-ups or account reviews.
+- **Built for agents:** 35 REST endpoints and 13 MCP tools. One `get_context` call returns the account, shaped for meeting prep, follow-ups or account reviews.
 - **Self-hosted and secure by default:** Run on your own database and model keys. Raw emails and transcripts stay with their participants, API keys can be read-only, and webhooks are signed.
 - **Works with your stack:** 16 integrations across CRM, email, calendar, calls and outbound, plus LinkedIn.
 
@@ -72,15 +72,6 @@ To look around with fictional data first, load the demo workspace ("Fernpoint", 
 docker compose --env-file nous.env cp supabase/seed/demo.sql db:/tmp/demo.sql
 docker compose --env-file nous.env exec db psql -U postgres -v ON_ERROR_STOP=1 -1 -f /tmp/demo.sql
 ```
-
-Everyone who has signed up is added to it as an admin; switch to it from the workspace menu. To remove it again (it touches nothing but the demo workspace, its team and its users):
-
-```bash
-docker compose --env-file nous.env cp supabase/seed/demo-reset.sql db:/tmp/demo-reset.sql
-docker compose --env-file nous.env exec db psql -U postgres -v ON_ERROR_STOP=1 -f /tmp/demo-reset.sql
-```
-
-A self-hosted install has one workspace per team: creating a second one is refused (`self_hosted_workspace_limit`). The demo workspace has its own team, so it does not use yours up.
 
 Then point your agent at your instance:
 
@@ -149,7 +140,7 @@ Setup for each one is in the [provider docs](https://docs.opennous.cloud/provide
 }
 ```
 
-Leave out `NOUS_API_URL` to use Cloud. Create keys under **API keys** in the sidebar (`/keys`).
+Leave out `NOUS_API_URL` to use Cloud. Create keys under **Settings → API keys**.
 
 The same data is on the REST API:
 

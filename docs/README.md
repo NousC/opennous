@@ -33,8 +33,7 @@ Grouped by area. Each group has a **start-here** doc; the rest are deep-dives.
   and does not count.
 
 ## Lifecycle & commercial
-- **Onboarding, Enrichment & Billing** (`onboarding-enrichment-billing.md`, Nous Cloud only:
-  not in the open-source repository) — the
+- **[Onboarding, Enrichment & Billing](./onboarding-enrichment-billing.md)** — the
   workspace lifecycle end to end: the single `init` entry point, drafting the ICP
   and the one write path that keeps its homes in sync, what fires when you connect
   an integration (the debounced history backfill + which enrichment runs per source),

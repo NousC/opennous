@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
-import { Field, inputCls, linkCls, submitAccentCls, SubmitArrow } from "./AuthCard";
+import { Field, inputCls, linkCls, submitCls, SubmitArrow } from "./AuthCard";
 import { getSupabaseAuthClient } from "./client";
 
 // Email + password account creation on Supabase Auth (GET-577). With "Confirm
@@ -47,8 +47,8 @@ export function SignUpFields({ fixedEmail, afterAuth, signInHref, setupRequired,
 
   if (sentTo) {
     return (
-      <div className="mt-6 rounded-md bg-white p-4 text-[14px] leading-relaxed text-[#2B303A] shadow-[inset_0_0_0_1px_rgba(14,17,22,0.08)]">
-        We sent a confirmation link to <span className="font-normal text-[#0E1116]">{sentTo}</span>. Open it to finish signing up.
+      <div className="mt-6 rounded-lg border border-[#E9E6DC] bg-[#FCFBF8] p-4 text-[13.5px] leading-relaxed text-[#4A463F]">
+        We sent a confirmation link to <span className="font-medium text-[#1C1A17]">{sentTo}</span>. Open it to finish signing up.
       </div>
     );
   }
@@ -80,13 +80,13 @@ export function SignUpFields({ fixedEmail, afterAuth, signInHref, setupRequired,
               required disabled={busy} className={inputCls} autoComplete="off" />
           </Field>
         )}
-        <Button type="submit" disabled={busy} className={submitAccentCls}>
+        <Button type="submit" disabled={busy} className={submitCls}>
           <span>{busy ? "Creating…" : setupRequired ? "Create workspace" : "Create account"}</span>
           {!busy && <SubmitArrow />}
         </Button>
       </form>
       {!setupRequired && (
-        <p className="mt-6 border-t border-[rgba(14,17,22,0.06)] pt-[18px] text-[15px] text-[#6E7480]">
+        <p className="mt-6 text-center text-[13px] text-[#787369]">
           Already have an account? <Link to={signInHref} className={linkCls}>Sign in</Link>
         </p>
       )}

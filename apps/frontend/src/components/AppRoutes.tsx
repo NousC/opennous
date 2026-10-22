@@ -124,6 +124,7 @@ const ApiKeys         = lazyWithErrorBoundary(() => import("@/pages/ApiKeys"));
 const KeyDetail       = lazyWithErrorBoundary(() => import("@/pages/KeyDetail"));
 const People          = lazyWithErrorBoundary(() => import("@/pages/People"));
 const Companies       = lazyWithErrorBoundary(() => import("@/pages/Companies"));
+const Deal            = lazyWithErrorBoundary(() => import("@/pages/Deal"));
 const Accounts        = lazyWithErrorBoundary(() => import("@/pages/Accounts"));
 const AccountsIndex   = lazyWithErrorBoundary(() => import("@/pages/AccountsIndex"));
 const GraphPage       = lazyWithErrorBoundary(() => import("@/pages/GraphPage"));
@@ -376,9 +377,8 @@ export function AppRoutes() {
                 URLs match the nav names: /accounts, /accounts/:id, /people, /people/:id. */}
             <Route path="/accounts"      element={<RequiresFeature feature="accounts"><Suspense fallback={<MinimalLoader />}><AccountsIndex /></Suspense></RequiresFeature>} />
             <Route path="/accounts/:id"  element={<RequiresFeature feature="accounts"><Suspense fallback={<MinimalLoader />}><Companies /></Suspense></RequiresFeature>} />
-            {/* One deal's page is Cloud's, on the workspace plans only (cloud.dealPages, GET-1008). Without
-                it a deal is listed on its account and never opens, so an old deal link lands on the account. */}
-            {!cloud.dealPages && <Route path="/accounts/:id/deals/:dealId" element={<RedirectToAccount />} />}
+            {/* One deal, inside its account (GET-262) — opened from the account's Deals tab. */}
+            <Route path="/accounts/:id/deals/:dealId" element={<RequiresFeature feature="accounts"><Suspense fallback={<MinimalLoader />}><Deal /></Suspense></RequiresFeature>} />
             <Route path="/people"        element={<Suspense fallback={<MinimalLoader />}><Accounts /></Suspense>} />
             <Route path="/people/:id"    element={<Suspense fallback={<MinimalLoader />}><People /></Suspense>} />
             {/* Back-compat redirects for the old paths. (/pipeline is now the Pipeline

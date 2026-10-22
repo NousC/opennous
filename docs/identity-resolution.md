@@ -257,7 +257,7 @@ The rule in one line: a name match plus a **work** domain that lines up with wha
 
 ## 6. LinkedIn: resolving the real profile
 
-LinkedIn sometimes hands us an encoded member URN (`/in/ACoAA…`) rather than a public handle. Treating that URN as a new person's URL was the original source of LinkedIn duplicates. The LinkedIn handler (`apps/worker/src/cloud/webhooks/handlers/linkedin.mjs`, Nous Cloud: LinkedIn is not in the open-source edition) runs a four step waterfall with a URN healing step in the middle:
+LinkedIn sometimes hands us an encoded member URN (`/in/ACoAA…`) rather than a public handle. Treating that URN as a new person's URL was the original source of LinkedIn duplicates. The LinkedIn handler (`apps/worker/src/webhooks/handlers/linkedin.mjs`) runs a four step waterfall with a URN healing step in the middle:
 
 ```
 1. Identifier match      linkedin_member_id, then linkedin_url (exact)
@@ -398,7 +398,7 @@ The expensive failure in any context graph is fusing two real people into one. E
 | A shared name never links by itself | name fallback requires surname corroboration and a unique candidate | `entities.ts` |
 | A cross-email link needs a real signal | `corroboratesIdentity` requires a matching work domain; free domains rejected | `identityMatch.mjs` |
 | A meeting never fuses generic-title calls | co-attendance requires the contact's name in the title | `resolveMeeting.mjs` |
-| A LinkedIn URN never forks a record | URN healed to a vanity handle before a create decision | `linkedin.mjs` (Cloud) |
+| A LinkedIn URN never forks a record | URN healed to a vanity handle before a create decision | `linkedin.mjs` |
 | Enrichment never erases your data | asserted-claim pin; alternates over swaps; provenance preserved | `claims.ts`, `enrichContact.mjs` |
 | Uncertain cases reach a human | ambiguous ingestion writes a Data Quality note instead of merging | `resolveContact.mjs`, `resolveMeeting.mjs` |
 | Every link is reversible | merge tombstones rather than deletes | `entities.ts` |

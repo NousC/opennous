@@ -20,12 +20,6 @@ services:
       # Root-equivalent on the host — acceptable for this single-tenant instance,
       # a hardening item (worker + rootless runtime) before this goes multi-tenant.
       - /var/run/docker.sock:/var/run/docker.sock
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${PORT:-3000}/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
   # ── Hosted MCP server (Streamable HTTP, multi-tenant) ─────────────────────────
   # Lets cloud clients that cannot run a local process (n8n cloud, etc.) connect
@@ -43,17 +37,8 @@ services:
       NODE_ENV: production
       PORT: 3002
       NOUS_API_URL: http://api:3000
-      # The app links the MCP server prints (whoami, setup hints). Unset, they point at Nous
-      # Cloud. Built from APP_DOMAIN, like the frontend's own address.
-      NOUS_APP_URL: https://${APP_DOMAIN}
     depends_on:
       - api
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3002/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
 
   # ── Background worker ────────────────────────────────────────────────────────
   worker:
@@ -66,19 +51,8 @@ services:
       - ./nous.env
     environment:
       NODE_ENV: production
-      # The API over the internal network, for the worker's /internal/* calls (the automation
-      # steps, the nightly ledger rebuild, detector drafts, vault sync). Not API_URL: that one
-      # is the PUBLIC address, which inside this container can resolve to the worker itself
-      # (api.localhost) and which Caddy does not route /internal/* for.
-      NOUS_API_INTERNAL_URL: http://api:3000
     depends_on:
       - api
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${WORKER_PORT:-3001}/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
 
   # ── Frontend (nginx: static SPA) ─────────────────────────────────────────────
   frontend:
@@ -103,31 +77,20 @@ services:
         VITE_DOCS_URL: ${VITE_DOCS_URL:-}
         # Google favicons + Gravatar photos (third-party requests). On unless set to false.
         VITE_EXTERNAL_IMAGES: ${VITE_EXTERNAL_IMAGES:-true}
-        # The hosted MCP URL the app shows in its Connect agent dialogs. Empty means Nous
-        # Cloud's (https://mcp.opennous.cloud/mcp); the bundled self-host stack sets its own.
-        VITE_MCP_URL: ${VITE_MCP_URL:-}
     image: nous-frontend:local
     restart: unless-stopped
     depends_on:
       - api
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
 
   # ── Caddy (SSL + subdomain routing) ──────────────────────────────────────────
   # Remove this service if you handle SSL/routing externally (Cloudflare Tunnel, etc.)
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
-    # Host ports default to 80/443. Set HTTP_PORT / HTTPS_PORT in nous.env when those are
-    # taken, but the app builds its links as https://$APP_DOMAIN (no port), so a non-443
-    # HTTPS port needs something in front (or a port-forward) that serves it on 443.
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
-      - "${HTTPS_PORT:-443}:443/udp"   # HTTP/3
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

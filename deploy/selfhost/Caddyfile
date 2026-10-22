@@ -35,12 +35,6 @@
 
 {$API_DOMAIN} {
     import security_headers
-    # The api's /internal/* routes are for the worker, which calls them on the compose
-    # network (NOUS_API_INTERNAL_URL=http://api:3000). Never from outside: the only guard
-    # on them is WORKER_SECRET.
-    handle /internal/* {
-        respond 404
-    }
     handle /inbound/* {
         reverse_proxy worker:3001
     }

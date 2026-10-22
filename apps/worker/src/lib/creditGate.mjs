@@ -25,8 +25,6 @@
 //     Failing open means not stopping on a billing hiccup; it does not mean forgetting a stop we
 //     already measured.
 
-import { apiInternalBase } from './apiInternal.mjs';
-
 const TTL_MS = 5 * 60_000;
 const TIMEOUT_MS = 4_000;
 /** A hard cap with fewer credits than this left is re-asked on every check. */
@@ -59,7 +57,7 @@ export async function mayReadWorkspace(workspaceId, { fresh = false } = {}) {
   if (hit && !fresh && !nearCap && Date.now() - hit.at < TTL_MS) return view(hit);
 
   const secret = process.env.WORKER_INTERNAL_SECRET;
-  const apiUrl = apiInternalBase();
+  const apiUrl = process.env.API_URL;
   // Not configured is not the same as over limit. A deployment without the internal channel
   // reads exactly as it did before this existed.
   if (!secret || !apiUrl) return { ...OPEN };

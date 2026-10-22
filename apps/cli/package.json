@@ -13,7 +13,6 @@
   ],
   "scripts": {
     "dev": "node src/index.js",
-    "test": "node ../../scripts/run-tests.mjs",
     "start": "node src/index.js"
   },
   "keywords": [

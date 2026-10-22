@@ -1,10 +1,5 @@
 # ICP Scoring & GTM Context
 
-> The learned scorer this document describes (the scoring worker, the re-score paths, the
-> nightly loop, signal discovery and the ICP seed) is Nous Cloud. Its files sit under `cloud/`
-> folders, which are not in the open-source repository. The GTM Context and the deterministic
-> pieces in `packages/core/src/db/` are in both.
-
 Most CRMs let you tag an account "good fit" by hand and leave it there. Nous does the opposite. You describe your business once, every account gets a **0–100 ICP fit score** computed from real evidence, and every closed deal teaches the model who actually buys, so the score sharpens, moves when *who the account is* changes, and carries a dated trail of *why* it moved. Your agents read that score, not a stale tag.
 
 The ICP score answers one question: **is this the kind of company and person we sell to?** It does not answer *is now the time* or *how is the deal going*. Those are separate scores (§0).
@@ -126,7 +121,7 @@ Every feature below flows into the `feature_snapshot` at scoring time, so a pred
 
 `layerForFeature` (`scorecard.ts`) is the one place that decides which layer a feature belongs to. `icpSignals` applies it to every ICP scorer: the first stake, both re-score paths, enrichment, the closed-deals import and nightly calibration. A timing rule can therefore never win calibration, because it can't raise an ICP score.
 
-The full vocabulary lives in `FEATURE_VOCAB` (`apps/api/src/cloud/lib/scorecardSeed.mjs`), the contract between the signal translator, the discovery engine, and the scorer.
+The full vocabulary lives in `FEATURE_VOCAB` (`apps/api/src/lib/scorecardSeed.mjs`), the contract between the signal translator, the discovery engine, and the scorer.
 
 ### Where the features come from
 
@@ -134,7 +129,7 @@ Layer A/B start with **enrichment** (`apps/api/src/services/enrichment.mjs`): pe
 
 `buildEntityFeatures` (`packages/core/src/db/predictions.ts`) is the single feature-extraction path shared by the first score and every re-score, so the two never drift. It reads the person's own claims, follows the `works_at` edge to merge the employer's company-level claims, inherits the company's **buying signals** as graded numeric features (each `signal.<class>` claim becomes `signal.<class> = its 0–10 score`), inherits its **`keywords` / `description` text and any `exclusion.*` flag**, and folds in the pipeline features. These all live on the **company**, so every person at that company inherits them. Score the company's friction (or flag its exclusion) once and the whole buying committee re-scores (§5).
 
-The signal taxonomy is **locked**. The six `signal.*` classes above are the only `signal.*` features the model may reference. `normalizeScorecardRule` (`apps/api/src/cloud/lib/scorecardSeed.mjs`) enforces this on every seed: it repairs the nested `{ feature: { op, value } }` rule shape to flat `{ feature, op, value }`, forces any `signal.*` rule to the `scaled` op, and drops `signal.*` rules that name an unknown class. This closes the failure mode where a model was seeded with signal keys signal-scan never produces (so no rule ever fired and every account scored a flat 50).
+The signal taxonomy is **locked**. The six `signal.*` classes above are the only `signal.*` features the model may reference. `normalizeScorecardRule` (`apps/api/src/lib/scorecardSeed.mjs`) enforces this on every seed: it repairs the nested `{ feature: { op, value } }` rule shape to flat `{ feature, op, value }`, forces any `signal.*` rule to the `scaled` op, and drops `signal.*` rules that name an unknown class. This closes the failure mode where a model was seeded with signal keys signal-scan never produces (so no rule ever fired and every account scored a flat 50).
 
 ---
 
@@ -173,7 +168,7 @@ Each line is `date · score · delta · the claim/signal that moved it`. The del
 
 ### What writes a history entry
 
-A trail entry is appended only when an **open** prediction's score actually *moves*. Two paths do this, and both live in `packages/core/src/cloud/rescore.ts`. The split is whether the model changed or the evidence changed:
+A trail entry is appended only when an **open** prediction's score actually *moves*. Two paths do this, and both live in `packages/core/src/services/rescore.ts`. The split is whether the model changed or the evidence changed:
 
 ```mermaid
 flowchart TD
@@ -301,7 +296,7 @@ flowchart TD
   RS -->|score moved| SC
 ```
 
-1. **Score.** `scoreEntities` (`apps/worker/src/cloud/workers/scoreEntities.mjs`) stakes one `icp_fit` prediction per scoreable person. Each entity is scored **exactly once**, its open prediction is re-scored in place (§4) and frozen on resolution. Re-staking churned closed-won customers back into the pipeline as fresh "Pending" rows.
+1. **Score.** `scoreEntities` (`apps/worker/src/workers/scoreEntities.mjs`) stakes one `icp_fit` prediction per scoreable person. Each entity is scored **exactly once**, its open prediction is re-scored in place (§4) and frozen on resolution. Re-staking churned closed-won customers back into the pipeline as fresh "Pending" rows.
 2. **Resolve.** §5 closes each bet to `won` / `lost` / `no_opportunity`.
 3. **Discover.** The nightly Mind (`scorecardLoop.mjs`) sweeps the resolved won/lost cohort for features that separate winners from losers, proposes the strongest as new signals, and ships only what survives two gates. Calibration scores fit rules only, the same way a prediction does, so a proposed timing or engagement rule can't pass the accuracy gate.
 4. **Re-score.** When the model changes, every open account's current fit is recomputed in place from its stored features (§4), and the move shows up as a trail step.
@@ -312,7 +307,7 @@ An entity is scored only when it carries at least one **scoreable** feature (`jo
 
 ### Discovery, contrastive lift
 
-`discoverSignals` (`packages/core/src/cloud/discovery.ts`) is the deterministic, no-LLM candidate source. For each candidate `feature == value`, it computes the **lift**, the win rate of accounts *with* the trait over the win rate of accounts *without*, and maps lift to a weight in bands (`weightFromLift`: ≥3× → +8, ≤0.33× → −8). Several mechanisms keep outliers from distorting the ICP:
+`discoverSignals` (`packages/core/src/discovery.ts`) is the deterministic, no-LLM candidate source. For each candidate `feature == value`, it computes the **lift**, the win rate of accounts *with* the trait over the win rate of accounts *without*, and maps lift to a weight in bands (`weightFromLift`: ≥3× → +8, ≤0.33× → −8). Several mechanisms keep outliers from distorting the ICP:
 
 - **Cohort thresholds.** A trait needs **≥4 real deals with it** (and ≥4 without, ≥8 total) before it can become a signal. Close 15 software / 3 agency / 2 local → only `industry=software` clears the bar. The outliers wait until they accumulate, then earn their own signal, it *compounds*.
 - **Recency decay.** Each deal's vote decays with a 180-day half-life from `resolved_at`, so a **pivot shifts the ICP faster**, old evidence fades instead of voting forever.
@@ -332,14 +327,14 @@ The catalog is capped at 12 active signals, forcing the loop to prune as it lear
 
 ## 8. The cold-start, build from closed deals
 
-A brand-new workspace has no resolved predictions, so there is nothing to learn from. The closed-deals flow seeds the loop. Paste won + lost domains, and `POST /api/mind/closed-deals` runs the whole cycle per account (`apps/api/src/cloud/routes/api/mind.mjs`):
+A brand-new workspace has no resolved predictions, so there is nothing to learn from. The closed-deals flow seeds the loop. Paste won + lost domains, and `POST /api/mind/closed-deals` runs the whole cycle per account (`apps/api/src/routes/api/mind.mjs`):
 
 1. **Read the site.** Extract firmographics (Layer A) + behavioural signals (Layer B), saving the "what they do" summary.
 2. **Recognise the account.** Find the contacts you *already have* at that domain (via the company record, the contact's domain, or email as fallback), link them with `works_at`, and record the won/lost on each, so their open prediction resolves and their pipeline history (Layer C) joins the deal. The most senior contact supplies the deal's buyer traits.
 3. **Discover.** Contrastive lift over the cohort, or, when there are too few deals for lift to mean anything, a winner-signal fallback proposes what your winners share (with an honest "sharpens as more deals close" note).
 4. **Surface.** The closed-deal companies are scored and resolved, so they appear in the analyzed table as real won/lost rows.
 
-This is also where the model is first **seeded** from your plain-English ICP. `seedScorecardFromMemory` (`apps/api/src/cloud/lib/scorecardSeed.mjs`) translates your GTM Context (ICP / Market / Product / Pricing / Positioning) into 4–8 weighted inclusion signals, *plus a disqualifying exclusion for each "not a fit" the ICP states* (§5), via Haiku, under a strict prompt: *preserve stated numbers exactly* ("1–20 employees" → `employee_count <= 20`, never loosened), map descriptors to the tightest faithful rule, invent nothing (including: never invent an exclusion the ICP didn't state). The learning loop then sharpens that seed and adds the *soft* negative signals it discovers from real outcomes.
+This is also where the model is first **seeded** from your plain-English ICP. `seedScorecardFromMemory` (`apps/api/src/lib/scorecardSeed.mjs`) translates your GTM Context (ICP / Market / Product / Pricing / Positioning) into 4–8 weighted inclusion signals, *plus a disqualifying exclusion for each "not a fit" the ICP states* (§5), via Haiku, under a strict prompt: *preserve stated numbers exactly* ("1–20 employees" → `employee_count <= 20`, never loosened), map descriptors to the tightest faithful rule, invent nothing (including: never invent an exclusion the ICP didn't state). The learning loop then sharpens that seed and adds the *soft* negative signals it discovers from real outcomes.
 
 ---
 
@@ -365,7 +360,7 @@ The `/playbook` page mirrors the synced ICP read-only. The graph is the runtime-
 
 ## 10. Playbooks, the policy layer
 
-Facts tell an agent *who* an account is. **Playbooks** tell it *how you operate*, the rules the agent should follow before it acts. They are a thin, deliberate four-kind set:
+Facts tell an agent *who* an account is. **Playbooks** tell it *how you operate*, the rules the agent should follow before it acts. They are a thin, deliberate four-kind set (`apps/api/src/routes/v2/playbooks.mjs`):
 
 | Kind | What it governs |
 | --- | --- |

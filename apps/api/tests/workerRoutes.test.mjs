@@ -39,9 +39,8 @@ function workerSecretPaths() {
   const paths = [];
   for (const file of sourceFiles(WORKER_SRC)) {
     const src = readFileSync(file, 'utf8');
-    // fetch(`${apiInternalBase()}/some/path`, { ... 'x-worker-secret' ... }); the internal URL
-    // helper since GET-1011, process.env.API_URL before it, `${base}` where it is read once.
-    for (const m of src.matchAll(/fetch\(`\$\{(?:process\.env\.API_URL|apiInternalBase\(\)|base)\}([^`]+)`\s*,\s*\{([\s\S]{0,400}?)\}\s*\)/g)) {
+    // fetch(`${process.env.API_URL}/some/path`, { ... 'x-worker-secret' ... })
+    for (const m of src.matchAll(/fetch\(`\$\{process\.env\.API_URL\}([^`]+)`\s*,\s*\{([\s\S]{0,400}?)\}\s*\)/g)) {
       if (/x-worker-secret/i.test(m[2])) paths.push({ path: m[1], file: file.slice(REPO.length + 1) });
     }
   }

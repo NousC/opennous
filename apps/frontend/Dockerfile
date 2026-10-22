@@ -23,10 +23,6 @@ ARG VITE_POSTHOG_HOST
 ARG VITE_GOOGLE_ANALYTICS_ID
 ARG VITE_DOCS_URL
 ARG VITE_EXTERNAL_IMAGES
-# The hosted MCP server the Connect agent dialogs quote (config/agentEndpoints.ts). Unset, the
-# app falls back to Nous Cloud's; self-host passes https://$MCP_DOMAIN/mcp.
-ARG VITE_MCP_URL
-ENV VITE_MCP_URL=$VITE_MCP_URL
 
 # The prod box (cpx11, 2 GB + swap) runs Node out of heap on the default limit.
 ENV NODE_OPTIONS=--max-old-space-size=3072

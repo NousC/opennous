@@ -11,8 +11,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
-import { dealRowHref } from "@/lib/dealPages";
-import { useDealPages } from "@/hooks/useDealPages";
 import { stageLabel } from "@/config/pipeline";
 import { type DealHealth, type Note, type IntelTopic } from "@/components/record/RecordParts";
 
@@ -133,6 +131,7 @@ export const pipelineText = (d: { pipeline?: string | null; pipeline_id?: string
   if (!name) return null;
   return primaryRef && d.pipeline_id === primaryRef ? `${name} (default)` : name;
 };
+export const dealPath = (companyId: string, dealId: string) => `/accounts/${companyId}/deals/${dealId}`;
 
 /**
  * The account's deals in its left rail, below Owner and above Contacts (GET-267). Open deals as
@@ -141,7 +140,6 @@ export const pipelineText = (d: { pipeline?: string | null; pipeline_id?: string
  */
 export function DealsSection({ companyId }: { companyId: string }) {
   const navigate = useNavigate();
-  const dealPages = useDealPages();
   const { data, isPending } = useAccountDeals(companyId);
   const [showClosed, setShowClosed] = useState(false);
   const secLabel = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/55";
@@ -154,12 +152,9 @@ export function DealsSection({ companyId }: { companyId: string }) {
     const st = STATUS_UI[d.status] ?? STATUS_UI.open;
     const close = shortDate(d.close_date);
     const overdue = d.status === "open" && !!d.close_date && Date.parse(d.close_date) < Date.now();
-    const href = dealRowHref(dealPages, companyId, d.id);
-    // No deal page on the API plan or in the open-source build (GET-1008): the row is plain.
-    const Tag = href ? "button" : "div";
     return (
-      <Tag onClick={href ? () => navigate(href) : undefined}
-        className={cn("flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 -mx-2 text-left", href && "hover:bg-muted/50 transition-colors")}>
+      <button onClick={() => navigate(dealPath(companyId, d.id))}
+        className="flex w-full items-start gap-2.5 rounded-lg px-2 py-1.5 -mx-2 hover:bg-muted/50 transition-colors text-left">
         <span className="mt-[7px] h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: st.color }} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
@@ -172,7 +167,7 @@ export function DealsSection({ companyId }: { companyId: string }) {
             {d.owners?.[0]?.name && <span> · {d.owners[0].name}{d.owners.length > 1 ? ` +${d.owners.length - 1}` : ""}</span>}
           </div>
         </div>
-      </Tag>
+      </button>
     );
   };
 

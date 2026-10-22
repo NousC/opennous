@@ -48,13 +48,6 @@ services:
       API_EXTERNAL_URL: https://${APP_DOMAIN}/auth/v1
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
-      # Recycle idle database connections. Without these GoTrue keeps a connection open
-      # forever, and after the instance sits idle the first token refresh can land on one the
-      # network already dropped (500, "broken pipe"). Names from supabase/auth
-      # internal/conf/configuration.go (DBConfiguration, prefix GOTRUE_DB_), Go durations.
-      GOTRUE_DB_CONN_MAX_IDLE_TIME: 60s
-      GOTRUE_DB_CONN_MAX_LIFETIME: 30m
-      GOTRUE_DB_HEALTH_CHECK_PERIOD: 30s
       GOTRUE_SITE_URL: https://${APP_DOMAIN}
       GOTRUE_URI_ALLOW_LIST: https://${APP_DOMAIN}/**
       GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}
@@ -157,12 +150,9 @@ services:
         VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?run scripts/selfhost-keys.mjs first}
         # Same origin: the frontend's nginx proxies /api and /me to the API.
         VITE_API_URL: ""
-        # On by default: company favicons come from Google and people photos from Gravatar,
-        # which tells those services which domains and (hashed) emails are in your workspace.
-        # Set VITE_EXTERNAL_IMAGES=false in nous.env to keep every image request on your host.
+        # Off on self-host: company favicons and Gravatar photos would tell Google and Gravatar
+        # which domains and (hashed) emails are in your workspace. Set true in nous.env to show them.
         VITE_EXTERNAL_IMAGES: ${VITE_EXTERNAL_IMAGES:-true}
-        # Your own MCP server, so the Connect agent dialogs never quote Nous Cloud's.
-        VITE_MCP_URL: https://${MCP_DOMAIN}/mcp
 
   caddy:
     volumes:

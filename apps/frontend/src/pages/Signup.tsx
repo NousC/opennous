@@ -1,13 +1,13 @@
 import { useEffect, Suspense } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { SignUpLayout } from "@/components/auth/AuthLayout";
+import { PAGE_STYLE } from "@/lib/authTheme";
 import { SignUpForm } from "@/contexts/auth/select";
 import { safeRedirect } from "@/lib/authRedirect";
 import { useAuthConfig, signupAllowed } from "@/lib/authConfig";
 
-// Signup is just the account-creation step, in the website v2 design (GET-958): the form on the
-// left, the brand panel on the right. The form is the auth provider's sign-up (Clerk's <SignUp>
-// on Cloud, email + password on self-host Supabase Auth). The "operate Nous with your coding agent"
+// Signup is now just the account-creation step — the auth provider's sign-up
+// (Clerk's <SignUp> on Cloud, email + password on self-host Supabase Auth) over
+// the branded background, matching login. The "operate Nous with your coding agent"
 // pitch lives on the marketing home page and in the first conversation with the agent, so
 // we don't repeat it here.
 const Signup = () => {
@@ -39,7 +39,10 @@ const Signup = () => {
   }, [searchParams]);
 
   return (
-    <SignUpLayout>
+    <div
+      className="relative overflow-hidden min-h-screen flex items-center justify-center px-4 py-10 font-geist-mono text-[#1A1712]"
+      style={PAGE_STYLE}
+    >
       <Suspense fallback={null}>
         <SignUpForm
           afterAuth={afterAuth}
@@ -48,7 +51,7 @@ const Signup = () => {
           setupToken={searchParams.get("setup") ?? undefined}
         />
       </Suspense>
-    </SignUpLayout>
+    </div>
   );
 };
 

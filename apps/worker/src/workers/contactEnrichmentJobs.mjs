@@ -13,7 +13,6 @@ import { getSupabaseClient, sendEmail, CREDIT_SCALE, withBackfillLock, lockHolde
 import { backfillCreditState, BACKFILL_CREDIT_FLOOR, CreditsExhausted } from '../utils/credits.mjs';
 import { providerFailures, probeProvider, ProviderUnavailable, PROVIDER_FAIL_THRESHOLD, PROBE_EVERY_MS, providerPauseLine } from '../lib/providerHealth.mjs';
 import { createMessage, modelEndpoint } from '../lib/llm.mjs';
-import { apiInternalBase } from '../lib/apiInternal.mjs';
 
 const LOCK_STALE_MS = 20 * 60_000; // a 'running' job locked longer than this is reclaimable
 const MAX_ATTEMPTS = 3;
@@ -317,7 +316,7 @@ export async function processContactEnrichmentJobs() {
         if (!secret) {
           console.warn('[CONTACT_ENRICH_JOB] onboarding reports skipped — WORKER_SECRET unset');
         } else {
-          const resp = await fetch(`${apiInternalBase()}/api/onboarding/reports`, {
+          const resp = await fetch(`${process.env.API_URL}/api/onboarding/reports`, {
             method: 'POST',
             headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
             // No user on an enrichment job — the API resolves the workspace's founder as owner.

@@ -3,14 +3,9 @@
 //
 // Read-only on purpose. Deals are born in the CRM and their stage moves there; a deal whose close
 // date has passed is marked for the rep to act on in the CRM, never a button that changes it here.
-//
-// A row opens the deal's page only where there is one (useDealPages, GET-1008): the workspace
-// plans on Cloud. On the API plan and in the open-source build the row is plain: name, stage, value.
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAccountDeals, dealStageText, pipelineText, countsAsDeal, type DealSummary } from "@/components/deals/AccountDeals";
-import { useDealPages } from "@/hooks/useDealPages";
-import { dealRowHref } from "@/lib/dealPages";
+import { useAccountDeals, dealStageText, dealPath, pipelineText, countsAsDeal, type DealSummary } from "@/components/deals/AccountDeals";
 import { usePipelineStages } from "@/components/pipeline/usePipelineData";
 import { PaneItem, PaneSection } from "@/components/record/RecordLayout";
 import { RecordPreview } from "@/components/record/RecordPreview";
@@ -48,7 +43,6 @@ export function shortDealName(name: string, account: string | null | undefined) 
 
 function DealRow({ d, companyId, primary, accountName }: { d: DealSummary; companyId: string; primary: string | null; accountName?: string | null }) {
   const navigate = useNavigate();
-  const href = dealRowHref(useDealPages(), companyId, d.id);
   const ladder = usePipelineStages(d.pipeline_id ?? "all").data;
   const g = stageGroup(d.status, d.stage, ladder);
   const late = overdue(d);
@@ -64,25 +58,22 @@ function DealRow({ d, companyId, primary, accountName }: { d: DealSummary; compa
   // A palette row: the stage as a dot in the 24px tile (its colour is the stage group), the deal
   // at 13px with its stage beside it in the quiet tone, the amount on the right.
   return (
-    <PaneItem onClick={href ? () => navigate(href) : undefined}>
+    <PaneItem onClick={() => navigate(dealPath(companyId, d.id))}>
       <span className="sr-only">{title}</span>
       {/* The implied deal (no CRM deal behind it, id "account") is named in full, "<Account> deal",
           and has no stage dot: it is the account worked as a deal, not a CRM record (GET-804). */}
       {!d.implied && <ListTile><span className="h-[7px] w-[7px] rounded-full" style={{ background: g.color }} /></ListTile>}
       <ListText
-        title={href ? (
+        title={(
           <RecordPreview kind="deal" companyId={companyId} dealId={d.id}>
             <span>{d.implied ? d.name : shortDealName(d.name, accountName)}</span>
           </RecordPreview>
-        ) : <span>{d.implied ? d.name : shortDealName(d.name, accountName)}</span>}
+        )}
         sub={late ? <span className="text-warning">Overdue</span> : d.status === "open" ? (dealStageText(d) ?? g.label) : d.status === "won" ? "Won" : "Lost"} />
-      {/* A plain row (no deal page) has no hover, so its CRM link always shows (GET-1008). */}
       {d.hubspot_url && (
         <a href={d.hubspot_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
           title={`Open in ${crmName()}`} aria-label={`Open ${d.name} in ${crmName()}`}
-          className={href
-            ? "flex-shrink-0 rounded p-0.5 opacity-0 transition-opacity duration-fast focus-visible:opacity-100 group-hover:opacity-100"
-            : "flex-shrink-0 rounded p-0.5"}>
+          className="flex-shrink-0 rounded p-0.5 opacity-0 transition-opacity duration-fast focus-visible:opacity-100 group-hover:opacity-100">
           <CrmMark className="h-3 w-3 text-[7px]" />
         </a>
       )}
