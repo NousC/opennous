@@ -73,6 +73,11 @@ test('a title is written at the bar, then again at every 5 more accounts', () =>
   assert.equal(needsTitle({}, 5, true), true);
   assert.equal(needsTitle({ title: 'T', title_account_count: 5 }, 9, true), false);
   assert.equal(needsTitle({ title: 'T', title_account_count: 5 }, 10, true), true);
+  // A title the model wrote but that was not used (it named someone) waits for 5 more accounts,
+  // so the same groups do not take every title of every run.
+  assert.equal(needsTitle({ title: null, title_account_count: 7 }, 9, true), false, 'tried at 7, no title');
+  assert.equal(needsTitle({ title: null, title_account_count: 7 }, 10, true), true, 'tried at 7, now 10');
+  assert.equal(needsTitle({ title: null, title_account_count: null }, 5, true), true, 'never tried');
   assert.equal(parsePatternTitle('{"title":"Teams want a date filter on the inbox."}'), 'Teams want a date filter on the inbox');
   assert.equal(parsePatternTitle('no json'), null);
 });

@@ -199,13 +199,15 @@ export function countPattern(members: Member[], minAccounts: number, today: stri
   };
 }
 
-/** Titles are rewritten as a pattern grows: at its bar, then every 5 more accounts (as GET-1001). */
+/** Titles are rewritten as a pattern grows: at its bar, then every 5 more accounts (as GET-1001).
+ *  `title_account_count` is when one was last tried: a title not used (it named someone) is tried
+ *  again only at the next step, so the same groups never take every title of every run. */
 export const TITLE_STEP = 5;
 export const titleStep = (accounts: number) => Math.floor(accounts / TITLE_STEP);
 export function needsTitle(p: { title?: string | null; title_account_count?: number | null }, accounts: number, atBar: boolean): boolean {
   if (!atBar) return false;
-  if (!p.title) return true;
-  return titleStep(accounts) > titleStep(p.title_account_count ?? 0);
+  if (p.title_account_count == null) return true;
+  return titleStep(accounts) > titleStep(p.title_account_count);
 }
 
 /** The prompt for one pattern's title: one sentence, from its own claims, inventing nothing. */
@@ -416,9 +418,12 @@ export async function rebuildInsightPatterns(supabase: SupabaseClient, workspace
     let title: string | null = old?.title ?? null, titleCount: number | null = old?.title_account_count ?? null;
     if (opts.ask && titlesLeft > 0 && needsTitle({ title, title_account_count: titleCount }, c.accounts, c.atBar)) {
       titlesLeft--;
-      const written = parsePatternTitle(await opts.ask(buildPatternTitlePrompt(t, g.label, g.members, c.accounts)).catch(() => ''));
-      // A title goes out in events and to every member: one naming a customer is not used.
+      const answer = await opts.ask(buildPatternTitlePrompt(t, g.label, g.members, c.accounts)).catch(() => '');
+      const written = parsePatternTitle(answer);
+      // A title goes out in events and to every member: one naming a customer is not used. It
+      // counts as tried all the same; a read that failed (no answer) is tried next run.
       if (written && !namesSomeone(written, await namesOf(supabase, workspaceId, g.members))) { title = written; titleCount = c.accounts; result.titled++; }
+      else if (answer) titleCount = c.accounts;
     }
     pending.push({ g, c, old, title, titleCount });
     rows.push({
