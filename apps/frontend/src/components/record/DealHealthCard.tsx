@@ -9,7 +9,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { healthColor } from "@/components/mind/entities";
 import { day, when as fmtWhen } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { HealthChart, bandOf, type DealHealth, type DealSignal, type FactorItem, type Note } from "./RecordParts";
+import { HealthChart, bandOf, type DealHealth, type DealSignal, type FactorItem, type Note, type Qualification } from "./RecordParts";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { H3 } from "./OverviewParts";
 import { ListCard, ListEmpty } from "@/components/ui/list";
@@ -298,6 +298,77 @@ export function DealHealthCard({ health, notes, voicedByName, updatedAt, picker,
       {!loading && !smart.length && !numeric.length && (
         <ListEmpty>Not enough on this record yet to read its health.</ListEmpty>
       )}
+    </ListCard>
+  );
+}
+
+const Q_STATUS: Record<string, { level: string; tone: DealSignal["tone"]; bars: number }> = {
+  confirmed: { level: "Confirmed", tone: "good", bars: 3 },
+  partial: { level: "Partial", tone: "warn", bars: 2 },
+  unknown: { level: "Unknown", tone: "unknown", bars: 0 },
+};
+
+/**
+ * What we know about the deal, beside how it feels (GET-1004). Each MEDDICC letter as a tile, the
+ * same tiles and panel as Deal health; a letter opens its claims, or the question that would answer
+ * it. The unknowns are listed under the tiles as the next things to ask.
+ */
+export function QualificationCard({ qualification, notes, voicedByName }: {
+  qualification: Qualification | null | undefined;
+  notes: Note[];
+  voicedByName?: (id?: string | null) => string | null;
+}) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const byId = useMemo(() => new Map(notes.map(n => [n.id, n])), [notes]);
+  if (!qualification?.items?.length) return null;
+  const items = qualification.items;
+  // A letter as a factor, so the panel is the one Deal health opens.
+  const asSignal = (i: (typeof items)[number]): DealSignal => {
+    const st = Q_STATUS[i.status] ?? Q_STATUS.unknown;
+    return { key: i.key, label: i.label, level: st.level, tone: st.tone, reason: i.reason, evidence: i.evidence, improve: i.ask,
+      meter: { bars: st.bars, color: TONE_COLOR[st.tone] } };
+  };
+  const sel = items.find(i => i.key === picked) ?? null;
+  const evidence = sel ? sel.evidence.map(id => byId.get(id)).filter((n): n is Note => !!n) : [];
+  const asks = items.filter(i => i.status === "unknown" && i.ask).slice(0, 3);
+  const summary = `${qualification.confirmed} of ${qualification.total} confirmed${qualification.partial ? `, ${qualification.partial} partial` : ""}`;
+  return (
+    <ListCard className="min-w-0">
+      <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-2 px-2 pb-1 pt-0.5">
+        <H3>Qualification</H3>
+        <span className="text-[12px] text-muted-foreground/60">{qualification.label}</span>
+        <span className="flex-1" />
+        <span className={cn("text-[12px] tabular-nums", qualification.confirmed >= 6 ? "text-positive" : qualification.confirmed >= 4 ? "text-foreground/80" : "text-warning")}
+          title="Letters a fact on the record answers. Partial means something points at it but it is not settled.">{summary}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-0.5 md:grid-cols-4">
+        {items.map(i => {
+          const s = asSignal(i);
+          const on = panelOpen && picked === i.key;
+          return (
+            <button key={i.key} type="button" onClick={() => { setPicked(i.key); setPanelOpen(true); }} aria-haspopup="dialog"
+              className={cn("flex min-w-0 cursor-pointer flex-col gap-1 rounded-lg px-2 py-2 text-left transition-colors duration-fast hover:bg-muted/40 focus-visible:bg-muted/60 focus-visible:outline-none", on && "bg-muted/60")}>
+              <span className="truncate text-[11.5px] text-muted-foreground/70">{i.label}</span>
+              <span className={cn("text-[13px]", i.status === "unknown" ? "text-muted-foreground/70" : "text-foreground")}>{s.level}</span>
+              <Meter tone={s.tone} meter={s.meter} />
+            </button>
+          );
+        })}
+      </div>
+      {asks.length > 0 && (
+        <div className="mt-1 px-2 pb-1 pt-2">
+          <p className="text-[11px] text-muted-foreground/50">Ask next</p>
+          <ul className="mt-1 space-y-1">
+            {asks.map(i => <li key={i.key} className="text-[13px] leading-snug text-foreground/85">{i.ask}</li>)}
+          </ul>
+        </div>
+      )}
+      <Sheet open={panelOpen && !!sel} onOpenChange={setPanelOpen}>
+        <SheetContent side="right" className="w-full gap-0 overflow-y-auto border-border/50 p-0 sm:max-w-[420px]">
+          {sel && <FactorPanel signal={asSignal(sel)} title="Qualification" evidence={evidence} voicedByName={voicedByName} />}
+        </SheetContent>
+      </Sheet>
     </ListCard>
   );
 }

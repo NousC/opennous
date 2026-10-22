@@ -198,7 +198,7 @@ function sliceForDeal(acc, deal, attributedIds) {
     : acc.activity.filter(a => attributedIds.has(a.id) || (a.contact_id !== acc.company.id && inScope(a.contact_id)));
   const dealStage = deal.status === 'won' ? 'won' : null;
   const stakeholders = people.map(c => ({
-    id: c.id, title: c.job_title, seniority: c.seniority, last_activity_at: c.last_activity_at,
+    id: c.id, name: [c.first_name, c.last_name].filter(Boolean).join(' ') || null, title: c.job_title, seniority: c.seniority, last_activity_at: c.last_activity_at,
     pipeline_stage: deal.implied ? c.pipeline_stage : dealStage,
     signal_count: activity.filter(a => a.contact_id === c.id).length,
   }));
@@ -209,7 +209,7 @@ function sliceForDeal(acc, deal, attributedIds) {
     : activity;
   const nextSteps = acc.nextSteps === undefined ? undefined
     : acc.nextSteps.filter(x => x.entity_id === acc.company.id || inScope(x.entity_id));
-  const health = computeDealHealth({ company: acc.company, notes, activity: healthActs, stakeholders, nextSteps });
+  const health = computeDealHealth({ company: acc.company, notes, activity: healthActs, stakeholders, nextSteps, closeDate: deal.close_date ?? null });
   if (deal.status === 'lost') health.band = 'Lost';
   return { people, notes, activity, health };
 }

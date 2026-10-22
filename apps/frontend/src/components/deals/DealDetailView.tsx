@@ -22,7 +22,7 @@ import { ActivityFeed, dedupeActivity, TaskList, useTaskToggle, type TaskListSta
 import { shortDate, STATUS_UI, dealStageText, type DealDetail, type DealStage, type CloseRecord } from "./AccountDeals";
 import { CrmLink } from "@/components/ui/crm-link";
 import { EmptyState } from "@/components/ui/empty-state";
-import { DealHealthCard } from "@/components/record/DealHealthCard";
+import { DealHealthCard, QualificationCard } from "@/components/record/DealHealthCard";
 import { IntelOverview, intelCountOf } from "@/components/record/IntelOverview";
 import { SegmentedControl } from "@/components/ui/view-tabs";
 import { CardHead, EventRow, Tile, TileStrip } from "@/components/record/OverviewParts";
@@ -148,6 +148,8 @@ export default function DealDetailView({ dd, onOpenAccount, onOpenPerson }: {
               {stages.length > 0 && <StageMovement stages={stages} deal={deal} />}
 
               <DealHealthCard health={health} notes={dd.notes ?? []} voicedByName={voicedByName} />
+
+              {deal.status === "open" && <QualificationCard qualification={health?.qualification} notes={dd.notes ?? []} voicedByName={voicedByName} />}
 
               <ListCard className="min-w-0">
                 <CardHead title="Recent conversations" onAll={activity.length ? () => setTab("conversations") : undefined} />

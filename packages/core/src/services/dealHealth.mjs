@@ -10,6 +10,7 @@ import { teamReadContext } from '../db/readContext.js';
 import { filterDerivedForViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
 import { windowedCounts, engagementTrend, medianBuyerResponseDays, multiThread, isEvidenceSnapshot, isOutboundActivity, isBuyerResponse } from './engagement.mjs';
 import { decisionMakers, committeeRating, selectNextStep } from './accountHealthScore.mjs';
+import { computeQualification } from './qualification.mjs';
 
 // Deal Health, computed on read from the SAME intel the record shows — so the four
 // "smart signals" are driven by the claim taxonomy (competitor/objection/pain/buying
@@ -20,7 +21,8 @@ import { decisionMakers, committeeRating, selectNextStep } from './accountHealth
 //
 // `nextSteps` is the account's open and recent next steps (`loadNextSteps`). A caller that has not
 // loaded them leaves it undefined, and the Next Step signal is left out rather than read as none.
-export function computeDealHealth({ company, notes, activity, stakeholders, nextSteps }) {
+// `closeDate` is the CRM's close date for a deal, when there is one (qualification reads it).
+export function computeDealHealth({ company, notes, activity, stakeholders, nextSteps, closeDate = null }) {
   const intel = (notes || []).filter(n => n.source === 'signal_extraction');
   const byCat = (c) => intel.filter(n => (n.category || '').toLowerCase() === c);
   const competitors = byCat('competitor');
@@ -303,7 +305,10 @@ export function computeDealHealth({ company, notes, activity, stakeholders, next
       : null,
   };
 
-  return { score, band, smart, numeric, evidence };
+  // What we know, beside how it feels (GET-1004): MEDDICC from the same intel and people.
+  const qualification = computeQualification({ notes: intel, stakeholders, engagedIds: mt.engaged_ids || [], activity: acts, closeDate });
+
+  return { score, band, smart, numeric, evidence, qualification };
 }
 
 // Minimal inputs for the contextual score — used by the batch recompute so the board's

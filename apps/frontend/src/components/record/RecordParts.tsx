@@ -142,7 +142,13 @@ export type FactorItem = {
   name?: string | null; title?: string | null; role?: string; unnamed?: boolean;
 };
 export type HealthPoint = { at: string; score: number };
-export type DealHealth = { score: number | null; band: string | null; smart: DealSignal[]; numeric: DealSignal[]; history?: HealthPoint[] };
+/** One MEDDICC letter (GET-1004): what the record knows about it, the claims behind it, the question if not. */
+export type QualificationItem = {
+  key: string; letter: string; label: string; status: "confirmed" | "partial" | "unknown";
+  reason: string; evidence: string[]; ask: string | null;
+};
+export type Qualification = { framework: string; label: string; confirmed: number; partial: number; total: number; items: QualificationItem[] };
+export type DealHealth = { score: number | null; band: string | null; smart: DealSignal[]; numeric: DealSignal[]; history?: HealthPoint[]; qualification?: Qualification };
 
 
 
