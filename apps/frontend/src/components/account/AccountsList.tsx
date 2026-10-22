@@ -28,6 +28,7 @@ import {
   salesGroupOf, SALES_GROUPS, SALES_GROUP_LABEL, SALES_GROUP_COLOR, type LifecycleStage, type SalesGroup,
 } from "@/config/lifecycle";
 import { inPrimaryPipeline } from "@/components/deals/AccountDeals";
+import { useDealPages } from "@/hooks/useDealPages";
 import { buildStageChips, sameStageLabel, type WsStage as StripStage } from "@/lib/stageStrip";
 import { faviconUrl } from "@/lib/externalImages";
 import { signalTag, type LatestSignal } from "@/lib/signalTags";
@@ -256,6 +257,8 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   defaultView?: AccountsView;
 }) {
   const navigate = useNavigate();
+  // A deal opens as its page only on the workspace plans on Cloud; elsewhere its account (GET-1008).
+  const dealPages = useDealPages();
   const { session, userData } = useAuth();
   const token = session?.access_token;
   const workspaceId = (userData as { workspace?: { id?: string } })?.workspace?.id ?? "";
@@ -820,6 +823,11 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
       count: csData ? csRows.length : (dealsData?.customers ?? null) },
   ].filter((c) => VIEWS.includes(c.key));
   const openDeal = (r: DealRow) => {
+    if (!dealPages) {
+      const path = accountPath(r.companyId);
+      navigate(path, { state: recordNavState(uniquePaths(dealRows.map((x) => accountPath(x.companyId))), path) });
+      return;
+    }
     const path = recordDealPath(r.companyId, r.dealId);
     navigate(path, { state: recordNavState(uniquePaths(dealRows.map((x) => recordDealPath(x.companyId, x.dealId))), path) });
   };

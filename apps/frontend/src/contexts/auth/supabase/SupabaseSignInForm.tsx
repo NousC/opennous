@@ -43,12 +43,12 @@ export default function SupabaseSignInForm({ redirectTo, redirectQuery }: SignIn
 
   return (
     <AuthCard
-      heading="Sign in"
-      sub="Welcome back. Open your workspace."
+      heading="Welcome back"
+      sub="Sign in to your OpenNous workspace."
       // Closed instances still offer it on the way to a join/invite page (the token is
       // the gate there) and while the owner account has not been created.
       footer={signupAllowed(authConfig, redirectTo) ? (
-        <>New here? <Link to={`/signup${redirectQuery}`} className={linkCls}>Create an account</Link></>
+        <>New to OpenNous? <Link to={`/signup${redirectQuery}`} className={linkCls}>Create an account</Link></>
       ) : undefined}
     >
       <form onSubmit={submit} className="mt-6 space-y-4">
@@ -58,8 +58,8 @@ export default function SupabaseSignInForm({ redirectTo, redirectQuery }: SignIn
         </Field>
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <label htmlFor="si-password" className="text-[13px] font-medium text-[#4A463F]">Password</label>
-            <button type="button" onClick={forgot} disabled={busy} className="text-[12px] text-[#787369] hover:text-[#E85B3D]">
+            <label htmlFor="si-password" className="text-[13.5px] font-normal text-[#2B303A]">Password</label>
+            <button type="button" onClick={forgot} disabled={busy} className="text-[13.5px] font-light text-[#6E7480] hover:text-[#C2410C]">
               Forgot password?
             </button>
           </div>
@@ -67,7 +67,7 @@ export default function SupabaseSignInForm({ redirectTo, redirectQuery }: SignIn
             required disabled={busy} className={inputCls} autoComplete="current-password" />
         </div>
         <Button type="submit" disabled={busy} className={submitCls}>
-          <span>{busy ? "Signing in…" : "Continue"}</span>
+          <span>{busy ? "Signing in…" : "Sign in"}</span>
           {!busy && <SubmitArrow />}
         </Button>
       </form>

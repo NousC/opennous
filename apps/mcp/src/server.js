@@ -1989,13 +1989,15 @@ export function createServer() {
       const roles = Array.isArray(y.roles) && y.roles.length ? y.roles.join(", ") : "none set";
       const cap = y.capability === "read_only" ? "read-only" : "read/write";
       const s = r.setup || {};
+      const num = (n) => Number(n).toLocaleString("en-US");
       // The orientation line — what the agent should do NEXT, right now.
       const next = !s.onboarded
         ? "Setup: NOT onboarded yet (fresh workspace). NEXT → run the `onboard` skill now to build the graph."
-        : `Setup: onboarded · ${s.accounts || 0} accounts · ICP ${s.has_icp ? "set" : "not set"}. NEXT → run \`focus\` for today's worklist.`;
+        : `Setup: onboarded · ${num(s.accounts || 0)} accounts` +
+          `${s.people != null ? ` · ${num(s.people)} people` : ""} · ICP ${s.has_icp ? "set" : "not set"}. ` +
+          "NEXT → call `attention` for today's worklist.";
       // The budget (null on a field = unlimited; usage null = metering unavailable right now).
       const u = r.usage;
-      const num = (n) => Number(n).toLocaleString("en-US");
       const usage = !u
         ? "Usage: unavailable right now (not a limit — retry later if it matters)."
         : `Usage: plan ${u.plan ?? "unknown"} · ops ${u.ops_left == null ? "unlimited" : `${num(u.ops_left)} left`}` +

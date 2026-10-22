@@ -12,6 +12,16 @@ import { homedir, hostname } from "os";
 import { join, resolve, dirname, relative, sep } from "path";
 import { createInterface } from "readline";
 import { spawn, spawnSync } from "child_process";
+import { certHint } from "./certHint.js";
+
+// An untrusted certificate (a local self-host behind Caddy's own CA) surfaces as a rejected
+// fetch somewhere in an async action. Print the one-line fix instead of a stack trace; anything
+// else still fails the way it always did.
+process.on("unhandledRejection", (err) => {
+  const hint = certHint(err);
+  if (hint) { console.error(hint); process.exit(1); }
+  throw err;
+});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -114,11 +124,17 @@ function apiClient() {
         if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
       }
     }
-    const res = await fetch(url.toString(), {
-      method,
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let res;
+    try {
+      res = await fetch(url.toString(), {
+        method,
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (e) {
+      console.error(certHint(e) || `Couldn't reach ${apiUrl}: ${e.message}`);
+      process.exit(1);
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
       console.error(`Error: ${err.error || err.message}`);
@@ -245,7 +261,7 @@ async function browserLogin(url, opts = {}) {
     }
     start = await r.json();
   } catch (e) {
-    console.error(`Couldn't start: ${e.message}`);
+    console.error(certHint(e) || `Couldn't start: ${e.message}`);
     process.exit(1);
   }
 

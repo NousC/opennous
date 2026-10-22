@@ -6,6 +6,7 @@
 // RESEND_API_KEY.
 
 import { sendEmail } from '@nous/core';
+import { apiInternalBase } from '../lib/apiInternal.mjs';
 
 const n = (x) => Number(x || 0).toLocaleString('en-US');
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -60,7 +61,7 @@ export function template(item) {
 export async function runApiNotificationEmails(kinds, { fetchImpl = fetch, send = sendEmail } = {}) {
   const secret = process.env.WORKER_INTERNAL_SECRET;
   if (!secret) return; // dormant until activated
-  const apiUrl = process.env.API_URL;
+  const apiUrl = apiInternalBase();
   if (!apiUrl) { console.warn('[API-NOTIFY] API_URL unset, skipping'); return; }
 
   let queued = [];

@@ -1,0 +1,45 @@
+/* The sign-in and sign-up pages' backgrounds (components/auth/AuthLayout.tsx, GET-958). */
+
+/* Sign in: a dotted ring around the card, and a slow orange sweep across it. */
+.auth-v2-dots,
+.auth-v2-sweep {
+  position: absolute; left: 50%; top: 50%; width: 1100px; aspect-ratio: 1; border-radius: 9999px;
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.auth-v2-dots {
+  background-image: radial-gradient(rgba(14,17,22,0.12) 1.1px, transparent 1.6px); background-size: 16px 16px;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 30%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(closest-side, transparent 30%, #000 55%, transparent 100%);
+}
+.auth-v2-sweep {
+  background: conic-gradient(from 40deg, rgba(240,96,58,0) 0deg, rgba(240,96,58,0.14) 24deg, rgba(240,96,58,0) 48deg, rgba(240,96,58,0) 360deg);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 28%, #000 50%, transparent 100%);
+  mask-image: radial-gradient(closest-side, transparent 28%, #000 50%, transparent 100%);
+}
+
+/* Sign up: the brand panel's radar. */
+.auth-v2-panel-dots,
+.auth-v2-panel-sweep,
+.auth-v2-ring {
+  position: absolute; left: 50%; top: 42%; aspect-ratio: 1; border-radius: 9999px; transform: translate(-50%, -50%); pointer-events: none;
+}
+.auth-v2-panel-dots,
+.auth-v2-panel-sweep { width: 760px; }
+.auth-v2-panel-dots {
+  background-image: radial-gradient(rgba(255,255,255,0.12) 1px, transparent 1.6px); background-size: 16px 16px;
+  -webkit-mask-image: radial-gradient(closest-side, #000 35%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 35%, transparent 100%);
+}
+.auth-v2-panel-sweep {
+  background: conic-gradient(from 20deg, rgba(240,96,58,0) 0deg, rgba(240,96,58,0.22) 24deg, rgba(240,96,58,0) 48deg, rgba(240,96,58,0) 360deg);
+  -webkit-mask-image: radial-gradient(closest-side, #000 20%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 20%, transparent 100%);
+}
+.auth-v2-ring { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.07); }
+
+@keyframes auth-v2-ping { 0% { transform: scale(1); opacity: .5; } 100% { transform: scale(2.8); opacity: 0; } }
+.auth-v2-ping { animation: auth-v2-ping 2.2s cubic-bezier(.22,1,.36,1) infinite; }
+@media (prefers-reduced-motion: reduce) { .auth-v2-ping { animation: none; } }
+
+.auth-v2 a { text-decoration: none; transition: color .3s cubic-bezier(.25,1,.5,1); }
+.auth-v2 a:hover { color: #C2410C !important; }

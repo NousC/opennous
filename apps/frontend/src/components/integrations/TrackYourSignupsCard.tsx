@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Check, Copy, Terminal, Sparkles, Code } from "lucide-react";
+import { apiBaseUrl } from "@/config/agentEndpoints";
 
 // ── Install scripts, agent prompts, and inline snippets ─────────────────────
 // These are the three things shippable today. The CLI flow is the most polished
@@ -9,14 +10,16 @@ import { Check, Copy, Terminal, Sparkles, Code } from "lucide-react";
 const CLI_SNIPPET = `# in your project root
 npx -y @opennous/cli@latest install`;
 
-const AGENT_PROMPT = `Wire Nous event tracking into this project.
+// The API base is this instance's own (apiBaseUrl), so a self-hosted copy never sends a
+// project's events to Nous Cloud.
+const agentPrompt = (api: string) => `Wire Nous event tracking into this project.
 
 What Nous needs:
 - After a user signs up: POST one observation tagged interaction.signed_up
 - After a Stripe customer.subscription event: POST observations tagged
   interaction.subscription_started / interaction.subscription_updated
   / interaction.subscription_canceled
-- All POSTs go to: https://api.opennous.cloud/v2/observations
+- All POSTs go to: ${api}/v2/observations
   with header: Authorization: Bearer \${process.env.NOUS_API_KEY}
 - Body: { "focus": "<email>",
           "observations": [{ "kind":"event"|"state", "property":"...", "value":{...} }] }
@@ -40,7 +43,7 @@ What to do:
 Style: native to the language and framework. Match existing conventions in
 this codebase. No new dependencies unless strictly necessary — fetch is fine.`;
 
-const CURL_SNIPPET = `curl -X POST https://api.opennous.cloud/v2/observations \\
+const curlSnippet = (api: string) => `curl -X POST ${api}/v2/observations \\
   -H 'Authorization: Bearer YOUR_API_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '{
@@ -70,8 +73,8 @@ export function NousInstallTabs() {
 
   const payload = useMemo(() => {
     if (tab === "cli")   return CLI_SNIPPET;
-    if (tab === "agent") return AGENT_PROMPT;
-    return CURL_SNIPPET;
+    if (tab === "agent") return agentPrompt(apiBaseUrl());
+    return curlSnippet(apiBaseUrl());
   }, [tab]);
 
   const copy = () => {

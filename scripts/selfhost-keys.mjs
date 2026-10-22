@@ -149,20 +149,26 @@ ensure('WORKER_SECRET', () => randomBytes(32).toString('hex'));
 const setupToken = ensure('SELFHOST_SETUP_TOKEN', () => `st_${randomBytes(24).toString('hex')}`);
 
 // Wiring for the bundled stack. The compose file sets these too; writing them here
-// keeps nous.env honest about what the app runs against.
-set('COMPOSE_FILE', 'docker-compose.yaml:docker-compose.selfhost.yaml');
-set('SUPABASE_URL', 'http://supabase:8000');
-set('SELF_HOSTED', 'true');
-set('AUTH_PROVIDER', 'supabase');
-set('VITE_AUTH_PROVIDER', 'supabase');
+// keeps nous.env honest about what the app runs against. Each one that changes is named in
+// the summary, like the secrets (GET-1011: the summary used to leave these out).
+function wire(key, value) {
+  if (get(key) === value) return;
+  set(key, value);
+  changed.push(key);
+}
+wire('COMPOSE_FILE', 'docker-compose.yaml:docker-compose.selfhost.yaml');
+wire('SUPABASE_URL', 'http://supabase:8000');
+wire('SELF_HOSTED', 'true');
+wire('AUTH_PROVIDER', 'supabase');
+wire('VITE_AUTH_PROVIDER', 'supabase');
 // The build this checkout is, so the sidebar's version widget can say whether an update is out.
 // ./update.sh keeps it current after that. No git (a tarball install): leave it unset.
 try {
   const commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  if (/^[0-9a-f]{7,40}$/.test(commit)) set('APP_COMMIT', commit);
+  if (/^[0-9a-f]{7,40}$/.test(commit)) wire('APP_COMMIT', commit);
 } catch { /* not a git checkout */ }
 const appDomain = get('APP_DOMAIN');
-if (!isUnset(appDomain)) set('VITE_SUPABASE_URL', `https://${appDomain}`);
+if (!isUnset(appDomain)) wire('VITE_SUPABASE_URL', `https://${appDomain}`);
 
 // Closed by default. Kept when the operator has set either on purpose.
 if (!get('DISABLE_SIGNUPS')) { set('DISABLE_SIGNUPS', 'true'); changed.push('DISABLE_SIGNUPS'); }
@@ -177,7 +183,7 @@ writeFileSync(file, text, { mode: 0o600 });
 // copied) file keeps its old mode, and this one holds the secrets.
 chmodSync(file, 0o600);
 
-console.log(changed.length ? `wrote ${changed.join(', ')} to ${file}` : `${file}: all secrets already set`);
+console.log(changed.length ? `wrote ${changed.join(', ')} to ${file}` : `${file}: all secrets and settings already set`);
 if (isUnset(appDomain)) {
   console.log(`note: set APP_DOMAIN, API_DOMAIN and MCP_DOMAIN in ${file}, then run this again`);
 }
