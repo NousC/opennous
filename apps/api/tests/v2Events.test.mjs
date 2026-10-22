@@ -31,3 +31,11 @@ test('refusals name what is wrong', () => {
   assert.equal(parseEventsQuery({ limit: '101' }).error, 'invalid_limit');
   assert.deepEqual(parseEventsQuery({ colour: 'red' }), { ok: false, error: 'unknown_parameter', parameter: 'colour' });
 });
+
+test('a date range (GET-1014): ISO times, refused when not a time', () => {
+  const f = parseEventsQuery({ since: '2026-10-01', until: '2026-10-08T00:00:00Z' }).filters;
+  assert.equal(f.since, '2026-10-01T00:00:00.000Z');
+  assert.equal(f.until, '2026-10-08T00:00:00.000Z');
+  assert.equal(parseEventsQuery({ since: 'last week' }).error, 'invalid_time');
+  assert.equal(parseEventsQuery({ until: 'soon' }).error, 'invalid_time');
+});

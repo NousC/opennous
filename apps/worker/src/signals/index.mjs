@@ -10,7 +10,7 @@ import { setUser } from 'useleak';
 import { createMessage, pipelineModel, parseJsonArray, ModelUnavailableError } from '../lib/llm.mjs';
 import { loadDerivedSources, derivedAudienceKey, saveAboutUsClaims, isPrivateMessageType } from '@nous/core';
 import { listNotes, saveNote, corroborateNote, searchClaims, listActivities, recordObservation,
-  isEntityInternal, linkPersonMention, resolvePersonMention, tagClaimMentions,
+  isEntityInternal, isContactPersonal, linkPersonMention, resolvePersonMention, tagClaimMentions,
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS, ACCOUNT_ROLLUP_CATEGORIES,
   resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, activityDirection, claimSubtagsFor, claimFreeTextFor,
   violatesPronounRule, isTitleOnlyFact, TITLE_ONLY_REASON, emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact, isIntelClaim } from '@nous/core';
@@ -1121,6 +1121,9 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     // message happened to greet. A placeholder is not a safe default here.
     const contact = await loadSubject(supabase, contactId);
     if (!contact) { if (strict) throw new Error('extraction_subject_unresolved'); return []; }
+    // Personal (GET-1014): someone we know, not a deal. Every reader of one person's words comes
+    // through here (live, rollups, backfill, re-extraction), so this is where it is held back.
+    if (await isContactPersonal(supabase, workspaceId, contactId).catch(() => false)) return [];
     const ourSide = await loadOurSide(supabase, workspaceId, { activityId, text: summary });
     // What is on file about them and their account that this conversation may move (GET-770).
     const positionsOnFile = await loadPositionsOnFile(supabase, workspaceId, [contactId, contact.company_id], { excludeSourceRef: sourceRef });
@@ -1549,6 +1552,15 @@ export async function meetingAlreadyRead(supabase, workspaceId, sourceRef) {
   }
 }
 
+/** The attendees who are not marked personal (GET-1014). One whose check fails is kept. */
+export async function withoutPersonal(supabase, workspaceId, participants = []) {
+  const keep = await Promise.all(participants.map(async (p) => {
+    if (!p?.contactId) return true;
+    return !(await isContactPersonal(supabase, workspaceId, p.contactId).catch(() => false));
+  }));
+  return participants.filter((_, i) => keep[i]);
+}
+
 export async function extractMeetingSignals({
   supabase, workspaceId, participants, summary, source,
   maxFactsOverride, dryRun = false, occurredAt = null,
@@ -1597,6 +1609,12 @@ export async function extractMeetingSignals({
           .catch(err => console.warn('[INSIGHT_HOOK_ERROR]', err.message)),
       );
     }
+
+    // Someone marked personal (or at a personal company) is someone we know, not a deal (GET-1014).
+    // The call still taught us something, so the insights pass above read it; what it never yields
+    // is a buying signal, an objection or a stakeholder about them. A call with only them stops here.
+    participants = await withoutPersonal(supabase, workspaceId, participants);
+    if (!participants.length) return [];
 
     // A 1:1 call is the common case, and the single-person prompt is sharper for
     // it (it can say "these are Sarah's own words" rather than hedging across a
@@ -2326,6 +2344,8 @@ export async function extractAfterActivity(supabase, activityResult, { contactId
   if (contactId) {
     try {
       if (await isEntityInternal(supabase, workspaceId, contactId)) return;
+      // A personal contact (GET-1014) is not a deal: no facts, no signals, no action items.
+      if (await isContactPersonal(supabase, workspaceId, contactId)) return;
     } catch { /* if the check fails, extract — losing signal is worse than a wasted call */ }
   }
 

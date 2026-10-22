@@ -15,6 +15,7 @@ import crypto from 'node:crypto';
 import { getAccountRecord } from '../db/claims.js';
 import { teamReadContext } from '../db/readContext.js';
 import { subscribersFor } from '../db/triggers.js';
+import { isEntityPersonal } from '../db/relationship.js';
 import { loggedEvent, logEvent, EVENT_LOG_RETENTION_DAYS } from '../db/eventLog.mjs';
 import { loadAutomationExtension } from './automationExtension.mjs';
 
@@ -194,6 +195,14 @@ async function cachedRecord(supabase, workspaceId, ids) {
   return record;
 }
 
+/** True when any of these entities is marked personal. False on a read error. */
+async function aboutPersonal(supabase, workspaceId, ids) {
+  for (const id of ids) {
+    if (id && await isEntityPersonal(supabase, workspaceId, id).catch(() => false)) return true;
+  }
+  return false;
+}
+
 /** The signed body every record event carries. */
 export function eventEnvelope({ type, workspaceId, occurredAt, record, data = {} }) {
   return {
@@ -224,6 +233,10 @@ export async function emitEvent(supabase, {
     const at = occurredAt ? new Date(occurredAt) : new Date();
     if (Number.isNaN(at.getTime())) return 0;
     if (Date.now() - at.getTime() > maxAgeHours * 3_600_000) return 0;
+    // An account or person marked personal is someone we know, not a deal (GET-1014): nothing that
+    // happens with them is an event, for the feed, a webhook or an automation. A failed check
+    // emits, as every other part of this does.
+    if (await aboutPersonal(supabase, workspaceId, [accountId, personId])) return 0;
 
     // The automation engine's extension hears every event first (GET-910): `internalData` rides along
     // for it only, never in a webhook's payload.

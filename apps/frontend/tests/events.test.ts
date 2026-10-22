@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EVENT_FILTERS, EVENT_FILTER_GROUPS, eventTone, eventFamilyLabel, eventLabel, eventSummary, eventsUrl, filterLabel, mergeNewer, needsSubscription, type NousEvent } from "../src/lib/events.ts";
+import { EVENT_FILTERS, EVENT_FILTER_GROUPS, rangeSince, eventTone, eventFamilyLabel, eventLabel, eventSummary, eventsUrl, filterLabel, mergeNewer, needsSubscription, type NousEvent } from "../src/lib/events.ts";
 
 const ev = (type: string, extra: Partial<NousEvent> = {}): NousEvent => ({ id: "e1", type, occurred_at: "2026-10-16T10:00:00Z", ...extra });
 
@@ -92,4 +92,16 @@ test("the interpreted events (GET-950) have a family, a line and a tone", () => 
   assert.equal(needsSubscription("account.champion_left"), false, "read from signals, logged for every workspace");
   assert.equal(needsSubscription("deal.stalled"), false, "computed for every workspace");
   assert.equal(needsSubscription("deal.*"), true, "the rest of the family still needs a webhook");
+});
+
+test("people added is not a filter on the feed (GET-1014)", () => {
+  assert.ok(!EVENT_FILTER_GROUPS.some((g) => g.types.includes("people.added")));
+});
+
+test("a date range starts today at midnight, or N days back; any time has no start", () => {
+  const now = new Date(2026, 9, 22, 15, 30);
+  assert.equal(rangeSince("any", now), null);
+  assert.equal(rangeSince("today", now), new Date(2026, 9, 22, 0, 0).toISOString());
+  assert.equal(rangeSince("7d", now), new Date(now.getTime() - 7 * 86_400_000).toISOString());
+  assert.match(eventsUrl("https://api", "ws", { since: "2026-10-15T00:00:00.000Z" }), /since=2026-10-15T00%3A00%3A00.000Z/);
 });

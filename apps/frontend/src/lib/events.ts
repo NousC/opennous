@@ -25,14 +25,14 @@ export const EVENT_FILTERS: { id: string; label: string; type: string | null }[]
   { id: "conversation", label: "Calls and replies", type: "conversation.*" },
   { id: "deal", label: "Deals", type: "deal.*" },
   { id: "icp", label: "ICP", type: "icp.*" },
-  { id: "people", label: "People", type: "people.*" },
 ];
 
 /** GET /v2/events with the page's filters. The signed-in page names its workspace. */
-export function eventsUrl(apiUrl: string, workspaceId: string, opts: { type?: string | null; account?: string | null; after?: string | null; limit?: number } = {}): string {
+export function eventsUrl(apiUrl: string, workspaceId: string, opts: { type?: string | null; account?: string | null; since?: string | null; after?: string | null; limit?: number } = {}): string {
   const q = new URLSearchParams({ workspaceId });
   if (opts.type) q.set("type", opts.type);
   if (opts.account) q.set("account", opts.account);
+  if (opts.since) q.set("since", opts.since);
   if (opts.after) q.set("starting_after", opts.after);
   if (opts.limit) q.set("limit", String(opts.limit));
   return `${apiUrl}/v2/events?${q.toString()}`;
@@ -128,9 +128,29 @@ export const EVENT_FILTER_GROUPS: { label: string; family: string; types: string
   { label: "Accounts", family: "account.*", types: ["account.champion_left", "account.expansion_requested"] },
   { label: "Deals", family: "deal.*", types: ["deal.won", "deal.lost", "deal.stage_changed", "deal.stalled"] },
   { label: "ICP", family: "icp.*", types: ["icp.score_changed", "icp.tier_changed"] },
-  { label: "People", family: "people.*", types: ["people.added"] },
   { label: "Insights", family: "insight.*", types: ["insight.emerged", "insight.rising"] },
 ];
+
+// People added is not on the feed (GET-1014): adding people is plumbing, not news. It is still an
+// event a webhook can subscribe to, so its label and summary stay.
+
+/** The date range beside the type filter. The log keeps 30 days, so that is the widest. */
+export const EVENT_RANGES: { id: string; label: string; days: number | null }[] = [
+  { id: "any", label: "Any time", days: null },
+  { id: "today", label: "Today", days: 0 },
+  { id: "7d", label: "Last 7 days", days: 7 },
+  { id: "30d", label: "Last 30 days", days: 30 },
+];
+
+/** The ISO time a range starts at: today from local midnight, the others N days back. Null for any time. Pure. */
+export function rangeSince(id: string, now: Date = new Date()): string | null {
+  const r = EVENT_RANGES.find((x) => x.id === id);
+  if (!r || r.days == null) return null;
+  const start = new Date(now);
+  if (r.days === 0) start.setHours(0, 0, 0, 0);
+  else start.setTime(now.getTime() - r.days * 86_400_000);
+  return start.toISOString();
+}
 
 /** What a chosen filter is called on the button and in the empty line. */
 export function filterLabel(type: string | null): string {
@@ -153,7 +173,7 @@ export function mergeNewer(loaded: NousEvent[], fresh: NousEvent[]): NousEvent[]
 }
 
 /** Families only computed for a workspace once a webhook subscribes to them (their polls run per subscriber). */
-export const SUBSCRIBED_ONLY_FAMILIES = new Set(["deal.*", "icp.*", "people.*"]);
+export const SUBSCRIBED_ONLY_FAMILIES = new Set(["deal.*", "icp.*"]);
 /** Types in those families that are computed for every workspace anyway (deal.stalled, GET-950). */
 export const ALWAYS_LOGGED = new Set(["deal.stalled"]);
 

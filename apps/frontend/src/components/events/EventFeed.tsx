@@ -57,9 +57,11 @@ function EventRow({ e, open, onToggle, showAccount, copied, onCopy }: {
   );
 }
 
-export function EventFeed({ type = null, accountId = null, showAccount = true, refreshKey = 0, onLoading }: {
+export function EventFeed({ type = null, since = null, accountId = null, showAccount = true, refreshKey = 0, onLoading }: {
   /** One event type, or a family like "signal.*". */
   type?: string | null;
+  /** Only events from this ISO time on (the date range). */
+  since?: string | null;
   /** Only this account's events (an account's Events tab). */
   accountId?: string | null;
   /** The account link on each row; off where the account is the page. */
@@ -91,12 +93,12 @@ export function EventFeed({ type = null, accountId = null, showAccount = true, r
   const fetchPage = useCallback(async (after: string | null): Promise<EventsPage | null> => {
     const token = tokenRef.current;
     if (!token || !workspaceId) return null;
-    const res = await fetch(eventsUrl(apiUrl, workspaceId, { type, account: accountId, after, limit: PAGE }), {
+    const res = await fetch(eventsUrl(apiUrl, workspaceId, { type, since, account: accountId, after, limit: PAGE }), {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error(String(res.status));
     return res.json();
-  }, [workspaceId, type, accountId]);
+  }, [workspaceId, type, since, accountId]);
 
   const load = useCallback(async () => {
     const mine = ++gen.current;
@@ -154,6 +156,8 @@ export function EventFeed({ type = null, accountId = null, showAccount = true, r
       <ListEmpty>
         {failed ? "Events could not be loaded. Try again in a moment."
           : needsSubscription(type) ? `${filterLabel(type)} are computed once a webhook subscribes to them. Add one under Endpoints, top right.`
+          : type && since ? "No events of this kind in this range."
+          : since ? "No events in this range."
           : type ? "No events of this kind yet."
           : accountId ? "No events on this account yet. Signals from its calls and email appear here as they are read."
           : "No events yet. Signals from your calls and email appear here as they are read."}

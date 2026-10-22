@@ -108,3 +108,22 @@ export async function isEntityPersonal(
     .maybeSingle();
   return (data as { value?: unknown } | null)?.value === true;
 }
+
+/** True if this contact is personal, or works at a company marked personal (GET-1014). A call or
+ *  message with them is someone we know, not a deal: extraction reads it for insights only, never
+ *  for buying signals, objections or stakeholders. */
+export async function isContactPersonal(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  contactId: string,
+): Promise<boolean> {
+  if (await isEntityPersonal(supabase, workspaceId, contactId)) return true;
+  const { data } = await supabase
+    .from('contacts')
+    .select('company_id')
+    .eq('workspace_id', workspaceId)
+    .eq('id', contactId)
+    .maybeSingle();
+  const companyId = (data as { company_id?: string | null } | null)?.company_id;
+  return companyId ? isEntityPersonal(supabase, workspaceId, companyId) : false;
+}

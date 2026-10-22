@@ -1,8 +1,9 @@
 // Events (GET-939): every event in the workspace as it happens, the way Stripe shows its events.
 // The list is the shared feed (components/events/EventFeed); the card's Filter (top right) picks one
-// family or one type at a time, the way GET /v2/events takes it.
-import { useState } from "react";
-import { Check, Filter } from "lucide-react";
+// family or one type at a time, the way GET /v2/events takes it, and the calendar beside it a date
+// range (GET-1014).
+import { useMemo, useState } from "react";
+import { CalendarDays, Check, Filter } from "lucide-react";
 import { useApiTopBar } from "@/components/shell/ApiTopBar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,7 @@ import { ListCard, ListHeader } from "@/components/ui/list";
 import { EventFeed } from "@/components/events/EventFeed";
 import { ApiWebhooks } from "@/components/webhooks/ApiWebhooks";
 import { useAuth } from "@/contexts/AuthContext";
-import { EVENT_FILTER_GROUPS, TONE_DOT, eventLabel, eventTone, filterLabel } from "@/lib/events";
+import { EVENT_FILTER_GROUPS, EVENT_RANGES, TONE_DOT, eventLabel, eventTone, filterLabel, rangeSince } from "@/lib/events";
 
 function Opt({ on, onClick, children, dot }: { on: boolean; onClick: () => void; children: React.ReactNode; dot?: string }) {
   return (
@@ -33,6 +34,11 @@ export default function Events() {
   const [loading, setLoading] = useState(false);
   useApiTopBar({ onRefresh: () => setRefreshKey((k) => k + 1), refreshing: loading });
   const [filterOpen, setFilterOpen] = useState(false);
+  const [range, setRange] = useState("any");
+  const [rangeOpen, setRangeOpen] = useState(false);
+  // Fixed when the range is picked, so the feed's polls do not reload it every render.
+  const since = useMemo(() => rangeSince(range), [range, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rangeLabel = EVENT_RANGES.find((r) => r.id === range)?.label ?? "Any time";
   const pick = (t: string | null) => { setType(t); setFilterOpen(false); setQuery(""); };
 
   // The filter: a search on top, then each group's "All …" and its types with their dots.
@@ -83,13 +89,30 @@ export default function Events() {
         ) : (
         <ListCard>
           {/* The filter sits in the card it filters (top right), one choice at a time. */}
-          <ListHeader title={filterLabel(type)} className="items-center"
+          <ListHeader title={range === "any" ? filterLabel(type) : `${filterLabel(type)} · ${rangeLabel.toLowerCase()}`} className="items-center"
             right={
               <span className="ml-auto flex items-center gap-1">
-                {type && (
-                  <button type="button" onClick={() => setType(null)}
+                {(type || range !== "any") && (
+                  <button type="button" onClick={() => { setType(null); setRange("any"); }}
                     className="rounded-md px-1.5 py-0.5 text-[12.5px] text-ink-2 hover:bg-hover hover:text-foreground">Clear</button>
                 )}
+                <Popover open={rangeOpen} onOpenChange={setRangeOpen}>
+                  <PopoverTrigger asChild>
+                    <button type="button" title="Date range" aria-label={range === "any" ? "Date range" : `Date range, ${rangeLabel}`}
+                      className={cn("relative inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-card shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover hover:text-foreground",
+                        range !== "any" ? "text-foreground" : "text-ink-2")}>
+                      <CalendarDays className="h-3.5 w-3.5" strokeWidth={1.8} />
+                      {range !== "any" && <span aria-hidden className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border-2 border-card bg-foreground" />}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[180px] p-1">
+                    <div role="listbox" aria-label="Date range">
+                      {EVENT_RANGES.map((r) => (
+                        <Opt key={r.id} on={range === r.id} onClick={() => { setRange(r.id); setRangeOpen(false); }}>{r.label}</Opt>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
                 <Popover open={filterOpen} onOpenChange={setFilterOpen}>
                   <PopoverTrigger asChild>
                     <button type="button" title="Filter" aria-label={type ? "Filter, 1 on" : "Filter"}
@@ -103,7 +126,7 @@ export default function Events() {
                 </Popover>
               </span>
             } />
-          <EventFeed type={type} refreshKey={refreshKey} onLoading={setLoading} />
+          <EventFeed type={type} since={since} refreshKey={refreshKey} onLoading={setLoading} />
         </ListCard>
         )}
       </div>

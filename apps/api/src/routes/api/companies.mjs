@@ -11,7 +11,7 @@ import {
   computeAccountHealth, selectNextStep, loadEngagementActivity, loadAccountHealthTrend,
   getAccountRecord, fetchEntityOverlays, applyCompanyOverlay,
   getRelationshipOwners, getWorkspaceMemberProfiles, effectiveOwnerUserId, accountOwnerIds,
-  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal,
+  assignRelationshipOwner, removeRelationshipMember, markEntityPersonal, getPersonalEntityIds,
 } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { intelTopicsFor } from '../../lib/intelTopics.mjs';
@@ -205,13 +205,16 @@ companiesApiRouter.get('/deals', verifySupabaseAuth, async (req, res) => {
     // their own, so assembling the same deals from claims and then discarding them was thousands of
     // deals of work on every board load of the workspace that needed the fast path most.
     const scope = readScope(req.query.scope);
-    const [hasRows, primary_pipeline_ref, scoped] = await Promise.all([
+    const [hasRows, primary_pipeline_ref, scoped, personal] = await Promise.all([
       hasListRows(supabase, workspaceId, 'deal'),
       readPrimaryPipelineRef(supabase, workspaceId),
       // Who is asking, in CRM terms. With no scope: null for an admin or anyone we cannot place,
       // and null is no filter, so a rep we failed to map sees the workspace, never an empty board.
       resolveScopedOwner(supabase, workspaceId, req, scope),
+      // An account marked personal is someone we know, not a deal (GET-1014): not on the board.
+      getPersonalEntityIds(supabase, workspaceId),
     ]);
+    const notPersonal = (d) => !personal.has(d.company_id);
     const owner = scoped.owner;
     // Health per deal is read off the row, never computed per request: a board is thousands of
     // deals. listDealRows maps it from the row (dealHealthRefresh.mjs writes it twice a day).
@@ -238,7 +241,7 @@ companiesApiRouter.get('/deals', verifySupabaseAuth, async (req, res) => {
       // roster, so `contact_count` is absent and the single-threaded reason never fires here. It
       // is wired in dealSignals and waits on the deal projection carrying its people count — a
       // deliberate gap, not a silent one.
-      const withSignals = rows.map(r => withHealth({ ...r, verdict: dealVerdict(r) }));
+      const withSignals = rows.filter(notPersonal).map(r => withHealth({ ...r, verdict: dealVerdict(r) }));
       // How many customers there are, so the Customer success tab can show its count without
       // being opened. That tab's own payload walks every won deal's line items and every
       // account's reasons; it stays lazy. This is one head-count against an indexed column —
@@ -253,7 +256,7 @@ companiesApiRouter.get('/deals', verifySupabaseAuth, async (req, res) => {
         .eq('workspace_id', workspaceId).eq('kind', 'account').gt('won_deals', 0);
       return res.json({
         deals: withSignals,
-        stale: stalePipeline(rows),
+        stale: stalePipeline(rows.filter(notPersonal)),
         counts: { customers: customers ?? null },
         primary_pipeline_ref, country, focus_country: wsRow?.focus_country ?? null,
         ...(scope ? { scope, scope_unmapped: false } : {}),
@@ -261,7 +264,7 @@ companiesApiRouter.get('/deals', verifySupabaseAuth, async (req, res) => {
     }
     // No flattened rows yet (a fresh or small workspace): assemble from claims, same window.
     const crmDeals = await listWorkspaceDeals(supabase, workspaceId, { status, visibleCompanyIds, windowed: true, owner });
-    const deals = await withDealPipelines(supabase, workspaceId, crmDeals);
+    const deals = await withDealPipelines(supabase, workspaceId, crmDeals.filter(notPersonal));
     return res.json({ deals: deals.map(withHealth), primary_pipeline_ref, ...(scope ? { scope, scope_unmapped: false } : {}) });
   } catch (err) {
     console.error('[GET /api/companies/deals]', err);

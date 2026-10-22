@@ -16,7 +16,7 @@
 
 import {
   getEntity, crmDealState, accountStage, mapToCanonical, getWorkspaceStages, runDealOutlook,
-  STAGE_LABEL, TERMINAL_STAGES, roleFromAuthorityClaims,
+  STAGE_LABEL, TERMINAL_STAGES, roleFromAuthorityClaims, getPersonalEntityIds,
 } from '@nous/core';
 import { hasListRows, listRows, listDealRows, personStagesForAccounts, dealValueByCompany } from './listRows.mjs';
 import { listWorkspaceDeals } from './workspaceDeals.mjs';
@@ -309,10 +309,13 @@ async function collectImpliedDeals(supabase, workspaceId, companiesWithDeals, { 
  * filters: { accountId, pipeline, status, stage, owner, closingWithinDays, minAmount, implied }
  */
 export async function listPublicDeals(supabase, req, workspaceId, f = {}) {
-  const [book, primaryRef, all] = await Promise.all([
+  const [book, primaryRef, all, personal] = await Promise.all([
     viewerBook(supabase, workspaceId, req),
     readPrimaryPipelineRef(supabase, workspaceId),
     collectCrmDeals(supabase, workspaceId),
+    // An account marked personal is someone we know, not a deal (GET-1014): off the pipeline.
+    // Asked for by name (its own account page), its deals still show.
+    f.accountId ? new Set() : getPersonalEntityIds(supabase, workspaceId),
   ]);
   // A deal that hangs off no account cannot be opened from one (the deal reader lives under it).
   let crm = all.filter((d) => d.company_id);
@@ -333,6 +336,7 @@ export async function listPublicDeals(supabase, req, workspaceId, f = {}) {
   const startOfToday = new Date(new Date(now).toISOString().slice(0, 10)).getTime();
   const deals = [...crm, ...implied].filter((d) => {
     if (book.restrict && !book.companyIds.has(d.company_id)) return false;
+    if (personal.has(d.company_id)) return false;
     if (f.status && d.status !== f.status) return false;
     if (f.stage && d.canonical_stage !== f.stage) return false;
     if (f.pipeline && d.pipeline_id !== f.pipeline) return false;

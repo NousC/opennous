@@ -1,7 +1,7 @@
 // The event log (GET-939): a page of the feed, its cursor, and an unknown cursor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listEvents, feedView } from '../dist/db/eventLog.mjs';
+import { listEvents, feedView, feedHiddenTypes } from '../dist/db/eventLog.mjs';
 
 // Records every filter the read applies; answers with the fixture rows for the table.
 function fakeDb(rows, cursorRow = null) {
@@ -66,10 +66,33 @@ test("the feed leaves out one mailbox's reply and an approval's draft; the rest 
   assert.equal(feedView(signal), signal);
 });
 
-test('a next step agreed logged before GET-967 is not on the feed', async () => {
+test('a next step agreed (before GET-967) and people added (GET-1014) are not on the feed', async () => {
   const db = fakeDb([ev(1)]);
   await listEvents(db, 'ws', {});
-  assert.ok(db.calls.some(([t, op, col, v]) => t === 'event_log' && op === 'neq' && col === 'type' && v === 'signal.next_step'));
+  assert.ok(db.calls.some(([t, op, col, how, v]) => t === 'event_log' && op === 'not' && col === 'type' && how === 'in' && v === '(signal.next_step,people.added)'));
+});
+
+test('people added is read when asked for by type or family; a next step never is', () => {
+  assert.deepEqual(feedHiddenTypes(null), ['signal.next_step', 'people.added']);
+  assert.deepEqual(feedHiddenTypes('signal.*'), ['signal.next_step', 'people.added']);
+  assert.deepEqual(feedHiddenTypes('people.added'), ['signal.next_step']);
+  assert.deepEqual(feedHiddenTypes('people.*'), ['signal.next_step']);
+});
+
+test('a date range bounds when it happened; until is exclusive', async () => {
+  const db = fakeDb([]);
+  await listEvents(db, 'ws', { since: '2026-10-01T00:00:00.000Z', until: '2026-10-08T00:00:00.000Z' });
+  assert.ok(db.calls.some(([, op, k, v]) => op === 'gte' && k === 'occurred_at' && v === '2026-10-01T00:00:00.000Z'));
+  assert.ok(db.calls.some(([, op, k, v]) => op === 'lt' && k === 'occurred_at' && v === '2026-10-08T00:00:00.000Z'));
+});
+
+test('personal accounts and people are left out, and events with no entity stay', async () => {
+  const db = fakeDb([]);
+  await listEvents(db, 'ws', { excludeEntityIds: ['p1', 'p2'] });
+  assert.ok(db.calls.some(([, op, v]) => op === 'or' && v === 'entity_id.is.null,entity_id.not.in.(p1,p2)'));
+  const none = fakeDb([]);
+  await listEvents(none, 'ws', {});
+  assert.ok(!none.calls.some(([, op]) => op === 'or'), 'no exclusion, no filter');
 });
 
 test('a page is shown through the feed view', async () => {

@@ -7,6 +7,17 @@
 export const EVENT_LOG_RETENTION_DAYS = 30;
 const DAY_MS = 86_400_000;
 export const EVENTS_PAGE_MAX = 100;
+// Logged, and sent to a webhook that listens, but not on the feed. A next step agreed (before
+// GET-967) is a task, never shown; people added is plumbing (GET-1014), shown only when asked for
+// by its type or family, the way a scorer reading /v2/events?type=people.added does.
+const NEVER_ON_FEED = ['signal.next_step'];
+const OFF_FEED_UNLESS_ASKED = ['people.added'];
+
+/** The types a read with this `type` filter leaves out. Pure. */
+export function feedHiddenTypes(type = null) {
+  const asked = (t) => !!type && (type === t || (type.endsWith('.*') && t.startsWith(type.slice(0, -1))));
+  return [...NEVER_ON_FEED, ...OFF_FEED_UNLESS_ASKED.filter((t) => !asked(t))];
+}
 
 /**
  * The logged event with this identity (`<type>:<dedupeKey>`), or null. Throws on a read error.
@@ -55,11 +66,13 @@ export async function logEvent(supabase, { workspaceId, type, externalId, entity
 
 /**
  * A page of the feed, newest first. `type` is one event type or a family (`signal.*`); `entityId`
- * narrows to one account (or person); `startingAfter` is the last event id of the previous page.
+ * narrows to one account (or person); `since` / `until` bound when it happened (ISO, until is
+ * exclusive); `excludeEntityIds` drops the accounts and people the feed must not show (the ones
+ * marked personal, GET-1014); `startingAfter` is the last event id of the previous page.
  * Returns { events, has_more } — events are the payloads as a webhook receives them — or
  * { unknown_cursor: true } when startingAfter is not an event of this workspace.
  */
-export async function listEvents(supabase, workspaceId, { type = null, entityId = null, startingAfter = null, limit = 25 } = {}) {
+export async function listEvents(supabase, workspaceId, { type = null, entityId = null, since = null, until = null, excludeEntityIds = [], startingAfter = null, limit = 25 } = {}) {
   const n = Math.min(Math.max(Number(limit) || 25, 1), EVENTS_PAGE_MAX);
   let cursor = null;
   if (startingAfter) {
@@ -70,11 +83,16 @@ export async function listEvents(supabase, workspaceId, { type = null, entityId 
     cursor = data;
   }
   let q = supabase.from('event_log').select('id, created_at, payload').eq('workspace_id', workspaceId)
-    // Logged before GET-967, when a next step agreed was still an event: a task, not news.
-    .neq('type', 'signal.next_step');
+    // Not news: a next step agreed logged before GET-967 is a task, and people landing in the
+    // workspace (GET-1014) is plumbing, unless the reader asked for exactly that.
+    .not('type', 'in', `(${feedHiddenTypes(type).join(',')})`);
   if (type?.endsWith('.*')) q = q.like('type', `${type.slice(0, -1)}%`);
   else if (type) q = q.eq('type', type);
   if (entityId) q = q.eq('entity_id', entityId);
+  if (since) q = q.gte('occurred_at', since);
+  if (until) q = q.lt('occurred_at', until);
+  // A plain NOT IN would also drop the events with no entity (an insight), so those are kept by name.
+  if (excludeEntityIds.length) q = q.or(`entity_id.is.null,entity_id.not.in.(${excludeEntityIds.join(',')})`);
   if (cursor) q = q.or(`created_at.lt."${cursor.created_at}",and(created_at.eq."${cursor.created_at}",id.lt.${cursor.id})`);
   const { data, error } = await q.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(n + 1);
   if (error) throw error;

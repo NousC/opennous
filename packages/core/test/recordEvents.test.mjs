@@ -197,3 +197,17 @@ test('older than the log keeps: sent to a listener, but not logged on top of the
   assert.equal(await emitEvent(db, { workspaceId: WS, type: 'deal.won', accountId: ACC, occurredAt: closed, dedupeKey: 'late', maxAgeHours: 45 * 24 }), 1);
   assert.deepEqual(db.writes.map(w => w.table), ['outbound_events']);
 });
+
+test('an account or person marked personal makes no event: nothing logged, nothing queued (GET-1014)', async () => {
+  for (const marked of [ACC, ANA]) {
+    const f = fixtures();
+    f.claims.push({ entity_id: marked, property: 'is_personal', value: true });
+    const db = fakeDb(f);
+    const n = await emitEvent(db, {
+      workspaceId: WS, type: 'signal.buying_signal', accountId: ACC, personId: ANA,
+      occurredAt: NOW, data: { title: 'Wants it next month' }, dedupeKey: `personal-${marked}`,
+    });
+    assert.equal(n, 0);
+    assert.equal(db.writes.length, 0);
+  }
+});
