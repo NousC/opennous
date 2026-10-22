@@ -38,3 +38,14 @@ test('selfhost-keys turns a CRLF nous.env (a Windows editor) into LF', () => {
   assert.equal(env.APP_DOMAIN, 'app.example.com');
   assert.equal(env.ANTHROPIC_API_KEY, 'sk-ant-x');
 });
+
+// Compose splits COMPOSE_FILE on the OS path separator, which is ';' on Windows, so the
+// ':'-joined list was one missing file there (GET-1013). Naming the separator fixes every OS.
+test('selfhost-keys names the compose path separator, so COMPOSE_FILE works on Windows too', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nous-keys-'));
+  const envFile = join(dir, 'nous.env');
+  writeFileSync(envFile, 'APP_DOMAIN=app.example.com\nAPI_DOMAIN=api.example.com\n');
+  const env = run(envFile);
+  assert.equal(env.COMPOSE_FILE, 'docker-compose.yaml:docker-compose.selfhost.yaml');
+  assert.equal(env.COMPOSE_PATH_SEPARATOR, ':');
+});

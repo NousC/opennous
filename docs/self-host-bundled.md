@@ -93,7 +93,8 @@ use that on an install that already has data.
 | `SUPABASE_URL` | `http://supabase:8000`, the internal gateway. |
 | `VITE_SUPABASE_URL` | `https://$APP_DOMAIN`. |
 | `SELF_HOSTED`, `AUTH_PROVIDER`, `VITE_AUTH_PROVIDER` | `true`, `supabase`, `supabase`. |
-| `COMPOSE_FILE` | `docker-compose.yaml:docker-compose.selfhost.yaml` (use `;` instead of `:` on Windows). |
+| `COMPOSE_FILE` | `docker-compose.yaml:docker-compose.selfhost.yaml`. |
+| `COMPOSE_PATH_SEPARATOR` | `:`, so the same `COMPOSE_FILE` line works on Windows. |
 | `DISABLE_SIGNUPS` | `true` (only if unset). Only the setup-token sign-up becomes the owner; after that only invitees. |
 | `GOTRUE_MAILER_AUTOCONFIRM` | Only if unset: `false` when `SMTP_HOST` is set, else `true`. |
 | `APP_COMMIT` | The checkout's short commit, for the sidebar's version widget (`./update.sh` keeps it current). Skipped outside a git checkout. |

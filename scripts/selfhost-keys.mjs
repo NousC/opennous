@@ -20,7 +20,8 @@
 // and sets APP_COMMIT (this checkout's commit, when it is a git checkout),
 // SUPABASE_URL (internal gateway), VITE_SUPABASE_URL (https://$APP_DOMAIN),
 // SELF_HOSTED=true, AUTH_PROVIDER=supabase, VITE_AUTH_PROVIDER=supabase, and
-// COMPOSE_FILE=docker-compose.yaml:docker-compose.selfhost.yaml, so the plain
+// COMPOSE_FILE=docker-compose.yaml:docker-compose.selfhost.yaml with COMPOSE_PATH_SEPARATOR=:
+// (so Windows reads it too), so the plain
 // `docker compose --env-file nous.env ...` (and ./update.sh) runs the bundled stack.
 //
 // Safe defaults, written only when unset (an explicit value is kept):
@@ -157,6 +158,9 @@ function wire(key, value) {
   changed.push(key);
 }
 wire('COMPOSE_FILE', 'docker-compose.yaml:docker-compose.selfhost.yaml');
+// Compose splits COMPOSE_FILE on the OS path separator, ';' on Windows. Naming ':' makes the
+// same line work everywhere (GET-1013).
+wire('COMPOSE_PATH_SEPARATOR', ':');
 wire('SUPABASE_URL', 'http://supabase:8000');
 wire('SELF_HOSTED', 'true');
 wire('AUTH_PROVIDER', 'supabase');

@@ -1,5 +1,13 @@
 # @opennous/cli changelog
 
+## 0.12.3
+
+### Fixed: a plain message when the server's certificate isn't trusted
+
+Against a self-hosted install with Caddy's local certificate, the CLI used to crash with
+a Node stack trace (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`). It now says to point
+`NODE_EXTRA_CA_CERTS` at the root certificate and links the self-host guide (GET-1011).
+
 ## 0.10.1
 
 ### Changed — new default vault folder structure

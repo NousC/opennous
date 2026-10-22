@@ -3,6 +3,7 @@
 #
 #   NOUS_VERSION=1.2.3
 #   COMPOSE_FILE=docker-compose.yaml:docker-compose.selfhost.yaml:docker-compose.release.yaml
+#   COMPOSE_PATH_SEPARATOR=:   (the keys script writes it; Windows needs it)
 #                (drop docker-compose.selfhost.yaml if you use an external Supabase project)
 #
 #   docker compose --env-file nous.env pull api worker mcp frontend
@@ -29,8 +30,10 @@ services:
   frontend:
     image: ghcr.io/nousc/opennous-frontend:${NOUS_VERSION:?set NOUS_VERSION in nous.env, e.g. 1.2.3}
     environment:
-      # The release frontend is built once for everyone; these two per-install values are
+      # The release frontend is built once for everyone; these per-install values are
       # written into it on start (apps/frontend/docker/40-nous-runtime-config.sh).
       # scripts/selfhost-keys.mjs sets both VITE_* values in nous.env for the bundled stack.
       NOUS_SUPABASE_URL: ${VITE_SUPABASE_URL:?set VITE_SUPABASE_URL in nous.env}
       NOUS_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?set VITE_SUPABASE_ANON_KEY in nous.env}
+      # The MCP server the Connect dialogs quote. Without it they named Nous Cloud's (GET-1013).
+      NOUS_MCP_URL: ${VITE_MCP_URL:-https://${MCP_DOMAIN:?set MCP_DOMAIN in nous.env}/mcp}

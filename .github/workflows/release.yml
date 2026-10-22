@@ -14,8 +14,9 @@ name: Release
 # (tags are not exported by Copybara; they are made on NousC/opennous itself).
 # Self-hosters use them through docker-compose.release.yaml and NOUS_VERSION (see update.sh).
 #
-# The frontend image is built with placeholders for the two per-install values (Supabase URL
-# and anon key); apps/frontend/docker/40-nous-runtime-config.sh fills them in on start.
+# The frontend image is built with placeholders for the per-install values (Supabase URL
+# and anon key, the MCP address); apps/frontend/docker/40-nous-runtime-config.sh fills them
+# in on start.
 #
 # This file also lives in the private repo (NousC/opennous-cloud), where it must never run:
 # the private tree holds the Cloud layer. Two guards: the repository name, and a check that
@@ -103,13 +104,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Only the frontend reads these. Self-host signs in with Supabase Auth on the same
-          # origin; the two per-install values are placeholders filled in at container start.
+          # origin; the per-install values (Supabase URL and anon key, the MCP address) are placeholders
+          # filled in at container start.
           build-args: |
             VITE_AUTH_PROVIDER=supabase
             VITE_CLERK_PUBLISHABLE_KEY=
             VITE_SUPABASE_URL=__NOUS_RUNTIME_SUPABASE_URL__
             VITE_SUPABASE_ANON_KEY=__NOUS_RUNTIME_SUPABASE_ANON_KEY__
             VITE_API_URL=
+            VITE_MCP_URL=__NOUS_RUNTIME_MCP_URL__
             VITE_EXTERNAL_IMAGES=true
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max

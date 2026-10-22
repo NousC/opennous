@@ -54,7 +54,8 @@ update_to_release() {
     *:docker-compose.release.yaml:*) ;;
     *) files="${files}:docker-compose.release.yaml" ;;
   esac
-  export COMPOSE_FILE="${files}" NOUS_VERSION="${ver}"
+  # The list is joined with ':' on every OS; Windows compose needs telling (GET-1013).
+  export COMPOSE_FILE="${files}" COMPOSE_PATH_SEPARATOR=":" NOUS_VERSION="${ver}"
 
   echo "→ Pulling images ghcr.io/nousc/opennous-*:${ver}…"
   if ! docker compose --env-file nous.env pull api worker mcp frontend; then
