@@ -13,7 +13,7 @@ const LABEL = {
   'signal.next_step_missed': 'Next step missed', 'signal.next_step_slipped': 'Next step slipped',
   'signal.usage_dropped': 'Usage dropped', 'signal.account_inactive': 'Account inactive',
   'signal.feature_adopted': 'Feature adopted', 'signal.seat_dropped': 'Seat dropped',
-  'signal.product_qualified': 'Product-qualified', 'signal.seats_growing': 'Seats growing', 'signal.account_activated': 'Account activated',
+  'signal.product_qualified': 'Product-qualified', 'signal.seats_growing': 'Seats growing', 'signal.account_activated': 'Account activated', 'signal.feature_requested': 'Feature requested',
   'conversation.call_ended': 'Call ended', 'conversation.reply_received': 'Reply received',
   'deal.won': 'Deal won', 'deal.lost': 'Deal lost', 'deal.stage_changed': 'Stage changed', 'deal.stalled': 'Deal stalled',
   'account.champion_left': 'Champion left', 'account.expansion_requested': 'Expansion requested',

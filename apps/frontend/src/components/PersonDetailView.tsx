@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { EntityAvatar } from "./EntityAvatar";
 import { FileText } from "lucide-react";
 import { relTime } from "@/components/mind/shared";
+import { FeatureRequestsCard } from "@/components/record/FeatureRequestsCard";
 import { RecordOverview, ActivityYear } from "@/components/RecordOverview";
 import { useAuth } from "@/contexts/AuthContext";
 import { ALL_PIPELINE_STAGES, DEFAULT_STAGE, normalizeStage } from "@/config/pipeline";
@@ -302,6 +303,7 @@ export default function PersonDetailView({
                   ? <p className="px-2 pb-1.5 text-[13px] leading-[1.6] text-foreground [overflow-wrap:anywhere]">{c.memory_summary}</p>
                   : <ListEmpty>No summary yet</ListEmpty>}
               </ListCard>
+              <FeatureRequestsCard requests={data?.feature_requests} />
               <ListCard className="min-w-0 px-4 pb-4 pt-3">
                 <ActivityYear acts={acts} />
               </ListCard>

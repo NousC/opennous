@@ -2,7 +2,7 @@ import { viewerReadContext } from '../../lib/messagePrivacy.mjs';
 import { Router } from 'express';
 import { productUsersAmong, personProductUsage, PERSON_USAGE_PROPERTIES } from '../../lib/productUsage.mjs';
 import { randomUUID } from 'crypto';
-import { getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, getPersonalEntityIds, markEntityPersonal, isEntityPersonal, setEntityInternalManual, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames, getWorkspaceMemberProfiles, effectiveOwnerUserId, assignRelationshipOwner, removeRelationshipMember } from '@nous/core';
+import { featureRequestsFor, getSupabaseClient, listNotes, saveNote, getNote, deleteNote, logActivity, collapseMeetingDupes, assertClaims, upsertIdentifier, scoreTier, normalizeClaimCategory, normalizeClaimAbout, recomputeClaim, ENRICHMENT_ATTRIBUTES, getInternalEntityIds, getPersonalEntityIds, markEntityPersonal, isEntityPersonal, setEntityInternalManual, isInTouchWith, getRelationshipOwners, getWorkspaceMemberNames, getWorkspaceMemberProfiles, effectiveOwnerUserId, assignRelationshipOwner, removeRelationshipMember } from '@nous/core';
 // The funnel lives in ONE place: packages/core/src/pipeline.ts. Never re-declare a
 // stage list in here — a local copy is exactly how a stage goes missing from one
 // code path and the account quietly drops out of it.
@@ -734,7 +734,9 @@ contactsApiRouter.get('/:id', verifySupabaseAuth, async (req, res) => {
     const { data: usageRows } = await supabase.from('claims').select('property, value')
       .eq('workspace_id', contact.workspace_id).eq('entity_id', id).in('property', PERSON_USAGE_PROPERTIES).is('invalid_at', null);
     contact.product_usage = personProductUsage(usageRows);
-    return res.json({ contact, activities, company, memories, intel_topics, signals, prediction, crm_connected });
+    // What they asked us to build (claims about us, GET-969), beside their record, never in it.
+    const feature_requests = await featureRequestsFor(supabase, workspaceId, { contactId: id }).catch(() => []);
+    return res.json({ contact, activities, company, memories, intel_topics, signals, prediction, crm_connected, feature_requests });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });
   }

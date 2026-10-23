@@ -54,6 +54,7 @@ export const TRIGGER_EVENTS = [
   'signal.product_qualified',
   'signal.seats_growing',
   'signal.account_activated',
+  'signal.feature_requested',
   // Interpreted events (GET-950): what a signal or a quiet deal means for the account, with the
   // evidence and how sure we are. Never the action.
   'account.champion_left',
@@ -97,6 +98,7 @@ export const EVENT_CATALOG: { type: TriggerEvent; description: string; record: b
   { type: 'signal.product_qualified', record: true, description: '3 or more people at the account used the product in the last 30 days, after fewer than 3 the 30 days before: a product-qualified account. Read from PostHog once a day; once per account.' },
   { type: 'signal.seats_growing', record: true, description: 'More people at the account use the product: active users up by 2 or more and by half again against the 30 days before. Read from PostHog once a day; at most once a month per account.' },
   { type: 'signal.account_activated', record: true, description: 'The account has used every one of the workspace\'s key product events (2 or more), the last of them for the first time in the last 8 days. Read from PostHog once a day; once per account.' },
+  { type: 'signal.feature_requested', record: true, description: 'A customer asked for a capability we do not have (a feature request heard in a call, email or Slack message). Carries what they asked for, the use case and their own words unless the message was private; once per request.' },
   { type: 'account.champion_left', record: true, description: 'A champion of the account left. Carries who left, who took over when someone was named, the quote it came from, and a confidence (high, medium or low) with the reason.' },
   { type: 'account.expansion_requested', record: true, description: 'A customer asked for more of a named product, in their words: the product, the quote, who said it and when.' },
   { type: 'deal.stalled', record: true, description: 'An open deal sat in its stage past the window with no touch. A meeting with anyone at the account counts as a touch, and one booked ahead means it is waiting, not stalled. Carries the stage, days in stage, days since the last touch and the dates behind them. Checked every six hours, for every workspace.' },

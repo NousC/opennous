@@ -144,12 +144,78 @@ export async function saveAboutUsClaims(
     const existing = (old ?? []).map((o: any) => ({ kind: String(o.kind), vec: parseVector(o.embedding) }));
     const kept = withoutRepeatedPoints(rows, vecs, existing);
     if (!kept.length) return 0;
-    const { error } = await supabase.from('about_us_claims')
-      .insert(kept.map(({ row, vec }) => ({ ...row, embedding: vec ? JSON.stringify(vec) : null })));
+    const { data: written, error } = await supabase.from('about_us_claims')
+      .insert(kept.map(({ row, vec }) => ({ ...row, embedding: vec ? JSON.stringify(vec) : null })))
+      .select('id, kind, company_id, contact_id, what, content, quote, quote_private, speaker, use_case, source_ref, source_system, occurred_at');
     if (error) { console.warn('[ABOUT_US] write failed:', error.message); return 0; }
+    await emitFeatureRequests(supabase, workspaceId, (written ?? []) as Record<string, any>[]);
     return kept.length;
   } catch (err: any) {
     console.warn('[ABOUT_US] failed:', err?.message ?? err);
     return 0;
   }
+}
+
+/**
+ * signal.feature_requested for one feature row just filed: a customer asked for something we do
+ * not have. Keyed by the row, so it fires once. Null for any other kind, or a row on nobody. A quote
+ * from a private message stays out of the event (GET-985). Pure.
+ */
+export function featureRequestedEvent(row: Record<string, any>): {
+  type: 'signal.feature_requested'; accountId: string | null; personId: string | null;
+  occurredAt: string | null; dedupeKey: string; data: Record<string, unknown>;
+} | null {
+  if (!row || row.kind !== 'feature' || !row.id || !(row.company_id || row.contact_id)) return null;
+  return {
+    type: 'signal.feature_requested',
+    accountId: row.company_id ?? null,
+    personId: row.contact_id ?? null,
+    occurredAt: row.occurred_at ?? null,
+    dedupeKey: String(row.id),
+    data: {
+      signal: 'feature_requested', label: 'Feature requested', title: row.what ?? null, text: row.content ?? null,
+      use_case: row.use_case ?? null, quote: row.quote_private ? null : row.quote ?? null,
+      said_by: row.speaker ?? null, source_ref: row.source_ref ?? null, source_system: row.source_system ?? null,
+    },
+  };
+}
+
+/** The events for the feature rows just filed. Best-effort: an event that fails never costs the row. */
+async function emitFeatureRequests(supabase: SupabaseClient, workspaceId: string, rows: Record<string, any>[]): Promise<void> {
+  const events = rows.map(featureRequestedEvent).filter((e): e is NonNullable<typeof e> => !!e);
+  if (!events.length) return;
+  try {
+    // Loaded here: services/events.mjs reads the record builders, which read this module's neighbours.
+    // @ts-ignore -- plain .mjs module, no declarations
+    const { emitEvent } = (await import('../services/events.mjs')) as { emitEvent: (sb: SupabaseClient, e: Record<string, unknown>) => Promise<number> };
+    for (const e of events) await emitEvent(supabase, { workspaceId, ...e });
+  } catch (err: any) {
+    console.warn('[ABOUT_US] feature event failed:', err?.message ?? err);
+  }
+}
+
+export interface FeatureRequest {
+  id: string; what: string | null; content: string; use_case: string | null; quote: string | null;
+  speaker: string | null; contact_id: string | null; source_system: string | null; occurred_at: string | null;
+}
+
+/**
+ * What a customer asked us to build, for an account (`companyId`) or a person (`contactId`): the
+ * feature rows of claims about us, newest first. A quote from a private message is left out (GET-985).
+ */
+export async function featureRequestsFor(
+  supabase: SupabaseClient, workspaceId: string, { companyId = null, contactId = null }: { companyId?: string | null; contactId?: string | null },
+): Promise<FeatureRequest[]> {
+  if (!companyId && !contactId) return [];
+  let q = supabase.from('about_us_claims')
+    .select('id, what, content, use_case, quote, quote_private, speaker, contact_id, source_system, occurred_at, created_at')
+    .eq('workspace_id', workspaceId).eq('kind', 'feature').is('retired_at', null);
+  q = companyId ? q.eq('company_id', companyId) : q.eq('contact_id', contactId as string);
+  const { data, error } = await q.order('occurred_at', { ascending: false, nullsFirst: false }).limit(50);
+  if (error) { console.warn('[ABOUT_US] feature requests read failed:', error.message); return []; }
+  return (data ?? []).map((r: any) => ({
+    id: r.id, what: r.what ?? null, content: r.content, use_case: r.use_case ?? null,
+    quote: r.quote_private ? null : r.quote ?? null, speaker: r.speaker ?? null, contact_id: r.contact_id ?? null,
+    source_system: r.source_system ?? null, occurred_at: r.occurred_at ?? r.created_at ?? null,
+  }));
 }

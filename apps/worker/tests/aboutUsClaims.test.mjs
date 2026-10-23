@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { routeFacts, splitAboutUs, markAboutUs, buildActivitySignalsPrompt, buildMeetingSignalsPrompt } from '../src/signals/index.mjs';
-import { aboutUsRow, normalizeAboutUsKind, withoutRepeatedPoints, saveAboutUsClaims } from '@nous/core';
+import { aboutUsRow, normalizeAboutUsKind, withoutRepeatedPoints, saveAboutUsClaims, featureRequestedEvent, featureRequestsFor, TRIGGER_EVENTS } from '@nous/core';
 
 const text = r => (typeof r === 'string' ? r : r.prompt);
 
@@ -107,4 +107,34 @@ test('a LinkedIn DM thread is private and has an identity, and our own "You:" li
   assert.match(call, /quotePrivate: true/);
   assert.match(call, /aboutUsRef: `thread:\/\//);
   assert.match(call, /ourNames: \['You'\]/);
+});
+
+// Feature requests: an event when one is heard, and a list on the account and the person.
+const featureRow = (extra = {}) => ({ id: 'auc-1', kind: 'feature', company_id: 'co-1', contact_id: 'p-1', what: 'Built-in call recording',
+  content: 'Dana Reyes wants us to record their sales calls ourselves', quote: 'do your own recorder', quote_private: false,
+  speaker: 'Dana Reyes', use_case: 'drop their other recorders', source_ref: 'source://slack/c1', source_system: 'slack', occurred_at: '2026-10-22T18:00:00Z', ...extra });
+
+test('a feature heard is a signal.feature_requested event, once per row, on the account and the person', () => {
+  assert.ok(TRIGGER_EVENTS.includes('signal.feature_requested'), 'a webhook can subscribe to it');
+  const ev = featureRequestedEvent(featureRow());
+  assert.deepEqual([ev.type, ev.accountId, ev.personId, ev.dedupeKey, ev.occurredAt], ['signal.feature_requested', 'co-1', 'p-1', 'auc-1', '2026-10-22T18:00:00Z']);
+  assert.equal(ev.data.title, 'Built-in call recording');
+  assert.equal(ev.data.quote, 'do your own recorder');
+  // Words from a private message stay out of the event; other kinds and rows on nobody fire nothing.
+  assert.equal(featureRequestedEvent(featureRow({ quote_private: true })).data.quote, null);
+  assert.equal(featureRequestedEvent(featureRow({ kind: 'bug' })), null);
+  assert.equal(featureRequestedEvent(featureRow({ company_id: null, contact_id: null })), null);
+});
+
+test('the account lists its feature requests newest first, without the words of a private message', async () => {
+  const calls = [];
+  const rows = [featureRow(), featureRow({ id: 'auc-2', quote_private: true, quote: 'secret words' })];
+  const q = { select: (...a) => { calls.push(['select', ...a]); return q; }, eq: (...a) => { calls.push(['eq', ...a]); return q; },
+    is: (...a) => { calls.push(['is', ...a]); return q; }, order: () => q, limit: async () => ({ data: rows, error: null }) };
+  const out = await featureRequestsFor({ from: () => q }, 'ws', { companyId: 'co-1' });
+  assert.deepEqual(out.map(r => [r.id, r.quote]), [['auc-1', 'do your own recorder'], ['auc-2', null]]);
+  assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'kind' && c[2] === 'feature'));
+  assert.ok(calls.some(c => c[0] === 'eq' && c[1] === 'company_id' && c[2] === 'co-1'));
+  assert.ok(calls.some(c => c[0] === 'is' && c[1] === 'retired_at'));
+  assert.deepEqual(await featureRequestsFor({ from: () => q }, 'ws', {}), []);
 });

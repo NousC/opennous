@@ -123,6 +123,7 @@ export const EVENT_LABEL: Record<string, string> = {
   "signal.product_qualified": "Product-qualified",
   "signal.seats_growing": "Seats growing",
   "signal.account_activated": "Account activated",
+  "signal.feature_requested": "Feature requested",
   "conversation.call_ended": "Call ended",
   "conversation.reply_received": "Reply received",
   "deal.won": "Deal won",

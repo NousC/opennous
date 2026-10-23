@@ -2,7 +2,7 @@ import { hubspotLinker, withDealLinks } from '../../lib/crmLinks.mjs';
 import { PRODUCT_USAGE_PROPERTIES, productUsageFromClaims } from '../../lib/productUsage.mjs';
 import { activeUsersTrendFor } from '../../lib/csHealth.mjs';
 import { buildAccountHealth } from '../../lib/csReport.mjs';
-import { listAccountSignals, filterByCitedClaimsForViewer, assertClaims, upsertIdentifier, normalizeStage, planAccountStage, accountStage, readTitle, roleFromAuthorityClaims, COMMITTEE_ROLE_RANK, listDocuments } from '@nous/core';
+import { featureRequestsFor, listAccountSignals, filterByCitedClaimsForViewer, assertClaims, upsertIdentifier, normalizeStage, planAccountStage, accountStage, readTitle, roleFromAuthorityClaims, COMMITTEE_ROLE_RANK, listDocuments } from '@nous/core';
 import { viewerReadContext, requestMessageViewer } from '../../lib/messagePrivacy.mjs';
 import { Router } from 'express';
 import {
@@ -1141,10 +1141,14 @@ companiesApiRouter.get('/:id/detail', verifySupabaseAuth, async (req, res) => {
 
     // Network (GET-1017): marked personal, or all its people are. The page drops the sales parts.
     const network = (await personalAccountIds(supabase, workspaceId, [id]).catch(() => new Set())).has(id);
+    // What they asked us to build (claims about us, GET-969): product feedback, so never a fact on
+    // the account; listed beside it so the account says what they want from us.
+    const feature_requests = await featureRequestsFor(supabase, workspaceId, { companyId: id }).catch(() => []);
 
     return res.json({
       company,
       network,
+      feature_requests,
       icp: icp || null,
       stakeholders,
       edges,

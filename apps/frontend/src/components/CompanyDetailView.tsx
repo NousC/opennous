@@ -33,6 +33,7 @@ import { useTopBarCrumbs } from "@/components/shell/topBar";
 import { relTime, tierFromScore } from "@/components/mind/shared";
 import { useAuth } from "@/contexts/AuthContext";
 import OrgChartFlow from "@/components/OrgChartFlow";
+import { FeatureRequestsCard, type FeatureRequest } from "@/components/record/FeatureRequestsCard";
 import { TaskList, taskSections, useTaskToggle, bandOf, intelChips, type IntelTopic, type TaskListState, type Note, type DealSignal, type DealHealth } from "@/components/record/RecordParts";
 import { useAccountDeals } from "@/components/deals/AccountDeals";
 import { DealHealthCard } from "@/components/record/DealHealthCard";
@@ -65,6 +66,8 @@ type CompanyDetail = {
   company: Record<string, any>;
   /** Someone we know, not an account we sell to (GET-1017): no pipeline, deals, health or ICP. */
   network?: boolean;
+  /** What they asked us to build (claims about us, GET-969). */
+  feature_requests?: FeatureRequest[];
   icp: { score: number; reason: string | null } | null;
   stakeholders: Stakeholder[];
   edges: { subject_id: string; relationship: string; object_id: string | null; object_label: string | null; confidence?: number | null; source_memory_id?: string | null; metadata?: any }[];
@@ -321,6 +324,7 @@ export default function CompanyDetailView({
             {!network && <AccountHealthCard health={acctHealthQ.data} />}
             {/* Product usage from PostHog (GET-751), under the account's health. */}
             <ProductUsageCard usage={cd.product_usage} />
+            <FeatureRequestsCard requests={cd.feature_requests} />
             <RecentActivity items={feed} onAll={() => setTab("activity")} />
           </div>
         )}

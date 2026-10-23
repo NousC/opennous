@@ -46,7 +46,9 @@ test("labels: a known type by name, an unknown one from its own words", () => {
 });
 
 test("the filter offers every signal, and knows which families need a webhook", () => {
-  assert.equal(EVENT_FILTER_GROUPS[0].types.length, 22);
+  // Feature requested (claims about us, a customer asking for what we do not have) is the 23rd.
+  assert.equal(EVENT_FILTER_GROUPS[0].types.length, 23);
+  assert.ok(EVENT_FILTER_GROUPS[0].types.includes("signal.feature_requested"));
   // A next step agreed stays in the raw feed; missed and slipped join it (GET-954), and the four
   // product-usage signals from PostHog (GET-751).
   for (const t of ["signal.next_step", "signal.next_step_missed", "signal.next_step_slipped",
