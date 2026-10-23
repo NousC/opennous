@@ -24,6 +24,8 @@ test('both claim prompts carry the routing rules and ask for a home on every fac
     assert.match(p, /account summary/i);
     assert.match(p, /confident answers/i);
     assert.match(p, /hard condition for buying/i);
+    // GET-1023: "build your own X, get us off the others" was filed as a friction.
+    assert.match(p, /build your own recorder and get us off the others" is a feature, not a friction/);
   }
 });
 

@@ -181,7 +181,7 @@ export function featureRequestedEvent(row: Record<string, any>): {
 }
 
 /** The events for the feature rows just filed. Best-effort: an event that fails never costs the row. */
-async function emitFeatureRequests(supabase: SupabaseClient, workspaceId: string, rows: Record<string, any>[]): Promise<void> {
+export async function emitFeatureRequests(supabase: SupabaseClient, workspaceId: string, rows: Record<string, any>[]): Promise<void> {
   const events = rows.map(featureRequestedEvent).filter((e): e is NonNullable<typeof e> => !!e);
   if (!events.length) return;
   try {
