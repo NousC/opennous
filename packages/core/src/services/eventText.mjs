@@ -74,6 +74,11 @@ export function eventSummary(e) {
   }
   if (type === 'people.added') { const n = num(d.count); return n == null ? '' : `${n} ${n === 1 ? 'person' : 'people'} added`; }
   if (type === 'automation.approval_requested') return str(d.automation?.name) ?? '';
+  if (family === 'insight') {
+    const title = str(d.insight?.title) ?? str(d.insight?.topic);
+    const n = num(d.insight?.accounts);
+    return [title, n != null ? `${n} ${n === 1 ? 'account' : 'accounts'}` : null].filter(Boolean).join(' · ');
+  }
   return '';
 }
 

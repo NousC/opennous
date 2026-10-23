@@ -8,9 +8,8 @@ import { Check, Copy } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { ListEmpty, listRowClass } from "@/components/ui/list";
-import { when } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { TONE_DOT, eventLabel, eventSummary, eventTone, eventsUrl, filterLabel, mergeNewer, needsSubscription, type EventsPage, type NousEvent } from "@/lib/events";
+import { TONE_DOT, eventDay, eventLabel, eventSummary, eventTone, eventsUrl, filterLabel, mergeNewer, needsSubscription, type EventsPage, type NousEvent } from "@/lib/events";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 const PAGE = 25;
@@ -37,7 +36,7 @@ function EventRow({ e, open, onToggle, showAccount, copied, onCopy }: {
             {e.account.name}
           </Link>
         )}
-        <span className="w-[76px] flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground/70">{when(e.occurred_at)}</span>
+        <span title={new Date(e.occurred_at).toLocaleString()} className="w-[76px] flex-shrink-0 text-right text-[12px] tabular-nums text-muted-foreground/70">{new Date(e.occurred_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
       </div>
       {open && (
         <div id={panel} className="space-y-2 px-2 pb-3">
@@ -166,10 +165,18 @@ export function EventFeed({ type = null, since = null, accountId = null, showAcc
   }
   return (
     <div>
-      {events.map((e) => (
-        <EventRow key={e.id} e={e} open={open === e.id} onToggle={() => setOpen((o) => (o === e.id ? null : e.id))}
-          showAccount={showAccount} copied={copied === e.id} onCopy={(v) => copy(e.id, v)} />
-      ))}
+      {/* Under a heading per day, so a row's time is just the time. */}
+      {events.map((e, i) => {
+        const day = eventDay(e.occurred_at);
+        const first = i === 0 || eventDay(events[i - 1].occurred_at) !== day;
+        return (
+          <div key={e.id}>
+            {first && <div className={cn("px-2 pb-1 text-[11.5px] font-medium text-muted-foreground/70", i === 0 ? "pt-1" : "pt-4")}>{day}</div>}
+            <EventRow e={e} open={open === e.id} onToggle={() => setOpen((o) => (o === e.id ? null : e.id))}
+              showAccount={showAccount} copied={copied === e.id} onCopy={(v) => copy(e.id, v)} />
+          </div>
+        );
+      })}
       {next && (
         <div className="flex items-center gap-2 px-2 pt-1">
           <Button variant="ghost" size="sm" className="h-7 px-2 text-[12.5px] text-ink-2" onClick={more} disabled={loading}>Load more</Button>

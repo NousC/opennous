@@ -113,11 +113,6 @@ export function ApiHomeStats({ readDays }: { readDays?: number | null } = {}) {
       {withReads && (
         <Card label={readDays == null ? "Read, all time" : `Read, last ${readDays} days`}>
           <span className={value}>{reads.data === undefined ? "—" : num(readTotal)}</span>
-          {readCounts.length > 0 && (
-            <span className="truncate text-[11.5px] text-muted-foreground/70">
-              {readCounts.map((c) => `${num(c.n)} ${c.label}`).join(" · ")}
-            </span>
-          )}
         </Card>
       )}
     </div>

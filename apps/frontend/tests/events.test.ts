@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { EVENT_FILTERS, EVENT_FILTER_GROUPS, rangeSince, eventTone, eventFamilyLabel, eventLabel, eventSummary, eventsUrl, filterLabel, mergeNewer, needsSubscription, type NousEvent } from "../src/lib/events.ts";
+import { EVENT_FILTERS, EVENT_FILTER_GROUPS, rangeSince, sentenceCase, eventDay, eventTone, eventFamilyLabel, eventLabel, eventSummary, eventsUrl, filterLabel, mergeNewer, needsSubscription, type NousEvent } from "../src/lib/events.ts";
 
 const ev = (type: string, extra: Partial<NousEvent> = {}): NousEvent => ({ id: "e1", type, occurred_at: "2026-10-16T10:00:00Z", ...extra });
 
@@ -104,4 +104,31 @@ test("a date range starts today at midnight, or N days back; any time has no sta
   assert.equal(rangeSince("today", now), new Date(2026, 9, 22, 0, 0).toISOString());
   assert.equal(rangeSince("7d", now), new Date(now.getTime() - 7 * 86_400_000).toISOString());
   assert.match(eventsUrl("https://api", "ws", { since: "2026-10-15T00:00:00.000Z" }), /since=2026-10-15T00%3A00%3A00.000Z/);
+});
+
+// Sentence case, insight lines and day headings (the Events feed polish)
+test("a Title Case signal reads in sentence case; acronyms and names keep their capitals", () => {
+  const fact = "Not a silver bullet, they said. The handoff PDF is too long.";
+  assert.equal(sentenceCase("Not A Silver Bullet", fact), "Not a silver bullet");
+  assert.equal(sentenceCase("Handoff PDF Verbosity", fact), "Handoff PDF verbosity");
+  assert.equal(sentenceCase("Heavy Grokbot Experiments", "They run heavy experiments with Grokbot every week."), "Heavy Grokbot experiments");
+  assert.equal(sentenceCase("Grok vs Nous Data", "Compared Grok with what Nous gives them."), "Grok vs Nous data");
+  assert.equal(sentenceCase("Champion Left: Sarah Chen", "Sarah Chen left the company."), "Champion left: Sarah Chen");
+  // Nothing to check names against, or already sentence case: left alone.
+  assert.equal(sentenceCase("Champion left: Sarah Chen", null), "Champion left: Sarah Chen");
+  assert.equal(sentenceCase("Ready for stakeholders", "Ready to present."), "Ready for stakeholders");
+  assert.equal(eventSummary(ev("signal.objection_raised", { data: { title: "Agent Confidence Critique", text: "They do not trust the agent's confidence." } })), "Agent confidence critique");
+});
+
+test("a new insight says what it is and how many accounts", () => {
+  assert.equal(eventSummary(ev("insight.emerged", { data: { insight: { title: "Wants call recording built in", accounts: 5 } } })), "Wants call recording built in · 5 accounts");
+  assert.equal(eventSummary(ev("insight.rising", { data: { insight: { topic: "Pricing", accounts: 1 } } })), "Pricing · 1 account");
+});
+
+test("events sit under Today, Yesterday, then the date", () => {
+  const now = new Date(2026, 9, 22, 15, 0);
+  assert.equal(eventDay(new Date(2026, 9, 22, 9, 0).toISOString(), now), "Today");
+  assert.equal(eventDay(new Date(2026, 9, 21, 23, 0).toISOString(), now), "Yesterday");
+  assert.equal(eventDay(new Date(2026, 9, 7, 12, 0).toISOString(), now), "7 Oct");
+  assert.equal(eventDay(new Date(2025, 11, 30, 12, 0).toISOString(), now), "30 Dec 2025");
 });

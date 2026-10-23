@@ -606,7 +606,8 @@ export function ActivityRow({ a }: { a: any }) {
   const isSlack = /^slack_(message|dm)$/.test(type);
   const label = isEmail
     ? `${type === "email_sent" ? "Email sent to" : "Email from"} ${other ?? "someone"}`
-    : isSlack ? `Slack message ${raw.is_outbound === true ? "to" : "from"} ${a.contactName ?? "someone"}`
+    // The person page sends no contactName; the Slack row carries its author's name (slack_mentions).
+    : isSlack ? `Slack message ${raw.is_outbound === true ? "to" : "from"} ${a.contactName ?? raw.slack_mentions?.[raw.user]?.name ?? "someone"}`
     : sentenceCat(type) || "Activity";
   // Someone else's email: the row stays (it is real activity on this account) but its words are
   // only for the people who were on it. Say that, rather than "no text" — which reads as empty.

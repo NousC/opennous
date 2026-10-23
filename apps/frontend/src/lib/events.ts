@@ -41,11 +41,36 @@ export function eventsUrl(apiUrl: string, workspaceId: string, opts: { type?: st
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
+/**
+ * A Title Case label in sentence case ("Not A Silver Bullet" → "Not a silver bullet"), read against the
+ * fact it labels. A word keeps its capital when it is an acronym ("PDF") or written capitalised in the
+ * fact itself, which is how a name ("Grokbot", "Sarah Chen") is told from an ordinary word. With no
+ * fact to check names against, or a label already in sentence case, the label is left alone. Pure.
+ */
+export function sentenceCase(label: string, text: string | null): string {
+  if (!text) return label;
+  const cap = (w: string) => /^[A-Z]([a-z]|$)/.test(w.replace(/^[^\w]+/, ""));
+  const words = label.split(/\s+/);
+  const titled = words.filter(cap).length;
+  if (words.length < 2 || titled < Math.max(2, Math.ceil(words.length * 0.6))) return label;
+  const names = new Set([...text.matchAll(/\b([A-Z][\w'-]*)/g)].map((m) => m[1].toLowerCase()));
+  return words.map((w, i) => {
+    if (i === 0 || !cap(w)) return w;
+    return names.has(w.replace(/[^\w'-]/g, "").toLowerCase()) ? w : w.toLowerCase();
+  }).join(" ");
+}
+
 /** The one line a row says about what happened, from the event's own data. Empty when it has none. */
 export function eventSummary(e: NousEvent): string {
   const d = e.data ?? {};
   const [family] = e.type.split(".");
-  if (family === "signal") return str(d.title) ?? str(d.text) ?? "";
+  if (family === "signal") { const t = str(d.title); return t ? sentenceCase(t, str(d.text)) : str(d.text) ?? ""; }
+  if (family === "insight") {
+    const i = (d.insight ?? {}) as { title?: unknown; topic?: unknown; accounts?: unknown };
+    const title = str(i.title) ?? str(i.topic);
+    const n = num(i.accounts);
+    return [title, n != null ? `${n} ${n === 1 ? "account" : "accounts"}` : null].filter(Boolean).join(" · ");
+  }
   if (e.type === "conversation.call_ended") return str(d.title) ?? "A call ended";
   if (e.type === "conversation.reply_received") return str(d.subject) ?? str(d.snippet) ?? "A reply came in";
   if (e.type === "deal.won" || e.type === "deal.lost") return str(e.deal?.name) ?? (e.type === "deal.won" ? "Deal won" : "Deal lost");
@@ -201,3 +226,13 @@ export function eventTone(type: string): EventTone {
 export const TONE_DOT: Record<EventTone, string> = {
   positive: "bg-positive", risk: "bg-risk", warning: "bg-warning-dot", neutral: "bg-muted-foreground/40",
 };
+
+/** The heading a day's events sit under: Today, Yesterday, then "7 Oct" (with the year when it is not this one). Pure. */
+export function eventDay(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((start(now) - start(d)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
+}
