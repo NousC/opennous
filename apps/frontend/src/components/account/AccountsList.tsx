@@ -335,13 +335,16 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const accountScope = cloud.accounts?.scope;
   const scopeId = accountScope ? params.get(accountScope.param) ?? "" : "";
   const clearScope = () => { if (!accountScope) return; const next = new URLSearchParams(params); next.delete(accountScope.param); setParams(next, { replace: true }); setPages(1); };
+  // Network accounts (someone we know, not a deal) are hidden by default; the filter can show them (GET-1019).
+  const [showNetwork, setShowNetwork] = useState(false);
   const { data: companiesPage, isPending: loadingCo } = useQuery<{ companies: any[]; total: number; applied: string | null; countries: { country: string; accounts: number }[]; scope: { id: string; name: string } | null }>({
-    queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all", scopeId],
+    queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all", scopeId, showNetwork ? "network" : ""],
     enabled: !!token && !!workspaceId,
     placeholderData: (prev) => prev,
     queryFn: async () => {
       const url = `${apiUrl}/api/companies/list?workspaceId=${workspaceId}&limit=${PAGE * pages}`
         + (debouncedQ ? `&q=${encodeURIComponent(debouncedQ)}` : "")
+        + (showNetwork ? "&network=show" : "")
         + (scopeId && accountScope ? `&${accountScope.param}=${encodeURIComponent(scopeId)}` : (mineOnly ? "&scope=mine" : "") + (country ? `&country=${encodeURIComponent(country)}` : ""));
       const r = await fetch(url, { headers: auth });
       const d = r.ok ? await r.json() : {};
@@ -959,10 +962,18 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {inShell && !scopeId && countryOptions.length > 0 && (
-        <ApiTopBarFilter active={appliedCountry ? 1 : 0}>
-          <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>
-          {[{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map((o) => ({ ...o, label: o.country }))].map((o) => {
+      {inShell && !scopeId && (
+        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (showNetwork ? 0 : 1)}>
+          <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Network</div>
+          {[{ on: !showNetwork, label: "Hidden" }, { on: showNetwork, label: "Shown" }].map((o) => (
+            <button key={o.label} onClick={() => { setShowNetwork(o.label === "Shown"); setPages(1); }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-hover">
+              <Check className={`h-3.5 w-3.5 flex-shrink-0 ${o.on ? "text-foreground" : "opacity-0"}`} />
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+            </button>
+          ))}
+          {countryOptions.length > 0 && <div className="mt-1 border-t border-hairline px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>}
+          {countryOptions.length > 0 && [{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map((o) => ({ ...o, label: o.country }))].map((o) => {
             const on = o.country === "all" ? !appliedCountry : appliedCountry === o.country;
             return (
               <button key={o.country} onClick={() => chooseCountry(o.country)}
@@ -1016,6 +1027,13 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
         {/* Which market. Accounts, the pipeline tabs and the counts all follow it, and it
             survives a reload. The focus country also keeps accounts whose country the CRM never
             recorded — they are unrecorded, not foreign. */}
+        {!inShell && !scopeId && (
+          <select value={showNetwork ? "show" : "hide"} onChange={e => { setShowNetwork(e.target.value === "show"); setPages(1); }} aria-label="Network accounts"
+            className="h-7 rounded-lg border border-border bg-card px-2 text-[12.5px] font-medium text-foreground">
+            <option value="hide">Network hidden</option>
+            <option value="show">Network shown</option>
+          </select>
+        )}
         {!inShell && !scopeId && <LocationFilter quiet applied={appliedCountry} options={countryOptions} onChange={chooseCountry} />}
       </PageToolbar>
 

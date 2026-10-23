@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient, scoreTier, getInternalEntityIds, filterDerivedForViewer, filterByCitedClaimsForViewer, accountStage, TERMINAL_STAGES, STAGE_LABEL } from '@nous/core';
+import { getSupabaseClient, personalAccountIds, scoreTier, getInternalEntityIds, filterDerivedForViewer, filterByCitedClaimsForViewer, accountStage, TERMINAL_STAGES, STAGE_LABEL } from '@nous/core';
 import { requestMessageViewer } from '../../lib/messagePrivacy.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { rankCommittee, committeeEdges, ROLE_EDGES } from '../../lib/committee.mjs';
@@ -191,7 +191,10 @@ async function buildNetwork(supabase, req, workspaceId) {
   // real one with the person it held before the merge (GET-841).
   const live = await liveEntityIds(supabase, workspaceId, [...peopleIds, ...companies.map(c => c.id)]);
   const contacts = contactsRaw.filter(c => live.has(c.id) && !internalIds.has(c.id) && !(memberName(c) && memberNames.has(memberName(c))));
-  companies.splice(0, companies.length, ...companies.filter(c => live.has(c.id)));
+  // A Network account (marked personal, or all its people are) is someone we know, not an account
+  // we sell to: not drawn. Its people stay on the graph, without an employer node (GET-1019).
+  const network = await personalAccountIds(supabase, workspaceId).catch(() => new Set());
+  companies.splice(0, companies.length, ...companies.filter(c => live.has(c.id) && !network.has(c.id)));
 
   const contactIds = new Set(contacts.map(c => c.id));
   // contact → employer (first works_at) + set of companies that employ a contact
@@ -531,7 +534,10 @@ graphApiRouter.get('/committee', verifySupabaseAuth, async (req, res) => {
           .eq('workspace_id', workspaceId).eq('kind', 'account').in('entity_id', ids.slice(i, i + 200))
           .order('entity_id', { ascending: true }).range(from, to)));
       }
+      // Not a Network account: nobody we sell to has a committee there (GET-1019).
+      const network = await personalAccountIds(supabase, workspaceId, ids).catch(() => new Set());
       const accounts = named
+        .filter(a => !network.has(a.entity_id))
         .map(a => ({ id: a.entity_id, name: a.name, roles: byCompany.get(a.entity_id)?.size ?? 0, people: a.people_count ?? 0 }))
         // Most labelled people first: those are the accounts where this view has something to say.
         .sort((x, y) => y.roles - x.roles || y.people - x.people || String(x.name ?? '').localeCompare(String(y.name ?? '')));
@@ -686,6 +692,8 @@ graphApiRouter.get('/claims', verifySupabaseAuth, async (req, res) => {
     await readRows([...new Set(visible.map(x => x.r.entity_id))]);
     await readRows([...new Set([...list.values()].map(x => x.company_id).filter(id => id && !list.has(id)))]);
 
+    // A Network account is not drawn as an account (GET-1019).
+    const network = await personalAccountIds(supabase, workspaceId).catch(() => new Set());
     const accounts = new Map();
     const claims = [];
     for (const { r, cat } of visible) {
@@ -693,6 +701,7 @@ graphApiRouter.get('/claims', verifySupabaseAuth, async (req, res) => {
       if (!who || who.kind === 'workspace') continue;
       const company = who.kind === 'person' && who.company_id ? list.get(who.company_id) : null;
       const acc = company ?? who;
+      if (acc.kind !== 'person' && network.has(acc.entity_id)) continue;
       const accKind = acc.kind === 'person' ? 'person' : 'account';
       if (!accounts.has(acc.entity_id)) accounts.set(acc.entity_id, { id: acc.entity_id, kind: accKind, name: acc.name || acc.domain || 'Unnamed' });
       const meta = r.value?.metadata ?? {};
