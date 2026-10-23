@@ -30,6 +30,14 @@ import { isWorkspaceMember } from '../../lib/authz.mjs';
 import { markCompanyClient } from './contacts.mjs';
 import { latestStages, lifecycleDeptScope, wonCompanyIds, ownerDeptForCompany } from './lifecycle.mjs';
 
+/**
+ * The Network accounts the Accounts list leaves out. Hidden is the default; the page's filter asks
+ * for `network=show` to see them (GET-1019).
+ */
+export async function networkExcludeIds(supabase, workspaceId, query = {}, find = personalAccountIds) {
+  return query.network === 'show' ? [] : [...await find(supabase, workspaceId)];
+}
+
 export const companiesApiRouter = Router();
 
 /** /list's account rows (entity_list_rows) as the page reads them, with faces, deal value and CS status. */
@@ -342,10 +350,8 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
       // 30 days, no window.
       const isNew = wsRow?.created_at && Date.now() - Date.parse(wsRow.created_at) < 30 * 86_400_000;
       // A Network account (marked personal, or all its people are) is someone we know, not an
-      // account we sell to: off this list; its people stay on People (GET-1017). Hidden is the
-      // default; the page's filter asks for `network=show` to see them (GET-1019).
-      const showNetwork = req.query.network === 'show';
-      const excludeIds = showNetwork ? [] : [...await personalAccountIds(supabase, workspaceId)];
+      // account we sell to: off this list; its people stay on People (GET-1017).
+      const excludeIds = await networkExcludeIds(supabase, workspaceId, req.query);
       let { rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: !isNew, owner, excludeIds });
       // And when the window holds nothing at all, show the accounts there are.
       if (!isNew && !total && !q && !offset) {
@@ -376,7 +382,7 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
       // the deals it already loads; an account's own figure needs a stored projection, not a view.
       .select('id, name, domain, industry, employee_count, location, revenue_range, enrichment_status, deal_health_score, icp_score', { count: 'exact' })
       .eq('workspace_id', workspaceId);
-    const network = req.query.network === 'show' ? [] : [...await personalAccountIds(supabase, workspaceId)];
+    const network = await networkExcludeIds(supabase, workspaceId, req.query);
     if (network.length) query = query.not('id', 'in', `(${network.join(',')})`);
     if (q) {
       const like = `%${q.replace(/[%,()]/g, ' ')}%`;

@@ -336,7 +336,18 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   const scopeId = accountScope ? params.get(accountScope.param) ?? "" : "";
   const clearScope = () => { if (!accountScope) return; const next = new URLSearchParams(params); next.delete(accountScope.param); setParams(next, { replace: true }); setPages(1); };
   // Network accounts (someone we know, not a deal) are hidden by default; the filter can show them (GET-1019).
-  const [showNetwork, setShowNetwork] = useState(false);
+  // Remembered per workspace, like the market (GET-1020).
+  const networkKey = `nous.accounts.network.${workspaceId}`;
+  const [showNetwork, setShowNetworkState] = useState<boolean>(() => {
+    try { return localStorage.getItem(networkKey) === "show"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { setShowNetworkState(localStorage.getItem(networkKey) === "show"); } catch { setShowNetworkState(false); }
+  }, [networkKey]);
+  const setShowNetwork = (on: boolean) => {
+    setShowNetworkState(on);
+    try { if (on) localStorage.setItem(networkKey, "show"); else localStorage.removeItem(networkKey); } catch { /* a filter that forgets is still a filter */ }
+  };
   const { data: companiesPage, isPending: loadingCo } = useQuery<{ companies: any[]; total: number; applied: string | null; countries: { country: string; accounts: number }[]; scope: { id: string; name: string } | null }>({
     queryKey: ["companies-list", workspaceId, debouncedQ, pages, country ?? "__ws_default__", mineOnly ? "mine" : "all", scopeId, showNetwork ? "network" : ""],
     enabled: !!token && !!workspaceId,

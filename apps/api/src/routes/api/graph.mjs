@@ -113,6 +113,9 @@ async function liveEntityIds(supabase, workspaceId, ids) {
   return live;
 }
 
+/** The accounts the graph draws: live (not merged away) and not Network (GET-1019). */
+export const drawnAccounts = (companies, live, network = new Set()) => companies.filter(c => live.has(c.id) && !network.has(c.id));
+
 /** The network the views read: people, touched accounts, who knows whom, and the patterns (GET-815: shared by /context). */
 async function buildNetwork(supabase, req, workspaceId) {
 
@@ -194,7 +197,7 @@ async function buildNetwork(supabase, req, workspaceId) {
   // A Network account (marked personal, or all its people are) is someone we know, not an account
   // we sell to: not drawn. Its people stay on the graph, without an employer node (GET-1019).
   const network = await personalAccountIds(supabase, workspaceId).catch(() => new Set());
-  companies.splice(0, companies.length, ...companies.filter(c => live.has(c.id) && !network.has(c.id)));
+  companies.splice(0, companies.length, ...drawnAccounts(companies, live, network));
 
   const contactIds = new Set(contacts.map(c => c.id));
   // contact → employer (first works_at) + set of companies that employ a contact
@@ -534,14 +537,8 @@ graphApiRouter.get('/committee', verifySupabaseAuth, async (req, res) => {
           .eq('workspace_id', workspaceId).eq('kind', 'account').in('entity_id', ids.slice(i, i + 200))
           .order('entity_id', { ascending: true }).range(from, to)));
       }
-      // Not a Network account: nobody we sell to has a committee there (GET-1019).
       const network = await personalAccountIds(supabase, workspaceId, ids).catch(() => new Set());
-      const accounts = named
-        .filter(a => !network.has(a.entity_id))
-        .map(a => ({ id: a.entity_id, name: a.name, roles: byCompany.get(a.entity_id)?.size ?? 0, people: a.people_count ?? 0 }))
-        // Most labelled people first: those are the accounts where this view has something to say.
-        .sort((x, y) => y.roles - x.roles || y.people - x.people || String(x.name ?? '').localeCompare(String(y.name ?? '')));
-      return res.json({ accounts });
+      return res.json({ accounts: committeeAccounts(named, byCompany, network) });
     }
     if (!UUID.test(accountId)) return res.status(400).json({ error: 'invalid_account_id' });
 
@@ -692,34 +689,52 @@ graphApiRouter.get('/claims', verifySupabaseAuth, async (req, res) => {
     await readRows([...new Set(visible.map(x => x.r.entity_id))]);
     await readRows([...new Set([...list.values()].map(x => x.company_id).filter(id => id && !list.has(id)))]);
 
-    // A Network account is not drawn as an account (GET-1019).
     const network = await personalAccountIds(supabase, workspaceId).catch(() => new Set());
-    const accounts = new Map();
-    const claims = [];
-    for (const { r, cat } of visible) {
-      const who = list.get(r.entity_id);
-      if (!who || who.kind === 'workspace') continue;
-      const company = who.kind === 'person' && who.company_id ? list.get(who.company_id) : null;
-      const acc = company ?? who;
-      if (acc.kind !== 'person' && network.has(acc.entity_id)) continue;
-      const accKind = acc.kind === 'person' ? 'person' : 'account';
-      if (!accounts.has(acc.entity_id)) accounts.set(acc.entity_id, { id: acc.entity_id, kind: accKind, name: acc.name || acc.domain || 'Unnamed' });
-      const meta = r.value?.metadata ?? {};
-      claims.push({
-        id: r.id, account: acc.entity_id, cat,
-        text: String(r.value.content).trim().slice(0, 400),
-        person: company ? (who.name || null) : null,
-        // The person it is about, and how sure we are (0–1): the record panel lists a person's own
-        // claims with their confidence (GET-840).
-        pid: company ? r.entity_id : null,
-        conf: r.confidence != null ? Number(r.confidence) : null,
-        at: r.valid_from ? String(r.valid_from).slice(0, 10) : null,
-        source: meta.extraction_source || meta.source_system || r.value?.source || null,
-      });
-    }
-    return res.json({ accounts: [...accounts.values()], claims });
+    return res.json(claimsByAccount(visible, list, network));
   } catch (err) {
     console.error('[GET /api/graph/claims]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
+
+/**
+ * The accounts that have a committee, most labelled people first: those are the accounts where the
+ * view has something to say. Not a Network account: nobody we sell to has a committee there (GET-1019).
+ */
+export function committeeAccounts(named, byCompany, network = new Set()) {
+  return named
+    .filter(a => !network.has(a.entity_id))
+    .map(a => ({ id: a.entity_id, name: a.name, roles: byCompany.get(a.entity_id)?.size ?? 0, people: a.people_count ?? 0 }))
+    .sort((x, y) => y.roles - x.roles || y.people - x.people || String(x.name ?? '').localeCompare(String(y.name ?? '')));
+}
+
+/**
+ * What we learned, grouped by who it is about: the account, or the person's employer when it is about
+ * a person. A Network account is not drawn as an account (GET-1019).
+ */
+export function claimsByAccount(visible, list, network = new Set()) {
+  const accounts = new Map();
+  const claims = [];
+  for (const { r, cat } of visible) {
+    const who = list.get(r.entity_id);
+    if (!who || who.kind === 'workspace') continue;
+    const company = who.kind === 'person' && who.company_id ? list.get(who.company_id) : null;
+    const acc = company ?? who;
+    if (acc.kind !== 'person' && network.has(acc.entity_id)) continue;
+    const accKind = acc.kind === 'person' ? 'person' : 'account';
+    if (!accounts.has(acc.entity_id)) accounts.set(acc.entity_id, { id: acc.entity_id, kind: accKind, name: acc.name || acc.domain || 'Unnamed' });
+    const meta = r.value?.metadata ?? {};
+    claims.push({
+      id: r.id, account: acc.entity_id, cat,
+      text: String(r.value.content).trim().slice(0, 400),
+      person: company ? (who.name || null) : null,
+      // The person it is about, and how sure we are (0–1): the record panel lists a person's own
+      // claims with their confidence (GET-840).
+      pid: company ? r.entity_id : null,
+      conf: r.confidence != null ? Number(r.confidence) : null,
+      at: r.valid_from ? String(r.valid_from).slice(0, 10) : null,
+      source: meta.extraction_source || meta.source_system || r.value?.source || null,
+    });
+  }
+  return { accounts: [...accounts.values()], claims };
+}
