@@ -4,6 +4,7 @@ import { normalizeStage } from '../pipeline.js';
 // @ts-ignore -- a plain .mjs module, carried into dist by allowJs
 import { personalAccountIds } from './accountOverview.mjs';
 import { retirePersonalFacts, restorePersonalFacts } from './personalFacts.js';
+import { rereadSlackSince } from './personalReread.js';
 
 // The sales funnel — the only stages that are a DEAL. Every stage on the canonical
 // ladder counts, plus its terminals: `closed_won` (a paying customer, set by the
@@ -42,12 +43,20 @@ export async function markEntityPersonal(
   entityId: string,
   on = true,
 ): Promise<void> {
+  // When the mark went on: what was read since then skipped them, so it is read again (GET-1024).
+  const { data: marks } = on ? { data: null } : await supabase.from('claims').select('valid_from')
+    .eq('workspace_id', workspaceId).eq('entity_id', entityId).eq('property', IS_PERSONAL)
+    .is('invalid_at', null).order('valid_from').limit(1);
+  const mark = marks?.[0] as { valid_from?: string } | undefined;
   await assertClaims(supabase, workspaceId, entityId, {
     values: { [IS_PERSONAL]: on ? true : null },
     source: 'user',
   });
   if (on) await retirePersonalFacts(supabase, workspaceId, entityId);
-  else await restorePersonalFacts(supabase, workspaceId, entityId);
+  else {
+    await restorePersonalFacts(supabase, workspaceId, entityId);
+    if (mark?.valid_from) await rereadSlackSince(supabase, workspaceId, entityId, mark.valid_from);
+  }
 }
 
 /** The entity ids on this workspace currently flagged personal, plus the Network accounts: a

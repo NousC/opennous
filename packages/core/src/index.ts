@@ -18,6 +18,7 @@ export * from './db/teamMembers.js';
 export * from './db/workspaceDomains.js';
 export * from './db/relationship.js';
 export * from './db/personalFacts.js';
+export * from './db/personalReread.js';
 export * from './db/graph.js';
 export * from './db/relationshipOwner.js';
 export * from './db/readContext.js';
