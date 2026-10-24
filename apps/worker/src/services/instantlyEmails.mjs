@@ -99,6 +99,9 @@ export async function fetchInstantlyEmails(apiKey, { campaignId, lead, emailType
         lead:      String(e.lead || e.to_address_email_list || '').toLowerCase().trim() || null,
         campaignId: e.campaign_id || null,
         ueType:    e.ue_type ?? null,
+        // Instantly's interest status on a received email: 1 interested, 2 meeting booked, -1 not
+        // interested… (GET-1025). Null when nobody has set one.
+        interest:  e.i_status ?? null,
         isOutbound: OUTBOUND_UE.has(e.ue_type),
         ts:        e.timestamp_email || e.timestamp_created || null,
       });

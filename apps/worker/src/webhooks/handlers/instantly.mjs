@@ -53,7 +53,16 @@ const PROVIDER_SIGNAL = {
   lead_unsubscribed:   'unsubscribe',
 };
 
-export async function reprocessInstantly(supabase, workspaceId, body) {
+// Instantly's interest status on a lead or received email → the disposition event its webhook
+// sends for it (GET-1025). Anything unset or unknown is a plain reply, which our classifier reads.
+const INTEREST_EVENT = { 1: 'lead_interested', 2: 'lead_meeting_booked', 3: 'lead_meeting_booked', 4: 'lead_interested',
+  0: 'lead_out_of_office', '-1': 'lead_not_interested', '-2': 'lead_wrong_person', '-3': 'lead_not_interested' };
+export const instantlyInterestEvent = status => (status == null ? null : INTEREST_EVENT[String(status)]) ?? 'reply_received';
+export const isPositiveInterest = status => PROVIDER_SIGNAL[instantlyInterestEvent(status)] === 'positive';
+
+// `backfill`: a reply fetched from Instantly's API after the webhook missed it (GET-1025). Filed the
+// same way, but not logged as a webhook delivery, so the Webhooks page never reads it as one.
+export async function reprocessInstantly(supabase, workspaceId, body, { backfill = false } = {}) {
   body = body || {};
   const eventType  = body.event_type  || body.event  || body.type || '';
   const leadEmail  = (body.lead_email || body.email  || body.lead?.email || '').toLowerCase().trim();
@@ -124,7 +133,8 @@ export async function reprocessInstantly(supabase, workspaceId, body) {
     type:        activityType,
     source:      'instantly',
     externalId,
-    occurredAt:  new Date().toISOString(),
+    // When it happened, as Instantly stamps it; a backfilled reply would otherwise be dated today.
+    occurredAt:  body.timestamp && !Number.isNaN(Date.parse(body.timestamp)) ? new Date(body.timestamp).toISOString() : new Date().toISOString(),
     description: campaignName
       ? `${activityType.replace('_', ' ')}: ${campaignName}`
       : activityType.replace('_', ' '),
@@ -154,7 +164,7 @@ export async function reprocessInstantly(supabase, workspaceId, body) {
   // Instantly is bulk outbound — the company's outreach engine, not a personal
   // 1:1 conversation. Left owner-less on purpose: it belongs in the company op
   // log, not any one member's Activity feed. (Decision 2026-08-15.)
-  await logSysEvent(supabase, {
+  if (!backfill) await logSysEvent(supabase, {
     workspaceId, source: 'instantly', eventType: 'webhook_received',
     summary:    `${activityType.replace('_', ' ')} from ${leadEmail}${campaignName ? ` (${campaignName})` : ''}`,
     contactId:  contact.id,
