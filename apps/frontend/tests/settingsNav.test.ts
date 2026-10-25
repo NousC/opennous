@@ -13,17 +13,19 @@ test("API plan admin: the board's three groups, billing goes to /usage, no Repo 
   // Repo was the API rail's only Connections row; with it gone (GET-882) the group is empty and drops.
   assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Workspace"]);
   assert.deepEqual(ids(nav), [
-    "profile", "notifications", "security",
-    "integrations", "company-sources", "webhooks", "api-keys",
+    "profile", "notifications", "security", "api-keys",
+    "integrations", "company-sources", "webhooks",
     "general", "members", "activity-log", "billing",
   ]);
   const billing = nav.find((i) => i.id === "billing")!;
   assert.equal(billing.label, "Usage and billing");
   assert.equal(billing.href, "/usage");
-  // The sidebar holds Personal, Shared, Webhooks and API keys on API, so the rail does not repeat
-  // them (GET-857); they stay routable, so /settings?section=integrations still lands on the page.
+  // The sidebar holds Personal, Shared and Webhooks on API, so the rail does not repeat them
+  // (GET-857); they stay routable, so /settings?section=integrations still lands on the page.
+  // API keys are the account's own and live here, under Account, in the pane (GET-1030).
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
-  assert.deepEqual(rail, ["profile", "notifications", "security", "general", "members", "activity-log", "billing"]);
+  assert.deepEqual(rail, ["profile", "notifications", "security", "api-keys", "general", "members", "activity-log", "billing"]);
+  assert.equal(nav.find((i) => i.id === "api-keys")!.href, undefined, "opens in Settings, not /keys");
   assert.equal(resolveSection("repo", nav), "profile");
   assert.equal(resolveSection("integrations", nav), "integrations");
 });
@@ -75,7 +77,7 @@ test("Connections rows open the standalone pages on every plan (GET-660)", () =>
     assert.equal(href("integrations"), "/integrations", tier);
     assert.equal(href("company-sources"), "/company-sources", tier);
     assert.equal(href("webhooks"), "/webhooks", tier);
-    assert.equal(href("api-keys"), "/keys", tier);
+    if (tier === "custom") assert.equal(href("api-keys"), "/keys", tier);
     assert.equal(href("billing"), "/usage", tier);
   }
   const plain = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false });

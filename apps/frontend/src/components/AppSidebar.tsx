@@ -112,7 +112,7 @@ const integrationNavItemsApi: NavItem[] = [
   { title: "Personal", url: "/integrations",    icon: Plug },
   { title: "Shared",   url: "/company-sources", icon: Users2 },
   { title: "Webhooks", url: "/webhooks",        icon: Webhook },
-  { title: "API keys", url: "/keys",            icon: KeyRound },
+  // API keys are in Settings, under Account (GET-1030).
 ];
 
 /** "https://www.acme.example/about" → "acme.example"; null when there's nothing usable. */

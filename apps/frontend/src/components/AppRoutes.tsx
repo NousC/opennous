@@ -13,6 +13,14 @@ function RedirectToAccount() {
 }
 // The space's old Admin URLs (/workspace/:tab) → the same panel in Settings › Workspace (GET-430).
 // Usage kept its own page there as `spend`, because `usage` was already an alias for Billing.
+// On the API plan the keys live in Settings under Account (GET-1030); every old "/keys" link lands
+// there. Self-hosting and the other plans keep the page.
+function KeysRoute() {
+  const { planId, selfHosted } = usePlan();
+  if (isCorePlan(planId) && !selfHosted) return <Navigate to="/settings?section=api-keys" replace />;
+  return <Suspense fallback={<MinimalLoader />}><ApiKeys /></Suspense>;
+}
+
 function WorkspaceToSettings({ tab: fixed }: { tab?: string }) {
   const { tab } = useParams();
   const t = fixed ?? tab ?? "general";
@@ -316,7 +324,7 @@ export function AppRoutes() {
             {/* One automation, drawn as its flow (GET-523). "new" is the unsaved one. */}
             <Route path="/automations/:id" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><AutomationEditor /></Suspense></RequiresFeature>} />
             <Route path="/workflows"  element={<Navigate to="/automations" replace />} />
-            <Route path="/keys"       element={<Suspense fallback={<MinimalLoader />}><ApiKeys /></Suspense>} />
+            <Route path="/keys"       element={<KeysRoute />} />
             <Route path="/keys/:id"   element={<Suspense fallback={<MinimalLoader />}><KeyDetail /></Suspense>} />
             {/* Integrations + Webhooks live inside Settings now (2026-07-31). The old
                 standalone paths redirect into their section so nothing 404s. */}

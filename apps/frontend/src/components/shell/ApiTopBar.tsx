@@ -1,7 +1,7 @@
 // The API plan's top bar (GET-621): one bar on every API-plan page.
 //
 //   left  — the page's icon and title, with its parent as a breadcrumb link when it has one
-//   right — Get started (until setup is done) · Filter · Refresh | API keys · Connect agent
+//   right — Get started (until setup is done) · Filter · Refresh | Connect agent
 //
 // The shell (StandardLayout) renders it for the API plan and wraps the page in the provider, so a
 // page only says what is its own:
@@ -64,7 +64,7 @@ const ROUTES: [pattern: string, meta: RouteMeta][] = [
   ["/company-sources", { title: "Shared",            icon: Users2,    parent: INTEGRATIONS }],
   ["/webhooks",        { title: "Webhooks",          icon: Webhook }],
   ["/keys",            { title: "API keys",          icon: KeyRound }],
-  ["/keys/:id",        { title: "Key",               icon: KeyRound,  parent: { label: "API keys", href: "/keys" } }],
+  ["/keys/:id",        { title: "Key",               icon: KeyRound,  parent: { label: "API keys", href: "/settings?section=api-keys" } }],
   ["/automations",     { title: "Automations",       icon: Zap }],
   ["/automations/:id", { title: "Automation",        icon: Zap,       parent: { label: "Automations", href: "/automations" } }],
   ["/graph",           { title: "Graph",             icon: Network }],
@@ -211,17 +211,7 @@ function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect 
             <RefreshCw className={cn("h-3.5 w-3.5", slots?.refreshing && "animate-spin")} strokeWidth={1.8} />
           </button>
           <span aria-hidden className="mx-0.5 hidden h-[18px] w-px shrink-0 bg-border sm:block" />
-          {/* On a phone the sidebar's API keys row is the way there; the title needs the room. */}
-          {/* On the keys page itself it would link to where you already are: shown as the current page (GET-869). */}
-          <Link
-            to="/keys"
-            aria-current={pathname.startsWith("/keys") ? "page" : undefined}
-            onClick={(e) => { if (pathname === "/keys") e.preventDefault(); }}
-            className="hidden h-7 shrink-0 aria-[current=page]:pointer-events-none aria-[current=page]:bg-hover items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-card px-2.5 text-[12.5px] font-medium text-foreground shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover sm:inline-flex"
-          >
-            <KeyRound className="h-3.5 w-3.5 text-ink-2" strokeWidth={1.8} />
-            API keys
-          </Link>
+          {/* API keys live in Settings under Account (GET-1030), not up here. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               {/* On a phone it is an icon button, so the page title keeps its room. */}
