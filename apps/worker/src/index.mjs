@@ -64,6 +64,7 @@ import { runCrmAutoSync } from './workers/crmSync.mjs';
 import { runCrmHygieneSweep } from './workers/crmHygiene.mjs';
 import { runRuleChecks } from './workers/ruleChecks.mjs';
 import { runStageDerivation } from './workers/stageDerivation.mjs';
+import { runWentQuietNightly } from './workers/wentQuiet.mjs';
 import { runApiNotificationEmails } from './workers/apiNotificationEmails.mjs';
 import { runAuditSweep } from './workers/auditSweep.mjs';
 import { runHealthRefresh } from './workers/healthRefresh.mjs';
@@ -414,6 +415,10 @@ async function runPipelineDecay() {
 }
 
 cron.schedule('0 3 * * *', runPipelineDecay, { timezone: 'UTC' });
+// Deals from discovery up with no answer from their side in 60 days close as went_quiet (GET-1028),
+// in the workspaces WENT_QUIET_WORKSPACES lists.
+// After the decay, before the deal-health refresh reads the stages.
+cron.schedule('20 3 * * *', () => runWentQuietNightly().catch(err => console.error('[WENT_QUIET] failed', err.message)), { timezone: 'UTC' });
 console.log('[WORKER] Pipeline decay — daily at 03:00 UTC');
 
 // ── Task closure — daily at 03:40 UTC ───────────────────────────────────────

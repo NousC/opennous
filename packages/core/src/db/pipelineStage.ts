@@ -165,10 +165,47 @@ export async function advancePipelineStage(
   type: string,
   opts: { isOutbound?: boolean; replySignal?: string; occurredAt?: string; now?: number } = {},
 ): Promise<void> {
-  // `now` is injectable so the clamp is testable without freezing the system clock.
-  const at = transitionAt(opts.occurredAt, opts.now ?? Date.now());
   const targetStage = targetStageFor(type, opts);
   if (!targetStage) return;
+  return moveToStage(supabase, workspaceId, contactId, targetStage, opts);
+}
+
+// What a call was, once it has been read (GET-1028). A demo is the demo rung, which nothing else
+// ever reached: a deal that had its demo read "discovery" in every view built from activity. A
+// proposal call is negotiation. Onboarding, training and a business review only happen with a
+// customer, so they mean the deal was won; until now a customer being onboarded still read "demo".
+const CALL_TYPE_STAGE: Record<string, string> = {
+  demo: 'demo', proposal: 'negotiation', onboarding: 'closed_won', training: 'closed_won', business_review: 'closed_won',
+};
+export function stageForCallType(callType: string | null | undefined): string | null {
+  return (callType && CALL_TYPE_STAGE[callType]) || null;
+}
+
+/** Move the people on a call to the stage its type implies. Advance-only, like every other rung. */
+export async function advanceStageForCall(
+  supabase: SupabaseClient, workspaceId: string, contactIds: string[], callType: string | null | undefined,
+  opts: { occurredAt?: string; now?: number } = {},
+): Promise<string | null> {
+  const stage = stageForCallType(callType);
+  if (!stage) return null;
+  for (const id of new Set(contactIds.filter(Boolean))) await moveToStage(supabase, workspaceId, id, stage, opts);
+  return stage;
+}
+
+/**
+ * Move one person toward `targetStage` under the funnel's rules: a lock holds, a terminal exit
+ * skips the rank gate, a dead deal revives only on real intent, and the ladder only advances.
+ * `method` is how the move was decided, kept on the transition (e.g. 'went_quiet').
+ */
+export async function moveToStage(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  contactId: string,
+  targetStage: string,
+  opts: { occurredAt?: string; now?: number; method?: string } = {},
+): Promise<void> {
+  // `now` is injectable so the clamp is testable without freezing the system clock.
+  const at = transitionAt(opts.occurredAt, opts.now ?? Date.now());
 
   const { data: stageClaims } = await supabase
     .from('claims')
@@ -199,7 +236,7 @@ export async function advancePipelineStage(
       property: 'pipeline_stage',
       value: next,
       source: 'system',
-      method: 'inference',
+      method: opts.method ?? 'inference',
       observed_at: at,
     }).then(({ error }) => {
       if (error && !['23505', '42P01', 'PGRST205'].includes(error.code ?? '')) {

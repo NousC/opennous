@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { PIPELINE_LADDER, STAGE_RANK, DONE_STAGES, isTerminalStage } from '../pipeline.js';
+import { PIPELINE_LADDER, STAGE_RANK, DONE_STAGES, isTerminalStage, normalizeStage } from '../pipeline.js';
 import { STAGE_DRIVING_PROPERTIES } from '../db/pipelineStage.js';
 import { getInternalEntityIds } from '../db/teamMembers.js';
 import { getPersonalEntityIds } from '../db/relationship.js';
@@ -166,6 +166,8 @@ export async function assembleForecast(
     });
   }
 
+  await followRecordedStage(supabase, workspaceId, accounts);
+
   const rates = buildConversionRates(
     PIPELINE_LADDER.slice(0, -1).map((from, i) => ({
       from, to: PIPELINE_LADDER[i + 1],
@@ -190,6 +192,56 @@ export async function assembleForecast(
     contactTimesByAccount: contactsByAccount,
     activitiesByAccount: actsByAccount,
   };
+}
+
+/**
+ * The stage a deal is IN is the one recorded on its people, when that is further along than what
+ * its activity rebuilds, or when it closed (GET-1028). The rebuild only knows activity types, so a
+ * demo read from a call, a deal that went quiet, or a stage a person set never reached it, and the
+ * deals tool said "discovery, 121 days" while the account page said "Demo". The conversion rates
+ * and curves still learn from the rebuilt ladders; only where each open deal stands follows the record.
+ */
+export function recordedStageFor(
+  current: { stage: string; enteredAt: string },
+  recorded: { stage: string | null; at: string | null },
+): { stage: string; enteredAt: string } {
+  const stage = normalizeStage(recorded.stage);
+  if (!stage || !recorded.at || stage === current.stage) return current;
+  if (isTerminalStage(stage)) return recorded.at >= current.enteredAt ? { stage, enteredAt: recorded.at } : current;
+  if (isTerminalStage(current.stage)) return current;
+  return (STAGE_RANK[stage] ?? 0) > (STAGE_RANK[current.stage] ?? 0) ? { stage, enteredAt: recorded.at } : current;
+}
+
+async function followRecordedStage(supabase: SupabaseClient, workspaceId: string, accounts: Map<string, AccountState>): Promise<void> {
+  const latest = new Map<string, { value: string; at: string }>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('observations').select('entity_id, value, observed_at')
+      .eq('workspace_id', workspaceId).eq('property', 'pipeline_stage')
+      .order('observed_at', { ascending: true }).order('id', { ascending: true }).range(from, from + 999);
+    if (error || !data?.length) break;
+    for (const o of data as Array<{ entity_id: string; value: unknown; observed_at: string }>) {
+      if (typeof o.value === 'string') latest.set(o.entity_id, { value: o.value, at: o.observed_at });
+    }
+    if (data.length < 1000) break;
+  }
+  if (!latest.size) return;
+  const { data: people } = await supabase.from('contacts').select('id, company_id').eq('workspace_id', workspaceId)
+    .in('id', [...latest.keys()].slice(0, 5000));
+  const byAccount = new Map<string, Array<{ value: string; at: string }>>();
+  for (const p of (people as Array<{ id: string; company_id: string | null }>) ?? []) {
+    const key = p.company_id || p.id;
+    (byAccount.get(key) ?? byAccount.set(key, []).get(key)!).push(latest.get(p.id)!);
+  }
+  for (const [id, state] of accounts) {
+    const rows = byAccount.get(id);
+    if (!rows?.length) continue;
+    // The account's stage: its furthest live person; only when all have exited, the exits.
+    const live = rows.filter(r => !isTerminalStage(normalizeStage(r.value) ?? 'identified'));
+    const pool = live.length ? live : rows;
+    const top = pool.reduce((a, b) => ((STAGE_RANK[normalizeStage(b.value) ?? 'identified'] ?? 0) > (STAGE_RANK[normalizeStage(a.value) ?? 'identified'] ?? 0) ? b : a));
+    const next = recordedStageFor({ stage: state.stage, enteredAt: state.enteredAt }, { stage: top.value, at: top.at });
+    if (next.stage !== state.stage) { state.stage = next.stage; state.enteredAt = next.enteredAt; }
+  }
 }
 
 // ─── the run: layer 1 + 2 + 3 for one workspace ──────────────────────────────

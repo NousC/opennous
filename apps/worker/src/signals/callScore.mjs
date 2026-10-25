@@ -15,7 +15,7 @@
 // names its speakers and the first one's did not.
 
 import {
-  writesTasks, getCoachingRubric, buildCallScorePrompt, buildCallTypePrompt, parseCallType, callTypeAgainstRoom, parseCallScoreJson, isGradedCallType, buildHealthReadPrompt, parseHealthReadJson, buildCommitmentsPrompt, parseCommitmentsJson, writeHealthPage, healthSignalsToSave, HEALTH_SIGNAL, saveNote, recordObservation, resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, enqueueGithubDispatches, callScoreFromStored, saveDocument, talkShareFromTranscript, sidesOfCall, resolveCallTarget, storeCallReview, emptyTaskProvenance, provenanceFromModel, matchPersonByName, dealForTask, companyOfContact, isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMeetingNotes, repeatsFiledTask, emitEvent, runCallEndedAutomations,
+  writesTasks, getCoachingRubric, buildCallScorePrompt, buildCallTypePrompt, parseCallType, callTypeAgainstRoom, parseCallScoreJson, isGradedCallType, buildHealthReadPrompt, parseHealthReadJson, buildCommitmentsPrompt, parseCommitmentsJson, writeHealthPage, healthSignalsToSave, HEALTH_SIGNAL, saveNote, recordObservation, resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, enqueueGithubDispatches, callScoreFromStored, saveDocument, talkShareFromTranscript, sidesOfCall, resolveCallTarget, storeCallReview, emptyTaskProvenance, provenanceFromModel, matchPersonByName, dealForTask, companyOfContact, isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMeetingNotes, repeatsFiledTask, emitEvent, runCallEndedAutomations, advanceStageForCall,
 } from '@nous/core';
 import { createMessage, pipelineModel } from '../lib/llm.mjs';
 import { spokenByOurSide } from '../noema/grounding.mjs';
@@ -390,6 +390,12 @@ export async function scoreCall({
     if (callType !== declaredType) {
       console.log(`[call-score] ${source} ${meetingId}: called ${declaredType}, but ${externalAttendees.join(', ')} ${externalAttendees.length === 1 ? 'is' : 'are'} not ours — reading it as ${callType}`);
     }
+    // What kind of call it was moves the deal (GET-1028): a demo is the demo stage, an onboarding or
+    // a business review means they are a customer. Only the people on their side of the call.
+    const theirIds = (Array.isArray(contacts) ? contacts : []).map(c => c?.id).filter(id => id && !ourEntityIds.has(id));
+    await advanceStageForCall(supabase, workspaceId, theirIds, callType, { occurredAt: at })
+      .then(stage => stage && theirIds.length && console.log(`[call-score] ${source} ${meetingId}: a ${callType} call → ${stage} for ${theirIds.length} person(s)`))
+      .catch(err => console.warn(`[call-score] ${source} ${meetingId}: stage from call type failed: ${err.message}`));
     // EVERY CALL FILES ITS COMMITMENTS (GET-418) — see fileMeetingCommitments.
     const fileCommitments = (list) => fileMeetingCommitments({ supabase, workspaceId, meetingId, source, title, sourceUrl, at, contacts, recorder, account, primary }, list);
 
