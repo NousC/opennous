@@ -368,7 +368,8 @@ export async function listRecentlyReplaced(
     .like('property', 'note.%')
     .not('invalid_at', 'is', null)
     .gte('invalid_at', cutoff)
-    .not('value->metadata->>superseded_by', 'is', null)
+    // Replaced by a newer claim, or settled with a reason and no successor (GET-1027).
+    .or('value->metadata->>superseded_by.not.is.null,value->metadata->>superseded_why.not.is.null')
     .order('invalid_at', { ascending: false })
     .range(0, 199);
   if (error || !data?.length) return [];
@@ -381,28 +382,30 @@ export async function listRecentlyReplaced(
   };
   const isFact = (n: Note) => n.intel && !n.metadata?.doc_type && n.content.trim() !== '';
 
-  let retired = rows.map(noteFromClaim).filter(n => isFact(n) && n.superseded_by
+  const whyOf = (n: Note) => (typeof n.metadata?.superseded_why === 'string' ? n.metadata.superseded_why as string : null);
+  let retired = rows.map(noteFromClaim).filter(n => isFact(n) && (n.superseded_by || whyOf(n))
     && (n.entity_id === scope.entityId || !scope.relatedCategories || scope.relatedCategories.has(n.category)));
   retired = await readable(retired);
-  const successorIds = [...new Set(retired.map(n => n.superseded_by as string))];
-  if (!successorIds.length) return [];
+  const successorIds = [...new Set(retired.map(n => n.superseded_by).filter((id): id is string => !!id))];
+  // Settled by what is on file rather than by a claim: the reason stands in as the new side.
+  const settled = new Map(retired.filter(n => !n.superseded_by && whyOf(n)).map(n => [`settled:${n.id}`,
+    { category: n.category, content: whyOf(n) as string, said_at: invalidAt.get(n.id) ?? n.said_at }]));
+  if (!successorIds.length && !settled.size) return [];
 
-  const { data: next, error: e2 } = await supabase
-    .from('claims')
-    .select(COLUMNS)
-    .eq('workspace_id', workspaceId)
-    .in('id', successorIds);
-  if (e2 || !next?.length) return [];
+  const { data: next, error: e2 } = successorIds.length
+    ? await supabase.from('claims').select(COLUMNS).eq('workspace_id', workspaceId).in('id', successorIds)
+    : { data: [], error: null };
+  if (e2) return [];
   const successors = await readable(
-    (next as unknown as Record<string, unknown>[]).map(noteFromClaim).filter(isFact),
+    ((next ?? []) as unknown as Record<string, unknown>[]).map(noteFromClaim).filter(isFact),
   );
 
   return pairReplacements(
     retired.map(n => ({
       category: n.category, content: n.content, said_at: n.said_at,
-      superseded_by: n.superseded_by, invalid_at: invalidAt.get(n.id) ?? null,
+      superseded_by: n.superseded_by ?? `settled:${n.id}`, invalid_at: invalidAt.get(n.id) ?? null,
     })),
-    new Map(successors.map(n => [n.id, { category: n.category, content: n.content, said_at: n.said_at }])),
+    new Map([...successors.map(n => [n.id, { category: n.category, content: n.content, said_at: n.said_at }] as const), ...settled]),
     { now, windowDays, limit },
   );
 }
@@ -557,8 +560,11 @@ export async function retireNote(
   supabase: SupabaseClient,
   workspaceId: string,
   oldId: string,
-  newId: string,
-  reason: 'contradicted' | 'updated' = 'updated',
+  newId: string | null,
+  reason: 'contradicted' | 'updated' | 'resolved' = 'updated',
+  /** Why it no longer holds, in a few words (GET-1027): kept on the old claim, and the only trace
+   *  when nothing newer replaced it (the people on file did, e.g. the CEO who is now a contact). */
+  why: string | null = null,
 ): Promise<void> {
   const read = async (id: string) => {
     const { data } = await supabase.from('claims').select('value, invalid_at')
@@ -574,12 +580,13 @@ export async function retireNote(
   const { error } = await supabase.from('claims')
     .update({
       invalid_at: new Date().toISOString(),
-      value: { ...oldVal, metadata: { ...oldMeta, superseded_by: newId, superseded_reason: reason } },
+      value: { ...oldVal, metadata: { ...oldMeta, superseded_by: newId, superseded_reason: reason, ...(why ? { superseded_why: why } : {}) } },
     })
     .eq('id', oldId).eq('workspace_id', workspaceId).is('invalid_at', null);
   // supabase-js reports a failed write in `error`, it does not throw — say so rather than link a
   // successor to a claim that is still live.
   if (error) { console.warn(`[RETIRE_NOTE] could not retire ${oldId}: ${error.message}`); return; }
+  if (!newId) return;
   const fresh = await read(newId);
   if (!fresh?.value) return;
   const newMeta = (fresh.value.metadata as Record<string, unknown>) ?? {};

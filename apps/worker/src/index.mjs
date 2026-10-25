@@ -68,6 +68,7 @@ import { runApiNotificationEmails } from './workers/apiNotificationEmails.mjs';
 import { runAuditSweep } from './workers/auditSweep.mjs';
 import { runHealthRefresh } from './workers/healthRefresh.mjs';
 import { refreshCompanySummary, runCompanySummaryStageSweep } from './signals/companySummary.mjs';
+import { runReconcileSweep } from './signals/reconcileAccount.mjs';
 import { refreshDealOverview, ACCOUNT_DEAL_ID } from './signals/dealOverview.mjs';
 import { opsAlert } from './lib/opsAlert.mjs';
 import { initSentry, captureException as sentryCapture } from './lib/sentry.mjs';
@@ -530,6 +531,13 @@ console.log('[WORKER] Data-quality invariants — daily at 04:30 UTC');
 cron.schedule('0 5 * * *', () => runInsightThemes().catch(err =>
   console.error('[INSIGHT_THEMES] failed', err.message)), { timezone: 'UTC' });
 console.log('[WORKER] Insight clustering — daily at 05:00 UTC');
+
+// ── Current state — daily at 02:30 UTC (GET-1027) ────────────────────────────
+// Every account whose record changed in the last day is read once more as a whole, and claims a
+// later one settled are retired. Before the health and deal-health refreshes, so they read it.
+cron.schedule('30 2 * * *', () => runReconcileSweep().catch(err =>
+  console.error('[RECONCILE] sweep failed', err.message)), { timezone: 'UTC' });
+console.log('[WORKER] Current-state reconcile — daily at 02:30 UTC');
 
 // ── Insights board — daily at 05:30 UTC ──────────────────────────────────────
 // Places each new insight under one board button with its tags and account, and refreshes the
