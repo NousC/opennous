@@ -263,7 +263,15 @@ export async function ingestGmail(supabase, conn, data, { triggerSlug = '' } = {
   if (!h) h = await fetchMessageHeaders(supabase, workspaceId, conn, messageId);
   const participants = participantsOf(h, { from: fromAddr, to: toAddrs, cc: listCc });
   const rfcMessageId = h?.rfcMessageId ?? null;
-  const bulk = isBulkEmail(h, fromAddr);
+  // Gmail's own Promotions tab is a sender's marketing even when its headers say nothing (GET-1029).
+  const bulk = isBulkEmail(h, fromAddr) || labels.includes('CATEGORY_PROMOTIONS');
+  // A newsletter or notification FROM them is not them talking to us (GET-1029). Filed as an
+  // interaction it counted as their reply everywhere: last active, engagement rising, deal health,
+  // the stage. Nothing about the person is in it, so it is not filed at all.
+  if (bulk && !sentByTeam) {
+    console.log(`[composio/gmail] ${messageId} not filed: bulk mail from ${fromAddr}`);
+    return 0;
+  }
 
   const internalIds = await getInternalEntityIds(supabase, workspaceId).catch(() => new Set());
   // The preview is what was newly written, not the thread quoted underneath it.
