@@ -162,6 +162,22 @@ export function factsBlock(r) {
   return lines;
 }
 
+/**
+ * What they asked US to build (GET-1026): product feedback, not intel about them. Its own section so
+ * an agent never turns "build your own recorder" into "they are looking for a recorder", and can
+ * say what was asked and when. Empty when there is none.
+ */
+export function featureRequestsBlock(requests) {
+  if (!requests?.length) return [];
+  const lines = ["FEATURE REQUESTS (what they asked us to build \u2014 our product's backlog, not a tool they are shopping for; newest first):"];
+  for (const r of requests) {
+    lines.push(`  ${r.what ? `${r.what}: ` : ""}${r.content}${r.occurred_at ? `  (asked ${shortDay(r.occurred_at)} \u00b7 ${relAge(r.occurred_at)}${r.source_system ? ` \u00b7 ${r.source_system}` : ""})` : ""}`);
+    if (r.quote) lines.push(`      "${clip(r.quote, 200)}"`);
+  }
+  lines.push("");
+  return lines;
+}
+
 function evidenceLines(f) {
   const out = [];
   const who = f.speaker ? String(f.speaker).trim() : "";
@@ -622,6 +638,7 @@ export function createServer() {
       }
       // Atomic memory, current position first (GET-770).
       lines.push(...factsBlock(rec));
+      lines.push(...featureRequestsBlock(rec.feature_requests));
       const docs = rec.documents ?? [];
       if (docs.length) {
         // Saved briefs / notes / transcripts kept on the contact — previews only.

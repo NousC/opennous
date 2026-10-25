@@ -3,7 +3,8 @@ import { requireEnrichmentQuota } from '../../lib/access.mjs';
 import { enrichCompanyEntity } from '../../services/companyEnrich.mjs';
 import {
   getSupabaseClient, getAccountRecord, resolveFocus, mergeEntities, unmergeEntities, readContextFromReq,
-  compressAccount, budgetForIntent, getLatestScorecard, accountStage, ALL_PIPELINE_STAGES, getEntity, listAccountSignals } from '@nous/core';
+  compressAccount, budgetForIntent, getLatestScorecard, accountStage, ALL_PIPELINE_STAGES, getEntity, listAccountSignals,
+  featureRequestsFor } from '@nous/core';
 import { icpFit, fetchIcpByEntity } from '../../lib/icpFit.mjs';
 import { entityVisibleToMember, viewerVisibleAccountSet } from '../../lib/visibility.mjs';
 import { hasListRows, listRows, hasOwnershipColumns, personStagesForAccounts } from '../../lib/listRows.mjs';
@@ -415,6 +416,10 @@ accountsV2Router.get('/:id', async (req, res) => {
     // Coaching v2 (GET-84): the latest call scorecard for this account, so the after-call skill can
     // write the coaching review out of what the app already scored rather than re-scoring.
     const scorecard = await getLatestScorecard(supabase, workspaceId, resolution.entity_id).catch(() => null);
+    // What they asked us to build (GET-1026): product feedback, kept apart from the facts about them so an
+    // agent never reads "build us a recorder" as "they are shopping for a recorder".
+    const feature_requests = await featureRequestsFor(supabase, workspaceId,
+      record.type === 'company' ? { companyId: resolution.entity_id } : { contactId: resolution.entity_id }).catch(() => []);
 
     const intent   = req.query.intent ? String(req.query.intent) : null;
     const compress = req.query.compress === '1' || req.query.compress === 'true';
@@ -422,7 +427,7 @@ accountsV2Router.get('/:id', async (req, res) => {
     // Who works here and what is being sold to them, in the list shapes (/v2/people, /v2/deals).
     const { people, people_count, deals } = await accountPeopleAndDeals(supabase, req, workspaceId, resolution.entity_id);
 
-    let out = { ...record, ...(icp ? { icp } : {}), ...(scorecard ? { scorecard } : {}), people, people_count, deals };
+    let out = { ...record, ...(icp ? { icp } : {}), ...(scorecard ? { scorecard } : {}), people, people_count, deals, feature_requests };
 
     if (intent || compress) {
       const { key_activity, activity_summary } = compressAccount(record, budgetForIntent(intent));
