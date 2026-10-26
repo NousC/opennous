@@ -95,7 +95,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     // An existing customer turning down a SPECIFIC ADDITIONAL product is expansion_signal with
     // stance declined, not an objection: the decline has to suppress that product for a year
     // (GET-401), and an objection has no product to suppress.
-    description: 'A concern, pushback, or challenge to us — price, security, timing, switching cost, competitor loyalty, or skepticism that we are meaningfully different from the alternatives. Applies even when the person is a peer or advisor, not a buyer. NOT an existing customer declining one more product (that is expansion_signal, stance declined).',
+    description: 'A concern, pushback, or challenge to us — price, security, timing, switching cost, competitor loyalty, or skepticism that we are meaningfully different from the alternatives, with its reason. Applies even when the person is a peer or advisor, not a buyer. NOT a general remark about AI or tools ("no tool is a silver bullet"), and NOT an existing customer declining one more product (that is expansion_signal, stance declined).',
     example: 'Questioned how we differ from memory tools like Fireflies that already sync notes to the CRM.',
   },
   {
@@ -158,7 +158,7 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     // and ZoomInfo as competitors because they are "competing tools" in the abstract; they compete with
     // nothing we sell. An incumbent competitor also raises deal-health risk, so a misfiled stack tool
     // made healthy deals look contested.
-    description: 'A product that does the job WE sell: an alternative to us they use, are evaluating, compared us with, or tried and dropped — why, and how loyal they are to it. Never a tool in their stack that does something else (that is status_quo).',
+    description: 'A product that does the job WE sell: an alternative to us they use, are evaluating, compared us with, or tried and dropped — why, and how loyal they are to it. Never a tool in their stack that does something else, and never a tool they built themselves (both are tech_stack).',
     example: 'Evaluating Gong forecasting alongside us, but says its price rules it out.',
   },
   {
@@ -358,8 +358,8 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
     label: 'Tech Stack',
     domain: 'account',
     about: 'company',
-    description: 'A tool, platform or vendor they use — CRM, dialer, note-taker, analytics, AI agents, chat — and any fact about it: who drives it, what it costs, how it is used, what they think of it, a decision about it. Name the tool. A tool that does the job WE do is competitor instead.',
-    example: 'Their CEO runs AI-agent experiments across the company on GrokBot, about $150 a month, pushing insights into Slack.',
+    description: 'A tool, platform or vendor they use — CRM, dialer, note-taker, analytics, AI agents, chat — and any fact about it: who drives it, what it costs, how it is used, what they think of it, a decision about it. Name the tool. A tool they built themselves (an internal bot or agent) is tech_stack too. A tool that does the job WE do is competitor instead.',
+    example: 'Their CEO runs AI-agent experiments across the company on Tallyhook, about $150 a month, pushing insights into Slack.',
   },
   // GET-776. What stands between now and a signed (or expanded) deal. Open until a later statement
   // resolves it — that is exactly the replace-on-contradiction path (GET-770).

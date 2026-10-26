@@ -25,6 +25,8 @@ import { read, parseArray, acceptsArray, parseProse, acceptsProse } from '../noe
 import { groundFacts, spokenByOurSide } from '../noema/grounding.mjs';
 import { externalEvidence } from '../noema/externalEvidence.mjs';
 import { splitForExtraction, halveForRetry, loadOurSide, ourSideLabel, ourSideRule, tidyFactContent, ourOfferBlock, factWording } from './extractionText.mjs';
+import { accountBriefBlock, loadAccountBrief } from './accountBrief.mjs';
+import { checkSignals, READ_IN_CONTEXT } from './signalCheck.mjs';
 
 
 // Activity types that warrant signal extraction — private, content-rich interactions only.
@@ -638,7 +640,7 @@ Second sentence: the single most important thing to know right now — the block
 // reading it. Aiming at the number breaks the instrument that finds the next category.
 const GENERAL_IS_LAST_RESORT = `
 \`general\` is the LAST resort, not the default. Before using it, rule out every category above — the common mis-files are:
-- their tools, vendors, or how their team handles a lead (not ours) → status_quo
+- their tools and vendors (not ours) → tech_stack; how their team handles a lead → status_quo
 - how far OUR product is in use, or what it has produced → adoption
 - whether someone is trained, active, dormant, or expert → proficiency
 - someone joining, leaving, changing role, or a team reorganised → staff_change
@@ -856,7 +858,7 @@ export function replacesAllowed(fact) {
 
 const REPLACES_FIELD = ', "replaces": <ON FILE line number, only when this fact replaces it>';
 
-export function buildActivitySignalsPrompt({ contactName, company = null, type, summary, maxFactsOverride = null, ourSide = null, part = null, positionsOnFile = [] }) {
+export function buildActivitySignalsPrompt({ contactName, company = null, type, summary, maxFactsOverride = null, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
     const contactCtx  = [contactName, company].filter(Boolean).join(' at ');
     // Who "our side" is — a teammate's name, else "the <Company> team". The prompt used to
     // say "the user (us)", and the models wrote exactly that into facts.
@@ -917,7 +919,7 @@ export function buildActivitySignalsPrompt({ contactName, company = null, type, 
 ${provenance}
 Record facts about ${contactName}, drawn from what THEY reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between ${contactName} and ${we}: how ${contactName} found ${we} or why they reached out (a video, post, referral, or event), anything ${contactName} offered ${we} or introductions they can make, and any objection or critique ${contactName} raised about the product or how it differs from alternatives. Do NOT turn ${we}'s OWN questions or statements into facts about ${contactName} (e.g. if ${we} asked "what's behind your product?", that is NOT a fact that ${contactName} is interested in the product) — but an offer, an introduction, a critique, or a reason-for-reaching-out that ${contactName} genuinely voices IS a fact about ${contactName} and must be recorded.
 ${contactCtx ? `Contact: ${contactCtx}` : ''}
-${partPreamble(part, 'Message')}
+${accountBriefBlock(accountBrief)}${partPreamble(part, 'Message')}
 
 Message: "${summary}"
 
@@ -941,20 +943,21 @@ Rules:
 - Each fact is one self-contained sentence naming ${contactName} explicitly (no pronouns). Name them as the one doing or wanting the thing, never as a speaker: "${contactName} is moving support to Zendesk", not "${contactName} says the company is moving support to Zendesk". Never "${contactName}'s company X's …". Short and plain: the fact, its detail, nothing about who said it (that is stored separately).
 - ${ourSideRule(ourSide)}
 - State only what ${contactName} said or plainly did. Never add your own reading of what it implies — no "indicating…", "suggesting that…", "which shows…", "meaning…", "as evidenced by…". Write "${contactName} offered two references", not "${contactName} offered two references, indicating a strong relationship".
+- ${READ_IN_CONTEXT}
 - ${contactName} is the ONLY possible subject. Other names will appear in the message — the person it greets, a colleague, one of us — and none of them is the subject. If the message opens "Hi <name>", that name is the RECIPIENT, not ${contactName}. Never write a fact whose subject is anyone but ${contactName}.
 - SOMEONE SELLING TO US IS NOT A CUSTOMER. This corpus is our own sales and support correspondence. A thread where the other side is pitching US — a vendor cold email, an agency, a recruiter, a software demo, a staffing or payment-terms negotiation — contains no intelligence about a customer, however well written it is. Extracting it files a stranger's product pitch on our own account record. When the thread is inbound selling, return [] and nothing else.
 - A JOB TITLE ON ITS OWN IS NOT A FACT. "Roland Fisk is the General Manager at Fallowmere Logistics" states what someone IS, not something they said or did, and it does not decay — it is an attribute of the person. Do not emit it as a fact at all. Put it in "job_title" instead, as the bare title: "General Manager". A title plus something they SAID stays a fact, and keeps the title too.
 - Set "category" to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}.
 - Set "about" to "person" for a fact about ${contactName}, or "company" for a fact about their company.
-- Set "label" to a 2–4 word tag that names the SUBSTANCE of the fact — what a rep would skim on a card. NOT the person's name. For a competitor, use the competitor/vendor name (e.g. "Tallowmark", "Brightlist leads"). For an objection, name the objection ("Outbound intent doubts", "Already on Salesforce"). For a pain/goal, name the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
+- Set "label" to a 2–5 word chip a colleague who was NOT there understands on its own, naming the substance — what a rep would skim on a card. NOT the person's name, NOT a fragment of their words ("Not a silver bullet", "Asked for more"), NOT "X vs Y". For a competitor, use the competitor/vendor name (e.g. "Tallowmark", "Brightlist leads"). For an objection, name the concern ("Doubts outbound intent data", "Already on Salesforce"). For a pain/goal, name the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
 - CONTEXT TAGS — these decide whether a signal is a real risk, so be precise:
-  - "competitor" means a competitor of ${ourSide?.companyName || 'our company'}: a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. Their CRM, call recorder, meeting-notes or agenda tool, data vendor or automation tool is NOT a competitor unless it does that same job — file it as status_quo (even when they plan to switch off it).
+  - "competitor" means a competitor of ${ourSide?.companyName || 'our company'}: a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. Their CRM, call recorder, meeting-notes or agenda tool, data vendor or automation tool is NOT a competitor unless it does that same job — file it as tech_stack (even when they plan to switch off it). Their own build (a bot or agent they made) is tech_stack, never competitor.
   - If category is "competitor": set "entity" to the competitor/vendor name only (e.g. "Pearl Lantern"), and "stance" to one of: "evaluating" (a live alternative they're weighing against us), "incumbent" (they currently use it FOR THE JOB we sell), "past_failure" (a vendor they TRIED for that job and it failed / they fired — this LOWERS competitive risk, it's an opening), "mentioned" (named in passing, no clear posture).
   - If category is "objection": set "status" to "open" (still unresolved), "resolved" (answered/no longer a concern), or "addressed" (we responded, awaiting confirmation); and "hardness" to "hard" (budget, authority, security, legal, procurement — a real gate) or "soft" (needs info, timing, minor preference).
   - If category is "authority": set "role" to one of: "economic_buyer" (holds the budget or signs), "decision_maker" (chooses, or their approval is what unblocks it), "champion" (actively pushes for us internally), "blocker" (is stopping it), "technical" (judges whether it works). The role must describe THE PERSON THE FACT IS ABOUT. Leave "role" out when the fact names someone ELSE's authority ("Marisol can't change that setting, the directors would have to"), when it only restates a job title, or when the person simply uses the product.
   - If category is "expansion_signal": set "product" to the product family they named (from WHAT WE SELL when listed — e.g. "Shelfwise Pro", not "Shelfwise Pro (EU)"), and "stance" to one of: "asked" (requested it or asked what it costs), "considering" (raised it, no commitment), "declined" (said no to it, or cancelled a trial of it). NEVER leave "stance" out — a decline read as an ask sends a rep to pitch what the customer just refused. A feature request about a product they ALREADY OWN is pain, not expansion.
   - If category is "risk_signal": set "severity" to one of: "stated_churn" (cancelled, gave notice, said they are leaving), "at_risk" (reviewing vendors, questioning the value, escalating an unresolved problem), "friction" (a billing, invoicing, support or service failure raised with frustration, no threat to leave). A departure of a person is staff_change, not risk_signal.
-  - If category is "tech_stack": set "tool" to the tool's official name, one spelling ("HubSpot", "Slack", "GrokBot" — never "Grok" for one fact and "GrokBot" for another). One tool per fact. A fact about one of their tools (who drives it, what it costs, what they think of it, a decision about it) is tech_stack — not risk_signal, and not competitor unless the tool does the job WE do.
+  - If category is "tech_stack": set "tool" to the tool's official name, one spelling ("HubSpot", "Slack", "Tallyhook" — never "Tally" for one fact and "Tallyhook" for another). One tool per fact. A fact about one of their tools (who drives it, what it costs, what they think of it, a decision about it) is tech_stack — not risk_signal, and not competitor unless the tool does the job WE do.
   - If category is "blocker": set "status" to "open" (still in the way) or "resolved" (the conversation says it is no longer in the way). Who else must sign off, no plan for who to onboard or how to roll it out, internal politics, missing access, a pending review. A setup step already done (access granted, a file shared) is not a blocker.
   - A buying signal is a decision moving toward the deal — never a setup step: pushing paperwork such as an NDA through, giving access or API keys, or promising to send a list is logistics.
   - "requirement" is a hard condition for buying, not a wish or a feature idea.
@@ -1024,6 +1027,10 @@ export async function extractFactsFromText({
   // whose quote our side spoke; a 1:1 call did not, so a rep's guess ("you'd find $700 expensive")
   // was filed as the customer's budget — and since GET-770 it could retire what they really said.
   ourNames = [],
+  // What is known about the account (GET-1033), so each line is read in context; and whether the
+  // deal signals get their second read (signalCheck.mjs). The eval runs with it on, so it scores what
+  // is filed; scores from before GET-1033 measured the extractor alone.
+  accountBrief = '', check = true,
 }) {
   const { context, parts } = splitForExtraction(text);
   const out = { facts: [], aboutUs: [], failedParts: 0, parts: parts.length, calls: [], offered: 0, grounded: 0, routed: { our_product: 0, market: 0, low_importance: 0 } };
@@ -1036,7 +1043,7 @@ export async function extractFactsFromText({
     // What earlier parts already found, so this part does not find it again (GET-789).
     const part = { index, total: parts.length, context, already: out.facts.map(f => f.content) };
     const { prompt, maxFacts, maxTokens } = buildActivitySignalsPrompt({
-      contactName, company, type, summary: piece, maxFactsOverride: partBudget, ourSide, part, positionsOnFile,
+      contactName, company, type, summary: piece, maxFactsOverride: partBudget, ourSide, part, positionsOnFile, accountBrief,
     });
     const msg = await createMessage({
       meter: false,   // the caller meters it, through onCall
@@ -1090,7 +1097,8 @@ export async function extractFactsFromText({
       if (theirs.length < facts.length) console.log(`[GROUNDING] activity-signals-extract: dropped ${facts.length - theirs.length} fact(s) ${evidenceMessages !== null ? 'without confirmed external evidence' : 'quoting our own side'}`);
       out.offered += offered;
       out.grounded += grounded;
-      const { claims: forThem, aboutUs } = splitAboutUs(theirs);
+      const { claims: found, aboutUs } = splitAboutUs(theirs);
+      const forThem = check ? await checkSignals(found, { text: shown, brief: accountBrief, offer: ourSide?.offer, onCall, label: type }) : found;
       out.facts.push(...forThem);
       out.aboutUs.push(...aboutUs);
       await onPart?.(forThem, { index, total: parts.length, model: out.calls[out.calls.length - 1]?.model });
@@ -1128,12 +1136,13 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     const ourSide = await loadOurSide(supabase, workspaceId, { activityId, text: summary });
     // What is on file about them and their account that this conversation may move (GET-770).
     const positionsOnFile = await loadPositionsOnFile(supabase, workspaceId, [contactId, contact.company_id], { excludeSourceRef: sourceRef });
+    const accountBrief = await loadAccountBrief(supabase, workspaceId, { contactId, companyId: contact.company_id });
 
     // Part by part, persisting as it goes: a later part's merge decision then sees the
     // facts an earlier part already saved, so the overlap between parts dedupes.
     const saved = [];
     const read = await extractFactsFromText({
-      contactName: contact.name, company: contact.company, type, text: summary, maxFactsOverride, ourSide, strict, positionsOnFile, ourNames,
+      contactName: contact.name, company: contact.company, type, text: summary, maxFactsOverride, ourSide, strict, positionsOnFile, ourNames, accountBrief,
       evidenceMessages, evidenceContactId: contactId,
       criteria: await extractionCriteria(supabase, workspaceId),
       onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-extraction', msg),
@@ -1642,6 +1651,9 @@ export async function extractMeetingSignals({
     const ourSide = await loadOurSide(supabase, workspaceId, { activityId: participants[0]?.activityId, text: summary });
     const positionsOnFile = await loadPositionsOnFile(supabase, workspaceId,
       participants.flatMap(p => [p.contactId, p.companyId]), { excludeSourceRef: sourceRef });
+    // The account the call is with: the first attendee who has one (GET-1033).
+    const lead = participants.find(p => p.companyId) ?? participants[0];
+    const accountBrief = await loadAccountBrief(supabase, workspaceId, { contactId: lead?.contactId ?? null, companyId: lead?.companyId ?? null });
 
     // A long call is read in parts, each persisted before the next is read, so the merge
     // decision on a later part sees what an earlier part saved (see splitForExtraction).
@@ -1660,7 +1672,7 @@ export async function extractMeetingSignals({
         max_tokens: Math.min(5000, Math.max(1500, partBudget * 200)) + ABOUT_US_TOKENS,   // room to think, see buildActivitySignalsPrompt
         accept: (t) => parseJsonArray(t) !== null,
         messages: [{ role: 'user', content: buildMeetingSignalsPrompt({
-          roster, transcript: text, maxFacts: partBudget, ourSide, positionsOnFile,
+          roster, transcript: text, maxFacts: partBudget, ourSide, positionsOnFile, accountBrief,
           part: { ...label, context, already: saved.map(f => f.content).filter(Boolean) },
         }) + criteria }],
       });
@@ -1702,8 +1714,10 @@ export async function extractMeetingSignals({
       // Our words are not their facts (GET-417): drop a fact whose grounded quote our side spoke.
       const theirs = grounded.filter(f => !(f.quote && spokenByOurSide(f.quote, shown, ourNames)));
       if (theirs.length < grounded.length) console.log(`[GROUNDING] meeting-signals-extract: dropped ${grounded.length - theirs.length} fact(s) quoting our own side`);
-      const { claims: forThem, aboutUs: forUs } = splitAboutUs(theirs);
+      const { claims: found, aboutUs: forUs } = splitAboutUs(theirs);
       heardAboutUs.push(...forUs);
+      const forThem = await checkSignals(found, { text: shown, brief: accountBrief, offer: ourSide?.offer, label: 'meeting',
+        onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-check', msg) });
       if (!forThem.length) continue;
       saved.push(...await persistFacts(supabase, workspaceId, forThem, { type: 'meeting_held', source, dryRun, sourceRef, occurredAt }));
       }
@@ -1720,7 +1734,7 @@ export async function extractMeetingSignals({
 }
 
 /** The multi-attendee meeting prompt. One part of the transcript per call; see splitForExtraction. */
-export function buildMeetingSignalsPrompt({ roster, transcript, maxFacts, ourSide = null, part = null, positionsOnFile = [] }) {
+export function buildMeetingSignalsPrompt({ roster, transcript, maxFacts, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
   const we = ourSideLabel(ourSide);
   return `Extract durable CRM intelligence from this meeting transcript.
 
@@ -1731,7 +1745,7 @@ ${roster}
 
 Our side of the call is ${we}. Do NOT turn our side's questions or statements into facts about an attendee — if ${we} asked "what's driving the timeline?", that is NOT a fact that they care about timelines. But an offer, an introduction, a critique, or a reason-for-reaching-out that an ATTENDEE genuinely voices IS a fact about them and must be recorded.
 
-${partPreamble(part)}
+${accountBriefBlock(accountBrief)}${partPreamble(part)}
 Transcript: "${transcript}"
 
 A fact is worth recording ONLY if it passes ALL FOUR bars:
@@ -1749,9 +1763,9 @@ Tag each fact with:
 - "person": the NUMBER of the attendee it is about (from the list above).
 - "category": exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}.
 - "about": "person" for a fact about that individual, "company" for a fact about their company.
-- "label": a 2–4 word tag naming the SUBSTANCE (what a rep skims on a card), NOT the person's name. Competitor → the vendor name ("Pearl Lantern"); objection → the objection ("Already on Salesforce"); pain/goal → the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
+- "label": a 2–5 word chip a colleague who was NOT there understands on its own, naming the SUBSTANCE (what a rep skims on a card). NOT the person's name, NOT a fragment of their words ("Not a silver bullet", "Asked for more"), NOT "X vs Y". Competitor → the vendor name ("Pearl Lantern"); objection → the concern ("Already on Salesforce"); pain/goal → the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
 - CONTEXT TAGS (they decide whether a signal is a real risk):
-  - competitor → ONLY a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. A tool in their stack that does something else (CRM, call recorder, notes/agenda tool, data vendor) is status_quo, never competitor. Set "entity" (vendor name only) + "stance": "evaluating" (live alternative to us) / "incumbent" (they use it for the job we do) / "past_failure" (tried for that job and failed/fired — LOWERS risk, it's an opening) / "mentioned".
+  - competitor → ONLY a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. A tool in their stack that does something else (CRM, call recorder, notes/agenda tool, data vendor) is tech_stack, never competitor; so is their own build (a bot or agent they made). Set "entity" (vendor name only) + "stance": "evaluating" (live alternative to us) / "incumbent" (they use it for the job we do) / "past_failure" (tried for that job and failed/fired — LOWERS risk, it's an opening) / "mentioned".
   - objection → "status": "open" / "resolved" / "addressed"; and "hardness": "hard" (budget, authority, security, legal, procurement) / "soft" (info, timing, minor).
   - expansion_signal → an EXISTING customer asking for more of what we sell. Set "product" (the family name from WHAT WE SELL, regional suffixes dropped) + "stance": "asked" / "considering" / "declined". NEVER omit "stance": a decline read as an ask sends a rep to pitch what the customer just refused. A feature request about a product they already own is pain.
   - risk_signal → an EXISTING customer saying the relationship is in question. Set "severity": "stated_churn" (cancelled, gave notice, leaving) / "at_risk" (reviewing vendors, questioning value, escalating) / "friction" (billing, invoicing, support or service failure raised with frustration, no threat to leave).
@@ -1767,6 +1781,7 @@ Rules:
 - Each fact is one self-contained sentence naming the person explicitly (no pronouns). Name them as the one doing or wanting the thing, never as a speaker: "Sam is moving support to Zendesk", not "Sam says the company is moving support to Zendesk". Never "Sam's company X's …". Short and plain: the fact, its detail, nothing about who said it (that is stored separately).
 - ${ourSideRule(ourSide)}
 - State only what the attendee said or plainly did. Never add your own reading of what it implies — no "indicating…", "suggesting that…", "which shows…", "meaning…", "as evidenced by…".
+- ${READ_IN_CONTEXT}
 - Attribute each fact to the attendee it is genuinely ABOUT. A fact one person states about another belongs to whoever it describes.
 - Extract EVERY fact that clears all four bars — there is no target number, and no requirement that every attendee yields one. A quiet attendee may yield none. NEVER pad, NEVER split one fact into several, NEVER restate the same fact twice.
 - Hard ceiling of ${maxFacts} facts with home "claim" across ALL attendees — a safety limit, not a goal. What they say about us (our_product, market) does not count toward it.

@@ -82,7 +82,8 @@ export function eventSummary(e: NousEvent): string {
     const next = str((d.replacement as { name?: unknown } | null)?.name);
     return next ? `${who} left; ${next} takes over` : `${who} left, no replacement named`;
   }
-  if (e.type === "account.expansion_requested") return str(d.product) ? `Asked for more ${str(d.product)}` : "Asked for more";
+  // The signal's own sentence (GET-1033): "Asked for more <product>" named our product and nothing they said.
+  if (e.type === "account.expansion_requested") return str(d.text) ?? (str(d.product) ? `Asked for more ${str(d.product)}` : "Asked for more");
   if (family === "icp") {
     const from = num((d.from as { score?: unknown } | null)?.score);
     const to = num((d.to as { score?: unknown } | null)?.score);

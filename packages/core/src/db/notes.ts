@@ -561,7 +561,8 @@ export async function retireNote(
   workspaceId: string,
   oldId: string,
   newId: string | null,
-  reason: 'contradicted' | 'updated' | 'resolved' = 'updated',
+  // 'misread' (GET-1034): it was never what it was filed as; a second read in context found that.
+  reason: 'contradicted' | 'updated' | 'resolved' | 'misread' = 'updated',
   /** Why it no longer holds, in a few words (GET-1027): kept on the old claim, and the only trace
    *  when nothing newer replaced it (the people on file did, e.g. the CEO who is now a contact). */
   why: string | null = null,

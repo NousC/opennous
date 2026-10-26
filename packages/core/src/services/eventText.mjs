@@ -66,7 +66,9 @@ export function eventSummary(e) {
     const next = str(d.replacement?.name);
     return next ? `${who} left; ${next} takes over` : `${who} left, no replacement named`;
   }
-  if (type === 'account.expansion_requested') return str(d.product) ? `Asked for more ${str(d.product)}` : '';
+  // What they asked for, in the signal's own sentence (GET-1033): "Asked for more <product>" named our
+  // product and nothing they said.
+  if (type === 'account.expansion_requested') return str(d.text) ?? (str(d.product) ? `Asked for more ${str(d.product)}` : '');
   if (family === 'icp') {
     const from = num(d.from?.score);
     const to = num(d.to?.score);

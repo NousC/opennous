@@ -31,6 +31,7 @@ import { renderThread, lastAt } from './emailThreads.mjs';
 import { extractFactsFromText, persistFacts, loadSubject, loadPositionsOnFile } from '../signals/index.mjs';
 import { extractCallInsights } from '../signals/insights.mjs';
 import { screenFeatureRequests } from '../signals/alreadyHave.mjs';
+import { loadAccountBrief } from '../signals/accountBrief.mjs';
 import { meterLLM } from '../utils/meterLLM.mjs';
 import { loadOurSide, tidyFactContent } from '../signals/extractionText.mjs';
 
@@ -483,6 +484,8 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
     groundAgainst: (partText) => theirSideOf(partText),
     // What is on file that this thread may move (GET-770).
     positionsOnFile: await loadPositionsOnFile(supabase, workspaceId, [contactId, contact.company_id], { excludeSourceRef: sourceRef }),
+    // What is known about the account, so each line is read in context (GET-1033).
+    accountBrief: await loadAccountBrief(supabase, workspaceId, { contactId, companyId: contact.company_id }),
     // METER THEM. Without this the claim calls are invisible: commitments go through read(),
     // which meters, and claims did not — so llm_usage showed roughly half of what a run cost and
     // every per-thread figure quoted from it was half the truth. A cost you cannot see is one you
