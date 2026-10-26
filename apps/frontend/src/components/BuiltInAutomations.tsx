@@ -324,9 +324,9 @@ export function BuiltInAutomations({
   const toolbar = (
     <PageToolbar>
       {onView && (
-        <ViewTabs<"automations" | "history" | "approvals"> aria-label="Automation views" value={view} onChange={onView}
+        <ViewTabs<"automations" | "history" | "approvals"> aria-label="Workflow views" value={view} onChange={onView}
           options={[
-            { value: "automations", label: "Automations", count: data ? data.automations.length : undefined },
+            { value: "automations", label: "Workflows", count: data ? data.automations.length : undefined },
             { value: "history", label: "Run history" },
             // What waits on you (GET-713), counted so it is seen before it is opened. The API plan's
             // only; on the Workspace plan the same reviews are in Priorities (GET-737).
@@ -337,7 +337,7 @@ export function BuiltInAutomations({
       {/* How many of the plan's automations are in use. Unlimited plans say nothing; the
           defaults are ours and do not count. */}
       {data?.limit != null && view === "automations" && (
-        <span title="Your automations count toward your plan. The defaults don't."
+        <span title="Your workflows count toward your plan. The defaults don't."
           className={cn("text-xs tabular-nums", data.used >= data.limit ? "text-warning" : "text-muted-foreground")}>
           {data.used} of {data.limit} used
         </span>
@@ -356,7 +356,7 @@ export function BuiltInAutomations({
               <FilterOpt key={label} on={days === value} onClick={() => setDays(value)}>{label}</FilterOpt>
             ))}
             {data.automations.length > 0 && (<>
-              <FilterHead label="Automation" hint="any, unless you pick" />
+              <FilterHead label="Workflow" hint="any, unless you pick" />
               {data.automations.map(a => (
                 <FilterOpt key={a.id} on={picked.has(a.id)} onClick={() => setPicked(p => flip(p, a.id))}>{a.name}</FilterOpt>
               ))}
@@ -378,7 +378,7 @@ export function BuiltInAutomations({
       )}
       {view === "automations" && (
         <Button size="sm" onClick={() => setAdding(true)} aria-expanded={adding}>
-          <Plus className="!size-[13px]" strokeWidth={2.2} />New automation
+          <Plus className="!size-[13px]" strokeWidth={2.2} />New workflow
         </Button>
       )}
     </PageToolbar>
@@ -438,14 +438,14 @@ export function BuiltInAutomations({
             { label: "Runs", value: stats ? num(stats.runs) : "—", note: days == null ? "all time" : `last ${days} days` },
             { label: "Reports created", value: stats ? num(stats.reports) : "—" },
             { label: "Failed", value: stats ? num(stats.failed) : "—", tone: stats?.failed ? "risk" : undefined },
-            { label: "Active", value: num(enabledCount), note: `of ${num(data.automations.length)} automations` },
+            { label: "Active", value: num(enabledCount), note: `of ${num(data.automations.length)} workflows` },
           ]} />
           {/* WHAT RAN: the same columns as Activity, so the two logs read alike. */}
           <TableBox>
             <DataTable aria-label="Run history" columns={runColumns(navigate, { automation: true })} rows={runs ?? []} rowKey={(r) => r.id}
               loading={runs === null} minWidth={760} onRowClick={(r) => setOpenRun(r.id)}
               empty={<EmptyState bordered={false} title={activeCount ? "Nothing matches these filters." : "Nothing has run yet."}
-                body={activeCount ? undefined : "Runs show up here as your automations fire."} />} />
+                body={activeCount ? undefined : "Runs show up here as your workflows fire."} />} />
           </TableBox>
         </div>
       ) : (
@@ -455,7 +455,7 @@ export function BuiltInAutomations({
           <Dialog open={adding} onOpenChange={setAdding}>
             <DialogContent className="max-w-[880px] gap-0 p-0">
               <DialogHeader className="border-b border-hairline px-6 py-4 text-left">
-                <DialogTitle>New automation</DialogTitle>
+                <DialogTitle>New workflow</DialogTitle>
                 <DialogDescription className="sr-only">Start from a template or from scratch.</DialogDescription>
               </DialogHeader>
               <div className="grid max-h-[65vh] grid-cols-1 gap-2 overflow-y-auto p-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -487,7 +487,7 @@ export function BuiltInAutomations({
               no lines between, each led by its trigger's tool in a 24px tile, the flow a quiet line. */}
           {/* Yours, as plain rows on the page (GET-710): no card around them and no title, the name
               and when it runs, nothing more. The steps are one click away in the editor. */}
-          <div aria-label="Your automations">
+          <div aria-label="Your workflows">
             {empty ? (
               <EmptyState bordered={false} title="Nothing of your own yet."
                 action={<Button size="sm" variant="outline" onClick={() => navigate("/automations/new")}><Plus className="!size-3.5" />Start blank</Button>} />

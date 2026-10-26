@@ -8,10 +8,15 @@
 //
 // Simpler than n8n on purpose: a flow here runs in one order, so there is nothing to drag or
 // wire.
+//
+// The look (2026-10-26): the canvas and the settings sit as two framed cards, each node is a
+// compact chip (a small "Trigger" or "Action" over its name, what it does on hover), nodes are
+// joined by a thin line with a handle at each end, a Draft tag sits on the canvas while there are
+// unpublished changes, and the bar carries the verbs: Activate, Discard draft, See runs, Add a node.
 import { trackProductEvent } from "@/lib/posthog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Check, ChevronLeft, ChevronRight, Loader2, PanelRightClose, PanelRightOpen, Play, Plus, Search, Trash2, X as XIcon, Zap } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, History, Layers, Loader2, PanelRightClose, PanelRightOpen, Play, Plus, Power, Search, Trash2, Undo2, X as XIcon, Zap } from "lucide-react";
 import { AutomationRunDetail } from "@/components/AutomationRunDetail";
 import { AccountLogo } from "@/components/pipeline/DealBits";
 import { usePlan } from "@/hooks/usePlan";
@@ -19,7 +24,6 @@ import { isApiTier } from "@/config/plans";
 import { OPEN_PRIORITIES } from "@/components/shell/PrioritiesButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StepMark, TriggerMark } from "@/components/AutomationMarks";
 import { StepPanel, TriggerPanel, type Mailbox } from "@/components/FlowPanels";
@@ -50,8 +54,11 @@ function ago(iso: string): string {
 
 // ── Adding a step ────────────────────────────────────────────────────────────
 
+/** A quiet verb in the bar: icon and word, no border, like the canvas tools around it. */
+const BAR_BTN = "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+
 /** The picker: search, then tools, then the tool's actions. */
-function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "link" | "end" }) {
+function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "link" | "end" | "bar" }) {
   const [open, setOpen] = useState(false);
   const [tool, setTool] = useState<string | null>(null);
   const [q, setQ] = useState("");
@@ -70,7 +77,11 @@ function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "lin
   return (
     <Popover open={open} onOpenChange={o => (o ? setOpen(true) : close())}>
       <PopoverTrigger asChild>
-        {variant === "end" ? (
+        {variant === "bar" ? (
+          <button aria-label="Add a node" className={cn(BAR_BTN, open && "bg-accent text-foreground")}>
+            <Plus className="h-3.5 w-3.5" /> Add a node
+          </button>
+        ) : variant === "end" ? (
           <button
             aria-label="Add a step"
             className={cn(
@@ -89,7 +100,7 @@ function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "lin
           </button>
         )}
       </PopoverTrigger>
-      <PopoverContent align="start" sideOffset={8} className="w-[240px] rounded-[12px] p-1 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.16)]">
+      <PopoverContent align={variant === "bar" ? "end" : "start"} sideOffset={8} className="w-[240px] rounded-[12px] p-1 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.16)]">
         <div className="flex items-center gap-2 border-b border-border/60 px-2 pb-1.5 pt-1">
           <Search className="h-3.5 w-3.5 text-muted-foreground/60" />
           <input
@@ -150,74 +161,77 @@ const RUN_CHIP: Record<CardRun["status"], { text: string; tone: string }> = {
 function FlowCard({ mark, title, rows, on, ready = true, trigger = false, onClick, run }: {
   mark: React.ReactNode; title: string; rows: CardRow[]; on: boolean; ready?: boolean; trigger?: boolean; onClick: () => void; run?: CardRun | null;
 }) {
+  // What it does, in the card's own rows, on hover: the chip itself stays a kind and a name.
+  const summary = rows.map(r => `${r.label}: ${r.value}`).join("\n");
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "group relative w-[380px] max-w-full flex-shrink-0 rounded-[14px] border bg-background p-3 text-left transition-all duration-500 focus-visible:outline-none",
-        run?.status === "running" ? "border-foreground/70 shadow-[0_0_0_5px_rgba(0,0,0,0.06)] animate-pulse"
-          : run?.status === "ok" ? "border-emerald-500/60 shadow-[0_0_0_4px_rgba(16,185,129,0.10)]"
-          : run?.status === "failed" ? "border-red-500/60 shadow-[0_0_0_4px_rgba(239,68,68,0.10)]"
-          : run?.status === "waiting" ? "border-amber-500/70 shadow-[0_0_0_4px_rgba(245,158,11,0.12)]"
-          : run?.status === "pending" ? "border-border opacity-60"
-          : on ? "border-foreground/60 shadow-[0_0_0_4px_rgba(0,0,0,0.05)]"
-          : ready ? "border-border shadow-[0_1px_3px_rgba(0,0,0,0.05)] hover:border-foreground/30"
-          : "border-dashed border-foreground/30 hover:border-foreground/50",
-      )}
-    >
-      <span className="flex items-center gap-2.5">
-        <span className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center">
+    <div className="flex flex-col items-center">
+      <button
+        onClick={onClick}
+        title={summary || undefined}
+        className={cn(
+          "group relative flex w-[248px] max-w-full flex-shrink-0 items-center gap-2.5 rounded-[10px] border bg-background px-2.5 py-2 text-left transition-all duration-300 focus-visible:outline-none",
+          run?.status === "running" ? "border-foreground/70 shadow-[0_0_0_4px_rgba(0,0,0,0.06)] animate-pulse"
+            : run?.status === "ok" ? "border-emerald-500/60 shadow-[0_0_0_3px_rgba(16,185,129,0.10)]"
+            : run?.status === "failed" ? "border-red-500/60 shadow-[0_0_0_3px_rgba(239,68,68,0.10)]"
+            : run?.status === "waiting" ? "border-amber-500/70 shadow-[0_0_0_3px_rgba(245,158,11,0.12)]"
+            : run?.status === "pending" ? "border-border opacity-60"
+            : on ? "border-[#6E7FC4] shadow-[0_0_0_3px_rgba(110,127,196,0.16)]"
+            : ready ? "border-border shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:border-foreground/25"
+            : "border-dashed border-foreground/30 hover:border-foreground/50",
+        )}
+      >
+        <span className="relative flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[8px] border border-border/60 bg-foreground/[0.025]">
           {mark}
           {trigger && (
-            <span className="absolute -left-1.5 -top-1.5 flex h-[15px] w-[15px] items-center justify-center rounded-full bg-foreground text-background ring-2 ring-background">
-              <Zap className="h-[8px] w-[8px]" strokeWidth={2.4} fill="currentColor" />
+            <span className="absolute -left-1.5 -top-1.5 flex h-[14px] w-[14px] items-center justify-center rounded-full bg-foreground text-background ring-2 ring-background">
+              <Zap className="h-[7px] w-[7px]" strokeWidth={2.4} fill="currentColor" />
             </span>
           )}
         </span>
-        <span className={cn("min-w-0 flex-1 truncate text-[13px] font-medium", ready ? "text-foreground" : "text-muted-foreground")}>{title}</span>
-        {run ? (
-          <span className={cn("flex flex-shrink-0 items-center gap-1 text-[11.5px]", RUN_CHIP[run.status].tone)}>
-            {run.status === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
-            {run.status === "ok" && <Check className="h-3 w-3" />}
-            {RUN_CHIP[run.status].text}
-          </span>
-        ) : (
-          <span className={cn("flex-shrink-0 text-[11.5px]", ready ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
-            {ready ? "Ready" : "Needs setup"}
-          </span>
-        )}
-      </span>
-      {rows.length > 0 && (
-        <span className="mt-2.5 block space-y-1 rounded-[10px] bg-foreground/[0.035] px-3 py-2">
-          {rows.map(r => (
-            <span key={r.label} className="flex gap-3 text-[12px] leading-snug">
-              <span className="w-[58px] flex-shrink-0 text-muted-foreground/70">{r.label}</span>
-              <span className="line-clamp-2 min-w-0 flex-1 text-foreground/85">{r.value}</span>
-            </span>
-          ))}
+        <span className="min-w-0 flex-1">
+          <span className={cn("block text-[11px] leading-tight", on ? "text-[#6E7FC4]" : "text-muted-foreground/70")}>{trigger ? "Trigger" : "Action"}</span>
+          <span className={cn("block truncate text-[13px] font-medium leading-snug", ready ? "text-foreground" : "text-muted-foreground")}>{title}</span>
         </span>
-      )}
+        {run ? (
+          <span className={cn("flex flex-shrink-0 items-center", RUN_CHIP[run.status].tone)} title={RUN_CHIP[run.status].text}>
+            {run.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : run.status === "ok" ? <Check className="h-3.5 w-3.5" />
+              : <span className="text-[11px]">{RUN_CHIP[run.status].text}</span>}
+          </span>
+        ) : !ready && (
+          <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500" title="Needs setup" />
+        )}
+      </button>
       {run?.detail && (
-        <span className={cn("mt-2 flex items-center gap-2 text-[12px] leading-snug", run.status === "failed" ? "text-red-600 dark:text-red-400" : "text-foreground/80")}>
+        <span className={cn("mt-1.5 flex max-w-[300px] items-center gap-2 text-[11.5px] leading-snug", run.status === "failed" ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
           <span className="min-w-0 flex-1 line-clamp-2">{run.detail}</span>
           {run.onView && (
             <span role="link" tabIndex={0} onClick={e => { e.stopPropagation(); run.onView?.(); }}
-              className="flex-shrink-0 text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">View</span>
+              className="flex-shrink-0 text-foreground underline-offset-2 hover:underline">View</span>
           )}
         </span>
       )}
-    </button>
+    </div>
   );
 }
 
-/** The dashed line between two cards, with ⊕ to add a step there. */
-function Link({ onAdd }: { onAdd: (a: Action) => void }) {
+/** The handle where a line meets a node. */
+function Handle() {
+  return <span className="h-[7px] w-[7px] flex-shrink-0 rounded-full border border-foreground/30 bg-background" />;
+}
+
+/** The line between two nodes, a handle at each end, with ⊕ to add a step there on hover. */
+function Link({ onAdd }: { onAdd?: (a: Action) => void }) {
   return (
-    <div className="relative flex h-14 w-full flex-shrink-0 justify-center">
-      <span className="h-full border-l border-dashed border-foreground/25" />
-      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <AddStep onAdd={onAdd} variant="link" />
-      </span>
+    <div className="group/link relative flex h-16 w-full flex-shrink-0 flex-col items-center">
+      <span className="-mt-[4px]"><Handle /></span>
+      <span className="w-px flex-1 bg-foreground/20" />
+      <span className="-mb-[4px]"><Handle /></span>
+      {onAdd && (
+        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity focus-within:opacity-100 group-hover/link:opacity-100 has-[[data-state=open]]:opacity-100">
+          <AddStep onAdd={onAdd} variant="link" />
+        </span>
+      )}
     </div>
   );
 }
@@ -376,7 +390,7 @@ export default function AutomationEditor() {
   const triggerTools = flow ? toolsFor(flow.trigger.kind, flow.trigger.config.tools ?? [], tools) : [];
   const tool = triggerTools.length === 1 ? triggerTools[0] : null;
   const firstAgent = flow?.steps.find(s => s.type === "agent") ?? null;
-  const autoName = (firstAgent && agentJob(firstAgent)?.name) || "Custom automation";
+  const autoName = (firstAgent && agentJob(firstAgent)?.name) || "Custom workflow";
   const shownName = name.touched ? name.value : (name.value || autoName);
 
   const allReady = !!flow && !!flow.trigger.kind && flow.steps.length > 0 && flow.steps.every(stepReady)
@@ -589,8 +603,8 @@ export default function AutomationEditor() {
   if (notFound) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-[13px] text-muted-foreground">
-        That automation is gone.
-        <button onClick={() => navigate("/automations")} className="text-foreground underline-offset-2 hover:underline">Back to automations</button>
+        That workflow is gone.
+        <button onClick={() => navigate("/automations")} className="text-foreground underline-offset-2 hover:underline">Back to workflows</button>
       </div>
     );
   }
@@ -616,61 +630,65 @@ export default function AutomationEditor() {
     : { dot: "bg-foreground/25", text: `Off · ${live}` };
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      {/* The bar — where you are, what state it is in, and the four things you do to it. */}
-      {/* Three columns — where you are, the tabs, what you can do — so a long name or a long
-          status can never slide under the tabs. */}
-      <div className="grid h-[52px] flex-shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border/70 px-4">
-        <div className="flex min-w-0 items-center gap-2">
-        <button
-          onClick={() => navigate("/automations")}
-          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <ChevronLeft className="h-3.5 w-3.5" /> Automations
-        </button>
-        <span className="text-muted-foreground/40">/</span>
-        <input
-          value={shownName}
-          onChange={e => { setName({ value: e.target.value, touched: true }); setDirty(true); version.current++; }}
-          aria-label="Name"
-          size={Math.max(12, shownName.length + 1)}
-          className="min-w-0 max-w-[280px] truncate rounded-md bg-transparent px-1.5 py-1 text-[13.5px] font-medium text-foreground transition-colors hover:bg-accent/60 focus:bg-accent/60 focus:outline-none"
-        />
-        <span className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/70 px-2 py-[2px] text-[11.5px] text-muted-foreground">
-          <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} /> {status.text}
-        </span>
+    <div className="flex h-full flex-col bg-muted/30">
+      {/* The bar — where you are, what state it is in, and the verbs, quiet, on the right. */}
+      <div className="flex h-[52px] flex-shrink-0 items-center gap-3 px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <button
+            onClick={() => navigate("/automations")}
+            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Zap className="h-3.5 w-3.5" /> Workflows
+          </button>
+          <span className="text-muted-foreground/40">/</span>
+          <input
+            value={shownName}
+            onChange={e => { setName({ value: e.target.value, touched: true }); setDirty(true); version.current++; }}
+            onFocus={() => tab !== "editor" && setTab("editor")}
+            aria-label="Name"
+            size={Math.max(12, shownName.length + 1)}
+            className="min-w-0 max-w-[280px] truncate rounded-md bg-transparent px-1.5 py-1 text-[13.5px] font-medium text-foreground transition-colors hover:bg-accent/60 focus:bg-accent/60 focus:outline-none"
+          />
+          <span className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-foreground">
+            <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} /> {status.text}
+          </span>
+          {saved?.last_run_at && !saved.draft && (
+            <span className="ml-1 hidden whitespace-nowrap text-[11.5px] text-muted-foreground/60 xl:inline">· Last run {ago(saved.last_run_at)}</span>
+          )}
         </div>
 
-        {saved ? (
-          <div className="flex h-[28px] items-center rounded-lg bg-foreground/[0.05] p-[3px]">
-            {(["editor", "runs", "versions"] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={cn("h-full rounded-[6px] px-3 text-[12.5px] capitalize transition-colors",
-                  tab === t ? "bg-background font-medium text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.08)]" : "text-muted-foreground hover:text-foreground")}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        ) : <span />}
-
-
-        <div className="flex min-w-0 items-center justify-end gap-1.5">
-
-          {saved?.last_run_at && !saved.draft && (
-            <span className="mr-2 whitespace-nowrap text-[12px] text-muted-foreground/70">Last run {ago(saved.last_run_at)}</span>
+        <div className="flex flex-shrink-0 items-center gap-0.5">
+          {saved && (
+            <button onClick={() => void toggle()} disabled={busy !== null} className={BAR_BTN} title={saved.enabled ? "Stop it running" : "Let it run on its trigger"}>
+              {busy === "toggle" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className={cn("h-3.5 w-3.5", saved.enabled && "text-emerald-600 dark:text-emerald-400")} />}
+              {saved.enabled ? "Deactivate" : "Activate"}
+            </button>
           )}
+          {saved?.draft && !dirty && (
+            <button onClick={() => void discard()} disabled={busy !== null} className={BAR_BTN}>
+              <Undo2 className="h-3.5 w-3.5" /> Discard draft
+            </button>
+          )}
+          {saved && (
+            <button onClick={() => setTab(tab === "runs" ? "editor" : "runs")} className={cn(BAR_BTN, tab === "runs" && "bg-accent text-foreground")}>
+              <History className="h-3.5 w-3.5" /> See runs
+            </button>
+          )}
+          {saved && (
+            <button onClick={() => setTab(tab === "versions" ? "editor" : "versions")} className={cn(BAR_BTN, tab === "versions" && "bg-accent text-foreground")}>
+              <Layers className="h-3.5 w-3.5" /> Versions
+            </button>
+          )}
+          {tab === "editor" && !viewing && <AddStep onAdd={a => addAt(flow.steps.length, a)} variant="bar" />}
           {saved && (
             <Popover open={testPicking} onOpenChange={setTestPicking}>
               <PopoverTrigger asChild>
                 <button
                   disabled={busy !== null || dirty || testRun?.status === "running"}
                   title={dirty ? "Save first" : "Run it now on a real trigger"}
-                  className="flex h-8 items-center gap-1.5 rounded-lg border border-border px-3 text-[12.5px] text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                  className={BAR_BTN}
                 >
-                  {testRun?.status === "running" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3 fill-current" />}
+                  {testRun?.status === "running" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                   Test
                 </button>
               </PopoverTrigger>
@@ -696,42 +714,18 @@ export default function AutomationEditor() {
             </Popover>
           )}
           {saved && (
-            <button
-              onClick={() => void save()}
-              disabled={!dirty || !allReady || busy !== null}
-              title={!allReady ? "Finish the dashed steps first" : undefined}
-              className="h-8 rounded-lg border border-border px-3 text-[12.5px] text-foreground transition-colors hover:bg-accent disabled:text-muted-foreground disabled:opacity-60"
-            >
-              {busy === "save" ? "Saving…" : dirty ? "Save" : "Saved"}
+            <button onClick={() => void remove()} aria-label="Delete" title="Delete" className={cn(BAR_BTN, "w-8 justify-center px-0")}>
+              {busy === "delete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             </button>
           )}
           {saved?.draft && !dirty && (
-            <>
-              <button
-                onClick={() => void discard()}
-                disabled={busy !== null}
-                className="h-8 rounded-lg px-3 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-              >
-                Discard
-              </button>
-              <button
-                onClick={() => void publish()}
-                disabled={busy !== null || !allReady}
-                className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3.5 text-[12.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 dark:bg-white dark:text-background"
-              >
-                {busy === "save" && <Loader2 className="h-3 w-3 animate-spin" />}
-                Publish v{(saved.version ?? 1) + 1}
-              </button>
-            </>
-          )}
-          {saved && (
             <button
-              onClick={() => void remove()}
-              aria-label="Delete"
-              title="Delete"
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+              onClick={() => void publish()}
+              disabled={busy !== null || !allReady}
+              className="ml-1.5 flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3.5 text-[12.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 dark:bg-white dark:text-background"
             >
-              {busy === "delete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              {busy === "save" && <Loader2 className="h-3 w-3 animate-spin" />}
+              Publish v{(saved.version ?? 1) + 1}
             </button>
           )}
           {!saved && (
@@ -741,10 +735,10 @@ export default function AutomationEditor() {
                   onClick={trySave}
                   disabled={!allReady || busy !== null}
                   title={allReady ? undefined : "Finish the dashed nodes first"}
-                  className="flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3.5 text-[12.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 dark:bg-white dark:text-background"
+                  className="ml-1.5 flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3.5 text-[12.5px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 dark:bg-white dark:text-background"
                 >
                   {busy === "save" && <Loader2 className="h-3 w-3 animate-spin" />}
-                  {saved ? "Save" : "Create"}
+                  Create
                 </button>
               </PopoverTrigger>
               {/* BEFORE YOU SAVE — what would stop it working. Never a wall: say it, let them go on. */}
@@ -763,25 +757,17 @@ export default function AutomationEditor() {
                     onClick={() => { setIssues(null); void save(); }}
                     className="h-7 rounded-md bg-foreground px-2.5 text-[12.5px] font-medium text-white hover:opacity-90 dark:bg-white dark:text-background"
                   >
-                    {saved ? "Save anyway" : "Create anyway"}
+                    Create anyway
                   </button>
                 </div>
               </PopoverContent>
             </Popover>
           )}
-          {saved && (
-            <label className="ml-1 flex items-center gap-2 border-l border-border/70 pl-3 text-[12.5px] text-muted-foreground">
-              Active
-              {busy === "toggle"
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                : <Switch checked={saved.enabled} onCheckedChange={() => void toggle()} aria-label="Active" />}
-            </label>
-          )}
         </div>
       </div>
 
       {saved && tab === "versions" ? (
-        <div className="min-h-0 flex-1 bg-background">
+        <div className="mx-2 mb-2 min-h-0 flex-1 overflow-y-auto rounded-[14px] border border-border/70 bg-background">
           <AutomationVersions
             automation={saved}
             onView={v => { setViewing(v); setTab("editor"); }}
@@ -789,11 +775,15 @@ export default function AutomationEditor() {
           />
         </div>
       ) : saved && tab === "runs" ? (
-        <div className="min-h-0 flex-1 bg-background"><AutomationRuns automationId={saved.id} /></div>
+        <div className="mx-2 mb-2 min-h-0 flex-1 overflow-y-auto rounded-[14px] border border-border/70 bg-background"><AutomationRuns automationId={saved.id} /></div>
       ) : (
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
         {/* The canvas. */}
-        <div className="relative flex-1 overflow-auto bg-muted/20 bg-[radial-gradient(hsl(var(--foreground)/0.08)_1px,transparent_1px)] [background-size:20px_20px]">
+        <div className="relative flex-1 overflow-auto rounded-[14px] border border-border/70 bg-background bg-[radial-gradient(hsl(var(--foreground)/0.09)_1px,transparent_1px)] [background-size:18px_18px]">
+          {/* Draft: changes not live yet (a new one, or a saved one with an unpublished draft). */}
+          {!viewing && (!saved || saved.draft || dirty) && (
+            <span className="absolute left-3 top-3 z-10 rounded-[6px] bg-amber-100 px-2 py-0.5 text-[12px] font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">Draft</span>
+          )}
           {panelOpen && (
             <button
               onClick={() => showPanel(false)}
@@ -844,7 +834,7 @@ export default function AutomationEditor() {
               title={triggerCardTitle(viewing.flow)} rows={triggerCardRows(viewing.flow, source)} />
             {viewing.flow.steps.map(s => (
               <div key={s.id} className="flex w-full flex-col items-center">
-                <span className="h-10 border-l border-dashed border-foreground/25" />
+                <Link />
                 <FlowCard on={false} ready onClick={() => {}} mark={<StepMark type={s.type} model={s.config.model} />}
                   title={stepCardTitle(s)} rows={stepCardRows(s, viewing.flow)} />
               </div>
@@ -876,7 +866,7 @@ export default function AutomationEditor() {
                 />
               </div>
             ))}
-            <span className="h-8 border-l border-dashed border-foreground/25" />
+            <span className="h-8 border-l border-dashed border-foreground/20" />
             <AddStep onAdd={a => addAt(flow.steps.length, a)} variant="end" />
           </div>
           )}
@@ -888,12 +878,12 @@ export default function AutomationEditor() {
             onClick={() => showPanel(true)}
             title="Open the settings"
             aria-label="Open the settings"
-            className="flex w-10 flex-shrink-0 items-start justify-center border-l border-border/60 bg-background pt-4 text-muted-foreground transition-colors hover:text-foreground"
+            className="flex w-10 flex-shrink-0 items-start justify-center rounded-[14px] border border-border/70 bg-background pt-4 text-muted-foreground transition-colors hover:text-foreground"
           >
             <PanelRightOpen className="h-4 w-4" />
           </button>
         ) : (
-        <div className="w-[380px] flex-shrink-0 overflow-y-auto border-l border-border/60 bg-background px-6 py-6">
+        <div className="w-[400px] flex-shrink-0 overflow-y-auto rounded-[14px] border border-border/70 bg-background px-5 py-5">
           {sel === "trigger" || !selStep ? (
             <TriggerPanel
               flow={flow}

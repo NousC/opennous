@@ -1393,7 +1393,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
               custom sequences. Rendered inside the standard section shell so the title sits like
               every other settings page. */}
           {section === "sequences" && (
-            <SectionShell title="Automations" wide>
+            <SectionShell title="Workflows" wide>
               <AutomationsPanel />
             </SectionShell>
           )}

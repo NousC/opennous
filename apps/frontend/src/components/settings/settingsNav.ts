@@ -75,7 +75,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "repo",            label: "Repo",                  group: "Connections", show: false },
     // Context & signals (GET-882) are the Workspace layer's rows (cloud/settings/navRows, GET-910).
     // Agent — the Workspace layer adds Memory and Skills ahead of Automations.
-    { id: "sequences",       label: "Automations",           group: "Agent", show: selfManagedAgent },
+    { id: "sequences",       label: "Workflows",              group: "Agent", show: selfManagedAgent },
     // Workspace — admins only (GET-430). The Workspace layer's models, changes, spend and adoption
     // rows sit before Billing (off in v1, GET-211).
     // Self-host: what nous.env has configured, AI models, integrations, email (GET-837).

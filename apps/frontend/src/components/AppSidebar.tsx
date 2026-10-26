@@ -19,6 +19,7 @@ import {
   BookOpen,
   ArrowUpRight,
   Users,
+  Zap,
 } from "lucide-react";
 import { usePref } from "@/hooks/usePref";
 import { usePlan } from "@/hooks/usePlan";
@@ -76,9 +77,10 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
   return (items ?? []).filter((i) => !i.tiers || i.tiers.includes(tier));
 }
 
-// The footer's power-user surfaces on the Workspace plan. There is no Workspace group any more and
-// no Automations row on either plan (GET-864). /automations still opens
-// for old links.
+// Automations are back in the rail on every plan that has them, right under Insights (GTM insights
+// on the API plan). GET-864 had taken the row out when RevBoxes arrived; RevBox jobs stay out of the
+// Automations list (GET-868), so the two never show the same thing.
+const AUTOMATIONS_ITEM: NavItem = { title: "Workflows", url: "/automations", icon: Zap };
 // Workspace plan (GET-872): Activity sits in the footer; Graph, Reporting, Forecast and Insights in a
 // collapsible Workspace group under the Workspace layer's groups.
 const footerNavItemsWorkspace: NavItem[] = [
@@ -161,7 +163,8 @@ export function AppSidebar() {
 
   // Custom (teams) plan gets the full in-app nav; everyone else is on the Core (plugin)
   // plan — Install + Workflows instead of Home + Chat, and no in-app agent.
-  const { plan, selfHosted } = usePlan();
+  const { plan, selfHosted, can } = usePlan();
+  const automationsRow = can("automations") ? [AUTOMATIONS_ITEM] : [];
   // Three plans now (GET-480): the API rail is its own shape, Workspace and Custom share
   // the full one.
   const api = isApiTier(plan);
@@ -170,14 +173,15 @@ export function AppSidebar() {
   const tier = planTier(plan);
   const showRecents = tier === "custom";
   // The API plan's rail, then the Workspace layer's rows for it (GTM insights, GET-973).
-  const workNavItems = api ? [...workNavItemsApi, ...(cloud.nav?.api ?? [])] : workNavItemsCustom;
+  const workNavItems = api ? [...workNavItemsApi, ...(cloud.nav?.api ?? []), ...automationsRow] : workNavItemsCustom;
   // Main rail on the workspace plans: Home, Accounts, then the Workspace layer's Tasks and Insights.
   const mainItems = api ? workNavItems : [...workNavItems, ...cloudRows(cloud.nav?.main, tier)];
   // Workspace (GET-665): on the workspace plan Reporting (the Workspace layer's) leads it; the API
   // plan has no Activity row because Activity is its Home.
   // Workspace footer: Activity and Graph, then Cloud's Reporting and Forecast (they sat in the old Workspace group).
   const footerItemsWorkspace = api ? [] : footerNavItemsWorkspace;
-  const workspaceItems = api ? [] : [...workspaceGroupItems, ...cloudRows(cloud.nav?.workspace, tier)];
+  // Workspace group: Graph, then Cloud's Insights, then Automations under it.
+  const workspaceItems = api ? [] : [...workspaceGroupItems, ...cloudRows(cloud.nav?.workspace, tier), ...automationsRow];
   const viewNavItems = cloudRows(cloud.nav?.views, tier).filter((v): v is ViewItem => !!v.swatch && !!v.match);
   const showViews = !api && viewNavItems.length > 0;
   // Every plan gets the Workspace section (Activity, Automations, Graph), collapsible; the API plan

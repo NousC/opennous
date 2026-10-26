@@ -197,7 +197,7 @@ export const TOOL_VERBS: Record<string, string> = {
   learn_preference: "Learning how you work",
   watch_account: "Setting a watch",
   run_play: "Starting an autopilot play",
-  schedule_automation: "Scheduling an automation",
+  schedule_automation: "Scheduling a workflow",
   // Drafts the operator approves
   propose_linkedin_message: "Drafting a message for you to approve",
   propose_linkedin_invite: "Drafting a connection request",
@@ -250,7 +250,7 @@ export const DONE_VERBS: Record<string, string> = {
   save_note: "Saved a note",
   watch_account: "Set a watch",
   run_play: "Started an autopilot play",
-  schedule_automation: "Scheduled an automation",
+  schedule_automation: "Scheduled a workflow",
   propose_linkedin_message: "Drafted a message",
   propose_linkedin_invite: "Drafted a connection request",
   propose_email: "Drafted an email",

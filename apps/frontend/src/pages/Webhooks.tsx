@@ -190,7 +190,7 @@ const WEBHOOK_GUIDES: Record<string, WebhookGuide> = {
     modeNote: "Set up automatically when you connected: we created an HTTP Webhook destination called OpenNous in your PostHog project, signed with a secret only this workspace knows. It sends your signup event and your key events as they happen. Change which events in Integrations → PostHog → Edit events. Usage is also read once a day, so nothing is lost if a delivery is missed.",
     events: [
       { source_event: "your signup event (signed_up)", nous_activity: "signed_up, the person and their account" },
-      { source_event: "your key events", nous_activity: "product event (feature adopted, automations)" },
+      { source_event: "your key events", nous_activity: "product event (feature adopted, workflows)" },
     ],
   },
 

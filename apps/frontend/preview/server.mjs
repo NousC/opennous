@@ -972,7 +972,7 @@ function previewAutomationRuns(q) {
   const inWindow = PREVIEW_RUN_ROWS.filter(([id, mins]) => (!(days > 0) || mins <= days * 1440) && (!routines.length || routines.includes(id)));
   const name = (id) => PREVIEW_AUTOMATIONS.find((a) => a.id === id);
   const runs = inWindow.filter(([, , st]) => !statuses.length || statuses.includes(st)).map(([id, mins, status, title], i) => ({
-    id: `run-${id}-${i}`, routine_id: id, when: name(id)?.when ?? null, automation: name(id)?.name ?? "Deleted automation", artifact: null,
+    id: `run-${id}-${i}`, routine_id: id, when: name(id)?.when ?? null, automation: name(id)?.name ?? "Deleted workflow", artifact: null,
     status, started_at: agoIso(mins), error: status === "error" ? "The model timed out before it finished." : null,
     document_id: title ? `doc-${id}-${i}` : null, document_title: title, version: name(id)?.version ?? 1,
   }));

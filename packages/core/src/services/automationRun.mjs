@@ -2417,7 +2417,7 @@ export async function getAutomationRun(supabase, workspaceId, runId) {
   const steps = log.length ? log : (run.document_id ? [{ step: 1, name: 'Agent · Write-up', status: 'ok', detail: 'Wrote it', document_id: run.document_id }] : []);
   return {
     id: run.id, status: run.status, error: run.error ?? null, started_at: run.started_at,
-    automation: { id: run.routine_id, name: a?.name ?? 'Deleted automation', trigger: a?.trigger_kind ?? null },
+    automation: { id: run.routine_id, name: a?.name ?? 'Deleted workflow', trigger: a?.trigger_kind ?? null },
     steps: steps.map(x => ({ ...x, output: x.document_id ? documentOutput(byId.get(x.document_id)) : null })),
     waiting: run.status === 'awaiting_approval' ? (run.state?.preview ?? null) : null,
     trigger: run.state?.trigger ?? null, test: !!run.state?.test,

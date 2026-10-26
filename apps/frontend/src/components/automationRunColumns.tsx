@@ -28,8 +28,8 @@ export function runColumns(navigate: (to: string) => void, opts: { automation?: 
   ];
   if (opts.version) cols.push({ key: "version", header: "Version", width: "72px", cell: (r) => <span className="text-xs text-muted-foreground">{r.version ? `v${r.version}` : "—"}</span> });
   if (opts.automation) cols.push({
-    key: "automation", header: "Automation", width: "26%",
-    cell: (r) => r.routine_id && r.automation !== "Deleted automation"
+    key: "automation", header: "Workflow", width: "26%",
+    cell: (r) => r.routine_id && r.automation !== "Deleted workflow"
       ? <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/automations/${r.routine_id}`); }} className="block max-w-full truncate text-left hover:underline">{r.automation}</button>
       : <span className="block truncate text-muted-foreground">{r.automation}</span>,
   });

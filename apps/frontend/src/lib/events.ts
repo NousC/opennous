@@ -104,7 +104,7 @@ export function eventSummary(e: NousEvent): string {
     return to == null ? "" : from == null ? `Scored ${to}` : `${from} → ${to}`;
   }
   if (e.type === "people.added") { const n = num(d.count); return n == null ? "" : `${n} ${n === 1 ? "person" : "people"} added`; }
-  if (e.type === "automation.approval_requested") return str((d.automation as { name?: unknown } | null)?.name) ?? "An automation is waiting";
+  if (e.type === "automation.approval_requested") return str((d.automation as { name?: unknown } | null)?.name) ?? "A workflow is waiting";
   return "";
 }
 

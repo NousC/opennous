@@ -96,6 +96,6 @@ export async function creditsByAutomation(supabase, workspaceId, { days = 30 } =
     : { data: [] };
   const names = new Map((autos ?? []).map(a => [a.id, a.name]));
   return [...per.entries()]
-    .map(([routine_id, e]) => ({ routine_id, name: names.get(routine_id) ?? 'Deleted automation', runs: e.runs, credits: costToCredits(e.usd) }))
+    .map(([routine_id, e]) => ({ routine_id, name: names.get(routine_id) ?? 'Deleted workflow', runs: e.runs, credits: costToCredits(e.usd) }))
     .sort((a, b) => b.credits - a.credits);
 }

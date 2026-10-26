@@ -105,8 +105,8 @@ function CreditsChart({ daily, since }: { daily: DayCredits[] | null; since?: st
       <p className="mb-2 min-h-[18px] text-[12px] tabular-nums text-muted-foreground">
         {shown ? (<>
           <span className="font-medium text-foreground">{day(shown.day)} · {num(val(shown))} credits</span>
-          {view === "all" && <> · {num(shown.reads ?? 0)} conversations · {num(shown.ai ?? 0)} AI work{shown.automations ? ` (${num(shown.automations)} automations)` : ""}</>}
-          {view === "ai" && shown.automations ? <> · {num(shown.automations)} from automations</> : null}
+          {view === "all" && <> · {num(shown.reads ?? 0)} conversations · {num(shown.ai ?? 0)} AI work{shown.automations ? ` (${num(shown.automations)} workflows)` : ""}</>}
+          {view === "ai" && shown.automations ? <> · {num(shown.automations)} from workflows</> : null}
         </>) : <>{num(total)} credits {since ? `since ${day(since)}` : "in 30 days"}</>}
       </p>
       {max === 0 ? (

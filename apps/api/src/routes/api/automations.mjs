@@ -237,7 +237,7 @@ export const rowOut = (r) => ({
 
 export const NEEDS_MIGRATION = {
   error: 'needs_migration',
-  message: 'Multi-step automations need a database update that has not run yet.',
+  message: 'Multi-step workflows need a database update that has not run yet.',
 };
 
 /**
@@ -309,8 +309,8 @@ export function automationLimitBody(planId, limit) {
   return {
     error: 'automation_limit_reached', limit, current_plan: planName(planId),
     message: limit === 0
-      ? 'Automations need an active plan.'
-      : `Your plan includes ${limit} automation${limit === 1 ? '' : 's'}. Delete one, or move to Custom for unlimited.`,
+      ? 'Workflows need an active plan.'
+      : `Your plan includes ${limit} workflow${limit === 1 ? '' : 's'}. Delete one, or move to Custom for unlimited.`,
     upgrade_url: '/settings?section=billing',
   };
 }
@@ -797,7 +797,7 @@ export async function listAutomationRuns(supabase, workspaceId, { days = null, r
       id: r.id,
       routine_id: r.routine_id ?? null,
       when: names.get(r.routine_id)?.when ?? null,
-      automation: names.get(r.routine_id)?.name ?? 'Deleted automation',
+      automation: names.get(r.routine_id)?.name ?? 'Deleted workflow',
       artifact: names.get(r.routine_id)?.artifact ?? null,
       status: r.status,
       started_at: r.started_at,

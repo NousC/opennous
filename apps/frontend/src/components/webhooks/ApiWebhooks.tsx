@@ -247,7 +247,7 @@ function EndpointRow({
           <ListText
             titleClassName="sm:flex-shrink-0 sm:max-w-[60%]"
             title={ep.name}
-            sub={<span className="max-sm:hidden">{managed ? "From Automations · " : ""}{isGithub || isSlack || isClaude ? (isSlack ? `Slack · ${target}` : target) : shortUrl(target)}</span>}
+            sub={<span className="max-sm:hidden">{managed ? "From Workflows · " : ""}{isGithub || isSlack || isClaude ? (isSlack ? `Slack · ${target}` : target) : shortUrl(target)}</span>}
           />
         </button>
         {health && (
@@ -261,7 +261,7 @@ function EndpointRow({
         </span>
         <span className="flex flex-shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
           <Switch aria-label={`${ep.name} enabled`} className={smallSwitchCls} checked={ep.active} onCheckedChange={onToggle} disabled={managed}
-            title={managed ? "Turned on and off in Settings → Automations" : undefined} />
+            title={managed ? "Turned on and off in Settings → Workflows" : undefined} />
         </span>
         <span className="flex flex-shrink-0 items-center" onClick={(e) => e.stopPropagation()}>
           <DropdownMenu>
