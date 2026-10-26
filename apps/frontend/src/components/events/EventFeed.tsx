@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { ListEmpty, listRowClass } from "@/components/ui/list";
 import { cn } from "@/lib/utils";
-import { TONE_DOT, eventDay, eventLabel, eventSummary, eventTone, eventsUrl, filterLabel, mergeNewer, needsSubscription, type EventsPage, type NousEvent } from "@/lib/events";
+import { TONE_DOT, eventDay, eventLabel, eventSummary, eventTone, eventsUrl, filterLabel, laterNote, mergeNewer, needsSubscription, type EventsPage, type NousEvent } from "@/lib/events";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 const PAGE = 25;
@@ -19,6 +19,8 @@ function EventRow({ e, open, onToggle, showAccount, copied, onCopy }: {
   copied: boolean; onCopy: (v: string) => void;
 }) {
   const summary = eventSummary(e);
+  // An event is history and stays as it happened; what became of its claim since is a note behind it.
+  const later = laterNote(e.later);
   const json = open ? JSON.stringify(e, null, 2) : "";
   const panel = `event-${e.id}`;
   return (
@@ -28,7 +30,8 @@ function EventRow({ e, open, onToggle, showAccount, copied, onCopy }: {
           className={cn(listRowClass, "min-w-0 flex-1 gap-2", open && "hover:bg-transparent")}>
           <span aria-hidden className={cn("h-1.5 w-1.5 flex-shrink-0 rounded-full", TONE_DOT[eventTone(e.type)])} />
           <span className="flex-shrink-0 text-[13px] text-foreground">{eventLabel(e.type)}</span>
-          {summary && <span className="min-w-0 truncate text-[12.5px] text-muted-foreground/80">{summary}</span>}
+          {summary && <span className={cn("min-w-0 truncate text-[12.5px] text-muted-foreground/80", later && "flex-shrink text-muted-foreground/60")}>{summary}</span>}
+          {later && <span title={e.later?.now?.text ?? e.later?.why ?? undefined} className="max-w-[45%] flex-shrink-0 truncate rounded-md bg-hover px-1.5 py-0.5 text-[12px] text-ink-2 max-sm:hidden">{later}</span>}
         </button>
         {showAccount && e.account?.name && (
           <Link to={`/accounts/${e.account.entity_id}`}

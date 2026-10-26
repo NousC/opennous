@@ -3,7 +3,9 @@
 // envelope a webhook receives (services/events.mjs), with the same id; the feed shows it through
 // feedView, which leaves out what is private to one member.
 
-/** Kept this long, like Stripe's events. */
+/** How recent an event must be to be logged when it is first emitted: an import of old history must
+ *  not land on top of the feed as news. Logged events are kept for good (GET-1032); pruneEventLog is
+ *  no longer scheduled. */
 export const EVENT_LOG_RETENTION_DAYS = 30;
 const DAY_MS = 86_400_000;
 export const EVENTS_PAGE_MAX = 100;
@@ -98,19 +100,25 @@ export async function listEvents(supabase, workspaceId, { type = null, entityId 
   if (error) throw error;
   const rows = data ?? [];
   const page = rows.slice(0, n).map(r => r.payload);
-  const retired = await retiredSignalEvents(supabase, workspaceId, page);
-  return { events: page.filter(e => !retired.has(e?.id)).map(feedView), has_more: rows.length > n };
+  const later = await laterOfSignalEvents(supabase, workspaceId, page);
+  return { events: page.map(e => withLater(feedView(e), later.get(e?.id))), has_more: rows.length > n };
 }
 
+/** The event with what became of its claim, when something did. Never changes the stored payload. */
+const withLater = (e, later) => (later ? { ...e, later } : e);
+
 /**
- * The signal events whose claim is no longer current (GET-1032). A signal is written once, when its
- * claim is filed; a claim later retired, replaced or removed ("the CEO, name not yet known" once the
- * CEO is on file) leaves its event on the feed as if still true. The feed reads each one against its
- * claim instead: one indexed lookup per page. What a webhook was sent stays as sent. A failed lookup
- * hides nothing. Returns the event ids to leave out.
+ * What became of each signal's claim since the event was sent (GET-1032). An event is history: it
+ * stays on the feed as it happened, and a claim later replaced, settled or corrected adds a note
+ * behind it instead of hiding it ("the CEO, name not yet known" → now: Andrew is the CEO). What a
+ * webhook was sent stays as sent. One claims lookup per page (two when something replaced them); a
+ * failed lookup adds no notes. Returns event id → { status, why, now }, where status is replaced
+ * (a newer claim took its place), corrected (read again in context, GET-1034), settled (no longer
+ * holds, nothing newer) or removed (the claim is gone), and `now` is the newer claim's chip and
+ * sentence, when there is one.
  */
-export async function retiredSignalEvents(supabase, workspaceId, events) {
-  const out = new Set();
+export async function laterOfSignalEvents(supabase, workspaceId, events) {
+  const out = new Map();
   try {
     // account.expansion_requested names its signal row, not its claim.
     const viaSignal = events.filter(e => e?.type === 'account.expansion_requested' && e.data?.signal_id);
@@ -133,14 +141,32 @@ export async function retiredSignalEvents(supabase, workspaceId, events) {
     const keyed = events.map(e => [e, keyOf(e)]).filter(([, k]) => k);
     if (!keyed.length) return out;
     const props = [...new Set(keyed.map(([, k]) => k.split('|')[1]))];
-    const { data, error } = await supabase.from('claims').select('entity_id, property, invalid_at')
+    const { data, error } = await supabase.from('claims').select('entity_id, property, invalid_at, value')
       .eq('workspace_id', workspaceId).in('property', props);
     if (error) throw error;
-    const current = new Set((data ?? []).filter(c => !c.invalid_at).map(c => `${c.entity_id}|${c.property}`));
-    for (const [e, k] of keyed) if (!current.has(k)) out.add(e.id);
+    const byKey = new Map((data ?? []).map(c => [`${c.entity_id}|${c.property}`, c]));
+    const nextIds = [...new Set((data ?? []).filter(c => c.invalid_at).map(c => c.value?.metadata?.superseded_by).filter(Boolean))];
+    const next = new Map();
+    if (nextIds.length) {
+      const { data: rows, error: e2 } = await supabase.from('claims').select('id, value').eq('workspace_id', workspaceId).in('id', nextIds);
+      if (e2) throw e2;
+      for (const r of rows ?? []) next.set(r.id, r.value ?? {});
+    }
+    for (const [e, k] of keyed) {
+      const c = byKey.get(k);
+      if (!c) { out.set(e.id, { status: 'removed', why: null, now: null }); continue; }
+      if (!c.invalid_at) continue;
+      const meta = c.value?.metadata ?? {};
+      const newer = meta.superseded_by ? next.get(meta.superseded_by) : null;
+      const status = meta.superseded_reason === 'misread' ? 'corrected' : newer ? 'replaced' : 'settled';
+      out.set(e.id, {
+        status, why: meta.superseded_why ?? null,
+        now: newer ? { label: newer.label ?? null, text: newer.content ?? null } : null,
+      });
+    }
   } catch (err) {
-    console.warn('[event_log] claim check failed, showing every event:', err?.message ?? err);
-    return new Set();
+    console.warn('[event_log] claim check failed, no notes added:', err?.message ?? err);
+    return new Map();
   }
   return out;
 }

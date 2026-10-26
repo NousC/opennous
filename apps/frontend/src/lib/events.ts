@@ -12,8 +12,22 @@ export type NousEvent = {
   people?: { entity_id: string; name?: string | null; title?: string | null }[];
   deal?: { name?: string | null; stage?: string | null } | null;
   data?: Record<string, unknown>;
+  /** What became of the signal's claim since (GET-1032): on the feed only, never in a webhook. */
+  later?: EventLater | null;
   [k: string]: unknown;
 };
+
+export type EventLater = { status: "replaced" | "corrected" | "settled" | "removed"; why: string | null; now: { label: string | null; text: string | null } | null };
+
+/** The note behind an event whose claim moved on: "Now: …", "Corrected: …", "Settled: …". Pure. */
+export function laterNote(l: EventLater | null | undefined): string | null {
+  if (!l) return null;
+  const now = l.now?.label ?? l.now?.text ?? null;
+  if (l.status === "removed") return "No longer on file";
+  if (l.status === "corrected") return now ? `Corrected: ${now}` : `Corrected${l.why ? `: ${l.why}` : ""}`;
+  if (l.status === "replaced") return `Now: ${now ?? l.why ?? "updated"}`;
+  return `Settled${l.why ? `: ${l.why}` : ""}`;
+}
 
 export type EventsPage = { data: NousEvent[]; has_more: boolean; next_starting_after: string | null };
 
@@ -161,7 +175,7 @@ export const EVENT_FILTER_GROUPS: { label: string; family: string; types: string
 // People added is not on the feed (GET-1014): adding people is plumbing, not news. It is still an
 // event a webhook can subscribe to, so its label and summary stay.
 
-/** The date range beside the type filter. The log keeps 30 days, so that is the widest. */
+/** The date range beside the type filter. Events are kept for good (GET-1032). */
 export const EVENT_RANGES: { id: string; label: string; days: number | null }[] = [
   { id: "any", label: "Any time", days: null },
   { id: "today", label: "Today", days: 0 },

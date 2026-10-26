@@ -67,7 +67,7 @@ eventsV2Router.get('/', async (req, res) => {
     const supabase = getSupabaseClient();
     const personal = await getPersonalEntityIds(supabase, req.workspaceId);
     const page = await listEvents(supabase, req.workspaceId, { ...parsed.filters, excludeEntityIds: [...personal] });
-    if (page.unknown_cursor) return res.status(400).json({ error: 'invalid_cursor', message: 'starting_after is not an event in this workspace, or it is older than 30 days.' });
+    if (page.unknown_cursor) return res.status(400).json({ error: 'invalid_cursor', message: 'starting_after is not an event in this workspace.' });
     const last = page.events.at(-1);
     return res.json({
       object: 'list',

@@ -1,7 +1,7 @@
 // The event log (GET-939): a page of the feed, its cursor, and an unknown cursor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listEvents, feedView, feedHiddenTypes, retiredSignalEvents } from '../dist/db/eventLog.mjs';
+import { listEvents, feedView, feedHiddenTypes, laterOfSignalEvents } from '../dist/db/eventLog.mjs';
 
 // Records every filter the read applies; answers with the fixture rows for the table.
 function fakeDb(rows, cursorRow = null) {
@@ -101,7 +101,7 @@ test('a page is shown through the feed view', async () => {
   assert.deepEqual(page.events[0].data, { thread_id: 't' });
 });
 
-// GET-1032: a signal follows its claim. One answer per table, as the read asks for it.
+// GET-1032: a signal stays on the feed as it happened; what became of its claim is a note behind it.
 function tablesDb(byTable, fail = null) {
   return {
     from(table) {
@@ -117,25 +117,32 @@ function tablesDb(byTable, fail = null) {
 }
 const sig = (id, prop, type = 'signal.stakeholder_identified') => ({ id, type, data: { entity_id: 'acc', claim_property: prop } });
 
-test('a signal whose claim was retired, or is gone, leaves the feed; a current one stays', async () => {
+test('a current claim adds nothing; a replaced, corrected, settled or removed one adds its note', async () => {
   const db = tablesDb({ claims: [
-    { entity_id: 'acc', property: 'note.a', invalid_at: null },
-    { entity_id: 'acc', property: 'note.b', invalid_at: '2026-10-25T00:00:00Z' },
+    { id: 'c1', entity_id: 'acc', property: 'note.a', invalid_at: null, value: {} },
+    { id: 'c2', entity_id: 'acc', property: 'note.b', invalid_at: '2026-10-25T00:00:00Z', value: { label: 'Andrew is the CEO', content: 'Andrew Lemoine is the CEO.', metadata: { superseded_by: 'c2', superseded_reason: 'updated', superseded_why: 'CEO now on file' } } },
+    { id: 'c3', entity_id: 'acc', property: 'note.d', invalid_at: '2026-10-25T00:00:00Z', value: { metadata: { superseded_by: null, superseded_reason: 'misread', superseded_why: 'a general view about tools' } } },
+    { id: 'c4', entity_id: 'acc', property: 'note.e', invalid_at: '2026-10-25T00:00:00Z', value: { metadata: { superseded_reason: 'resolved', superseded_why: 'access works now' } } },
   ] });
-  const out = await retiredSignalEvents(db, 'ws', [sig('e1', 'note.a'), sig('e2', 'note.b'), sig('e3', 'note.c'), { id: 'e4', type: 'deal.won', data: {} }]);
-  assert.deepEqual([...out].sort(), ['e2', 'e3']);
+  const out = await laterOfSignalEvents(db, 'ws', [sig('e1', 'note.a'), sig('e2', 'note.b'), sig('e3', 'note.c'), sig('e4', 'note.d'), sig('e5', 'note.e'), { id: 'e6', type: 'deal.won', data: {} }]);
+  assert.equal(out.has('e1'), false);
+  assert.deepEqual(out.get('e2'), { status: 'replaced', why: 'CEO now on file', now: { label: 'Andrew is the CEO', text: 'Andrew Lemoine is the CEO.' } });
+  assert.equal(out.get('e3').status, 'removed');
+  assert.equal(out.get('e4').status, 'corrected');
+  assert.deepEqual(out.get('e5'), { status: 'settled', why: 'access works now', now: null });
+  assert.equal(out.has('e6'), false);
 });
 
 test('an expansion request follows the claim behind its signal row', async () => {
   const db = tablesDb({
     account_signals: [{ id: 's1', entity_id: 'acc', claim_property: 'note.x' }],
-    claims: [{ entity_id: 'acc', property: 'note.x', invalid_at: '2026-10-25T00:00:00Z' }],
+    claims: [{ entity_id: 'acc', property: 'note.x', invalid_at: '2026-10-25T00:00:00Z', value: { metadata: { superseded_reason: 'resolved' } } }],
   });
-  const out = await retiredSignalEvents(db, 'ws', [{ id: 'e9', type: 'account.expansion_requested', data: { signal_id: 's1' } }]);
-  assert.deepEqual([...out], ['e9']);
+  const out = await laterOfSignalEvents(db, 'ws', [{ id: 'e9', type: 'account.expansion_requested', data: { signal_id: 's1' } }]);
+  assert.equal(out.get('e9').status, 'settled');
 });
 
-test('a failed claim lookup hides nothing', async () => {
-  const out = await retiredSignalEvents(tablesDb({}, 'claims'), 'ws', [sig('e1', 'note.a')]);
+test('a failed claim lookup adds no notes', async () => {
+  const out = await laterOfSignalEvents(tablesDb({}, 'claims'), 'ws', [sig('e1', 'note.a')]);
   assert.equal(out.size, 0);
 });
