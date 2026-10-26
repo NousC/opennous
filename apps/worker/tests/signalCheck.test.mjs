@@ -133,3 +133,9 @@ test('a chip that would be cut, or reads "X vs Y", is refused and the old chip k
     [{ n: 1, verdict: 'rewrite', label: 'Adoption friction: trust as people problem' }]);
   assert.equal(a.label, 'Old chip');
 });
+
+test('a chip of exactly 40 characters reads as cut', async () => {
+  const { goodChip } = await import('../src/signals/signalCheck.mjs');
+  assert.equal(goodChip('Conditional pricing acceptance pending p'), false);
+  assert.equal(goodChip('Conditional pricing acceptance'), true);
+});

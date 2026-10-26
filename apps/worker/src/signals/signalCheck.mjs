@@ -93,7 +93,7 @@ ${lines}
 
 ${READ_IN_CONTEXT}
 
-Categories you may move a signal to: ${CLAIM_CATEGORY_KEYS.join(', ')}. A competitor does the job WE sell. A chip is 2–5 words and at most 40 characters, that a colleague who was not there understands on its own, sentence case, never a fragment of their words, a person's name, or "X vs Y". For competitor, tech_stack, budget and authority the chip is built from the tags, so leave "label" out for those.
+Categories you may move a signal to: ${CLAIM_CATEGORY_KEYS.join(', ')}. A competitor does the job WE sell. A chip is 2–5 words and under 40 characters, that a colleague who was not there understands on its own, sentence case, never a fragment of their words, a person's name, or "X vs Y". For competitor, tech_stack, budget and authority the chip is built from the tags, so leave "label" out for those.
 Moving a signal needs the tags of its new category: competitor → "entity" and "stance" (evaluating, incumbent, past_failure, mentioned); tech_stack → "tool"; expansion_signal → "product" and "stance" (asked, considering, declined); objection → "status" (open, resolved, addressed) and "hardness" (hard, soft); blocker → "status" (open, resolved); authority → "role" (economic_buyer, decision_maker, champion, blocker, technical) when it is stated; risk_signal → "severity" (stated_churn, at_risk, friction).
 
 For each signal decide:
@@ -114,7 +114,8 @@ const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
  *  chip kept. Pure. */
 export function goodChip(label) {
   const t = str(label);
-  if (!t || t.length > 40) return false;
+  // 40 is where the first re-check cut chips off, so a chip that long reads as cut too.
+  if (!t || t.length >= 40) return false;
   const words = t.split(/\s+/).length;
   return words >= 1 && words <= 5 && !/\bvs\.?\b|\bversus\b/i.test(t);
 }
