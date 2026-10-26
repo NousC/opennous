@@ -64,8 +64,9 @@ webhooksV2Router.get('/', async (req, res) => {
 });
 
 // Body: { name?, events, url } or { name?, events, destination: { type: 'url', url } |
-// { type: 'github', repo: 'owner/name', token } }. A GitHub destination sends each event as a
-// repository_dispatch (event_type nous.<event>) to that repo, so its Actions run on it (GET-670).
+// { type: 'github', repo: 'owner/name', token } | { type: 'claude', url: <Fire URL>, token } }. A GitHub
+// destination sends each event as a repository_dispatch (event_type nous.<event>) to that repo, so its
+// Actions run on it (GET-670); a Claude one fires that scheduled task with the event (GET-1035).
 webhooksV2Router.post('/', async (req, res) => {
   const { name, events } = req.body || {};
   let destination;
@@ -78,8 +79,8 @@ webhooksV2Router.post('/', async (req, res) => {
     const { subscription, secret } = await createTrigger(getSupabaseClient(), req.workspaceId, {
       name: name || fallbackName, destination, events,
     });
-    // The signing secret only means something to a URL receiver; GitHub authenticates by token.
-    res.status(201).json({ webhook: shape(subscription), ...(subscription.destination_type === 'github' ? {} : { secret }) });
+    // The signing secret only means something to a URL receiver; GitHub and a Claude task authenticate by token.
+    res.status(201).json({ webhook: shape(subscription), ...(['github', 'claude'].includes(subscription.destination_type) ? {} : { secret }) });
   } catch (err) {
     if (err?.message && !/failed to create/.test(err.message)) return badRequest(res, err);
     console.error('[POST /v2/webhooks]', err);

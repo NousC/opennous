@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { slackMessage } from '../services/eventText.mjs';
+import { slackMessage, claudeFireText } from '../services/eventText.mjs';
 
 // Webhook delivery log (GET-624). One row per HTTP attempt Nous makes against a customer's
 // outbound webhook (a trigger_subscriptions row), retries included, so the Webhooks page can
@@ -277,6 +277,64 @@ export async function sendSlackMessage(p: SlackSendParams): Promise<SendResult> 
   }
 }
 
+// ── The Claude scheduled task fire (GET-1035) ───────────────────────────────
+//
+// A Claude scheduled task with an API trigger: POST its Fire URL with the task's own token and the
+// event as `text`. Claude answers 200 with the run's session once it has started. 401 (token revoked
+// or not this task's), 403 (no access), 404 (task gone) and 400 (task paused, or the text refused)
+// do not get better by retrying; 429 (30 fires an hour per task) and 5xx do.
+
+/** A task's Fire URL, as the API trigger panel shows it. */
+export const CLAUDE_FIRE_URL_RE = /^https:\/\/api\.anthropic\.com\/v1\/claude_code\/routines\/trig_[A-Za-z0-9]+\/fire$/;
+
+export interface ClaudeFireParams {
+  url: string;
+  token: string;
+  eventType: string;
+  payload: Record<string, unknown> | null | undefined;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+/** Fire one Claude scheduled task with one event. Never throws; the same result shape as a URL send. */
+export async function sendClaudeFire(p: ClaudeFireParams): Promise<SendResult> {
+  const doFetch = p.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), p.timeoutMs ?? DELIVERY_TIMEOUT_MS);
+  const started = Date.now();
+  try {
+    const res = await doFetch(p.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${p.token}`,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'experimental-cc-routine-2026-04-01',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Nous-Triggers/1.0',
+      },
+      body: JSON.stringify({ text: claudeFireText(p.eventType, (p.payload ?? {}) as Record<string, unknown>) }),
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    const duration_ms = Date.now() - started;
+    discardBody(res);
+    if (res.status >= 200 && res.status < 300) return { ok: true, status_code: res.status, error: null, duration_ms, permanent: false };
+    const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
+    const hint = res.status === 401 ? ' (token revoked or not this task\'s)' : res.status === 404 ? ' (task not found)'
+      : res.status === 400 ? ' (task paused, or the event was refused)' : res.status === 429 ? ' (task fire limit)' : '';
+    return { ok: false, status_code: res.status, error: (statusReason(res.status, res.statusText) + hint).slice(0, DELIVERY_REASON_MAX), duration_ms, permanent };
+  } catch (err) {
+    const e = err as { name?: string; message?: string };
+    return {
+      ok: false, status_code: null,
+      error: e?.name === 'AbortError' ? 'timeout' : String(e?.message ?? 'network_error').slice(0, DELIVERY_ERROR_MAX),
+      duration_ms: Date.now() - started, permanent: false,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ── One send for every path ─────────────────────────────────────────────────
 
 /** The subscription columns a send needs. github_token_enc is read here and nowhere else. */
@@ -294,7 +352,8 @@ export interface SendableSubscription {
 /**
  * Deliver one event to one subscription, whatever its destination. The worker's drain, Resend and
  * the test send all come through here, so a GitHub webhook behaves exactly like a URL one.
- * `decryptToken` is the caller's (API or worker) decrypt for github_token_enc; core holds no key.
+ * `decryptToken` is the caller's (API or worker) decrypt for github_token_enc (a GitHub token, or a
+ * Claude task's token); core holds no key.
  */
 export async function deliverToSubscription(
   sub: SendableSubscription,
@@ -314,6 +373,14 @@ export async function deliverToSubscription(
     });
   }
   if (!sub.url) return { ok: false, status_code: null, error: 'webhook has no URL', duration_ms: 0, permanent: true };
+  if (sub.destination_type === 'claude') {
+    // The task's token is kept in github_token_enc, the destination's one encrypted credential.
+    let token: string | null = null;
+    try { token = sub.github_token_enc && p.decryptToken ? p.decryptToken(sub.github_token_enc) : null; } catch { token = null; }
+    if (token === sub.github_token_enc) token = null;
+    if (!token) return { ok: false, status_code: null, error: 'Claude task token missing or unreadable', duration_ms: 0, permanent: true };
+    return sendClaudeFire({ url: sub.url, token, eventType: p.eventType, payload: p.payload, timeoutMs: p.timeoutMs, fetchImpl: p.fetchImpl });
+  }
   if (sub.destination_type === 'slack') {
     return sendSlackMessage({ url: sub.url, eventType: p.eventType, payload: p.payload, timeoutMs: p.timeoutMs, fetchImpl: p.fetchImpl });
   }

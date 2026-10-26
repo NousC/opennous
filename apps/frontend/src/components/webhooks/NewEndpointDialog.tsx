@@ -90,10 +90,10 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
     ],
   },
   {
-    group: "Calls and replies",
+    group: "Meetings and replies",
     items: [
-      { id: "conversation.call_ended", label: "Call ended",
-        description: "A customer call was recorded and reviewed. Carries the call, its score and the account record.",
+      { id: "conversation.call_ended", label: "Meeting ended",
+        description: "A meeting with a customer ended and its notes were read. Carries the meeting, its summary when there is one, and the account record.",
         icon: Phone, logo: null },
       { id: "conversation.reply_received", label: "Reply received",
         description: "Someone replied to an email you sent. Carries the message and the account record.",
@@ -112,7 +112,7 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
       { id: "deal.lost", label: "Deal lost",
         description: "A deal closed lost. Same timing as deal.won.",
         icon: Briefcase, logo: null },
-      { id: "deal.stalled", label: "Deal stalled",
+      { id: "deal.stalled", label: "Stale deal detected",
         description: "An open deal sat in its stage past the window with no touch and no meeting booked. Checked every six hours.",
         icon: Briefcase, logo: null },
     ],
@@ -200,15 +200,18 @@ export type EditableEndpoint = {
   id: string;
   name: string;
   url: string | null;
-  destination?: { type: "url"; url: string } | { type: "github"; repo: string } | { type: "slack"; hint?: string };
+  destination?: { type: "url"; url: string } | { type: "github"; repo: string } | { type: "slack"; hint?: string } | { type: "claude"; url: string; task?: string | null };
   events: string[];
 };
 
 /** A Slack incoming webhook: the only URL a Slack destination takes (core: SLACK_WEBHOOK_RE). */
 export const SLACK_WEBHOOK = /^https:\/\/hooks\.slack\.com\/(services|workflows|triggers)\/[A-Za-z0-9_\-/]+$/;
 const SLACK_HELP = "https://api.slack.com/messaging/webhooks";
+/** A Claude scheduled task's Fire URL, as its API trigger panel shows it (core: CLAUDE_FIRE_URL_RE). */
+export const CLAUDE_FIRE_URL = /^https:\/\/api\.anthropic\.com\/v1\/claude_code\/routines\/trig_[A-Za-z0-9]+\/fire$/;
+const CLAUDE_HELP = "https://code.claude.com/docs/en/routines";
 // The groups shown open; the outreach-tool events (a person snapshot only) sit behind "More events".
-const MAIN_GROUPS = new Set(["Signals", "Accounts", "Calls and replies", "Deals", "ICP", "People"]);
+const MAIN_GROUPS = new Set(["Signals", "Accounts", "Meetings and replies", "Deals", "ICP", "People"]);
 
 function DestinationCard({ on, onClick, title, sub, tile }: { on: boolean; onClick: () => void; title: string; sub: string; tile: React.ReactNode }) {
   return (
@@ -245,9 +248,12 @@ export function NewEndpointDialog({
    *  sent back); a Slack webhook is replaced only when a new one is pasted. */
   editing?: EditableEndpoint | null;
 }) {
-  // Where events go: a URL (n8n, Make, Zapier, your server) or a Slack channel (GET-941). GitHub
-  // repos are no longer offered for new endpoints; existing ones keep working and can be edited.
-  const [kind, setKind] = useState<"url" | "slack">("url");
+  // Where events go: a URL (n8n, Make, Zapier, your server), a Slack channel (GET-941) or a Claude
+  // scheduled task (GET-1035). GitHub repos are no longer offered for new endpoints; existing ones
+  // keep working and can be edited.
+  const [kind, setKind] = useState<"url" | "slack" | "claude">("url");
+  const [claudeUrl, setClaudeUrl] = useState("");
+  const [claudeToken, setClaudeToken] = useState("");
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [slackUrl, setSlackUrl] = useState("");
@@ -263,8 +269,10 @@ export function NewEndpointDialog({
     if (!open || !editing) return;
     setNewName(editing.name);
     setNewUrl(editing.destination?.type === "url" ? editing.destination.url : (editing.url ?? ""));
-    setKind(editKind === "slack" ? "slack" : "url");
+    setKind(editKind === "slack" ? "slack" : editKind === "claude" ? "claude" : "url");
     setSlackUrl("");
+    setClaudeUrl(editing.destination?.type === "claude" ? editing.destination.url : "");
+    setClaudeToken("");
     setNewEvents(editing.events);
     setCreateError(null);
   }, [open, editing, editKind]);
@@ -273,7 +281,7 @@ export function NewEndpointDialog({
     setNewEvents(curr => curr.includes(id) ? curr.filter(x => x !== id) : [...curr, id]);
 
   const resetForm = () => {
-    setNewName(""); setNewUrl(""); setSlackUrl(""); setNewEvents([]); setCreateError(null); setSubmitting(false);
+    setNewName(""); setNewUrl(""); setSlackUrl(""); setClaudeUrl(""); setClaudeToken(""); setNewEvents([]); setCreateError(null); setSubmitting(false);
     setKind("url"); setQuery(""); setMoreOpen(false);
   };
 
@@ -283,8 +291,12 @@ export function NewEndpointDialog({
     catch { return false; }
   }, [newUrl]);
   const validSlack = SLACK_WEBHOOK.test(slackUrl.trim());
+  const validClaudeUrl = CLAUDE_FIRE_URL.test(claudeUrl.trim());
+  // Editing a Claude task keeps its token unless a new one is pasted; a new Fire URL needs its token.
+  const keepClaude = editKind === "claude" && !claudeToken.trim() && editing?.destination?.type === "claude" && claudeUrl.trim() === editing.destination.url;
 
   const validDestination = editGithub ? true
+    : kind === "claude" ? validClaudeUrl && (keepClaude || claudeToken.trim().length > 20)
     : kind === "url" ? validUrl
     : editKind === "slack" ? (!slackUrl.trim() || validSlack)
     : validSlack;
@@ -293,6 +305,7 @@ export function NewEndpointDialog({
   const destinationBody = () => {
     if (editGithub) return {};
     if (kind === "url") return { url: newUrl.trim() };
+    if (kind === "claude") return keepClaude ? {} : { destination: { type: "claude", url: claudeUrl.trim(), token: claudeToken.trim() } };
     if (editKind === "slack" && !slackUrl.trim()) return {};
     return { destination: { type: "slack", url: slackUrl.trim() } };
   };
@@ -312,6 +325,7 @@ export function NewEndpointDialog({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setCreateError(data.error === "invalid_slack_webhook" ? "That is not a Slack incoming webhook URL. It starts with https://hooks.slack.com/."
+          : data.error === "invalid_claude_fire_url" ? "That is not a Claude task's Fire URL. Copy it from the task's API trigger."
           : data.detail ?? data.error ?? (editing ? "update_failed" : "create_failed"));
         return;
       }
@@ -364,11 +378,13 @@ export function NewEndpointDialog({
               </div>
             </div>
           ) : (
-            <div role="radiogroup" aria-label="Send events to" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div role="radiogroup" aria-label="Send events to" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <DestinationCard on={kind === "url"} onClick={() => setKind("url")} title="Webhook URL"
                 sub="n8n, Make, Zapier or your own server. Signed JSON." tile={<Link2 className="h-3.5 w-3.5 text-foreground" strokeWidth={1.75} />} />
               <DestinationCard on={kind === "slack"} onClick={() => setKind("slack")} title="Slack channel"
                 sub="Each event posted as a short message." tile={<img src="/provider-logos/slack.svg" alt="" className="h-3.5 w-3.5" />} />
+              <DestinationCard on={kind === "claude"} onClick={() => setKind("claude")} title="Claude task"
+                sub="Each event starts your scheduled task." tile={<img src="/provider-logos/claude.svg" alt="" className="h-3.5 w-3.5" />} />
             </div>
           )}
 
@@ -397,10 +413,31 @@ export function NewEndpointDialog({
                   : <p className="mt-1.5 text-[11.5px] text-muted-foreground/70">Create it in Slack for the channel you want. We only ever show its start.</p>}
               </div>
             )}
+            {!editGithub && kind === "claude" && (
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label htmlFor="endpoint-claude-url" className="text-[12px] font-medium text-ink-2">Fire URL</label>
+                    <a href={CLAUDE_HELP} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground hover:text-foreground">
+                      Add an API trigger in Claude <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                  <Input id="endpoint-claude-url" autoFocus={!editing} value={claudeUrl} onChange={e => setClaudeUrl(e.target.value)}
+                    placeholder="https://api.anthropic.com/v1/claude_code/routines/trig_…/fire" className={field} />
+                  {claudeUrl && !validClaudeUrl && <p className="mt-1.5 text-[11.5px] text-warning">Copy the Fire URL from the task's API trigger.</p>}
+                </div>
+                <div>
+                  <label htmlFor="endpoint-claude-token" className={label}>Task token</label>
+                  <Input id="endpoint-claude-token" type="password" autoComplete="off" value={claudeToken} onChange={e => setClaudeToken(e.target.value)}
+                    placeholder={editKind === "claude" ? "Keep the current token, or paste a new one" : "sk-ant-oat01-…"} className={field} />
+                  <p className="mt-1.5 text-[11.5px] text-muted-foreground/70">Stored encrypted, never shown again. In the task's prompt, ask it to act on the event in the routine-fire-payload block.</p>
+                </div>
+              </div>
+            )}
             <div>
               <label htmlFor="endpoint-name" className={label}>Name</label>
               <Input id="endpoint-name" autoFocus={!!editing} value={newName} onChange={e => setNewName(e.target.value)}
-                placeholder={kind === "slack" ? "e.g. #deal-risks" : "e.g. n8n follow-ups"} className="h-9 rounded-lg bg-card text-[13px] focus-visible:border-foreground/30" />
+                placeholder={kind === "slack" ? "e.g. #deal-risks" : kind === "claude" ? "e.g. Follow-up after every meeting" : "e.g. n8n follow-ups"} className="h-9 rounded-lg bg-card text-[13px] focus-visible:border-foreground/30" />
             </div>
           </div>
 

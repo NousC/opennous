@@ -4,13 +4,15 @@
 //   { "destination": { "type": "url", "url": "https://…" } }            the same, spelled out
 //   { "destination": { "type": "slack", "url": "https://hooks.slack.com/services/…" } }  a Slack channel (GET-941)
 //   { "destination": { "type": "github", "repo": "owner/name", "token": "github_pat_…" } }
+//   { "destination": { "type": "claude", "url": "https://api.anthropic.com/v1/claude_code/routines/trig_…/fire", "token": "sk-ant-oat01-…" } }
+//       a Claude scheduled task's API trigger: each event fires the task (GET-1035)
 //   { "destination": { "type": "github", "connected_repo": true } }    the caller's repo from Settings →
 //       Repo, with the token already stored there: nothing secret travels in the request (GET-672)
 //   { "destination": { "type": "github", "connected_repo": "company" } } the workspace's company repo;
 //       admins only, since its token is the workspace's, not the caller's (GET-674)
 //
-// The GitHub token is encrypted here, before it reaches core or the database, and is never read
-// back: a webhook's JSON shows the repo, never the token.
+// The GitHub token and the Claude task's token are encrypted here, before they reach core or the
+// database, and are never read back: a webhook's JSON shows the repo or the task, never the token.
 import { getSupabaseClient, connectedRepoDestination, connectedRepos } from '@nous/core';
 import { encryptValue, decrypt } from '../providers/crypto.mjs';
 
@@ -25,6 +27,11 @@ export async function destinationFromBody(body, req) {
   if (d.type === 'url') {
     if (!d.url) throw new Error('url_required');
     return { type: 'url', url: String(d.url) };
+  }
+  if (d.type === 'claude') {
+    if (!d.url) throw new Error('claude_fire_url_required');
+    if (!d.token || typeof d.token !== 'string') throw new Error('claude_token_required');
+    return { type: 'claude', url: String(d.url).trim(), tokenEnc: encryptValue(d.token.trim()) };
   }
   if (d.type === 'slack') {
     if (!d.url) throw new Error('slack_webhook_required');
@@ -67,6 +74,10 @@ export function webhookOut(sub) {
   if (rest.destination_type === 'slack') {
     return { ...rest, url: null, destination: { type: 'slack', hint: slackHint(rest.url) } };
   }
+  // The Fire URL names the task, not a credential: the token is what fires it.
+  if (rest.destination_type === 'claude') {
+    return { ...rest, destination: { type: 'claude', url: rest.url, task: /\/routines\/(trig_[A-Za-z0-9]+)\//.exec(String(rest.url ?? ''))?.[1] ?? null } };
+  }
   const destination = rest.destination_type === 'github'
     ? { type: 'github', repo: rest.github_repo }
     : { type: 'url', url: rest.url };
@@ -88,5 +99,5 @@ export function managedRefusal(sub) {
   };
 }
 
-/** The decrypt a send needs for a GitHub destination's token. */
+/** The decrypt a send needs for a GitHub destination's token, or a Claude task's. */
 export const decryptToken = (enc) => decrypt(enc);

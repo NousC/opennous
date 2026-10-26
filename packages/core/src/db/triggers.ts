@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { GITHUB_REPO_RE } from './webhookDeliveries.js';
+import { GITHUB_REPO_RE, CLAUDE_FIRE_URL_RE } from './webhookDeliveries.js';
 
 // Triggers — outbound webhooks. Nous tells the user's workflow ("n8n, Claude
 // routine, custom backend") that something happened on the Account Record.
@@ -69,7 +69,7 @@ export const TRIGGER_EVENTS = [
 
 /** What each event means, for the catalog endpoint and the docs. */
 export const EVENT_CATALOG: { type: TriggerEvent; description: string; record: boolean }[] = [
-  { type: 'conversation.call_ended',     record: true,  description: 'A customer call was recorded and reviewed. Carries the call, its score and the account record.' },
+  { type: 'conversation.call_ended',     record: true,  description: 'A meeting with a customer ended and its notes were read. Carries the meeting, its summary when there is one, and the account record.' },
   { type: 'conversation.reply_received', record: true,  description: 'Someone replied to an email you sent. Carries the message and the account record.' },
   { type: 'deal.won',                    record: true,  description: 'A deal closed won. Checked hourly; deals reach the ledger after the CRM records the close.' },
   { type: 'deal.lost',                   record: true,  description: 'A deal closed lost. Same timing as deal.won.' },
@@ -141,7 +141,7 @@ export function triggerEventForActivity(activityType: string): TriggerEvent | nu
 
 // ── Subscription CRUD ───────────────────────────────────────────────────────
 
-export type DestinationType = 'url' | 'github' | 'slack';
+export type DestinationType = 'url' | 'github' | 'slack' | 'claude';
 
 export interface TriggerSubscription {
   id: string;
@@ -149,7 +149,7 @@ export interface TriggerSubscription {
   name: string;
   /** Set for a URL webhook; null for a GitHub one. */
   url: string | null;
-  /** Where events go (GET-670, GET-941): POST to `url`, a repository_dispatch to `github_repo`, or a Slack message to the incoming webhook in `url`. */
+  /** Where events go (GET-670, GET-941, GET-1035): POST to `url`, a repository_dispatch to `github_repo`, a Slack message to the incoming webhook in `url`, or a fire of the Claude scheduled task whose Fire URL is `url`. */
   destination_type: DestinationType;
   github_repo: string | null;
   /** 'after_call' when the Settings → Automations toggle owns this webhook (GET-672); null if made by hand. */
@@ -223,7 +223,9 @@ export type TriggerDestination =
   | { type: 'url'; url: string }
   | { type: 'github'; repo: string; tokenEnc: string }
   // A Slack incoming webhook (GET-941): each event posted to the channel it was made for.
-  | { type: 'slack'; url: string };
+  | { type: 'slack'; url: string }
+  // A Claude scheduled task's API trigger (GET-1035): its Fire URL, and its token, encrypted by the API.
+  | { type: 'claude'; url: string; tokenEnc: string };
 
 export interface CreateTriggerParams {
   name: string;
@@ -240,6 +242,12 @@ function destinationColumns(d: TriggerDestination): Record<string, unknown> {
     if (!GITHUB_REPO_RE.test(repo)) throw new Error('invalid_github_repo');
     if (!d.tokenEnc) throw new Error('github_token_required');
     return { destination_type: 'github', github_repo: repo, github_token_enc: d.tokenEnc, url: null };
+  }
+  if (d.type === 'claude') {
+    const url = String(d.url ?? '').trim();
+    if (!CLAUDE_FIRE_URL_RE.test(url)) throw new Error('invalid_claude_fire_url');
+    if (!d.tokenEnc) throw new Error('claude_token_required');
+    return { destination_type: 'claude', url, github_repo: null, github_token_enc: d.tokenEnc };
   }
   if (d.type === 'slack') {
     const url = String(d.url ?? '').trim();

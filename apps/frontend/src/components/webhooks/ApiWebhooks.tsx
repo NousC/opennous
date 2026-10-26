@@ -37,7 +37,7 @@ type Endpoint = {
   name: string;
   url: string | null;
   /** GET-670: a URL, or a GitHub repo whose Actions run on each event. Absent on older API builds. */
-  destination?: { type: "url"; url: string } | { type: "github"; repo: string } | { type: "slack"; hint?: string };
+  destination?: { type: "url"; url: string } | { type: "github"; repo: string } | { type: "slack"; hint?: string } | { type: "claude"; url: string; task?: string | null };
   /** "after_call" when the Settings → Automations toggle owns it (GET-672). */
   managed_by?: string | null;
   events: string[];
@@ -113,6 +113,9 @@ function EndpointTile({ ep }: { ep: Endpoint }) {
   if (ep.destination?.type === "github") {
     return <ListTile className="text-foreground"><Github className="h-3.5 w-3.5" strokeWidth={1.8} /></ListTile>;
   }
+  if (ep.destination?.type === "claude") {
+    return <ListTile><img src="/provider-logos/claude.svg" alt="" className="h-3.5 w-3.5 object-contain" /></ListTile>;
+  }
   let host = "";
   try { host = new URL(ep.url ?? "").host.toLowerCase(); } catch { /* not a URL */ }
   const logo = HOST_LOGOS.find(([needle]) => host.includes(needle))?.[1];
@@ -145,9 +148,12 @@ function EndpointRow({
   // Owned by the "After every call" toggle: switched on and off in Settings → Automations.
   const managed = !!ep.managed_by;
   const isSlack = ep.destination?.type === "slack";
+  // A Claude scheduled task (GET-1035): fired with its own token, so no signing secret applies.
+  const isClaude = ep.destination?.type === "claude";
   // A Slack incoming webhook is never sent back whole (GET-941): the row shows its start.
   const target = ep.destination?.type === "github" ? ep.destination.repo
     : ep.destination?.type === "slack" ? (ep.destination.hint ?? "Slack")
+    : ep.destination?.type === "claude" ? (ep.destination.task ? `Claude task ${ep.destination.task}` : "Claude task")
     : (ep.url ?? "");
   const qs = `workspace_id=${encodeURIComponent(workspaceId)}`;
   const onFailingRef = useRef(onFailing);
@@ -241,7 +247,7 @@ function EndpointRow({
           <ListText
             titleClassName="sm:flex-shrink-0 sm:max-w-[60%]"
             title={ep.name}
-            sub={<span className="max-sm:hidden">{managed ? "From Automations · " : ""}{isGithub || isSlack ? (isSlack ? `Slack · ${target}` : target) : shortUrl(target)}</span>}
+            sub={<span className="max-sm:hidden">{managed ? "From Automations · " : ""}{isGithub || isSlack || isClaude ? (isSlack ? `Slack · ${target}` : target) : shortUrl(target)}</span>}
           />
         </button>
         {health && (
@@ -269,7 +275,7 @@ function EndpointRow({
                 {testing ? "Sending…" : ep.active ? "Send test" : "Send test (enable first)"}
               </DropdownMenuItem>
               {!managed && <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>}
-              {!managed && canRotate && !isGithub && <DropdownMenuItem onSelect={onRotate}>Rotate signing secret</DropdownMenuItem>}
+              {!managed && canRotate && !isGithub && !isClaude && <DropdownMenuItem onSelect={onRotate}>Rotate signing secret</DropdownMenuItem>}
               {!managed && <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={onDelete} className="text-risk focus:text-risk">Delete</DropdownMenuItem>
@@ -283,9 +289,9 @@ function EndpointRow({
       {open && (
         <div id={panelId} className="space-y-4 pb-3 pl-2 pr-2 pt-1 sm:pl-[42px]">
           <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))]">
-            <CopyField id={`wh-url-${ep.id}`} label={isGithub ? "GitHub repo" : isSlack ? "Slack webhook (shown shortened)" : "Endpoint URL"} value={target}
+            <CopyField id={`wh-url-${ep.id}`} label={isGithub ? "GitHub repo" : isSlack ? "Slack webhook (shown shortened)" : isClaude ? "Claude task" : "Endpoint URL"} value={target}
               copied={copied === "url"} onCopy={() => copy(target, "url")} copyLabel={isGithub ? "Copy repo" : "Copy endpoint URL"} />
-            {secret && !isSlack && (
+            {secret && !isSlack && !isClaude && (
               <CopyField id={`wh-sec-${ep.id}`} label="Signing secret · shown once" value={secret}
                 copied={copied === "secret"} onCopy={() => copy(secret, "secret")} copyLabel="Copy signing secret">
                 <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[12px]" onClick={onSecretDone}>Done</Button>

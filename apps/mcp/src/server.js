@@ -1933,18 +1933,22 @@ export function createServer() {
     "`create` (url + events; returns the signing secret ONCE — tell the user to store it); `update` " +
     "(name/url/events/active, or rotate_secret); `delete`; `test` sends one webhook.test now against a " +
     "real account; `deliveries` shows recent sends and failures. Deliveries are signed: X-Nous-Signature " +
-    "= sha256 HMAC of the raw body with the secret.",
+    "= sha256 HMAC of the raw body with the secret. To have the user's own Claude act on an event (e.g. " +
+    "draft a follow-up after every meeting), create with claude_fire_url + claude_token from a Claude " +
+    "scheduled task's API trigger instead of url: each event fires that task with the event as its text.",
     {
       action: z.enum(["events", "list", "create", "update", "delete", "test", "deliveries"]),
       id: z.string().optional().describe("The webhook id, for update, delete, test and deliveries."),
       url: z.string().optional().describe("Where to POST events (https)."),
-      events: z.array(z.string()).optional().describe("Event types, e.g. conversation.call_ended, conversation.reply_received, deal.won, deal.lost, deal.stage_changed."),
+      claude_fire_url: z.string().optional().describe("Instead of url: a Claude scheduled task's Fire URL (https://api.anthropic.com/v1/claude_code/routines/trig_…/fire), from its API trigger."),
+      claude_token: z.string().optional().describe("With claude_fire_url: the task's API token. Stored encrypted, never returned."),
+      events: z.array(z.string()).optional().describe("Event types, e.g. conversation.call_ended (Meeting ended), deal.stalled (Stale deal detected), conversation.reply_received, deal.won, deal.lost, deal.stage_changed."),
       name: z.string().optional(),
       active: z.boolean().optional(),
       rotate_secret: z.boolean().optional(),
       account_id: z.string().optional().describe("For test: the account to build the sample record from."),
     },
-    async ({ action, id, url, events, name, active, rotate_secret, account_id }) => {
+    async ({ action, id, url, claude_fire_url, claude_token, events, name, active, rotate_secret, account_id }) => {
       const text = (t) => ({ content: [{ type: "text", text: t }] });
       const need = (v, what) => { if (!v) throw new Error(`${what} is required for ${action}`); };
       if (action === "events") {
@@ -1954,7 +1958,12 @@ export function createServer() {
       if (action === "list") {
         const r = await get("/v2/webhooks");
         if (!r.webhooks.length) return text("No webhooks yet.");
-        return text(r.webhooks.map(w => `${w.id} · ${w.name} · ${w.active ? "active" : "paused"} · ${w.url}\n  ${w.events.join(", ")}`).join("\n"));
+        return text(r.webhooks.map(w => `${w.id} · ${w.name} · ${w.active ? "active" : "paused"} · ${w.destination?.type === "claude" ? `Claude task ${w.destination.task ?? ""}` : w.url}\n  ${w.events.join(", ")}`).join("\n"));
+      }
+      if (action === "create" && claude_fire_url) {
+        need(claude_token, "claude_token"); need(events?.length, "events");
+        const r = await post("/v2/webhooks", { destination: { type: "claude", url: claude_fire_url, token: claude_token }, events, name: name ?? "Claude task" });
+        return text(`Created ${r.webhook.id}: ${r.webhook.events.join(", ")} → Claude task ${r.webhook.destination?.task ?? ""}. Each event fires the task; its prompt should act on the event in the routine-fire-payload block.`);
       }
       if (action === "create") {
         need(url, "url"); need(events?.length, "events");

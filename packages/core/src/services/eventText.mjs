@@ -14,8 +14,8 @@ const LABEL = {
   'signal.usage_dropped': 'Usage dropped', 'signal.account_inactive': 'Account inactive',
   'signal.feature_adopted': 'Feature adopted', 'signal.seat_dropped': 'Seat dropped',
   'signal.product_qualified': 'Product-qualified', 'signal.seats_growing': 'Seats growing', 'signal.account_activated': 'Account activated', 'signal.feature_requested': 'Feature requested',
-  'conversation.call_ended': 'Call ended', 'conversation.reply_received': 'Reply received',
-  'deal.won': 'Deal won', 'deal.lost': 'Deal lost', 'deal.stage_changed': 'Stage changed', 'deal.stalled': 'Deal stalled',
+  'conversation.call_ended': 'Meeting ended', 'conversation.reply_received': 'Reply received',
+  'deal.won': 'Deal won', 'deal.lost': 'Deal lost', 'deal.stage_changed': 'Stage changed', 'deal.stalled': 'Stale deal detected',
   'account.champion_left': 'Champion left', 'account.expansion_requested': 'Expansion requested',
   'icp.score_changed': 'ICP score changed', 'icp.tier_changed': 'ICP tier changed',
   'people.added': 'People added', 'automation.approval_requested': 'Approval requested',
@@ -120,4 +120,39 @@ export function slackMessage(eventType, payload) {
       { type: 'context', elements: [{ type: 'mrkdwn', text: context }] },
     ],
   };
+}
+
+// ── The text a Claude scheduled task is fired with (GET-1035) ─────────────────
+//
+// A Claude task's API trigger takes one free-text field (at most 65,536 characters), handed to the run
+// as a <routine-fire-payload> block next to the task's own prompt. So the event goes as a few readable
+// lines first (what happened, on which account, how to read the whole record), then the event itself
+// as JSON for anything the prompt wants to pick out. The task decides what to do: we send the event,
+// never a result.
+
+export const CLAUDE_FIRE_TEXT_MAX = 65_536;
+
+/** The `text` of one fire. Pure. */
+export function claudeFireText(eventType, payload) {
+  const e = { ...(payload ?? {}), type: eventType };
+  const label = eventLabel(eventType);
+  const account = e.account ?? null;
+  const name = str(account?.name);
+  const id = str(account?.entity_id);
+  const summary = eventSummary(e);
+  const lines = [
+    `OpenNous event: ${label}${name ? ` · ${name}` : ''} (${eventType})`,
+    summary ? `What happened: ${summary}` : null,
+    str(e.occurred_at) ? `When: ${e.occurred_at}` : null,
+    id ? `The full account record: OpenNous MCP get_account with id "${id}", or GET https://api.opennous.cloud/v2/accounts/${id}.` : null,
+    'The event as JSON:',
+  ].filter(Boolean);
+  const head = `${lines.join('\n')}\n`;
+  let json = JSON.stringify(e, null, 1);
+  // Over the limit: the evidence goes first (the record call returns it whole), then the rest is cut.
+  if (head.length + json.length > CLAUDE_FIRE_TEXT_MAX) {
+    const { evidence, ...rest } = e;
+    json = JSON.stringify({ ...rest, evidence_omitted: !!evidence }, null, 1);
+  }
+  return `${head}${json}`.slice(0, CLAUDE_FIRE_TEXT_MAX);
 }

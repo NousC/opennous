@@ -58,7 +58,7 @@ triggersRouter.post('/', async (req, res) => {
     const { name, events } = req.body ?? {};
     const destination = await destinationFromBody(req.body, req);
     const result = await createTrigger(getSupabaseClient(), req.workspaceId, { name, destination, events });
-    if (result.subscription.destination_type === 'github') {
+    if (['github', 'claude'].includes(result.subscription.destination_type)) {
       return res.status(201).json({ trigger: webhookOut(result.subscription) });
     }
     return res.status(201).json({

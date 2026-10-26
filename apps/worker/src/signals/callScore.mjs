@@ -526,6 +526,10 @@ export async function scoreCall({
     // the caller asked for the account and not the grade.
     if (plan === 'skip') {
       await callAutomations(null);
+      // Meeting ended (GET-1035) for every customer meeting, not only a scored one: a demo with
+      // coaching off, an onboarding or a support call is exactly when a customer's own agent wants
+      // to write the follow-up. No summary here; the account record carries the call.
+      if (externalAttendees.length) await callEnded({});
       const why = isGradedCallType(callType) ? 'coaching skipped by request' : 'not a coaching moment';
       console.log(`[call-score] meeting ${meetingId} is ${callType} — ${why}, not scored`);
       return { call_type: callType, scores: [], overall: 0, ...(skipCoaching && isGradedCallType(callType) ? { coaching_skipped: true } : {}) };
@@ -591,6 +595,7 @@ export async function scoreCall({
     }
     await callAutomations(scored.summary ?? null);
     await callEnded({
+      summary: scored.summary ?? null,
       score: scored.overall ?? null,
       scores: (scored.scores ?? []).map(d => ({ dimension: d.key, score: d.score, note: d.note || null })),
     });

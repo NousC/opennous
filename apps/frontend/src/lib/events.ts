@@ -22,7 +22,7 @@ export const EVENT_FILTERS: { id: string; label: string; type: string | null }[]
   { id: "all", label: "All", type: null },
   { id: "signal", label: "Signals", type: "signal.*" },
   { id: "account", label: "Accounts", type: "account.*" },
-  { id: "conversation", label: "Calls and replies", type: "conversation.*" },
+  { id: "conversation", label: "Meetings and replies", type: "conversation.*" },
   { id: "deal", label: "Deals", type: "deal.*" },
   { id: "icp", label: "ICP", type: "icp.*" },
 ];
@@ -125,12 +125,12 @@ export const EVENT_LABEL: Record<string, string> = {
   "signal.seats_growing": "Seats growing",
   "signal.account_activated": "Account activated",
   "signal.feature_requested": "Feature requested",
-  "conversation.call_ended": "Call ended",
+  "conversation.call_ended": "Meeting ended",
   "conversation.reply_received": "Reply received",
   "deal.won": "Deal won",
   "deal.lost": "Deal lost",
   "deal.stage_changed": "Stage changed",
-  "deal.stalled": "Deal stalled",
+  "deal.stalled": "Stale deal detected",
   "account.champion_left": "Champion left",
   "account.expansion_requested": "Expansion requested",
   "icp.score_changed": "ICP score changed",
@@ -151,7 +151,7 @@ export function eventLabel(type: string): string {
 /** The Filter popover: each family, then the types in it. One choice at a time, as the API takes. */
 export const EVENT_FILTER_GROUPS: { label: string; family: string; types: string[] }[] = [
   { label: "Signals", family: "signal.*", types: Object.keys(EVENT_LABEL).filter((t) => t.startsWith("signal.")) },
-  { label: "Calls and replies", family: "conversation.*", types: ["conversation.call_ended", "conversation.reply_received"] },
+  { label: "Meetings and replies", family: "conversation.*", types: ["conversation.call_ended", "conversation.reply_received"] },
   { label: "Accounts", family: "account.*", types: ["account.champion_left", "account.expansion_requested"] },
   { label: "Deals", family: "deal.*", types: ["deal.won", "deal.lost", "deal.stage_changed", "deal.stalled"] },
   { label: "ICP", family: "icp.*", types: ["icp.score_changed", "icp.tier_changed"] },

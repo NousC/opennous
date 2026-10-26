@@ -8465,7 +8465,7 @@ CREATE TABLE public.trigger_subscriptions (
     destination_type text DEFAULT 'url'::text NOT NULL,
     github_repo text,
     github_token_enc text,
-    CONSTRAINT trigger_subscriptions_destination_check CHECK ((((destination_type = 'url'::text) AND (url IS NOT NULL)) OR ((destination_type = 'github'::text) AND (github_repo IS NOT NULL) AND (github_token_enc IS NOT NULL)) OR ((destination_type = 'slack'::text) AND (url IS NOT NULL))))
+    CONSTRAINT trigger_subscriptions_destination_check CHECK ((((destination_type = 'url'::text) AND (url IS NOT NULL)) OR ((destination_type = 'github'::text) AND (github_repo IS NOT NULL) AND (github_token_enc IS NOT NULL)) OR ((destination_type = 'slack'::text) AND (url IS NOT NULL)) OR ((destination_type = 'claude'::text) AND (url IS NOT NULL) AND (github_token_enc IS NOT NULL))))
 );
 
 
@@ -8487,14 +8487,14 @@ COMMENT ON COLUMN public.trigger_subscriptions.github_event_type IS 'GitHub dest
 -- Name: COLUMN trigger_subscriptions.destination_type; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.trigger_subscriptions.destination_type IS 'url (POST a signed JSON body), github (repository_dispatch to github_repo) or slack (a message to the incoming webhook in url). GET-670, GET-941.';
+COMMENT ON COLUMN public.trigger_subscriptions.destination_type IS 'url (POST a signed JSON body), github (repository_dispatch to github_repo), slack (a message to the incoming webhook in url) or claude (fire the Claude scheduled task whose Fire URL is url, with the token in github_token_enc). GET-670, GET-941, GET-1035.';
 
 
 --
 -- Name: COLUMN trigger_subscriptions.github_token_enc; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.trigger_subscriptions.github_token_enc IS 'Fine-grained GitHub token, encrypted (providers/crypto.mjs). Never returned by a read. GET-670.';
+COMMENT ON COLUMN public.trigger_subscriptions.github_token_enc IS 'The destination''s encrypted credential: a GitHub token (github) or a Claude scheduled task''s API token (claude). Read only by the delivery path.';
 
 
 --

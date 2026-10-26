@@ -287,3 +287,4 @@ workspace_icp_scorer.sql
 workspace_own_domains.sql
 workspace_skill_references.sql
 workspaces_tour_completed_at.sql
+2026_10_26_webhook_claude_destination.sql
