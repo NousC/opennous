@@ -178,11 +178,12 @@ export default function Integrations({ embedded = false, connectProvider, chrome
   // Self-host: tools whose OAuth app nous.env does not have yet (Gmail and Calendar share Google's).
   const setupIds = new Set<string>(((userData as { integrations_needing_setup?: string[] } | null)?.integrations_needing_setup) ?? []);
   const needsSetup = (name: string) => selfHosted && (setupIds.has(name) || (isGoogleProduct(name) && setupIds.has("gmail_oauth")));
-  // The Integrations pages are a card grid (GET-631), on every plan since GET-660. Only as one of
-  // the two standalone pages; embedded somewhere else or in the chat it stays the list.
-  const apiCards = !!scope && !embedded && !chromeless;
+  // The Integrations pages are a card grid (GET-631), on every plan since GET-660: as the two
+  // standalone pages and, since Integrations moved into Settings (GET-1043), as its Personal and
+  // Shared tabs too. In the chat, or anywhere without a side, it stays the list.
+  const apiCards = !!scope && !chromeless;
   // Outside the API plan's own bar, the app's top bar names the side the way that bar does.
-  useTopBarCrumbs(apiCards ? [{ label: "Integrations", href: "/integrations" }, { label: scope === "company" ? "Shared" : "Personal" }] : null);
+  useTopBarCrumbs(apiCards && !embedded ? [{ label: "Integrations", href: "/integrations" }, { label: scope === "company" ? "Shared" : "Personal" }] : null);
   // Slack is on the Workspace plan; self-host is Self-serve, so it stays locked there too
   // (GET-576). While the plan is still loading, don't lock — usePlan warns that gating before
   // the first response flickers items away from a Workspace customer on every cold load.
@@ -1310,6 +1311,26 @@ export default function Integrations({ embedded = false, connectProvider, chrome
         })
       : [];
     const conns = side === "personal" ? personalConns : companyConns;
+    // In Settings the section already has its Personal / Shared tabs and its own scroll: just the
+    // grid, with the + card to add one.
+    if (embedded) return (
+      <div>
+        {side === "personal" && !selfHosted && workspaceId && canManageComposio && composioChecked && !composioConfigured && !googleNative && (
+          <div className="mb-4">
+            <ComposioConfigCard apiUrl={apiUrl} token={token} workspaceId={workspaceId} canManage={canManageComposio} onConfigured={setComposioConfigured} />
+          </div>
+        )}
+        {connsLoaded && (
+          <SourceGrid>
+            {linkedinCards}
+            {conns.map(connCard)}
+            <AddSourceCard onClick={addFromHere} />
+          </SourceGrid>
+        )}
+        {apiAddDialog()}
+        {disconnectDialog}
+      </div>
+    );
     return (
       <div className="flex h-full flex-col overflow-y-auto bg-background">
         <SourcesToolbar side={side} onAdd={addFromHere} />
