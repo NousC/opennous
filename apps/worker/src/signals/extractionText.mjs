@@ -172,7 +172,7 @@ async function loadTeam(supabase, workspaceId) {
  * text. It is what lets extraction tell a competitor of OURS from a tool in the prospect's stack
  * (GET-252) without anyone keeping a competitor list — every workspace describes itself.
  */
-export function offerExcerpt(markdown, max = 900) {
+export function offerExcerpt(markdown, max = 1500) {
   const text = String(markdown ?? '')
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/^\s{0,3}#{1,6}\s+.*$/gm, ' ')        // headings name sections, they don't describe the product

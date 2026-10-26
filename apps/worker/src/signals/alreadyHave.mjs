@@ -14,14 +14,14 @@ const CATALOGUE_CHARS = 3000;
 const MAX_ROWS = 60;
 
 /**
- * What we sell: the ICP's "What <us> sells" section, else the Positioning foundation, else the ICP
- * itself. Pure.
+ * What we sell: the About us file (mirrored into the Positioning foundation, GET-1036), else the
+ * ICP's "What <us> sells" section, else the ICP itself. Pure.
  */
 export function whatWeSell(icpText, positioning = null) {
   const icp = String(icpText ?? '').replace(/<!--\s*nous:icp start[\s\S]*?nous:icp end\s*-->/gi, '').trim();
   const section = /^##\s*What\b[^\n]*\bsells?\b[^\n]*\n([\s\S]*?)(?=\n##\s|(?![\s\S]))/im.exec(icp)?.[1];
   const pos = String(positioning ?? '').replace(/<!--[\s\S]*?-->/g, '').trim();
-  const text = (section?.trim() || pos || icp).slice(0, CATALOGUE_CHARS);
+  const text = (pos || section?.trim() || icp).slice(0, CATALOGUE_CHARS);
   return text.length >= 40 ? text : null;
 }
 

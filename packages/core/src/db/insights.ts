@@ -164,12 +164,13 @@ If nothing meaningful: []`;
 }
 
 // The workspace's own GTM context, assembled from its foundations, so the insight
-// extractor knows who "us" is. Prefers the ICP (which carries the buyer + positioning
-// in the canonical template), then any positioning/product/company/market foundation.
+// extractor knows who "us" is: the About us file (positioning, GET-1036), then the ICP (which carries
+// the buyer + positioning in the canonical template).
 // Returns null when the workspace has no meaningful self-context — the caller then
 // SKIPS extraction rather than mining a call blind and misattributing the prospect's
 // own business as ours.
-const CONTEXT_KINDS = ['icp'];
+// The About us file (GET-1036), mirrored into `positioning`, first: who we are and what we have.
+const CONTEXT_KINDS = ['positioning', 'icp'];
 const CONTEXT_BUDGET = 4000;
 
 export async function loadWorkspaceContext(

@@ -53,3 +53,7 @@ test('no catalogue on file: every feature stays a feature', async () => {
   const sb = { from: () => q };
   assert.deepEqual(await screenFeatureRequests(sb, 'ws', facts), facts);
 });
+
+test('the About us file (positioning) comes before the ICP\'s own section', () => {
+  assert.equal(whatWeSell(ICP, 'Lanternly: the account record for agents, with an MCP server, an API and a phone app.'), 'Lanternly: the account record for agents, with an MCP server, an API and a phone app.');
+});
