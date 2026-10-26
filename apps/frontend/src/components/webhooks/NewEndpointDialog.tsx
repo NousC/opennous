@@ -93,7 +93,7 @@ export const EVENT_CATALOG: { group: string; items: EventDef[] }[] = [
     group: "Meetings and replies",
     items: [
       { id: "conversation.call_ended", label: "Meeting ended",
-        description: "A meeting with a customer ended and its notes were read. Carries the meeting, its summary when there is one, and the account record.",
+        description: "A meeting with a customer ended and its notes were read. Carries the meeting, its summary, the attendees, the account record, and the recorder with its own meeting id.",
         icon: Phone, logo: null },
       { id: "conversation.reply_received", label: "Reply received",
         description: "Someone replied to an email you sent. Carries the message and the account record.",

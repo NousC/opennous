@@ -17,6 +17,7 @@ import { teamReadContext } from '../db/readContext.js';
 import { subscribersFor } from '../db/triggers.js';
 import { isEntityPersonal } from '../db/relationship.js';
 import { loggedEvent, logEvent, EVENT_LOG_RETENTION_DAYS } from '../db/eventLog.mjs';
+import { eventSource } from './eventText.mjs';
 import { loadAutomationExtension } from './automationExtension.mjs';
 
 /** Bump when the envelope changes shape. Receivers can branch on it. */
@@ -203,8 +204,10 @@ async function aboutPersonal(supabase, workspaceId, ids) {
   return false;
 }
 
-/** The signed body every record event carries. */
+/** The signed body every record event carries. `source` (GET-1035): the tool and its own id when the
+ *  event came from a conversation, so a receiver can open the transcript or thread itself. */
 export function eventEnvelope({ type, workspaceId, occurredAt, record, data = {} }) {
+  const source = eventSource(data);
   return {
     id: crypto.randomUUID(),
     type,
@@ -212,6 +215,7 @@ export function eventEnvelope({ type, workspaceId, occurredAt, record, data = {}
     occurred_at: occurredAt,
     workspace_id: workspaceId,
     ...record,
+    ...(source ? { source } : {}),
     data,
   };
 }

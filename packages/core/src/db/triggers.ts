@@ -69,7 +69,7 @@ export const TRIGGER_EVENTS = [
 
 /** What each event means, for the catalog endpoint and the docs. */
 export const EVENT_CATALOG: { type: TriggerEvent; description: string; record: boolean }[] = [
-  { type: 'conversation.call_ended',     record: true,  description: 'A meeting with a customer ended and its notes were read. Carries the meeting, its summary when there is one, and the account record.' },
+  { type: 'conversation.call_ended',     record: true,  description: 'A meeting with a customer ended and its notes were read. Carries the meeting, its summary when there is one, the customer attendees, the account record, and source: the recorder (e.g. Granola, Fireflies) and its own meeting id, to open the transcript there.' },
   { type: 'conversation.reply_received', record: true,  description: 'Someone replied to an email you sent. Carries the message and the account record.' },
   { type: 'deal.won',                    record: true,  description: 'A deal closed won. Checked hourly; deals reach the ledger after the CRM records the close.' },
   { type: 'deal.lost',                   record: true,  description: 'A deal closed lost. Same timing as deal.won.' },

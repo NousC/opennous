@@ -66,3 +66,25 @@ test('a Claude subscription decrypts its token, and never sends ciphertext', asy
   assert.equal(bad.ok, false);
   assert.equal(bad.permanent, true);
 });
+
+// GET-1035: an event says where it came from, so an agent can open the transcript or thread itself.
+test('an event names its source tool, that tool\'s own id and how to read it', async () => {
+  const { eventSource } = await import('../dist/services/eventText.mjs');
+  const { eventEnvelope } = await import('../dist/services/events.mjs');
+  assert.deepEqual(eventSource({ source_ref: 'source://granola/not_8x2', url: 'https://notes.granola.ai/d/8x2' }),
+    { tool: 'granola', name: 'Granola', id: 'not_8x2', url: 'https://notes.granola.ai/d/8x2', how: 'Granola MCP: get_meeting_transcript (or get_meetings) with this meeting id' });
+  assert.equal(eventSource({ source_ref: 'source://acme/1' }).name, 'Acme');
+  assert.equal(eventSource({}), null);
+  const env = eventEnvelope({ type: 'conversation.call_ended', workspaceId: 'ws', occurredAt: 'now', record: {}, data: { source_ref: 'source://fireflies/01KX' } });
+  assert.equal(env.source.name, 'Fireflies'); assert.equal(env.source.id, '01KX');
+  assert.equal('source' in eventEnvelope({ type: 'deal.won', workspaceId: 'ws', occurredAt: 'now', record: {}, data: {} }), false);
+});
+
+test('the fire text says where to read the meeting and who was on it', () => {
+  const t = claudeFireText('conversation.call_ended', {
+    ...meeting, source: { tool: 'granola', name: 'Granola', id: 'not_8x2', url: null, how: 'Granola MCP: get_meeting_transcript (or get_meetings) with this meeting id' },
+    data: { ...meeting.data, attendees: [{ name: 'Ines Okafor', email: 'ines@atlas.example' }] },
+  });
+  assert.match(t, /Source: Granola not_8x2\. To read it: Granola MCP: get_meeting_transcript/);
+  assert.match(t, /Attendees: Ines Okafor <ines@atlas\.example>/);
+});

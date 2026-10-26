@@ -145,6 +145,8 @@ export function claudeFireText(eventType, payload) {
     summary ? `What happened: ${summary}` : null,
     str(e.occurred_at) ? `When: ${e.occurred_at}` : null,
     id ? `The full account record: OpenNous MCP get_account with id "${id}", or GET https://api.opennous.cloud/v2/accounts/${id}.` : null,
+    e.source?.id ? `Source: ${e.source.name} ${e.source.id}${e.source.url ? ` (${e.source.url})` : ''}${e.source.how ? `. To read it: ${e.source.how}.` : '.'}` : null,
+    Array.isArray(e.data?.attendees) && e.data.attendees.length ? `Attendees: ${e.data.attendees.map(a => [a?.name, a?.email ? `<${a.email}>` : null].filter(Boolean).join(' ')).join(', ')}` : null,
     'The event as JSON:',
   ].filter(Boolean);
   const head = `${lines.join('\n')}\n`;
@@ -155,4 +157,36 @@ export function claudeFireText(eventType, payload) {
     json = JSON.stringify({ ...rest, evidence_omitted: !!evidence }, null, 1);
   }
   return `${head}${json}`.slice(0, CLAUDE_FIRE_TEXT_MAX);
+}
+
+// ── Where an event came from (GET-1035) ─────────────────────────────────────
+//
+// An agent acting on an event ("draft the follow-up after this meeting") needs to open the source
+// itself: the recorder's transcript, the email thread. Every event whose data carries a source_ref
+// (`source://<tool>/<the tool's own id>`) gets `source`: the tool, its name, that id, the link, and
+// how an agent reads it. Pure.
+
+const SOURCE_TOOLS = {
+  granola: { name: 'Granola', how: 'Granola MCP: get_meeting_transcript (or get_meetings) with this meeting id' },
+  fireflies: { name: 'Fireflies', how: 'Fireflies MCP: fireflies_get_transcript with this transcript id' },
+  fathom: { name: 'Fathom', how: 'Fathom API: the call with this id' },
+  fellow: { name: 'Fellow', how: 'Fellow: the note with this id' },
+  ringcentral: { name: 'RingCentral', how: 'RingCentral: the recording with this id' },
+  gmail: { name: 'Gmail', how: 'Gmail: the thread or message with this id' },
+  slack: { name: 'Slack', how: 'Slack: the message with this id' },
+  linkedin: { name: 'LinkedIn', how: 'LinkedIn: the conversation with this id' },
+  hubspot: { name: 'HubSpot', how: 'HubSpot: the engagement with this id' },
+};
+
+/** { tool, name, id, url, how } from an event's data, or null when it names no source. Pure. */
+export function eventSource(data) {
+  const d = data ?? {};
+  const m = /^source:\/\/([a-z0-9_-]+)\/(.+)$/i.exec(String(d.source_ref ?? ''));
+  if (!m) return null;
+  const tool = m[1].toLowerCase();
+  const known = SOURCE_TOOLS[tool];
+  return {
+    tool, name: known?.name ?? tool.charAt(0).toUpperCase() + tool.slice(1), id: m[2],
+    url: str(d.url) ?? str(d.source_url) ?? null, how: known?.how ?? null,
+  };
 }

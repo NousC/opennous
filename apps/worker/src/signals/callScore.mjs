@@ -408,7 +408,14 @@ export async function scoreCall({
           dedupeKey: target.meetingId,
           // For the engine extension only (GET-910), never in a webhook: who recorded it, the words, who was on it.
           internalData:{owner_user_id:recorder?.userId??repUserId??null,transcript:transcript.slice(0,60000),attendees:(Array.isArray(contacts)?contacts:[]).filter(c=>c?.email&&!ourEntityIds.has(c.id)).map(c=>({name:c.name??null,email:c.email}))},
-          data: { meeting_id: target.meetingId, title: title ?? null, source: target.source ?? source ?? null, source_ref: sourceRef ?? null, url: sourceUrl ?? null, call_type: callType, ...data },
+          // The recorder's own id rides in source_ref, which the envelope turns into `source` (GET-1035);
+          // the customer's side of the call is named so a receiver knows who to write to.
+          data: {
+            meeting_id: target.meetingId, title: title ?? null, source: target.source ?? source ?? null,
+            source_ref: sourceRef ?? (source && meetingId ? `source://${source}/${meetingId}` : null), url: sourceUrl ?? null, call_type: callType,
+            attendees: (Array.isArray(contacts) ? contacts : []).filter(c => c?.email && !ourEntityIds.has(c.id)).slice(0, 20).map(c => ({ name: c.name ?? null, email: c.email })),
+            ...data,
+          },
         }).catch(() => 0)
       : Promise.resolve(0));
 
