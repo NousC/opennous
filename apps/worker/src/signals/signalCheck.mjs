@@ -93,13 +93,14 @@ ${lines}
 
 ${READ_IN_CONTEXT}
 
-Categories you may move a signal to: ${CLAIM_CATEGORY_KEYS.join(', ')}. A competitor does the job WE sell. A chip is 2–5 words a colleague who was not there understands on its own, sentence case, never a fragment of their words or a person's name. For competitor, tech_stack, budget and authority the chip is built from the tags, so leave "label" out for those.
+Categories you may move a signal to: ${CLAIM_CATEGORY_KEYS.join(', ')}. A competitor does the job WE sell. A chip is 2–5 words and at most 40 characters, that a colleague who was not there understands on its own, sentence case, never a fragment of their words, a person's name, or "X vs Y". For competitor, tech_stack, budget and authority the chip is built from the tags, so leave "label" out for those.
 Moving a signal needs the tags of its new category: competitor → "entity" and "stance" (evaluating, incumbent, past_failure, mentioned); tech_stack → "tool"; expansion_signal → "product" and "stance" (asked, considering, declined); objection → "status" (open, resolved, addressed) and "hardness" (hard, soft); blocker → "status" (open, resolved); authority → "role" (economic_buyer, decision_maker, champion, blocker, technical) when it is stated; risk_signal → "severity" (stated_churn, at_risk, friction).
 
 For each signal decide:
 - "keep": right as written, in context.
 - "rewrite": a real signal whose sentence, chip or category is wrong in context. Give the corrected fields; keep the person it is about named in the sentence, and state only what they said or did.
 - "drop": not a deal signal once read in context (a step in a test, an aside, a general view about AI or tools, someone else's view, our own words, or nothing that matters for the deal).
+Your verdict must agree with your reason: if you find it is not what its category says, move it to the category it is, or drop it. Never keep a category your own "why" rules out.
 
 Answer with ONLY a JSON array, one item per signal:
 [{"n": 1, "verdict": "keep|rewrite|drop", "content": "<rewrite only>", "label": "<rewrite only>", "category": "<rewrite only, when it changes>", "about": "<person|company, when it changes>", "entity": "", "stance": "", "tool": "", "status": "", "hardness": "", "role": "", "product": "", "severity": "", "why": "<a few words, for rewrite or drop>"}]
@@ -107,6 +108,16 @@ Give only the tags that apply.`;
 }
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+/** A chip that reads whole: 2–5 words, at most 40 characters, never "X vs Y". A longer one was cut
+ *  mid-word on the card ("Conditional pricing acceptance pending p"), so it is refused and the old
+ *  chip kept. Pure. */
+export function goodChip(label) {
+  const t = str(label);
+  if (!t || t.length > 40) return false;
+  const words = t.split(/\s+/).length;
+  return words >= 1 && words <= 5 && !/\bvs\.?\b|\bversus\b/i.test(t);
+}
 
 /** The signals after the verdicts, one slot each: kept, rewritten, or null when dropped. An
  *  unanswered signal is kept. Pure. */
@@ -147,7 +158,7 @@ export function applyVerdicts(signals, verdicts, { log = () => {} } = {}) {
     }
     if (['person', 'company'].includes(str(v.about) ?? '')) next.about = str(v.about);
     if (str(v.content)) next.content = str(v.content);
-    if (str(v.label) && !CODE_CHIPS.has(next.category)) next.label = str(v.label).slice(0, 40);
+    if (goodChip(v.label) && !CODE_CHIPS.has(next.category)) next.label = str(v.label);
     next.checked = 'rewritten';
     log(`rewrite [${f.category}] "${f.label ?? ''}" → [${next.category}] "${next.label ?? ''}" — ${str(v.why) ?? ''}`);
     out.push(next);

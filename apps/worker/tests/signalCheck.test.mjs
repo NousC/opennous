@@ -123,3 +123,13 @@ test('a code-built chip is not a rewrite on its own; a checked note is skipped',
   const n = { category: 'competitor', label: 'Brightlist', content: 'x', metadata: { entity: 'Brightlist', stance: 'evaluating' } };
   assert.equal(rewriteOf(n, { category: 'competitor', label: 'Evaluating Brightlist', content: 'x', entity: 'Brightlist', stance: 'evaluating' }), null);
 });
+
+test('a chip that would be cut, or reads "X vs Y", is refused and the old chip kept', async () => {
+  const { goodChip } = await import('../src/signals/signalCheck.mjs');
+  assert.equal(goodChip('Ready to present to leadership'), true);
+  assert.equal(goodChip('Conditional pricing acceptance pending product fit'), false);
+  assert.equal(goodChip('Testing Nous MCP vs. HubSpot'), false);
+  const [a] = applyVerdicts([{ category: 'objection', label: 'Old chip', content: 'x' }],
+    [{ n: 1, verdict: 'rewrite', label: 'Adoption friction: trust as people problem' }]);
+  assert.equal(a.label, 'Old chip');
+});
