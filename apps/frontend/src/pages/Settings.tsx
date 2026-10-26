@@ -36,7 +36,7 @@ import {
   setOn as setNotifOn, setMode as setNotifMode, type NotifPrefs,
 } from "@/components/settings/notificationPrefs";
 import { Button } from "@/components/ui/button";
-import { SegmentedControl } from "@/components/ui/view-tabs";
+import { SegmentedControl, ViewTabs } from "@/components/ui/view-tabs";
 import { PersonAvatar } from "@/components/ui/owner-filter";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -753,7 +753,8 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
       {!embedded && (
         <SettingsRail
           items={inScope}
-          active={section}
+          // Shared is Integrations' second tab (GET-1043): the rail lights Integrations for it.
+          active={section === "company-sources" ? "integrations" : section}
           onSelect={onRailSelect}
           onBack={() => navigate("/")}
           onSignOut={handleSignOut}
@@ -1399,8 +1400,20 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           )}
 
           {/* Insights config (watch-topic categories) moved to the company surface → Categories tab. */}
-          {section === "integrations" && <SectionShell wide><Integrations embedded scope="personal" onWrongScope={forwardSource} /></SectionShell>}
-          {section === "company-sources" && <SectionShell wide><Integrations embedded scope="company" onWrongScope={forwardSource} /></SectionShell>}
+          {/* Integrations: one page, Personal and Shared as tabs (GET-1043). Each tab keeps its own
+              ?section= id, so old links and the cross-scope connect forwarding land on the right tab. */}
+          {(section === "integrations" || section === "company-sources") && (
+            <SectionShell wide>
+              <ViewTabs<"integrations" | "company-sources">
+                aria-label="Integrations"
+                value={section}
+                onChange={goto}
+                className="mb-5"
+                options={[{ value: "integrations", label: "Personal" }, { value: "company-sources", label: "Shared" }]}
+              />
+              <Integrations key={section} embedded scope={section === "company-sources" ? "company" : "personal"} onWrongScope={forwardSource} />
+            </SectionShell>
+          )}
           {section === "webhooks"     && <SectionShell wide><Webhooks embedded /></SectionShell>}
           {/* Full width, like the other connection pages (GET-668). */}
           {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}

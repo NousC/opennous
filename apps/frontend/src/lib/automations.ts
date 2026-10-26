@@ -75,7 +75,7 @@ export type Payload = {
 export async function automationsFetch(path: string, token: string, init: RequestInit = {}) {
   const headers: Record<string, string> = { Authorization: `Bearer ${await freshAccessToken() ?? token}` };
   if (init.body) headers["Content-Type"] = "application/json";
-  return fetch(`${apiUrl}/api/automations${path}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) } });
+  return fetch(`${apiUrl}/api/workflows${path}`, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) } });
 }
 
 // ── Jobs ─────────────────────────────────────────────────────────────────────

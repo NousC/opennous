@@ -8,10 +8,9 @@ import { groupNav, resolveSection, settingsNav } from "../src/components/setting
 
 const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
 
-test("API plan admin: the board's three groups, billing goes to /usage, no Repo (GET-882)", () => {
+test("API plan admin: Account, Connections (Integrations, Webhooks), Workspace; billing goes to /usage, no Repo (GET-882)", () => {
   const nav = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
-  // Repo was the API rail's only Connections row; with it gone (GET-882) the group is empty and drops.
-  assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Workspace"]);
+  assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Connections", "Workspace"]);
   assert.deepEqual(ids(nav), [
     "profile", "notifications", "security", "api-keys",
     "integrations", "company-sources", "webhooks",
@@ -20,11 +19,12 @@ test("API plan admin: the board's three groups, billing goes to /usage, no Repo 
   const billing = nav.find((i) => i.id === "billing")!;
   assert.equal(billing.label, "Usage and billing");
   assert.equal(billing.href, "/usage");
-  // The sidebar holds Personal, Shared and Webhooks on API, so the rail does not repeat them
-  // (GET-857); they stay routable, so /settings?section=integrations still lands on the page.
+  // Integrations (Personal and Shared as tabs) and Webhooks moved off the sidebar into Settings
+  // (GET-1043). Shared is one page's tab, so its id stays routable but is not its own row.
   // API keys are the account's own and live here, under Account, in the pane (GET-1030).
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
-  assert.deepEqual(rail, ["profile", "notifications", "security", "api-keys", "general", "members", "activity-log", "billing"]);
+  assert.deepEqual(rail, ["profile", "notifications", "security", "api-keys", "integrations", "webhooks", "general", "members", "activity-log", "billing"]);
+  assert.equal(nav.find((i) => i.id === "integrations")!.label, "Integrations");
   assert.equal(nav.find((i) => i.id === "api-keys")!.href, undefined, "opens in Settings, not /keys");
   assert.equal(resolveSection("repo", nav), "profile");
   assert.equal(resolveSection("integrations", nav), "integrations");
@@ -70,13 +70,12 @@ test("resolveSection: aliases, unknown and out-of-rail ids fall back", () => {
   assert.equal(resolveSection("members", member), "profile");
 });
 
-test("Connections rows open the standalone pages on every plan (GET-660)", () => {
+test("Integrations and Webhooks open inside Settings on every plan (GET-1043); keys and billing stay pages", () => {
   for (const tier of ["api", "custom"] as const) {
     const nav = settingsNav({ tier, isWorkspaceAdmin: true, isOwner: false });
     const href = (id: string) => nav.find((i) => i.id === id)?.href;
-    assert.equal(href("integrations"), "/integrations", tier);
-    assert.equal(href("company-sources"), "/company-sources", tier);
-    assert.equal(href("webhooks"), "/webhooks", tier);
+    for (const id of ["integrations", "company-sources", "webhooks"]) assert.equal(href(id), undefined, `${tier}: ${id} in Settings`);
+    assert.equal(resolveSection("company-sources", nav), "company-sources", `${tier}: the Shared tab still resolves`);
     if (tier === "custom") assert.equal(href("api-keys"), "/keys", tier);
     assert.equal(href("billing"), "/usage", tier);
   }
@@ -86,10 +85,10 @@ test("Connections rows open the standalone pages on every plan (GET-660)", () =>
   }
 });
 
-test("self-host admin: no Connections group (the sidebar has them), no billing, Instance setup first in Workspace", () => {
+test("self-host admin: Integrations and Webhooks in Settings (no sidebar group any more), no billing, Instance setup first in Workspace", () => {
   const nav = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false, selfHosted: true });
-  assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Workspace"]);
-  assert.deepEqual(ids(nav), ["profile", "security", "instance", "general", "members"]);
+  assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Connections", "Workspace"]);
+  assert.deepEqual(ids(nav), ["profile", "security", "integrations", "company-sources", "webhooks", "instance", "general", "members"]);
   assert.equal(resolveSection("notifications", nav), "profile", "a hidden section lands on Account");
 });
 
@@ -98,10 +97,11 @@ test("self-host member: no Instance setup", () => {
   assert.ok(!ids(nav).includes("instance"));
 });
 
-test("Custom plan keeps the Connections rows in the rail: its sidebar has no Integrations group (GET-857)", () => {
+test("Custom plan keeps the Connections rows in the rail: Integrations (one row, two tabs), Webhooks, API keys", () => {
   const nav = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false });
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
-  for (const id of ["integrations", "company-sources", "webhooks", "api-keys"]) assert.ok(rail.includes(id), id);
+  for (const id of ["integrations", "webhooks", "api-keys"]) assert.ok(rail.includes(id), id);
+  assert.ok(!rail.includes("company-sources"), "Shared is a tab, not a row");
 });
 
 test("no Context or Signals rows of its own: they are the Workspace layer's (GET-910)", () => {

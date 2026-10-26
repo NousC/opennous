@@ -30,7 +30,7 @@ export function runColumns(navigate: (to: string) => void, opts: { automation?: 
   if (opts.automation) cols.push({
     key: "automation", header: "Workflow", width: "26%",
     cell: (r) => r.routine_id && r.automation !== "Deleted workflow"
-      ? <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/automations/${r.routine_id}`); }} className="block max-w-full truncate text-left hover:underline">{r.automation}</button>
+      ? <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/workflows/${r.routine_id}`); }} className="block max-w-full truncate text-left hover:underline">{r.automation}</button>
       : <span className="block truncate text-muted-foreground">{r.automation}</span>,
   });
   cols.push(

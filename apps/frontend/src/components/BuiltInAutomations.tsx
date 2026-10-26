@@ -2,7 +2,7 @@
 //
 // Each row draws its own flow before it says anything: the tool it runs on, the agent, where it
 // goes. You read what an automation does from its marks and its name; the sentence and every
-// setting are one click away in the editor, which is a page of its own (/automations/:id)
+// setting are one click away in the editor, which is a page of its own (/workflows/:id)
 // because a flow needs the height a dialog does not have.
 //
 // New opens the jobs as templates, plus a blank one. Picking one lands you in the editor with
@@ -460,7 +460,7 @@ export function BuiltInAutomations({
               </DialogHeader>
               <div className="grid max-h-[65vh] grid-cols-1 gap-2 overflow-y-auto p-5 sm:grid-cols-2 lg:grid-cols-3">
                 <button
-                  onClick={() => navigate("/automations/new")}
+                  onClick={() => navigate("/workflows/new")}
                   className="flex min-h-[112px] flex-col items-start justify-between rounded-xl border border-dashed border-border px-3.5 py-3 text-left transition-colors hover:border-foreground/40"
                 >
                   <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground"><Plus className="h-3.5 w-3.5" /> Start from scratch</span>
@@ -469,7 +469,7 @@ export function BuiltInAutomations({
                 {TEMPLATES.filter(t => !t.byDefault).map(t => (
                   <button
                     key={t.id}
-                    onClick={() => navigate(`/automations/new?template=${t.id}`)}
+                    onClick={() => navigate(`/workflows/new?template=${t.id}`)}
                     className="flex flex-col gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3 text-left shadow-card transition-colors hover:border-foreground/25"
                   >
                     <span className="text-[13px] font-medium text-foreground">{t.name}</span>
@@ -490,7 +490,7 @@ export function BuiltInAutomations({
           <div aria-label="Your workflows">
             {empty ? (
               <EmptyState bordered={false} title="Nothing of your own yet."
-                action={<Button size="sm" variant="outline" onClick={() => navigate("/automations/new")}><Plus className="!size-3.5" />Start blank</Button>} />
+                action={<Button size="sm" variant="outline" onClick={() => navigate("/workflows/new")}><Plus className="!size-3.5" />Start blank</Button>} />
             ) : (
               <div>
                 {data.automations.map(a => {
@@ -501,8 +501,8 @@ export function BuiltInAutomations({
                       key={a.id}
                       role="link"
                       tabIndex={0}
-                      onClick={() => navigate(`/automations/${a.id}`)}
-                      onKeyDown={e => { if (e.key === "Enter") navigate(`/automations/${a.id}`); }}
+                      onClick={() => navigate(`/workflows/${a.id}`)}
+                      onKeyDown={e => { if (e.key === "Enter") navigate(`/workflows/${a.id}`); }}
                       className="group flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2.5 transition-colors duration-fast hover:bg-hover focus-visible:bg-hover focus-visible:outline-none max-sm:flex-wrap max-sm:gap-x-3 max-sm:gap-y-2"
                     >
                       <ListTile className={cn(!a.enabled && "opacity-60")}><TriggerTiny when={flow.trigger.kind} tools={marks} /></ListTile>
@@ -525,7 +525,7 @@ export function BuiltInAutomations({
                         {/* Straight to this automation's runs. */}
                         <button
                           type="button"
-                          onClick={e => { e.stopPropagation(); navigate(`/automations/${a.id}?tab=runs`); }}
+                          onClick={e => { e.stopPropagation(); navigate(`/workflows/${a.id}?tab=runs`); }}
                           title="Runs in the last 30 days"
                           className="w-[64px] text-right text-[12px] tabular-nums text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
                         >

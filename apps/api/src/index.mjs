@@ -490,6 +490,9 @@ app.use('/api/campaign-messages',     verifyAuthEither, requireFeature('leadList
 app.use('/api/triggers',              verifyAuthEither, triggersRouter);
 app.use('/api/account-overview', verifySupabaseAuth, accountOverviewRouter);
 app.use('/api/automations',           verifyAuthEither, automationsRouter);
+// The same router under the name the app uses since GET-1043. /api/automations stays for API keys,
+// the plugin and anything already calling it.
+app.use('/api/workflows',             verifyAuthEither, automationsRouter);
 // Worker→API, secret-guarded: rebuild the derived ledger the deal triggers read.
 app.use('/internal/automations',       automationsInternalRouter);
 app.use('/api/foundations',             foundationsApiRouter);

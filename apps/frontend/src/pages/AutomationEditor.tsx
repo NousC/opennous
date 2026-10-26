@@ -12,7 +12,7 @@
 // The look (2026-10-26): the canvas and the settings sit as two framed cards, each node is a
 // compact chip (a small "Trigger" or "Action" over its name, what it does on hover), nodes are
 // joined by a thin line with a handle at each end, a Draft tag sits on the canvas while there are
-// unpublished changes, and the bar carries the verbs: Activate, Discard draft, See runs, Add a node.
+// unpublished changes, and the bar carries the verbs: Activate, Discard draft, See runs, Versions, Test.
 import { trackProductEvent } from "@/lib/posthog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -43,22 +43,13 @@ import {
   type Action, type Flow, type Issue, type Step, type StepConfig,
 } from "@/lib/flows";
 
-/** "2h ago", "Sep 27". */
-function ago(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const h = ms / 3_600_000;
-  if (h < 1) return `${Math.max(1, Math.round(ms / 60_000))}m ago`;
-  if (h < 24) return `${Math.round(h)}h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 // ── Adding a step ────────────────────────────────────────────────────────────
 
 /** A quiet verb in the bar: icon and word, no border, like the canvas tools around it. */
 const BAR_BTN = "flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
 
 /** The picker: search, then tools, then the tool's actions. */
-function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "link" | "end" | "bar" }) {
+function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "link" | "end" }) {
   const [open, setOpen] = useState(false);
   const [tool, setTool] = useState<string | null>(null);
   const [q, setQ] = useState("");
@@ -77,11 +68,7 @@ function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "lin
   return (
     <Popover open={open} onOpenChange={o => (o ? setOpen(true) : close())}>
       <PopoverTrigger asChild>
-        {variant === "bar" ? (
-          <button aria-label="Add a node" className={cn(BAR_BTN, open && "bg-accent text-foreground")}>
-            <Plus className="h-3.5 w-3.5" /> Add a node
-          </button>
-        ) : variant === "end" ? (
+        {variant === "end" ? (
           <button
             aria-label="Add a step"
             className={cn(
@@ -100,7 +87,7 @@ function AddStep({ onAdd, variant }: { onAdd: (a: Action) => void; variant: "lin
           </button>
         )}
       </PopoverTrigger>
-      <PopoverContent align={variant === "bar" ? "end" : "start"} sideOffset={8} className="w-[240px] rounded-[12px] p-1 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.16)]">
+      <PopoverContent align="start" sideOffset={8} className="w-[240px] rounded-[12px] p-1 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.16)]">
         <div className="flex items-center gap-2 border-b border-border/60 px-2 pb-1.5 pt-1">
           <Search className="h-3.5 w-3.5 text-muted-foreground/60" />
           <input
@@ -454,7 +441,7 @@ export default function AutomationEditor() {
       if (!res.ok) { setError(out.message ?? out.error ?? "Could not save that."); return null; }
       setSaved(out);
       if (version.current === sent) setDirty(false);
-      if (!saved) navigate(`/automations/${out.id}`, { replace: true });
+      if (!saved) navigate(`/workflows/${out.id}`, { replace: true });
       return out;
     } finally { setBusy(null); }
   };
@@ -550,7 +537,7 @@ export default function AutomationEditor() {
   const { plan } = usePlan();
   // With a run, straight to that run's review (GET-739).
   const openApprovals = (runId: string | null = null) => (isApiTier(plan)
-    ? navigate(`/automations?view=approvals${runId ? `&run=${encodeURIComponent(runId)}` : ""}`)
+    ? navigate(`/workflows?view=approvals${runId ? `&run=${encodeURIComponent(runId)}` : ""}`)
     : window.dispatchEvent(new CustomEvent(OPEN_PRIORITIES, { detail: { runId } })));
 
   const startTest = async (triggerId: string | null = null) => {
@@ -596,7 +583,7 @@ export default function AutomationEditor() {
     setBusy("delete");
     try {
       await automationsFetch(`/${saved.id}?workspaceId=${workspaceId}`, token, { method: "DELETE" });
-      navigate("/automations");
+      navigate("/workflows");
     } finally { setBusy(null); }
   };
 
@@ -604,7 +591,7 @@ export default function AutomationEditor() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-[13px] text-muted-foreground">
         That workflow is gone.
-        <button onClick={() => navigate("/automations")} className="text-foreground underline-offset-2 hover:underline">Back to workflows</button>
+        <button onClick={() => navigate("/workflows")} className="text-foreground underline-offset-2 hover:underline">Back to workflows</button>
       </div>
     );
   }
@@ -619,42 +606,23 @@ export default function AutomationEditor() {
   const selStep = flow.steps.find(s => s.id === sel) ?? null;
   const selIndex = selStep ? flow.steps.indexOf(selStep) : -1;
 
-  const live = `v${saved?.version ?? 1}`;
-  const status =
-    !saved ? { dot: "bg-foreground/25", text: "New" }
-    : busy === "save" ? { dot: "bg-foreground/25", text: "Saving…" }
-    : dirty && !allReady ? { dot: "bg-amber-500", text: "Not saved: finish the dashed steps" }
-    : dirty ? { dot: "bg-foreground/25", text: "Saving…" }
-    : saved.draft ? { dot: "bg-amber-500", text: `Unpublished · ${live} live` }
-    : saved.enabled ? { dot: "bg-emerald-500", text: `Live · ${live}` }
-    : { dot: "bg-foreground/25", text: `Off · ${live}` };
-
   return (
     <div className="flex h-full flex-col bg-muted/30">
       {/* The bar — where you are, what state it is in, and the verbs, quiet, on the right. */}
       <div className="flex h-[52px] flex-shrink-0 items-center gap-3 px-4">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <button
-            onClick={() => navigate("/automations")}
-            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Zap className="h-3.5 w-3.5" /> Workflows
-          </button>
-          <span className="text-muted-foreground/40">/</span>
+        {/* Just the name and the version (2026-10-26): the rail already says where you are. */}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <input
             value={shownName}
             onChange={e => { setName({ value: e.target.value, touched: true }); setDirty(true); version.current++; }}
             onFocus={() => tab !== "editor" && setTab("editor")}
             aria-label="Name"
             size={Math.max(12, shownName.length + 1)}
-            className="min-w-0 max-w-[280px] truncate rounded-md bg-transparent px-1.5 py-1 text-[13.5px] font-medium text-foreground transition-colors hover:bg-accent/60 focus:bg-accent/60 focus:outline-none"
+            className="min-w-0 max-w-[320px] truncate rounded-md bg-transparent px-1.5 py-1 text-[13.5px] font-medium text-foreground transition-colors hover:bg-accent/60 focus:bg-accent/60 focus:outline-none"
           />
-          <span className="flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-[11.5px] text-muted-foreground">
-            <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} /> {status.text}
+          <span className="flex-shrink-0 rounded-[6px] border border-border/70 px-1.5 py-[1px] text-[11.5px] tabular-nums text-muted-foreground">
+            {saved ? `v${saved.version ?? 1}` : "New"}
           </span>
-          {saved?.last_run_at && !saved.draft && (
-            <span className="ml-1 hidden whitespace-nowrap text-[11.5px] text-muted-foreground/60 xl:inline">· Last run {ago(saved.last_run_at)}</span>
-          )}
         </div>
 
         <div className="flex flex-shrink-0 items-center gap-0.5">
@@ -679,7 +647,6 @@ export default function AutomationEditor() {
               <Layers className="h-3.5 w-3.5" /> Versions
             </button>
           )}
-          {tab === "editor" && !viewing && <AddStep onAdd={a => addAt(flow.steps.length, a)} variant="bar" />}
           {saved && (
             <Popover open={testPicking} onOpenChange={setTestPicking}>
               <PopoverTrigger asChild>

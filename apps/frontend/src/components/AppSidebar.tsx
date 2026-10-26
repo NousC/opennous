@@ -9,10 +9,7 @@ import {
   Building2,
   Activity,
   BarChart3,
-  Plug,
-  Webhook,
   Radio,
-  Users2,
   ChevronRight,
   Settings as SettingsIcon,
   KeyRound,
@@ -80,7 +77,7 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 // Automations are back in the rail on every plan that has them, right under Insights (GTM insights
 // on the API plan). GET-864 had taken the row out when RevBoxes arrived; RevBox jobs stay out of the
 // Automations list (GET-868), so the two never show the same thing.
-const AUTOMATIONS_ITEM: NavItem = { title: "Workflows", url: "/automations", icon: Zap };
+const AUTOMATIONS_ITEM: NavItem = { title: "Workflows", url: "/workflows", icon: Zap };
 // Workspace plan (GET-872): Activity sits in the footer; Graph, Reporting, Forecast and Insights in a
 // collapsible Workspace group under the Workspace layer's groups.
 const footerNavItemsWorkspace: NavItem[] = [
@@ -107,15 +104,7 @@ const workNavItemsApi: NavItem[] = [
   // What happened, as events an engineer can pull or subscribe to (GET-939).
   { title: "Events",   url: "/events",   icon: Radio },
 ];
-// The API plan redesign (GET-620): integrations are a group of their own, the four places that
-// change what the record contains or who reads it, with API keys beside the webhooks. Usage and
-// billing sits under them on its own. No counts on any row.
-const integrationNavItemsApi: NavItem[] = [
-  { title: "Personal", url: "/integrations",    icon: Plug },
-  { title: "Shared",   url: "/company-sources", icon: Users2 },
-  { title: "Webhooks", url: "/webhooks",        icon: Webhook },
-  // API keys are in Settings, under Account (GET-1030).
-];
+// Integrations (Personal, Shared) and Webhooks are in Settings now, on every plan (GET-1043).
 
 /** "https://www.acme.example/about" → "acme.example"; null when there's nothing usable. */
 function domainOf(website?: string | null): string | null {
@@ -190,7 +179,6 @@ export function AppSidebar() {
 
   // Group folds stick per workspace (usePref, GET-595).
   const [viewsOpen, setViewsOpen] = usePref<boolean>("sidebar.views.open", true, (v): v is boolean => typeof v === "boolean");
-  const [integrationsOpen, setIntegrationsOpen] = usePref<boolean>("sidebar.integrations.open", true, (v): v is boolean => typeof v === "boolean");
   const [workspaceOpen, setWorkspaceOpen] = usePref<boolean>("sidebar.workspace.open", true, (v): v is boolean => typeof v === "boolean");
   // API plan: the credits card in the foot, from the same payload the Usage page reads.
   const credits = useCredits(api);
@@ -413,12 +401,6 @@ export function AppSidebar() {
               ),
             )}
           </ul>
-        )}
-
-        {/* API plan — Integrations (personal, shared, webhooks, keys). Usage and billing is in the footer. */}
-        {api && sectionLabel("Integrations", { open: integrationsOpen || collapsed, toggle: () => setIntegrationsOpen((o) => !o) })}
-        {api && (integrationsOpen || collapsed) && (
-          <ul className="flex flex-col gap-px">{integrationNavItemsApi.map((i) => renderOpenItem(i))}</ul>
         )}
 
         {/* The Workspace layer's groups after the views (cloud.nav.groups); the API plan has none. */}

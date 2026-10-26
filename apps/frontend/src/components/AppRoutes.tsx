@@ -107,13 +107,20 @@ function HomeRoute() {
   return <CloudHome />;
 }
 
+/** /automations[/:id][?…] → the same place under /workflows (GET-1043). */
+function LegacyAutomationsRedirect() {
+  const { id } = useParams();
+  const location = useLocation();
+  return <Navigate to={`/workflows${id ? `/${id}` : ""}${location.search}${location.hash}`} replace />;
+}
+
 // Chat is the in-app conversational agent — Custom plan only. On Core the agent lives in
 // the operator's own coding tool, so /chat redirects to Workflows.
 function ChatRoute() {
   const { plan, loading } = usePlan();
   const location = useLocation();
   if (loading) return <MinimalLoader />;
-  if (isCorePlan(plan)) return <Navigate to="/automations" replace />;
+  if (isCorePlan(plan)) return <Navigate to="/workflows" replace />;
   // Kept only so old links and open tabs still work. The query string carries over, so
   // /chat?thread=abc lands on /?thread=abc rather than dropping someone into an empty page.
   return <Navigate to={`/${location.search}`} replace />;
@@ -125,8 +132,6 @@ const Activity        = lazyWithErrorBoundary(() => import("@/pages/Activity"));
 const Workflows       = lazyWithErrorBoundary(() => import("@/pages/Workflows"));
 const AutomationEditor = lazyWithErrorBoundary(() => import("@/pages/AutomationEditor"));
 const DocPage         = lazyWithErrorBoundary(() => import("@/pages/DocPage"));
-const IntegrationsPage = lazyWithErrorBoundary(() => import("@/pages/Integrations"));
-const WebhooksPage = lazyWithErrorBoundary(() => import("@/pages/Webhooks"));
 const EventsPage = lazyWithErrorBoundary(() => import("@/pages/Events"));
 const ApiKeys         = lazyWithErrorBoundary(() => import("@/pages/ApiKeys"));
 const KeyDetail       = lazyWithErrorBoundary(() => import("@/pages/KeyDetail"));
@@ -143,17 +148,11 @@ const NotFound        = lazyWithErrorBoundary(() => import("@/pages/NotFound"));
 
 const EmptyWorkspace        = lazyWithErrorBoundary(() => import("@/pages/EmptyWorkspace"));
 
-// Sources as two standalone pages (GET-239). A connect link for a tool that belongs on the
-// other page forwards there, so the new connection shows up in the list being looked at.
-function SourcesPage({ side }: { side: "personal" | "company" }) {
-  const navigate = useNavigate();
-  return (
-    <IntegrationsPage
-      scope={side}
-      onWrongScope={(other, slug) =>
-        navigate(`${other === "company" ? "/company-sources" : "/integrations"}?connect=${encodeURIComponent(slug)}`, { replace: true })}
-    />
-  );
+/** An old standalone page's address → its Settings section, query and hash kept (GET-1043). */
+function ToSettingsSection({ section }: { section: string }) {
+  const { search, hash } = useLocation();
+  const rest = search.replace(/^\?/, "");
+  return <Navigate to={`/settings?section=${section}${rest ? `&${rest}` : ""}${hash}`} replace />;
 }
 
 // App shell — persistent sidebar + scrollable main pane. One shared layout for every
@@ -312,23 +311,27 @@ export function AppRoutes() {
                 which redirects browsers to /get-started. */}
             <Route path="/get-started" element={<Navigate to="/?getstarted=1" replace />} />
             <Route path="/install"    element={<Navigate to="/get-started" replace />} />
-            <Route path="/integrations" element={<Suspense fallback={<MinimalLoader />}><SourcesPage side="personal" /></Suspense>} />
-            <Route path="/company-sources" element={<Suspense fallback={<MinimalLoader />}><SourcesPage side="company" /></Suspense>} />
+            {/* Integrations and Webhooks live in Settings (GET-1043): Personal and Shared as tabs of one
+                page. The old addresses forward there with their query, so ?connect= links still connect. */}
+            <Route path="/integrations"    element={<ToSettingsSection section="integrations" />} />
+            <Route path="/company-sources" element={<ToSettingsSection section="company-sources" />} />
             {/* /playground and /graph are mounted above as full-screen routes — no sidebar */}
             {/* Skills stays hidden (2026-07-31); the engine is live for the agent and the
                 page redirects so old links don't 404. */}
             <Route path="/skills"     element={<Navigate to="/accounts" replace />} />
-            {/* Automations — trigger, artifact, destination. /workflows was its address while
-                it was an agent-only surface; it keeps resolving so nothing in the wild 404s. */}
-            <Route path="/automations" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><Workflows /></Suspense></RequiresFeature>} />
-            {/* One automation, drawn as its flow (GET-523). "new" is the unsaved one. */}
-            <Route path="/automations/:id" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><AutomationEditor /></Suspense></RequiresFeature>} />
-            <Route path="/workflows"  element={<Navigate to="/automations" replace />} />
+            {/* Workflows — trigger, steps, destination (called Automations until GET-1041/1043).
+                /automations was their address; it keeps resolving, id and query string included,
+                so links in email, Slack and open tabs land on the same page. */}
+            <Route path="/workflows" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><Workflows /></Suspense></RequiresFeature>} />
+            {/* One workflow, drawn as its flow (GET-523). "new" is the unsaved one. */}
+            <Route path="/workflows/:id" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><AutomationEditor /></Suspense></RequiresFeature>} />
+            <Route path="/automations"     element={<LegacyAutomationsRedirect />} />
+            <Route path="/automations/:id" element={<LegacyAutomationsRedirect />} />
             <Route path="/keys"       element={<KeysRoute />} />
             <Route path="/keys/:id"   element={<Suspense fallback={<MinimalLoader />}><KeyDetail /></Suspense>} />
             {/* Integrations + Webhooks live inside Settings now (2026-07-31). The old
                 standalone paths redirect into their section so nothing 404s. */}
-            <Route path="/webhooks"   element={<Suspense fallback={<MinimalLoader />}><WebhooksPage /></Suspense>} />
+            <Route path="/webhooks"   element={<ToSettingsSection section="webhooks" />} />
             {/* Every event as it happens, Stripe-style (GET-939). */}
             <Route path="/events"     element={<Suspense fallback={<MinimalLoader />}><EventsPage /></Suspense>} />
             {/* Triggers are headless (2026-07-14): the engine and MCP tools stay live, but
@@ -393,8 +396,6 @@ export function AppRoutes() {
                 page itself — see below — so it no longer redirects to the board.) */}
             <Route path="/companies"     element={<Navigate to="/accounts" replace />} />
             <Route path="/companies/:id" element={<RedirectToAccount />} />
-            <Route path="/integrations"  element={<Navigate to="/settings?section=integrations" replace />} />
-            <Route path="/company-sources" element={<Navigate to="/settings?section=company-sources" replace />} />
             {/* Lists (lead database) now lives in Partner OS — routes removed from the graph app. */}
             <Route path="/settings/*" element={<Navigate to="/settings" replace />} />
 

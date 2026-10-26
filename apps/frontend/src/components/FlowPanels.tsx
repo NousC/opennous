@@ -564,12 +564,12 @@ function HubspotFieldTrigger({ c, set }: { c: TriggerConfig; set: (patch: Partia
   const [fields, setFields] = useState<{ name: string; label: string; type: string | null }[] | null>(null);
   useEffect(() => {
     if (!token || !ws) return;
-    fetch(`${api}/api/automations/hubspot/objects?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${api}/api/workflows/hubspot/objects?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : { connected: false, objects: [] })).then(setObjects).catch(() => setObjects({ connected: false, objects: [] }));
   }, [api, token, ws]);
   useEffect(() => {
     if (!token || !ws || !c.object) { setFields(null); return; }
-    fetch(`${api}/api/automations/hubspot/objects/${encodeURIComponent(c.object)}/fields?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${api}/api/workflows/hubspot/objects/${encodeURIComponent(c.object)}/fields?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : { fields: [] })).then(d => setFields(d.fields ?? [])).catch(() => setFields([]));
   }, [api, token, ws, c.object]);
   if (objects && !objects.connected) return <p className="text-[12.5px] text-muted-foreground">HubSpot isn't connected.</p>;
@@ -899,7 +899,7 @@ function ReadPreview({ config }: { config: Step["config"] }) {
   const ready = !!config.object && (config.fields ?? []).length > 0;
   const run = async () => {
     setOut({ busy: true });
-    const r = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/automations/hubspot/read-preview?workspaceId=${userData?.workspace?.id ?? ""}`, {
+    const r = await fetch(`${import.meta.env.VITE_API_URL ?? ""}/api/workflows/hubspot/read-preview?workspaceId=${userData?.workspace?.id ?? ""}`, {
       method: "POST", headers: { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" }, body: JSON.stringify({ config }),
     }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
@@ -984,13 +984,13 @@ function HubspotReadFields({ c, set }: { c: Step["config"]; set: (patch: Partial
   const [q, setQ] = useState("");
   useEffect(() => {
     if (!token || !ws) return;
-    fetch(`${api}/api/automations/hubspot/objects?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${api}/api/workflows/hubspot/objects?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : { connected: false, objects: [] })).then(setObjects).catch(() => setObjects({ connected: false, objects: [] }));
   }, [api, token, ws]);
   useEffect(() => {
     if (!token || !ws || !c.object) { setFields(null); return; }
     setFields(null);
-    fetch(`${api}/api/automations/hubspot/objects/${encodeURIComponent(c.object)}/fields?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${api}/api/workflows/hubspot/objects/${encodeURIComponent(c.object)}/fields?workspaceId=${ws}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => (r.ok ? r.json() : { fields: [] })).then(d => setFields(d.fields ?? [])).catch(() => setFields([]));
   }, [api, token, ws, c.object]);
   // Sensible defaults once the fields are in: the "date" field to window on, a name to group by.

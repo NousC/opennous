@@ -43,8 +43,8 @@ export type ExtraSettingsRow = SettingsNavItem & { before?: string; show?: (inpu
 
 export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] = []): SettingsNavItem[] {
   const { tier, isWorkspaceAdmin } = input;
-  // Self-host: the sidebar already holds Integrations, Webhooks and API keys, Repo is a Cloud API
-  // plan option, and nothing is billed, so Settings keeps only what lives nowhere else (GET-839).
+  // Self-host: the sidebar holds API keys, Repo is a Cloud API plan option, and nothing is billed, so
+  // Settings keeps only what lives nowhere else (GET-839), plus Integrations and Webhooks (GET-1043).
   const selfHosted = !!input.selfHosted;
   // Core is the API plan (CORE_PLAN_IDS = ['api']).
   const core = tier === "api";
@@ -60,15 +60,13 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // On API the keys are the account's own way in, so they sit under Account, in Settings itself
     // rather than the sidebar and the top bar (GET-1030). Elsewhere they stay a Connections page.
     ...(core ? [{ id: "api-keys", label: "API keys", group: "Account", show: !selfHosted } as Row] : []),
-    // Connections — how data flows in and out. Sources are two pages (GET-239); the personal one
-    // keeps the `integrations` id so every existing ?section= link still lands.
-    // Each one is a standalone page on every plan (GET-625 follow-up on API, GET-660 on Custom), so
-    // the row goes there and both plans see the same page.
-    // On API the sidebar's Integrations group already holds these four (GET-620), so the rail does
-    // not repeat them (GET-857); unlisted, not hidden, so a ?section= link still reaches the page.
-    { id: "integrations",    label: "Personal integrations", group: "Connections", href: "/integrations", show: !selfHosted, unlisted: core },
-    { id: "company-sources", label: "Shared integrations",   group: "Connections", href: "/company-sources", show: !selfHosted, unlisted: core },
-    { id: "webhooks",        label: "Webhooks",              group: "Connections", href: "/webhooks", show: !selfHosted, unlisted: core },
+    // Connections — how data flows in and out. Integrations is one Settings page with Personal and
+    // Shared as tabs, and Webhooks sits under it, on every plan and on self-host: the API sidebar's
+    // Integrations group moved here (GET-1043). Shared keeps its own id so every ?section=company-sources
+    // link still lands, on its tab; unlisted because a tab is not a row.
+    { id: "integrations",    label: "Integrations",          group: "Connections" },
+    { id: "company-sources", label: "Shared integrations",   group: "Connections", unlisted: true },
+    { id: "webhooks",        label: "Webhooks",              group: "Connections" },
     ...(core ? [] : [{ id: "api-keys", label: "API keys", group: "Connections", href: "/keys", show: !selfHosted } as Row]),
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
