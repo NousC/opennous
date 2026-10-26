@@ -1,7 +1,7 @@
 // The event log (GET-939): a page of the feed, its cursor, and an unknown cursor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listEvents, feedView, feedHiddenTypes } from '../dist/db/eventLog.mjs';
+import { listEvents, feedView, feedHiddenTypes, retiredSignalEvents } from '../dist/db/eventLog.mjs';
 
 // Records every filter the read applies; answers with the fixture rows for the table.
 function fakeDb(rows, cursorRow = null) {
@@ -99,4 +99,43 @@ test('a page is shown through the feed view', async () => {
   const row = { id: 'e1', created_at: 'x', payload: { id: 'e1', type: 'conversation.reply_received', data: { subject: 's', thread_id: 't' } } };
   const page = await listEvents(fakeDb([row]), 'ws', {});
   assert.deepEqual(page.events[0].data, { thread_id: 't' });
+});
+
+// GET-1032: a signal follows its claim. One answer per table, as the read asks for it.
+function tablesDb(byTable, fail = null) {
+  return {
+    from(table) {
+      const q = new Proxy({}, {
+        get(_t, prop) {
+          if (prop === 'then') return (resolve) => resolve(table === fail ? { data: null, error: { message: 'down' } } : { data: byTable[table] ?? [], error: null });
+          return () => q;
+        },
+      });
+      return q;
+    },
+  };
+}
+const sig = (id, prop, type = 'signal.stakeholder_identified') => ({ id, type, data: { entity_id: 'acc', claim_property: prop } });
+
+test('a signal whose claim was retired, or is gone, leaves the feed; a current one stays', async () => {
+  const db = tablesDb({ claims: [
+    { entity_id: 'acc', property: 'note.a', invalid_at: null },
+    { entity_id: 'acc', property: 'note.b', invalid_at: '2026-10-25T00:00:00Z' },
+  ] });
+  const out = await retiredSignalEvents(db, 'ws', [sig('e1', 'note.a'), sig('e2', 'note.b'), sig('e3', 'note.c'), { id: 'e4', type: 'deal.won', data: {} }]);
+  assert.deepEqual([...out].sort(), ['e2', 'e3']);
+});
+
+test('an expansion request follows the claim behind its signal row', async () => {
+  const db = tablesDb({
+    account_signals: [{ id: 's1', entity_id: 'acc', claim_property: 'note.x' }],
+    claims: [{ entity_id: 'acc', property: 'note.x', invalid_at: '2026-10-25T00:00:00Z' }],
+  });
+  const out = await retiredSignalEvents(db, 'ws', [{ id: 'e9', type: 'account.expansion_requested', data: { signal_id: 's1' } }]);
+  assert.deepEqual([...out], ['e9']);
+});
+
+test('a failed claim lookup hides nothing', async () => {
+  const out = await retiredSignalEvents(tablesDb({}, 'claims'), 'ws', [sig('e1', 'note.a')]);
+  assert.equal(out.size, 0);
 });

@@ -97,7 +97,52 @@ export async function listEvents(supabase, workspaceId, { type = null, entityId 
   const { data, error } = await q.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(n + 1);
   if (error) throw error;
   const rows = data ?? [];
-  return { events: rows.slice(0, n).map(r => feedView(r.payload)), has_more: rows.length > n };
+  const page = rows.slice(0, n).map(r => r.payload);
+  const retired = await retiredSignalEvents(supabase, workspaceId, page);
+  return { events: page.filter(e => !retired.has(e?.id)).map(feedView), has_more: rows.length > n };
+}
+
+/**
+ * The signal events whose claim is no longer current (GET-1032). A signal is written once, when its
+ * claim is filed; a claim later retired, replaced or removed ("the CEO, name not yet known" once the
+ * CEO is on file) leaves its event on the feed as if still true. The feed reads each one against its
+ * claim instead: one indexed lookup per page. What a webhook was sent stays as sent. A failed lookup
+ * hides nothing. Returns the event ids to leave out.
+ */
+export async function retiredSignalEvents(supabase, workspaceId, events) {
+  const out = new Set();
+  try {
+    // account.expansion_requested names its signal row, not its claim.
+    const viaSignal = events.filter(e => e?.type === 'account.expansion_requested' && e.data?.signal_id);
+    const sigIds = [...new Set(viaSignal.map(e => e.data.signal_id))];
+    const bySignal = new Map();
+    if (sigIds.length) {
+      const { data, error } = await supabase.from('account_signals').select('id, entity_id, claim_property')
+        .eq('workspace_id', workspaceId).in('id', sigIds);
+      if (error) throw error;
+      for (const r of data ?? []) bySignal.set(r.id, r);
+    }
+    const keyOf = (e) => {
+      if (e?.type === 'account.expansion_requested') {
+        const s = bySignal.get(e.data?.signal_id);
+        return s?.claim_property ? `${s.entity_id}|${s.claim_property}` : null;
+      }
+      return String(e?.type ?? '').startsWith('signal.') && e.data?.entity_id && String(e.data?.claim_property ?? '').startsWith('note.')
+        ? `${e.data.entity_id}|${e.data.claim_property}` : null;
+    };
+    const keyed = events.map(e => [e, keyOf(e)]).filter(([, k]) => k);
+    if (!keyed.length) return out;
+    const props = [...new Set(keyed.map(([, k]) => k.split('|')[1]))];
+    const { data, error } = await supabase.from('claims').select('entity_id, property, invalid_at')
+      .eq('workspace_id', workspaceId).in('property', props);
+    if (error) throw error;
+    const current = new Set((data ?? []).filter(c => !c.invalid_at).map(c => `${c.entity_id}|${c.property}`));
+    for (const [e, k] of keyed) if (!current.has(k)) out.add(e.id);
+  } catch (err) {
+    console.warn('[event_log] claim check failed, showing every event:', err?.message ?? err);
+    return new Set();
+  }
+  return out;
 }
 
 /** One event by id, as a webhook receives it, or null. */
