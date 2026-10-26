@@ -116,7 +116,7 @@ export async function reconcileAccount(supabase, workspaceId, companyId, { since
   const incremental = !!since;
   const result = await read({
     supabase, workspaceId, feature: 'account-reconcile', meterAs: 'signal-extraction',
-    accept: acceptsArray, parse: parseArray, maxTokens: 600,
+    accept: acceptsArray, parse: parseArray, maxTokens: 1200,
     prompt: buildReconcilePrompt({ company: company.name, people, claims, incremental, today: new Date().toISOString().slice(0, 10) }),
   });
   if (!result.ok) return { skipped: result.reason };

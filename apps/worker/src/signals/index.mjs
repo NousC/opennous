@@ -15,6 +15,7 @@ import { listNotes, saveNote, corroborateNote, searchClaims, listActivities, rec
   resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, activityDirection, claimSubtagsFor, claimFreeTextFor,
   violatesPronounRule, isTitleOnlyFact, TITLE_ONLY_REASON, emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact, isIntelClaim } from '@nous/core';
 import { extractCallInsights } from './insights.mjs';
+import { screenFeatureRequests } from './alreadyHave.mjs';
 import { recomputeEntityStage } from '../workers/stageDerivation.mjs';
 import { scheduleCompanySummary } from './companySummary.mjs';
 import { runIntentScoring } from '../intentScore.mjs';
@@ -1149,7 +1150,7 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
       },
     });
     if (!dryRun && aboutUs && read.aboutUs.length) {
-      await saveAboutUsClaims(supabase, workspaceId, read.aboutUs.map(f => ({ ...f, contactId, companyId: contact?.company_id ?? null })),
+      await saveAboutUsClaims(supabase, workspaceId, (await screenFeatureRequests(supabase, workspaceId, read.aboutUs)).map(f => ({ ...f, contactId, companyId: contact?.company_id ?? null })),
         { sourceRef: sourceRef ?? aboutUsRef, sourceSystem: source ?? null, occurredAt, quotePrivate: quotePrivate || isPrivateMessageType(type) || type === 'email_thread' });
     }
     return saved;
@@ -1707,7 +1708,7 @@ export async function extractMeetingSignals({
       saved.push(...await persistFacts(supabase, workspaceId, forThem, { type: 'meeting_held', source, dryRun, sourceRef, occurredAt }));
       }
     }
-    if (!dryRun && heardAboutUs.length) await saveAboutUsClaims(supabase, workspaceId, heardAboutUs, { sourceRef, sourceSystem: source ?? null, occurredAt });
+    if (!dryRun && heardAboutUs.length) await saveAboutUsClaims(supabase, workspaceId, await screenFeatureRequests(supabase, workspaceId, heardAboutUs), { sourceRef, sourceSystem: source ?? null, occurredAt });
     return saved;
   } catch (err) {
     console.warn('[MEETING_EXTRACTOR_ERROR]', err.message);

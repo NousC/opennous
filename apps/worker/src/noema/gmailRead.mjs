@@ -30,6 +30,7 @@ import { theirSideOf, groundQuote } from './grounding.mjs';
 import { renderThread, lastAt } from './emailThreads.mjs';
 import { extractFactsFromText, persistFacts, loadSubject, loadPositionsOnFile } from '../signals/index.mjs';
 import { extractCallInsights } from '../signals/insights.mjs';
+import { screenFeatureRequests } from '../signals/alreadyHave.mjs';
 import { meterLLM } from '../utils/meterLLM.mjs';
 import { loadOurSide, tidyFactContent } from '../signals/extractionText.mjs';
 
@@ -503,7 +504,7 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
   });
   // What they said about us (GET-969): the same read, their side of the thread only.
   if (!dryRun && out.aboutUs?.length) {
-    await saveAboutUsClaims(supabase, workspaceId, out.aboutUs.map(f => ({ ...f, contactId, companyId: contact.company_id ?? null })),
+    await saveAboutUsClaims(supabase, workspaceId, (await screenFeatureRequests(supabase, workspaceId, out.aboutUs)).map(f => ({ ...f, contactId, companyId: contact.company_id ?? null })),
       { sourceRef, sourceSystem: SOURCE, occurredAt: lastAt(thread), quotePrivate: true });
   }
 
