@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cosine, parseVector } from './aboutUsClaims.js';
 import { getInternalEntityIds } from './teamMembers.js';
+import { canonicalEntityNames } from './marketEntities.js';
 
 // The insight engine (GET-971): one way to turn what customers said into insights.
 //
@@ -86,6 +87,17 @@ export function normalizeKey(s: unknown): string | null {
   const k = String(s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean).map(w => (w.length > 3 ? w.replace(/(?<!s)s$/, '') : w)).join(' ');
   return k || null;
+}
+
+/**
+ * What a competitor claim groups on (GET-1049): its market entity's canonical name when it has one,
+ * else the name it was written with (a possessive dropped, so "HubSpot's" is "HubSpot" even before
+ * the backfill), else its label. Pure.
+ */
+export function competitorKey(v: any, canonical: Map<string, string>): string | null {
+  const id = v?.metadata?.market_entity_id;
+  const named = (id && canonical.get(id)) || v?.metadata?.entity || v?.label || null;
+  return named ? String(named).replace(/['\u2019]s\b/g, '').trim() || null : null;
 }
 
 /** Two members within a type are the same point at this similarity (by meaning, no shared key). */
@@ -276,6 +288,12 @@ export async function loadMembers(supabase: SupabaseClient, workspaceId: string)
       if (error) throw error;
       for (const e of data ?? []) company.set(e.entity_id, e.kind === 'account' ? e.entity_id : e.company_id ?? null);
     }
+    // GET-1049: a competitor resolved to a market entity counts under its canonical name, so
+    // "Hubspot" and "HubSpot's" are one group. Without an id (older claims, tables missing) it is
+    // the claim's own text, normalised by groupMembers as before.
+    const canonical = t.accountCategory === 'competitor'
+      ? await canonicalEntityNames(supabase, workspaceId, rows.map(r => r.value?.metadata?.market_entity_id).filter(Boolean))
+      : new Map<string, string>();
     for (const r of rows) {
       const v = r.value ?? {};
       if (internal.has(r.entity_id)) continue;
@@ -286,7 +304,7 @@ export async function loadMembers(supabase: SupabaseClient, workspaceId: string)
         table: 'claims', id: r.id, type: t.key,
         // A competitor groups on its name. An objection groups by meaning; with no vector yet (the
         // embeddings worker fills it in), on its label.
-        key: t.accountCategory === 'competitor' ? (v.metadata?.entity ?? v.label ?? null) : r.embedding ? null : (v.label ?? null),
+        key: t.accountCategory === 'competitor' ? competitorKey(v, canonical) : r.embedding ? null : (v.label ?? null),
         content: String(v.content ?? ''), quote: null,
         companyId: company.get(r.entity_id) ?? null, contactId: person, speaker: null,
         sourceRef: v.metadata?.source_activity_id ? `activity:${v.metadata.source_activity_id}` : null,

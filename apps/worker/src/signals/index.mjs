@@ -1416,6 +1416,9 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
         // activity observation it was extracted from (claims.supporting_observation_ids).
         // A thread fact carries every message it was read from, so each one's readers can see it.
         supportingObservationIds: factSourceIds(fact).length ? factSourceIds(fact) : undefined,
+        // One canonical name per competitor / tool (GET-1049): a competitor or tech_stack fact's name
+        // resolves to a market entity and the claim carries metadata.market_entity_id. Fail-safe.
+        resolveMarketEntity: true,
         metadata: {
           about,
           signal_type:        type,

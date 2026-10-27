@@ -25,6 +25,7 @@ export * from './db/readContext.js';
 export * from './db/predictions.js';
 export * from './db/externalScores.js';
 export * from './db/notes.js';
+export * from './db/marketEntities.js';
 export * from './db/intelTimeline.js';
 export * from './db/conversationCredits.js';
 export * from './db/intelTopics.js';

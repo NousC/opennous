@@ -6,6 +6,7 @@ import { derivedViewerForContext, filterDerivedForViewer } from '../privacy/mess
 import { noteFreshness, noteDecaysAt, resolveSaidAt, pairReplacements, DEAL_POSITION_CATEGORIES, type Replacement } from './claimTime.js';
 import type { Freshness } from './claims.js';
 import { normalizeClaimCategory, ACCOUNT_ROLLUP_CATEGORIES, isIntelClaim, claimLabel } from './claimCategories.js';
+import { resolveClaimMarketEntity } from './marketEntities.js';
 
 // Build the text we embed for a note claim. MUST match the embeddings worker's
 // rowText() (apps/worker/src/workers/embeddings.mjs) so sync + backfill produce
@@ -429,6 +430,10 @@ export interface SaveNoteParams {
   /** When the source said it — the call's or the message's time (GET-770). Defaults to now. A
    *  backfill reading June must file June's facts under June, or they read as this week's news. */
   saidAt?: string | null;
+  /** GET-1049: a competitor or tech_stack claim resolves its name (metadata.entity / .tool) to one
+   *  market entity and stamps metadata.market_entity_id. Opt-in, set by the two claim writers
+   *  (worker extraction, API record); fail-safe, so without the tables the claim saves as before. */
+  resolveMarketEntity?: boolean;
 }
 
 export async function saveNote(
@@ -457,6 +462,10 @@ export async function saveNote(
   // people's labels would corrupt that decision.
   if (requested && category === 'general' && requested.toLowerCase() !== 'general') {
     metadata.category_raw = requested;
+  }
+  if (params.resolveMarketEntity) {
+    const resolved = await resolveClaimMarketEntity(supabase, workspaceId, category, metadata, { seenAt: saidAt });
+    if (resolved) Object.assign(metadata, resolved);
   }
   const value: Record<string, unknown> = {
     category,

@@ -264,6 +264,8 @@
 2026_10_21_insight_patterns.sql
 2026_10_21_slack_dm_privacy.sql
 2026_10_22_insight_pattern_interpretations.sql
+2026_10_26_webhook_claude_destination.sql
+2026_10_27_market_entities.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql
@@ -287,4 +289,3 @@ workspace_icp_scorer.sql
 workspace_own_domains.sql
 workspace_skill_references.sql
 workspaces_tour_completed_at.sql
-2026_10_26_webhook_claude_destination.sql

@@ -378,6 +378,8 @@ export async function recordObservations(supabase, workspaceId, body = {}, opts 
           content: String(content).trim(),
           source: o.source || 'agent',
           metadata,
+          // One canonical name per competitor / tool, same as the worker (GET-1049). Fail-safe.
+          resolveMarketEntity: true,
         });
         recorded++;
       } else {
