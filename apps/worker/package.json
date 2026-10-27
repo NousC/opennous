@@ -8,6 +8,7 @@
     "start": "node --env-file=../../.env src/index.mjs",
     "once": "node --env-file=../../.env src/runOnce.mjs",
     "test": "node ../../scripts/run-tests.mjs",
+    "eval:extraction": "node --env-file-if-exists=../../.env evals/extraction/run.mjs",
     "typecheck": "echo 'no ts in worker — skipping'"
   },
   "dependencies": {
