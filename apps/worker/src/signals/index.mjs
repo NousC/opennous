@@ -3,6 +3,7 @@
 // Claude Haiku extracts structured CRM facts → `note.*` claims on the contact entity.
 // Graph edges (REPORTS_TO, BUDGET_HOLDER_AT, etc.) extracted from each fact → workspace_graph_edges.
 
+import { createHash } from 'node:crypto';
 import { teamReadContext, writesTasks, isTimeBound, retireNote, claimAboutFor } from '@nous/core';
 import { extractionCriteria } from '../lib/extractionCriteria.mjs';
 import { mayReadWorkspace } from '../lib/creditGate.mjs';
@@ -27,6 +28,7 @@ import { externalEvidence } from '../noema/externalEvidence.mjs';
 import { splitForExtraction, halveForRetry, loadOurSide, ourSideLabel, ourSideRule, tidyFactContent, ourOfferBlock, factWording } from './extractionText.mjs';
 import { accountBriefBlock, loadAccountBrief } from './accountBrief.mjs';
 import { checkSignals, READ_IN_CONTEXT } from './signalCheck.mjs';
+import { readWithRepair, readReply, usableFacts, unusable, splitOnOverflow } from './extractionReply.mjs';
 
 
 // Activity types that warrant signal extraction — private, content-rich interactions only.
@@ -692,7 +694,7 @@ export function perPartFactCap(total, parts) {
   return Math.max(3, Math.ceil(total / parts) + 1);
 }
 
-const DEAL_BAR = `ONLY WHAT MOVES THE DEAL — record a fact only if it changes how we win this deal or work this account. True-but-minor context is NOT a fact worth recording: an org-chart detail of their team ("CS moved from account managers to specialists"), a passing mention of their own initiatives ("we're doing two big pushes this quarter"), an internal rule about one of their tools, a vague "the department needs this", a small feature ask about our product (edit a prompt, show a number on a card). Anything our side says — including what WE think they pay or would pay — is never their fact. Also not worth recording (the commonest noise in an audit of real output): colour about how their business works that changes nothing for us (how their team divides its work, how their own customers behave, their own competitors in their market); small talk and stale numbers (what they did years ago, "we're closing some big clients right now"); a vague offer or intent with no substance ("I can show you how we do other pieces", "take it off my plate"). When in doubt, leave it out.
+const DEAL_BAR = `ONLY WHAT MOVES THE DEAL — record a fact only if it changes how we win this deal or work this account. True-but-minor context is NOT a fact worth recording: an org-chart detail of their team ("CS moved from account managers to specialists"), a passing mention of their own initiatives ("we're doing two big pushes this quarter"), an internal rule about one of their tools, a vague "the department needs this", a small feature ask about our product (edit a prompt, show a number on a card). Anything our side says — including what WE think they pay or would pay — is never their fact. Their own answer to it is theirs, though: when they reply to our question or guess with a real fact (who decides or holds the money, what they have or have not done yet, what someone else at their company will need to see), record that fact, in their terms, and nothing of our guess. Also not worth recording (the commonest noise in an audit of real output): colour about how their business works that changes nothing for us (how their team divides its work, how their own customers behave, their own competitors in their market); small talk and stale numbers (what they did years ago, "we're closing some big clients right now"); a vague offer or intent with no substance ("I can show you how we do other pieces", "take it off my plate"). When in doubt, leave it out.
 
 Rate every fact's "importance": "high" — it changes what we do next or whether the deal closes (a buying signal, a blocker, a requirement, a timeline, who decides); "medium" — context a rep should know before the next call; "low" — true, but it would change nothing. Low facts are not recorded, so be honest.`;
 
@@ -858,6 +860,38 @@ export function replacesAllowed(fact) {
 
 const REPLACES_FIELD = ', "replaces": <ON FILE line number, only when this fact replaces it>';
 
+// ── One system prompt for every workspace (GET-1050) ──────────────────────────
+//
+// The extraction prompt was one user message, with the workspace's own focus (what we sell, our
+// side's names, the account brief, the workspace's criteria) woven between the rules. Nothing of it
+// could be reused from one call to the next. The rules that never change (the taxonomy, the deal
+// bar, where each statement belongs, selectivity) are now the SYSTEM prompt, word for word what the
+// user message carried, and identical for every workspace, contact and conversation; everything
+// that varies stays in the user message. A provider that caches a repeated prefix (OpenRouter
+// reports cached_tokens; DeepSeek and OpenAI-family models cache automatically) can now reuse it.
+// No cache_control flags are sent: the model door flattens `system` to a string for OpenRouter.
+// Both prompts share it, so a 1:1 read and a meeting read warm the same prefix.
+
+// Hindsight's two guards (retain/fact_extraction.py, MIT), GET-1050.
+const SELECTIVITY_RULES = `SELECTIVITY — before recording any fact, ask: would this matter for the deal or the account in 6 months? If not, leave it out.
+EXAMPLES ARE NOT INPUT — every name, company, tool, number and date in the examples in these instructions is invented to show the shape of a fact. Never emit an example's facts, names or dates unless the conversation itself has them.`;
+
+let systemPrompt = null;
+/** The extraction system prompt: the same text for every workspace and every conversation. Pure. */
+export function extractionSystemPrompt() {
+  systemPrompt ??= `You extract durable CRM intelligence from a sales team's conversations. The conversation, who it is with, who we are and what we sell come in the user message; these rules apply to every one.
+
+Categories:
+${claimCategoryPromptBlock()}
+${GENERAL_IS_LAST_RESORT}
+${DEAL_BAR}
+
+${SELECTIVITY_RULES}
+
+${ROUTING_RULES}`;
+  return systemPrompt;
+}
+
 export function buildActivitySignalsPrompt({ contactName, company = null, type, summary, maxFactsOverride = null, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
     const contactCtx  = [contactName, company].filter(Boolean).join(' at ');
     // Who "our side" is — a teammate's name, else "the <Company> team". The prompt used to
@@ -915,7 +949,9 @@ export function buildActivitySignalsPrompt({ contactName, company = null, type, 
     // re-extract pass can still raise the ceiling via override.
     const maxFacts = maxFactsOverride ?? defaultMaxFacts(type);
 
-    const prompt = `Extract durable CRM intelligence about ${contactName} from this private ${channelLabel}.
+    // The user message: everything about THIS conversation and workspace. The fixed rules are the
+    // system prompt (extractionSystemPrompt, GET-1050).
+    const user = `Extract durable CRM intelligence about ${contactName} from this private ${channelLabel}.
 ${provenance}
 Record facts about ${contactName}, drawn from what THEY reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between ${contactName} and ${we}: how ${contactName} found ${we} or why they reached out (a video, post, referral, or event), anything ${contactName} offered ${we} or introductions they can make, and any objection or critique ${contactName} raised about the product or how it differs from alternatives. Do NOT turn ${we}'s OWN questions or statements into facts about ${contactName} (e.g. if ${we} asked "what's behind your product?", that is NOT a fact that ${contactName} is interested in the product) — but an offer, an introduction, a critique, or a reason-for-reaching-out that ${contactName} genuinely voices IS a fact about ${contactName} and must be recorded.
 ${contactCtx ? `Contact: ${contactCtx}` : ''}
@@ -936,22 +972,19 @@ NEVER record (noise, or it already lives elsewhere in the CRM):
 
 Tag each fact with exactly one category, and whether it is about the person or their company.
 
-${ourOfferBlock(ourSide)}Categories:
-${claimCategoryPromptBlock()}
-${GENERAL_IS_LAST_RESORT}
-Rules:
+${ourOfferBlock(ourSide)}Rules:
 - Each fact is one self-contained sentence naming ${contactName} explicitly (no pronouns). Name them as the one doing or wanting the thing, never as a speaker: "${contactName} is moving support to Zendesk", not "${contactName} says the company is moving support to Zendesk". Never "${contactName}'s company X's …". Short and plain: the fact, its detail, nothing about who said it (that is stored separately).
 - ${ourSideRule(ourSide)}
 - State only what ${contactName} said or plainly did. Never add your own reading of what it implies — no "indicating…", "suggesting that…", "which shows…", "meaning…", "as evidenced by…". Write "${contactName} offered two references", not "${contactName} offered two references, indicating a strong relationship".
 - ${READ_IN_CONTEXT}
-- ${contactName} is the ONLY possible subject. Other names will appear in the message — the person it greets, a colleague, one of us — and none of them is the subject. If the message opens "Hi <name>", that name is the RECIPIENT, not ${contactName}. Never write a fact whose subject is anyone but ${contactName}.
+- ${contactName} is the ONLY possible subject. Other names will appear in the message — the person it greets, a colleague, one of us — and none of them is the subject. If the message opens "Hi <name>", that name is the RECIPIENT, not ${contactName}. Never write a fact whose subject is anyone but ${contactName}. ONE EXCEPTION, and it is a fact about their COMPANY: when ${contactName} says who at their company decides, signs off or holds the budget (a colleague who is not in this conversation, such as their CFO or their boss), record it with "about": "company", naming ${company ? company : 'their company'} in the sentence ("At ${company ? company : 'the company'}, the CFO, Wren Adair, decides on spend") — never as a fact about ${contactName} alone, and never dropped because the colleague is not ${contactName}.
 - SOMEONE SELLING TO US IS NOT A CUSTOMER. This corpus is our own sales and support correspondence. A thread where the other side is pitching US — a vendor cold email, an agency, a recruiter, a software demo, a staffing or payment-terms negotiation — contains no intelligence about a customer, however well written it is. Extracting it files a stranger's product pitch on our own account record. When the thread is inbound selling, return [] and nothing else.
 - A JOB TITLE ON ITS OWN IS NOT A FACT. "Roland Fisk is the General Manager at Fallowmere Logistics" states what someone IS, not something they said or did, and it does not decay — it is an attribute of the person. Do not emit it as a fact at all. Put it in "job_title" instead, as the bare title: "General Manager". A title plus something they SAID stays a fact, and keeps the title too.
 - Set "category" to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}.
 - Set "about" to "person" for a fact about ${contactName}, or "company" for a fact about their company.
 - Set "label" to a 2–5 word chip a colleague who was NOT there understands on its own, naming the substance — what a rep would skim on a card. NOT the person's name, NOT a fragment of their words ("Not a silver bullet", "Asked for more"), NOT "X vs Y". For a competitor, use the competitor/vendor name (e.g. "Tallowmark", "Brightlist leads"). For an objection, name the concern ("Doubts outbound intent data", "Already on Salesforce"). For a pain/goal, name the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
 - CONTEXT TAGS — these decide whether a signal is a real risk, so be precise:
-  - "competitor" means a competitor of ${ourSide?.companyName || 'our company'}: a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. Their CRM, call recorder, meeting-notes or agenda tool, data vendor or automation tool is NOT a competitor unless it does that same job — file it as tech_stack (even when they plan to switch off it). Their own build (a bot or agent they made) is tech_stack, never competitor.
+  - "competitor" means a competitor of ${ourSide?.companyName || 'our company'}: a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. Their CRM, call recorder, meeting-notes or agenda tool, data vendor or automation tool is NOT a competitor unless it does that same job — file it as tech_stack (even when they plan to switch off it). Their own build (a bot or agent they made) is tech_stack, never competitor. Testing what feeds their own tool (their tool on their CRM's data versus on ours) is a test of US, not a competitor evaluation: the system they already run is tech_stack even when it is the other side of the test, and the test itself is a goal (or a buying_signal when it is a step toward buying). A data source is a competitor only when it is a product sold to do the job WE sell.
   - If category is "competitor": set "entity" to the competitor/vendor name only (e.g. "Pearl Lantern"), and "stance" to one of: "evaluating" (a live alternative they're weighing against us), "incumbent" (they currently use it FOR THE JOB we sell), "past_failure" (a vendor they TRIED for that job and it failed / they fired — this LOWERS competitive risk, it's an opening), "mentioned" (named in passing, no clear posture).
   - If category is "objection": set "status" to "open" (still unresolved), "resolved" (answered/no longer a concern), or "addressed" (we responded, awaiting confirmation); and "hardness" to "hard" (budget, authority, security, legal, procurement — a real gate) or "soft" (needs info, timing, minor preference).
   - If category is "authority": set "role" to one of: "economic_buyer" (holds the budget or signs), "decision_maker" (chooses, or their approval is what unblocks it), "champion" (actively pushes for us internally), "blocker" (is stopping it), "technical" (judges whether it works). The role must describe THE PERSON THE FACT IS ABOUT. Leave "role" out when the fact names someone ELSE's authority ("Marisol can't change that setting, the directors would have to"), when it only restates a job title, or when the person simply uses the product.
@@ -964,10 +997,7 @@ Rules:
 - Extract EVERY fact that clears all four bars — there is no target number. A thin message often yields none or one; a content-rich meeting may yield many. NEVER pad to reach a count, NEVER split one fact into several, and NEVER restate the same fact in different words.
 - Quality over quantity: one sharp, specific fact is worth more than five vague ones. If nothing clears all four bars, return [].
 - Hard ceiling of ${maxFacts} facts with home "claim" — a safety limit, not a goal. What they say about us (our_product, market) does not count toward it. Stop when you run out of facts that genuinely clear the bar, well before the ceiling.
-
-${DEAL_BAR}
-
-${ROUTING_RULES}
+- The deal bar, where each statement belongs (home), and the categories are in the instructions above; they apply here.
 
 ${positionShiftBlock(positionsOnFile)}
 
@@ -985,8 +1015,17 @@ If nothing meaningful: []`;
     // 400–2,000 cap it ran out mid-thought on long parts and answered nothing (finish: length).
     // Room for what they say about us too (GET-969): those ride alongside the facts, not in their count.
     const maxTokens = Math.min(4000, Math.max(1500, maxFacts * 200)) + ABOUT_US_TOKENS;
-    return { prompt, maxFacts, maxTokens };
+    const system = extractionSystemPrompt();
+    // `prompt` is the whole text the model reads, system first: what the eval fingerprints and the
+    // prompt tests read.
+    return { prompt: `${system}\n\n${user}`, system, user, maxFacts, maxTokens };
 }
+
+// What the model door counts as an answer (GET-1050): anything readReply can read, including a
+// mostly-malformed array the repair turn will fix. Only no array at all sends it to the fallback.
+const acceptsReply = (t) => readReply(t).status !== 'unparseable';
+// How many times an overflowing piece is halved before the read fails (OVERFLOW_FLOOR also stops it).
+const MAX_SPLIT_DEPTH = 4;
 
 /** The lines that tell the model it is reading one part of a long text, with the call summary as context. */
 function partPreamble(part, noun = 'Transcript') {
@@ -1039,44 +1078,61 @@ export async function extractFactsFromText({
   // One budget per CALL, split across its parts (GET-789): a long call no longer yields more facts
   // just because it is read in more pieces.
   const partBudget = perPartFactCap(callFactBudget(maxFactsOverride ?? defaultMaxFacts(type), parts.length), parts.length);
-  const readPiece = async (piece, index, allowHalving) => {
+  // GET-1050: one repair turn for an unusable answer (readWithRepair), categories held to the list
+  // (usableFacts), and an answer cut off at its token limit read again as two halves of the text
+  // (splitOnOverflow), down to OVERFLOW_FLOOR characters. `depth` bounds the splitting.
+  // `budget`: a split half shares its piece's fact budget rather than getting the whole of it (GET-789).
+  const readPiece = async (piece, index, allowHalving, depth = 0, budget = partBudget) => {
     // What earlier parts already found, so this part does not find it again (GET-789).
     const part = { index, total: parts.length, context, already: out.facts.map(f => f.content) };
-    const { prompt, maxFacts, maxTokens } = buildActivitySignalsPrompt({
-      contactName, company, type, summary: piece, maxFactsOverride: partBudget, ourSide, part, positionsOnFile, accountBrief,
+    const { system, user, maxFacts, maxTokens } = buildActivitySignalsPrompt({
+      contactName, company, type, summary: piece, maxFactsOverride: budget, ourSide, part, positionsOnFile, accountBrief,
     });
-    const msg = await createMessage({
-      meter: false,   // the caller meters it, through onCall
-      feature: 'activity-signals-extract',
-      model: model || pipelineModel(),
-      fallback,
-      max_tokens: maxTokens,
-      messages: [{ role: 'user', content: prompt + criteria }],
-      accept: (t) => parseJsonArray(t) !== null,
+    const label = `${type} part ${index + 1}/${parts.length}`;
+    const { reply, msg } = await readWithRepair({
+      ask: ({ system: sys, messages }) => createMessage({
+        meter: false,   // the caller meters it, through onCall — the repair turn too
+        feature: 'activity-signals-extract',
+        model: model || pipelineModel(),
+        fallback,
+        max_tokens: maxTokens,
+        system: sys,
+        messages,
+        accept: acceptsReply,
+      }),
+      system, user: user + criteria, label,
+      onCall: async (m) => { out.calls.push(m); await onCall?.(m); },
     });
-    out.calls.push(msg);
-    await onCall?.(msg);
-    const parsed = parseJsonArray(msg.content[0]?.text);
-    let raw = null;
-    if (parsed !== null) {
-      const { claims, aboutUs, routed } = routeFacts(resolveReplaces(parsed, positionsOnFile));
+    if ((reply.status === 'facts' && !unusable(reply)) || reply.status === 'empty') {
+      const { claims, aboutUs, routed } = routeFacts(resolveReplaces(usableFacts(reply.facts, { label }), positionsOnFile));
       out.routed.our_product += routed.our_product; out.routed.market += routed.market; out.routed.low_importance += routed.low_importance;
       if (routed.our_product || routed.market || routed.low_importance) console.log(`[ROUTER] ${type}: ${routed.our_product} product feedback, ${routed.market} market view(s) kept as claims about us, ${routed.low_importance} low-importance dropped`);
-      raw = [...claims, ...aboutUs.map(markAboutUs)];
+      return [{ raw: [...claims, ...aboutUs.map(markAboutUs)], shown: piece, maxFacts }];
     }
-    if (raw !== null) return [{ raw, shown: piece, maxFacts }];
-    const halves = allowHalving ? halveForRetry(piece) : null;
-    if (halves) {
-      console.warn(`[ACTIVITY_EXTRACTOR_HALVED] part ${index + 1}/${parts.length}: no answer for ${piece.length} chars — reading it as two halves`);
-      const got = [];
-      for (const half of halves) got.push(...await readPiece(half, index, false));
-      if (got.length) return got;
+    if (reply.status === 'truncated') {
+      // The answer overflowed: the same text is too much for one answer, so read it as two (GET-1050).
+      const halves = depth < MAX_SPLIT_DEPTH ? splitOnOverflow(piece) : null;
+      if (halves) {
+        console.warn(`[EXTRACTION_OVERFLOW] ${label}: answer cut off at the token limit for ${piece.length} chars — reading it as two halves`);
+        const got = [];
+        for (const half of halves) got.push(...await readPiece(half, index, false, depth + 1, perPartFactCap(budget, 2)));
+        return got;   // a half that failed recorded its own failure
+      }
+    } else {
+      const halves = allowHalving ? halveForRetry(piece) : null;
+      if (halves) {
+        console.warn(`[ACTIVITY_EXTRACTOR_HALVED] part ${index + 1}/${parts.length}: no answer for ${piece.length} chars — reading it as two halves`);
+        const got = [];
+        for (const half of halves) got.push(...await readPiece(half, index, false, depth + 1, perPartFactCap(budget, 2)));
+        if (got.length) return got;
+      }
     }
-    // An output with no parseable JSON array is a FAILURE, not an empty answer — a model
-    // that fumbles the format 5% of the time silently loses 5% of the intel otherwise.
+    // No usable answer after the repair turn (and the split) is a FAILURE, never an empty answer:
+    // only an explicit [] means "nothing to record" (GET-1050). Recorded as an `unparseable`
+    // pipeline event by the caller, and thrown in strict mode so a backfill retries it.
     out.failedParts++;
     await onPart?.(null, { index, total: parts.length, model: msg.model });
-    if (strict) throw new Error(`unparseable extraction output from ${msg.model}`);
+    if (strict) throw new Error(`${unusable(reply) ? 'unusable' : reply.status} extraction output from ${msg.model}`);
     return [];
   };
   for (let index = 0; index < parts.length; index++) {
@@ -1114,7 +1170,7 @@ export async function extractFactsFromText({
 // `aboutUsRef`: the conversation's identity for claims about us when it has no sourceRef (a LinkedIn
 // thread rollup), so a re-read files nothing twice. `quotePrivate`: the conversation is a private
 // message whatever its type says.
-export async function extractActivitySignals({ supabase, activityId, sourceActivityIds, contactId, workspaceId, type, source, summary, maxFactsOverride, dryRun = false, strict = false, sourceRef = null, occurredAt = null, ourNames = [], evidenceMessages = null, aboutUs = true, aboutUsRef = null, quotePrivate = false }) {
+export async function extractActivitySignals({ supabase, activityId, sourceActivityIds, contactId, workspaceId, type, source, summary, maxFactsOverride, dryRun = false, strict = false, sourceRef = null, occurredAt = null, ourNames = [], evidenceMessages = null, aboutUs = true, aboutUsRef = null, quotePrivate = false, sourceHash = null }) {
   try {
     // THE CREDIT GATE (GET-531). Reading is what spends credits, so this is where the band
     // has to bite — one question per workspace per five minutes, in front of every caller:
@@ -1149,13 +1205,13 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
       onPart: async (facts, { index, total, model }) => {
         if (facts === null) {
           console.warn(`[SIGNAL_EXTRACTOR_PARSE_FAIL] ${model}: no JSON array in output — activity ${activityId} part ${index + 1}/${total}`);
-          await recordPipelineEvent(supabase, { workspaceId, kind: 'unparseable', feature: 'activity-signals-extract', model, detail: { activity_id: activityId, part: index + 1, parts: total } });
+          await recordPipelineEvent(supabase, { workspaceId, kind: 'unparseable', feature: 'activity-signals-extract', model, detail: { activity_id: activityId, part: index + 1, parts: total, ...(sourceRef ? { source_ref: sourceRef } : {}) } });
           return;
         }
         if (!facts.length) return;
         const kept = facts.map(f => ({ ...f, contactId, activityId: f.activityId ?? activityId,
           sourceActivityIds: f.sourceActivityIds ?? sourceActivityIds, companyId: contact?.company_id ?? null }));
-        saved.push(...await persistFacts(supabase, workspaceId, kept, { type, source, dryRun, sourceRef, occurredAt, strict }));
+        saved.push(...await persistFacts(supabase, workspaceId, kept, { type, source, dryRun, sourceRef, sourceHash, occurredAt, strict }));
       },
     });
     if (!dryRun && aboutUs && read.aboutUs.length) {
@@ -1168,7 +1224,7 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
       // Logged under its own tag so an outage is findable — an empty credit balance read as
       // "no facts in any conversation" for a full day before anyone looked.
       console.error('[SIGNAL_EXTRACTOR_UNAVAILABLE]', err.model, err.status, err.message);
-      await recordPipelineEvent(supabase, { workspaceId, kind: 'unavailable', feature: 'activity-signals-extract', model: err.model, detail: { activity_id: activityId, status: err.status, message: String(err.message).slice(0, 300) } });
+      await recordPipelineEvent(supabase, { workspaceId, kind: 'unavailable', feature: 'activity-signals-extract', model: err.model, detail: { activity_id: activityId, status: err.status, message: String(err.message).slice(0, 300), ...(sourceRef ? { source_ref: sourceRef } : {}) } });
     } else {
       console.warn('[SIGNAL_EXTRACTOR_ERROR]', err.message);
     }
@@ -1266,7 +1322,10 @@ export async function persistJobTitles(supabase, workspaceId, facts, { source, d
 
 // `occurredAt` is when the source was said (the call, the message). Every claim is filed under it,
 // not under the time we wrote it (GET-770). A fact may carry its own `saidAt` (a thread's message).
-export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, occurredAt = null, strict = false }) {
+// The categories a person fact may be re-filed on its account under (GET-1050, see persistFacts).
+const REFILE_ON_ACCOUNT = new Set(['authority', 'budget', 'blocker']);
+
+export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, sourceHash = null, occurredAt = null, strict = false }) {
   // Titles first, and they are filed whether or not the fact survives the guards below: a title is
   // an attribute of the person and does not depend on the claim it arrived with being keepable.
   const titlesFiled = await persistJobTitles(supabase, workspaceId, kept, { source, dryRun });
@@ -1328,6 +1387,24 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
           || namesSubjectForTest(f.content, subjectNames.get(f.contactId))
         : true)
     : namesSubjectForTest(f.content, subjectNames.get(f.contactId));
+  // Only who decides and where the money sits, the account's buying committee; and only with a
+  // company record to land on (without one claimTargetEntity would put it back on the person).
+  // A buying signal is a person's move and is never in this set.
+  // A PERSON fact that names their COMPANY but not them is about the account, and is re-filed on it
+  // rather than dropped (GET-1050). "At Brindle, the CFO decides on spend" said by one attendee about
+  // a colleague who was not on the call is a real fact, and the person guard used to delete it, so a
+  // buyer's true answer about who holds the budget left nothing on file. A buying signal stays a
+  // person's move (claimTargetEntity) and is never re-filed. An authority role described the person
+  // the fact was about; on the company it describes nobody, so it is cleared.
+  kept = kept.map(f => {
+    if (namesSubject(f) || claimAboutFor(f.category, f.about) !== 'person') return f;
+    if (!REFILE_ON_ACCOUNT.has(normalizeClaimCategory(f.category)) || !f.companyId) return f;
+    const co = companyNames.get(f.contactId);
+    if (!co || !namesSubjectForTest(f.content, co)) return f;
+    console.log(`[SIGNAL_SUBJECT_GUARD] re-filed on the account (names ${co}, not the person): "${f.content}"`);
+    const { role: _role, ...rest } = f;
+    return { ...rest, about: 'company' };
+  });
   const offSubject = kept.filter(f => !namesSubject(f));
   kept = kept.filter(namesSubject);
   if (offSubject.length) {
@@ -1449,6 +1526,8 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
           // themselves — and a backfill's resume check has to answer exactly that, or it pays to
           // read the same year twice.
           ...(sourceRef ? { source_ref: sourceRef } : {}),
+          // The fingerprint of the text it was read from, so a re-sync of the same text is not read again (GET-1050).
+          ...(sourceRef && sourceHash ? { source_hash: sourceHash } : {}),
           // Context tags — a closed vocabulary alongside the prose, so a RULE can act on it.
           // "Osric left last month", "we lost Osric" and "Osric is no longer with us" are one
           // fact and three strings; `change` is what lets a departure end the authority claim it
@@ -1565,6 +1644,42 @@ export async function meetingAlreadyRead(supabase, workspaceId, sourceRef) {
   }
 }
 
+// ── Delta skip (GET-1050) ─────────────────────────────────────────────────────
+//
+// A notetaker re-sends a meeting it already sent (a re-sync, a webhook retried, the same transcript
+// polled twice), and live webhooks cannot use onceOnly, because the summary can arrive first and the
+// full transcript later under the same source_ref. So the claims a read files carry a fingerprint of
+// the text they were read from (metadata.source_hash), and a meeting whose source_ref and text both
+// match a read already on file is not read again. A changed text has a new fingerprint and is read.
+// A read from before this shipped has no fingerprint, so it is read again as before: never a skip
+// on a guess. Emails and messages are not covered here: an activity is recorded once by its
+// external id, and its extraction runs when it is first recorded.
+
+/** The fingerprint of a conversation's text: whitespace-insensitive, so a re-sync that only re-wraps
+ *  lines matches. Pure. */
+export function sourceTextHash(text) {
+  return createHash('sha256').update(String(text ?? '').replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 32);
+}
+
+/** Whether a claim already on file was read from exactly this text of this source. Unknown → false. */
+export async function alreadyReadSameText(supabase, workspaceId, sourceRef, sourceHash) {
+  if (!sourceRef || !sourceHash) return false;
+  try {
+    const { data } = await supabase.from('claims').select('id')
+      .eq('workspace_id', workspaceId).eq('value->metadata->>source_ref', sourceRef)
+      .eq('value->metadata->>source_hash', sourceHash).limit(1);
+    if (!data?.length) return false;
+    // An earlier read of this source that lost a part (unparseable, or the model down) is read
+    // again: skipping it would make the recorded failure permanent.
+    const { data: failed } = await supabase.from('pipeline_events').select('id')
+      .eq('workspace_id', workspaceId).eq('detail->>source_ref', sourceRef)
+      .in('kind', ['unparseable', 'unavailable']).limit(1);
+    return !failed?.length;
+  } catch {
+    return false;   // unknown: read it rather than drop it
+  }
+}
+
 /** The attendees who are not marked personal (GET-1014). One whose check fails is kept. */
 export async function withoutPersonal(supabase, workspaceId, participants = []) {
   const keep = await Promise.all(participants.map(async (p) => {
@@ -1595,6 +1710,14 @@ export async function extractMeetingSignals({
 }) {
   try {
     if (onceOnly && sourceRef && !dryRun && await meetingAlreadyRead(supabase, workspaceId, sourceRef)) return [];
+    // The same text of the same meeting, already read: nothing new to find (GET-1050).
+    // The attendees are part of what was read: a newly resolved attendee on the same text is a new read.
+    const sourceHash = sourceRef && summary
+      ? sourceTextHash(`${summary}\n${(participants ?? []).map(p => p.contactId ?? p.name ?? '').sort().join(',')}`) : null;
+    if (sourceHash && !dryRun && await alreadyReadSameText(supabase, workspaceId, sourceRef, sourceHash)) {
+      console.log(`[EXTRACTION_DELTA_SKIP] ${sourceRef}: same text as the read on file — not read again`);
+      return [];
+    }
     // THE CREDIT GATE (GET-531). Reading is what spends credits, so this is where the band
     // has to bite — one question per workspace per five minutes, in front of every caller:
     // the webhook handlers, the rollups, the re-extraction passes. The activity is already
@@ -1639,7 +1762,7 @@ export async function extractMeetingSignals({
         type: 'meeting_held', source, summary, maxFactsOverride, dryRun, occurredAt, ourNames,
         // The meeting path already holds the ref; dropping it here is what made a
         // 1:1 call indistinguishable from an unread one (GET-375).
-        sourceRef,
+        sourceRef, sourceHash,
       });
     }
 
@@ -1667,37 +1790,53 @@ export async function extractMeetingSignals({
     // One part, read once — or, when the model returns nothing for it, read again as two halves
     // (GET-415). Returns the facts found and the transcript text they must be grounded against.
     const criteria = await extractionCriteria(supabase, workspaceId);
-    const readPart = async (text, label, allowHalving) => {
-      const msg = await createMessage({
-        meter: false,
-        feature: 'meeting-signals-extract',
-        model: pipelineModel(),
-        max_tokens: Math.min(5000, Math.max(1500, partBudget * 200)) + ABOUT_US_TOKENS,   // room to think, see buildActivitySignalsPrompt
-        accept: (t) => parseJsonArray(t) !== null,
-        messages: [{ role: 'user', content: buildMeetingSignalsPrompt({
-          roster, transcript: text, maxFacts: partBudget, ourSide, positionsOnFile, accountBrief,
-          part: { ...label, context, already: saved.map(f => f.content).filter(Boolean) },
-        }) + criteria }],
+    // GET-1050: one repair turn, categories held to the list, a split on overflow (see readPiece in
+    // extractFactsFromText). Every call is metered, the repair turn included.
+    const readPart = async (text, label, allowHalving, depth = 0, budget = partBudget) => {
+      const { system, user } = buildMeetingSignalsMessages({
+        roster, transcript: text, maxFacts: budget, ourSide, positionsOnFile, accountBrief,
+        part: { ...label, context, already: saved.map(f => f.content).filter(Boolean) },
       });
-      await meterLLM(supabase, workspaceId, 'signal-extraction', msg);
-      const parsed = parseJsonArray(msg.content[0]?.text);
-      let facts = null;
-      if (parsed !== null) {
-        const { claims, aboutUs, routed } = routeFacts(resolveReplaces(parsed, positionsOnFile));
+      const tag = `meeting part ${label.index + 1}/${label.total}`;
+      const { reply, msg } = await readWithRepair({
+        ask: ({ system: sys, messages }) => createMessage({
+          meter: false,
+          feature: 'meeting-signals-extract',
+          model: pipelineModel(),
+          max_tokens: Math.min(5000, Math.max(1500, budget * 200)) + ABOUT_US_TOKENS,   // room to think, see buildActivitySignalsPrompt
+          accept: acceptsReply,
+          system: sys,
+          messages,
+        }),
+        system, user: user + criteria, label: tag,
+        onCall: (m) => meterLLM(supabase, workspaceId, 'signal-extraction', m),
+      });
+      if ((reply.status === 'facts' && !unusable(reply)) || reply.status === 'empty') {
+        const { claims, aboutUs, routed } = routeFacts(resolveReplaces(usableFacts(reply.facts, { label: tag }), positionsOnFile));
         if (routed.our_product || routed.market || routed.low_importance) console.log(`[ROUTER] meeting: ${routed.our_product} product feedback, ${routed.market} market view(s) kept as claims about us, ${routed.low_importance} low-importance dropped`);
-        facts = [...claims.slice(0, partBudget), ...aboutUs.map(markAboutUs)];
+        return [{ facts: [...claims.slice(0, budget), ...aboutUs.map(markAboutUs)], text }];
       }
-      if (facts !== null) return [{ facts, text }];
-      const halves = allowHalving ? halveForRetry(text) : null;
-      if (!halves) {
-        console.warn(`[MEETING_EXTRACTOR_PARSE_FAIL] ${msg.model}: no JSON array — part ${label.index + 1}/${label.total}`);
-        await recordPipelineEvent(supabase, { workspaceId, kind: 'unparseable', feature: 'meeting-signals-extract', model: msg.model, detail: { part: label.index + 1, parts: label.total, source_ref: sourceRef } });
-        return [];
+      if (reply.status === 'truncated') {
+        const halves = depth < MAX_SPLIT_DEPTH ? splitOnOverflow(text) : null;
+        if (halves) {
+          console.warn(`[EXTRACTION_OVERFLOW] ${tag}: answer cut off at the token limit for ${text.length} chars — reading it as two halves`);
+          const out = [];
+          for (const half of halves) out.push(...await readPart(half, label, false, depth + 1, perPartFactCap(budget, 2)));
+          return out;
+        }
+      } else {
+        const halves = allowHalving ? halveForRetry(text) : null;
+        if (halves) {
+          console.warn(`[MEETING_EXTRACTOR_HALVED] part ${label.index + 1}/${label.total}: no answer for ${text.length} chars — reading it as two halves`);
+          const out = [];
+          for (const half of halves) out.push(...await readPart(half, label, false, depth + 1, perPartFactCap(budget, 2)));
+          return out;
+        }
       }
-      console.warn(`[MEETING_EXTRACTOR_HALVED] part ${label.index + 1}/${label.total}: no answer for ${text.length} chars — reading it as two halves`);
-      const out = [];
-      for (const half of halves) out.push(...await readPart(half, label, false));
-      return out;
+      // Never a silent zero (GET-1050): no usable answer after the repair turn is recorded as a failure.
+      console.warn(`[MEETING_EXTRACTOR_PARSE_FAIL] ${msg.model}: ${unusable(reply) ? 'no usable fact' : reply.status} — part ${label.index + 1}/${label.total}`);
+      await recordPipelineEvent(supabase, { workspaceId, kind: 'unparseable', feature: 'meeting-signals-extract', model: msg.model, detail: { part: label.index + 1, parts: label.total, source_ref: sourceRef, status: unusable(reply) ? 'unusable' : reply.status } });
+      return [];
     };
     for (let index = 0; index < parts.length; index++) {
       for (const { facts, text: shown } of await readPart(parts[index], { index, total: parts.length }, true)) {
@@ -1722,7 +1861,7 @@ export async function extractMeetingSignals({
       const forThem = await checkSignals(found, { text: shown, brief: accountBrief, offer: ourSide?.offer, label: 'meeting',
         onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-check', msg) });
       if (!forThem.length) continue;
-      saved.push(...await persistFacts(supabase, workspaceId, forThem, { type: 'meeting_held', source, dryRun, sourceRef, occurredAt }));
+      saved.push(...await persistFacts(supabase, workspaceId, forThem, { type: 'meeting_held', source, dryRun, sourceRef, sourceHash, occurredAt }));
       }
     }
     if (!dryRun && heardAboutUs.length) await saveAboutUsClaims(supabase, workspaceId, await screenFeatureRequests(supabase, workspaceId, heardAboutUs), { sourceRef, sourceSystem: source ?? null, occurredAt });
@@ -1737,9 +1876,15 @@ export async function extractMeetingSignals({
 }
 
 /** The multi-attendee meeting prompt. One part of the transcript per call; see splitForExtraction. */
-export function buildMeetingSignalsPrompt({ roster, transcript, maxFacts, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
+export function buildMeetingSignalsPrompt(args) {
+  const { system, user } = buildMeetingSignalsMessages(args);
+  return `${system}\n\n${user}`;
+}
+
+/** The meeting prompt as the model gets it: the shared system prompt, and this call's user message (GET-1050). Pure. */
+export function buildMeetingSignalsMessages({ roster, transcript, maxFacts, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
   const we = ourSideLabel(ourSide);
-  return `Extract durable CRM intelligence from this meeting transcript.
+  return { system: extractionSystemPrompt(), user: `Extract durable CRM intelligence from this meeting transcript.
 
 These are notes/transcript from a call. The people below are the EXTERNAL attendees — the ones we are selling to or working with. Record facts about THEM, drawn from what they reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between an attendee and ${we}: how they found ${we} or why they reached out (a video, post, referral, or event), anything they offered ${we} or introductions they can make, and any objection or critique they raised about the product or how it differs from alternatives.
 
@@ -1768,7 +1913,7 @@ Tag each fact with:
 - "about": "person" for a fact about that individual, "company" for a fact about their company.
 - "label": a 2–5 word chip a colleague who was NOT there understands on its own, naming the SUBSTANCE (what a rep skims on a card). NOT the person's name, NOT a fragment of their words ("Not a silver bullet", "Asked for more"), NOT "X vs Y". Competitor → the vendor name ("Pearl Lantern"); objection → the concern ("Already on Salesforce"); pain/goal → the pain/goal ("Stale Apollo data", "Expand to healthcare"). Sentence case: capitalise only the first word and names ("Already on Salesforce", not "Already On Salesforce"). No trailing period.
 - CONTEXT TAGS (they decide whether a signal is a real risk):
-  - competitor → ONLY a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. A tool in their stack that does something else (CRM, call recorder, notes/agenda tool, data vendor) is tech_stack, never competitor; so is their own build (a bot or agent they made). Set "entity" (vendor name only) + "stance": "evaluating" (live alternative to us) / "incumbent" (they use it for the job we do) / "past_failure" (tried for that job and failed/fired — LOWERS risk, it's an opening) / "mentioned".
+  - competitor → ONLY a product that does the job described under WHAT ${(ourSide?.companyName || 'our company').toUpperCase()} SELLS. A tool in their stack that does something else (CRM, call recorder, notes/agenda tool, data vendor) is tech_stack, never competitor; so is their own build (a bot or agent they made). Testing what feeds their own tool (their tool on their CRM's data versus on ours) is a test of US, not a competitor evaluation: the system they already run is tech_stack even when it is the other side of the test, and the test itself is a goal (or a buying_signal when it is a step toward buying). Set "entity" (vendor name only) + "stance": "evaluating" (live alternative to us) / "incumbent" (they use it for the job we do) / "past_failure" (tried for that job and failed/fired — LOWERS risk, it's an opening) / "mentioned".
   - objection → "status": "open" / "resolved" / "addressed"; and "hardness": "hard" (budget, authority, security, legal, procurement) / "soft" (info, timing, minor).
   - expansion_signal → an EXISTING customer asking for more of what we sell. Set "product" (the family name from WHAT WE SELL, regional suffixes dropped) + "stance": "asked" / "considering" / "declined". NEVER omit "stance": a decline read as an ask sends a rep to pitch what the customer just refused. A feature request about a product they already own is pain.
   - risk_signal → an EXISTING customer saying the relationship is in question. Set "severity": "stated_churn" (cancelled, gave notice, leaving) / "at_risk" (reviewing vendors, questioning value, escalating) / "friction" (billing, invoicing, support or service failure raised with frustration, no threat to leave).
@@ -1777,10 +1922,7 @@ Tag each fact with:
   - buying_signal → a decision moving toward the deal, never a setup step (pushing an NDA through, giving access or API keys, promising to send a list).
   - requirement → a hard condition for buying, not a wish.
 
-${ourOfferBlock(ourSide)}Categories:
-${claimCategoryPromptBlock()}
-${GENERAL_IS_LAST_RESORT}
-Rules:
+${ourOfferBlock(ourSide)}Rules:
 - Each fact is one self-contained sentence naming the person explicitly (no pronouns). Name them as the one doing or wanting the thing, never as a speaker: "Sam is moving support to Zendesk", not "Sam says the company is moving support to Zendesk". Never "Sam's company X's …". Short and plain: the fact, its detail, nothing about who said it (that is stored separately).
 - ${ourSideRule(ourSide)}
 - State only what the attendee said or plainly did. Never add your own reading of what it implies — no "indicating…", "suggesting that…", "which shows…", "meaning…", "as evidenced by…".
@@ -1788,10 +1930,7 @@ Rules:
 - Attribute each fact to the attendee it is genuinely ABOUT. A fact one person states about another belongs to whoever it describes.
 - Extract EVERY fact that clears all four bars — there is no target number, and no requirement that every attendee yields one. A quiet attendee may yield none. NEVER pad, NEVER split one fact into several, NEVER restate the same fact twice.
 - Hard ceiling of ${maxFacts} facts with home "claim" across ALL attendees — a safety limit, not a goal. What they say about us (our_product, market) does not count toward it.
-
-${DEAL_BAR}
-
-${ROUTING_RULES}
+- The deal bar, where each statement belongs (home), and the categories are in the instructions above; they apply here.
 
 ${positionShiftBlock(positionsOnFile)}
 
@@ -1802,7 +1941,7 @@ Output ONLY valid JSON: [{${HOME_FIELD}, "person": 1, "content": "...", "quote":
 
 - "quote": the line from the transcript this fact rests on, VERBATIM — copied exactly, not rephrased, not tidied, max ~25 words. It is checked against the transcript and dropped if it is not found there, so never invent or paraphrase one. Use "" if the fact rests on no single line.
 - "speaker": the transcript's own label for whoever spoke that line. This is NOT the same as the attendee the fact is about — one person describing another is the common case in a review call, and the pair is what makes the fact checkable. Use "" if the line has no speaker label.
-If nothing meaningful: []`;
+If nothing meaningful: []` };
 }
 
 // ── People named in a Connections claim → graph nodes ─────────────────────────

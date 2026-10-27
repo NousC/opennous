@@ -225,7 +225,9 @@ test('the judge is never the family it grades', () => {
   assert.equal(modelFamily('anthropic/claude-haiku-4.5'), 'anthropic');
   assert.equal(modelFamily('openai/gpt-4.1-mini'), 'openai');
   assert.equal(modelFamily('z-ai/glm-5.2'), 'z-ai');
-  assert.equal(judgeModelFor({ graded: ['claude-haiku-4-5-20251001', 'anthropic/claude-haiku-4.5'], env: {} }), 'openai/gpt-4.1-mini');
+  assert.equal(judgeModelFor({ graded: ['claude-haiku-4-5-20251001', 'anthropic/claude-haiku-4.5'], env: {} }), 'z-ai/glm-5.2');
+  // The default never grades the extractor's own family (deepseek) or the check pass's (anthropic).
+  assert.equal(judgeModelFor({ graded: ['deepseek/deepseek-v4.1-flash', 'anthropic/claude-haiku-4.5'], env: {} }), 'z-ai/glm-5.2');
   assert.equal(judgeModelFor({ graded: ['claude-haiku-4-5-20251001'], env: { EVAL_JUDGE_MODEL: 'google/gemini-2.5-flash' } }), 'google/gemini-2.5-flash');
   assert.throws(() => judgeModelFor({ graded: ['claude-haiku-4-5-20251001'], env: { EVAL_JUDGE_MODEL: 'anthropic/claude-sonnet-4.5' } }), /same family/);
 });

@@ -17,8 +17,10 @@ npm run eval:extraction -- --out results.json             # the full set, result
 
 The judge is not a Claude model, so it needs `OPENROUTER_API_KEY` (or `LLM_API_KEY` / `LLM_BASE_URL`).
 The extractor uses whatever production uses (`EXTRACTION_MODEL`, `INSIGHT_BOARD_MODEL`). The judge
-defaults to `openai/gpt-4.1-mini`. Set `EVAL_JUDGE_MODEL` to change it. The runner refuses a judge
-from the same model family as the extractor it grades.
+defaults to `z-ai/glm-5.2`. Set `EVAL_JUDGE_MODEL` to change it. The runner refuses a judge
+from the same model family as the extractor or the check pass it grades, so a Claude judge is
+refused while the check pass runs on Claude. `openai/gpt-4.1-mini` and `google/gemini-2.5-flash`
+are not routable on our OpenRouter account, which is why they are not the default (GET-1050).
 
 The exit code is 0 when every selected case passed, 1 when any case failed or errored, and 2 on a
 setup problem.
@@ -28,6 +30,11 @@ setup problem.
 database seeded for that case. Before the extractor loads, the runner removes every database, API
 and telemetry setting from its own environment (`safeEnv.mjs`). The only network calls go to the
 models.
+
+The dry run covers the whole read since GET-1050: the repair turn for an unusable answer, the split
+of an answer cut off at its token limit, and the drop of a category outside the list all run as in
+production. Only the delta skip (a re-synced meeting with the same text) is off, since it reads the
+database for an earlier read and a case is always a first read.
 
 ## How a case is graded
 

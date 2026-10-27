@@ -111,9 +111,12 @@ export function modelFamily(model) {
   return m.includes('/') ? m.split('/')[0] : m.split(/[-:]/)[0];
 }
 
-// An OpenRouter id (it bills where the pipeline bills): cheap, follows a JSON-only instruction,
-// and not a reasoning model, so temperature 0 means what it says.
-export const DEFAULT_JUDGE_MODEL = 'openai/gpt-4.1-mini';
+// An OpenRouter id (it bills where the pipeline bills) that follows a JSON-only instruction and is
+// routable on our account (GET-1050): openai/gpt-4.1-mini and google/gemini-2.5-flash are not, and a
+// Claude judge is refused as the check pass's own family. The first baseline (4/6 of the minimum
+// set) was graded by it. It reasons before it answers; the model door adds OpenRouter's reasoning
+// headroom to max_tokens, and the votes at 0.5 below are what make a verdict robust.
+export const DEFAULT_JUDGE_MODEL = 'z-ai/glm-5.2';
 
 /** The judge's model: EVAL_JUDGE_MODEL, else the default. Throws when it shares a family with a
  *  model it would be grading. */

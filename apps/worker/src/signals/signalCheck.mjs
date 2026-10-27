@@ -37,12 +37,16 @@ const FIELD_HOME = {
 // GET-1033. Each line was read on its own and filed as what its words looked like: "no tool is a
 // silver bullet" an objection, a customer's own bot a competitor, "their bot vs our data" a competitor
 // being evaluated, chips like "Asked for more" that only made sense on the call.
+// GET-1050: the data-source line used to say "the competitor is the OTHER source", so a buyer testing
+// its own bot on its CRM's data against ours had its CRM filed as a competitor being evaluated, and
+// this check, reading the same rule, kept it. The other side of such a test is their stack unless it
+// is a vendor that does our job.
 export const READ_IN_CONTEXT = `READ EACH STATEMENT IN CONTEXT — the quote is the evidence; the fact is what it MEANS, given the whole conversation and the ACCOUNT CONTEXT:
 - Before filing a line, ask what they are actually doing and why. A line that is a step in a test, an aside, a joke, a question or someone else's view is not a position.
 - Write the fact so a colleague who was not there understands it: what, about what, and why it matters for the deal. "Testing their own sales bot on their CRM's own data source against ours to see which answers better", not "Comparing data".
 - An objection is THEIR pushback against buying or using US, with its reason. A general remark about AI, agents or tools ("no tool is a silver bullet", "agents get things wrong") is a market view, not an objection.
 - Their OWN tools, including one they built themselves (an internal bot, agent or script), are tech_stack, never competitor, however much they rely on it.
-- When they compare data sources or vendors to feed their own tool, the competitor is the OTHER source that does the job we do (stance "evaluating"), named as that vendor. Never their own tool, and never "X vs us" as a name.
+- When they test what feeds their own tool (their tool on their CRM's or their own system's data versus on ours), that is a test of US, not a competitor evaluation. The system they already run is tech_stack, never competitor, even when it is the other side of the test: a CRM, a database or a data store is not a product that does the job we sell. Only a separate vendor sold to do the job WE sell, that they are weighing against us, is a competitor (stance "evaluating"), named as that vendor. Never their own tool, and never "X vs us" as a name.
 - A person's name is not a signal. "Ines onboarding" says nothing; "Their head of CS is onboarding first, to roll it out to the CS team" does.
 - If you cannot say what a line means for the deal, it is not a fact. Leave it out.`;
 
