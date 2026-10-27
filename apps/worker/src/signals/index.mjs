@@ -1324,6 +1324,8 @@ export async function persistJobTitles(supabase, workspaceId, facts, { source, d
 // not under the time we wrote it (GET-770). A fact may carry its own `saidAt` (a thread's message).
 // The categories a person fact may be re-filed on its account under (GET-1050, see persistFacts).
 const REFILE_ON_ACCOUNT = new Set(['authority', 'budget', 'blocker']);
+// "The CFO decides" → "the CFO decides" after "At Brindle, "; a name or an acronym keeps its capital.
+const leadLower = (s) => /^(The|A|An|Their|Its|Budget|Money|Spending|Approval|Sign-off|Every|All|No)\b/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
 
 export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, sourceHash = null, occurredAt = null, strict = false }) {
   // Titles first, and they are filed whether or not the fact survives the guards below: a title is
@@ -1396,14 +1398,26 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
   // buyer's true answer about who holds the budget left nothing on file. A buying signal stays a
   // person's move (claimTargetEntity) and is never re-filed. An authority role described the person
   // the fact was about; on the company it describes nobody, so it is cleared.
+  // The same fact may name neither (GET-1050 follow-up): "Odile, the CFO, owns budget decisions"
+  // names the colleague, not the attendee or the company, so both guards dropped it in the eval. When
+  // the attendee themself said it (the speaker is the subject, never our side), it is theirs about
+  // their own company: it is filed on the account and leads with the company ("At Brindle, …"), so
+  // it names its subject like every company fact.
+  const saidBySubject = (f) => !!f.speaker && !!subjectNames.get(f.contactId) && namesSubjectForTest(f.speaker, subjectNames.get(f.contactId));
   kept = kept.map(f => {
-    if (namesSubject(f) || claimAboutFor(f.category, f.about) !== 'person') return f;
+    if (namesSubject(f)) return f;
     if (!REFILE_ON_ACCOUNT.has(normalizeClaimCategory(f.category)) || !f.companyId) return f;
     const co = companyNames.get(f.contactId);
-    if (!co || !namesSubjectForTest(f.content, co)) return f;
-    console.log(`[SIGNAL_SUBJECT_GUARD] re-filed on the account (names ${co}, not the person): "${f.content}"`);
+    if (!co) return f;
     const { role: _role, ...rest } = f;
-    return { ...rest, about: 'company' };
+    if (claimAboutFor(f.category, f.about) === 'person' && namesSubjectForTest(f.content, co)) {
+      console.log(`[SIGNAL_SUBJECT_GUARD] re-filed on the account (names ${co}, not the person): "${f.content}"`);
+      return { ...rest, about: 'company' };
+    }
+    if (!saidBySubject(f)) return f;
+    const content = `At ${co}, ${leadLower(String(f.content).trim())}`;
+    console.log(`[SIGNAL_SUBJECT_GUARD] re-filed on the account (said by the subject, names a colleague): "${content}"`);
+    return { ...rest, about: 'company', content };
   });
   const offSubject = kept.filter(f => !namesSubject(f));
   kept = kept.filter(namesSubject);

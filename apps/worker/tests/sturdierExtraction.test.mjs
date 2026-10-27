@@ -266,7 +266,8 @@ test('a person fact that names the account but not the person is re-filed on the
       text: "Avery Lund: Would it feel expensive?\nSabeline Kroft: Money is Wren's call, she's our CFO.\nSabeline Kroft: She reads everything on paper.",
     },
   });
-  assert.deepEqual(got.claims.map(c => c.content), ["Wren, Harborline's CFO, makes the money call."]);
+  // The second names only the colleague; the attendee said it, so it is the account's, led by its name.
+  assert.deepEqual(got.claims.map(c => c.content), ["Wren, Harborline's CFO, makes the money call.", 'At Harborline, Wren reads everything on paper.']);
   assert.deepEqual(got.claims[0].subject, { kind: 'account', name: 'Harborline' });
   assert.equal(got.claims[0].tags.role ?? null, null, 'the role described a person; on the account it is cleared');
 });
@@ -289,4 +290,24 @@ test('alreadyReadSameText asks for a claim with this source and this text, and f
   assert.equal(await alreadyReadSameText(db([{ id: 'c1' }]), 'ws', null, 'h1'), false, 'no source, no skip');
   const broken = { from: () => { throw new Error('down'); } };
   assert.equal(await alreadyReadSameText(broken, 'ws', 'source://x/1', 'h1'), false);
+});
+
+test('a budget fact naming only a colleague, said by our side, is still dropped', async () => {
+  const { scrubProductionEnv } = await import('../evals/extraction/safeEnv.mjs');
+  scrubProductionEnv();
+  const { extractCase } = await import('../evals/extraction/extract.mjs');
+  const facts = [
+    { home: 'claim', importance: 'high', category: 'budget', about: 'company', content: 'The CFO owns budget decisions.', quote: 'Money is the CFO\'s call', speaker: 'Sabeline Kroft' },
+    { home: 'claim', importance: 'high', category: 'budget', about: 'company', content: 'Wren would find $700 a month expensive.', quote: "I'd guess $700 would feel expensive", speaker: 'Avery Lund' },
+  ];
+  fakeModel([(p) => ({ text: String(p.messages[0].content).startsWith('You check the deal signals') ? '[]' : JSON.stringify(facts) })]);
+  const got = await extractCase({
+    id: 'refile-unnamed', category: 'attribution', origin: 'test', must: [], traps: [], expect: {},
+    input: {
+      kind: 'meeting', saidAt: '2026-10-14', account: { name: 'Harborline' }, people: [{ name: 'Sabeline Kroft' }],
+      ourSide: { company: 'Fernpoint', names: ['Avery Lund'], offer: 'Fernpoint sells route planning.' },
+      text: "Avery Lund: I'd guess $700 would feel expensive?\nSabeline Kroft: Money is the CFO's call.",
+    },
+  });
+  assert.deepEqual(got.claims.map(c => c.content), ['At Harborline, the CFO owns budget decisions.']);
 });
