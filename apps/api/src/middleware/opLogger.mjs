@@ -54,6 +54,7 @@ const PATH_LABELS = {
   'GET /v2/brain/search':        'v2.brain.search',
   'GET /v2/brain/page':          'v2.brain.page',
   'PUT /v2/brain/page':          'v2.brain.page.write',
+  'GET /v2/intelligence':        'v2.intelligence',
   'GET /v2/icp':                 'v2.icp',
   'PUT /v2/icp':                 'v2.icp.set',
   'POST /v2/icp/closed-deals':   'v2.icp.closed_deals',
@@ -227,6 +228,7 @@ function describeCall(req) {
     case 'GET /v2/brain/search': return `brain_search · ${trunc(q.q)}`;
     case 'GET /v2/brain/page':  return `read_page · ${trunc(q.path)}`;
     case 'PUT /v2/brain/page':  return `save_page · ${trunc(body.path)}`;
+    case 'GET /v2/intelligence': return 'read_intelligence';
     case 'GET /v2/icp':         return 'get_icp';
     case 'PUT /v2/icp':         return 'set_icp';
     case 'POST /v2/icp/closed-deals': {

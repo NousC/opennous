@@ -16,7 +16,7 @@
  *   READ      find (people | accounts | deals lists) · get_context (person, account or deal) ·
  *             query · attention · get_insights
  *   WRITE     add_note · enrich · score · set_icp
- * (Cloud adds read_brain and write_brain through src/cloud/, GET-839.)
+ * (Cloud adds read_brain, write_brain and read_intelligence through src/cloud/, GET-839, GET-1042.)
  * Legacy, still registered because plugin skills call them (retire with GET-536):
  *   get_account · deals · pages · read_page · save_page · record · record_insight · record_closed_deals
  */
@@ -184,6 +184,18 @@ export function featureRequestsBlock(requests) {
   }
   lines.push("");
   return lines;
+}
+
+/**
+ * What the workspace has learned, for this account (GET-1042): the sections of the Intelligence
+ * files (Objection playbook, Battlecards, Win/loss, the ICP's learned block) that bear on it, as
+ * markdown, each point ending in its id. Its own section, so an agent tells the workspace's
+ * lessons from the account's facts. Empty when there is none.
+ */
+export function intelligenceBlock(intel) {
+  const body = String(intel?.text ?? "").replace(/^\s*##\s+Intelligence\s*\n+/, "").trim();
+  if (!body) return [];
+  return ["INTELLIGENCE (what this workspace has learned from its closes and objections, the parts that bear on this account; use what has worked, never quote it to the buyer):", body, ""];
 }
 
 function evidenceLines(f) {
@@ -430,7 +442,7 @@ export function createServer() {
     // The documented core (2026-09-30): one tool per door of the public API.
     "whoami", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",
     "add_note", "enrich", "score",
-    // The Workspace layer's (Cloud) tools: read_brain, write_brain (GET-839). None in the open-source edition.
+    // The Workspace layer's (Cloud) tools: read_brain, write_brain (GET-839), read_intelligence (GET-1042). None in the open-source edition.
     ...CLOUD_TOOL_NAMES,
     "set_icp",
     // Events pushed to the operator's own stack (GET-559): a door of its own, /v2/webhooks —
@@ -468,7 +480,8 @@ export function createServer() {
     "timeline filed to it), then its account's context. Returns a focused, ranked context block: the facts that matter for " +
     "that task — each with a confidence and a freshness — the durable FACTS we've learned about them " +
     "(their atomic memory: budget, authority, pain, stack, plans), the recent timeline, the buying-group " +
-    "stakeholders, open predictions, and the account's ICP fit score (0-100 + why). Call this before " +
+    "stakeholders, open predictions, and the account's ICP fit score (0-100 + why). For an account it also " +
+    "carries what the workspace has LEARNED that bears on it (objection answers that worked, battlecards, win/loss). Call this before " +
     "drafting outreach, preparing for a meeting, " +
     "or making any decision about a person. A fact's freshness tells you whether to trust it: 'fresh' " +
     "act on it, 'suspect'/'expired' verify first.",
@@ -500,6 +513,8 @@ export function createServer() {
       }
       // Atomic memory, current position first (GET-770).
       lines.push(...factsBlock(ctx));
+      // Then what the workspace has learned that bears on them (GET-1042).
+      lines.push(...intelligenceBlock(ctx.intelligence));
       if (ctx.claims?.length) {
         lines.push(`ATTRIBUTES (${ctx.meta?.claims_returned ?? ctx.claims.length}):`);
         for (const c of ctx.claims) {

@@ -145,6 +145,8 @@ export function claudeFireText(eventType, payload) {
     summary ? `What happened: ${summary}` : null,
     str(e.occurred_at) ? `When: ${e.occurred_at}` : null,
     id ? `The full account record: OpenNous MCP get_account with id "${id}", or GET https://api.opennous.cloud/v2/accounts/${id}.` : null,
+    // GET-1042: get_context carries the Intelligence for the account, so the task acts on what has worked.
+    id ? `Before you act: OpenNous MCP get_context with focus "${id}" and the intent of what you are about to do. It includes what this workspace has learned that bears on this account (objection answers that worked, battlecards, win/loss).` : null,
     e.source?.id ? `Source: ${e.source.name} ${e.source.id}${e.source.url ? ` (${e.source.url})` : ''}${e.source.how ? `. To read it: ${e.source.how}.` : '.'}` : null,
     Array.isArray(e.data?.attendees) && e.data.attendees.length ? `Attendees: ${e.data.attendees.map(a => [a?.name, a?.email ? `<${a.email}>` : null].filter(Boolean).join(' ')).join(', ')}` : null,
     'The event as JSON:',

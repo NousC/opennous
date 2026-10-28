@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // Update this list ONLY alongside a deliberate decision to widen the surface, and say why in the
 // commit. The bar: a capability that cannot fold into an existing primitive.
 // The documented core (2026-09-30): one tool per door of the public API, listed FIRST in
-// PLUGIN_TOOLS so tools/list leads with them. Cloud adds read_brain and write_brain from its own
+// PLUGIN_TOOLS so tools/list leads with them. Cloud adds read_brain, write_brain and read_intelligence from its own
 // module (src/cloud/index.js, GET-839), so they are not in this literal set.
 const DOCUMENTED = [
   'whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',

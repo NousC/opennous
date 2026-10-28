@@ -74,7 +74,8 @@ per door of the public API: `whoami`, `find`, `get_context`, `query`, `attention
 (2026-10-11, GET-830: list the task list and close or reopen tasks; closing cannot fold into
 `record` or `add_note`, which only append) and `rules` (2026-10-12, GET-846: the operator's own
 rules, guidance or checked in the background). Nous Cloud adds `read_brain` and `write_brain` for
-the GTM brain, which the open-source edition does not have (GET-839). They come
+the GTM brain, which the open-source edition does not have (GET-839), and `read_intelligence` for the
+Intelligence files (GET-1042). They come
 first in `PLUGIN_TOOLS`, so an agent's tool list leads with them. `find` replaces `list_people`
 (added on the public-API branch, never released) and covers the accounts and deals lists too.
 The legacy tools (`get_account`, `deals`, `pages`, `read_page`, `save_page`, `record`,
@@ -93,13 +94,14 @@ as before and are described under **Legacy** below.
 | Tool | Use |
 |---|---|
 | `find` | The lists: `kind` people \| accounts \| deals (`GET /v2/people`, `/v2/accounts`, `/v2/deals`), with each list's own filters and sorts (stage, ICP fit/score, owner, country, open deal, activity recency, account, deal status, pipeline, closing window, amount, implied). A filter the kind does not support is refused with the supported set, before any call. One line per row. |
-| `get_context` | The headline tool — engineered, task-scoped context for a person, company **or deal** (a CRM deal id, or `implied:<account_id>`; the deal block leads). Facts carry confidence, freshness, and their evidence: speaker, quote, source and `source_ref`. |
+| `get_context` | The headline tool — engineered, task-scoped context for a person, company **or deal** (a CRM deal id, or `implied:<account_id>`; the deal block leads). Facts carry confidence, freshness, and their evidence: speaker, quote, source and `source_ref`. For an account, the Intelligence sections that bear on it ride along (`intelligence`). |
 | `query` | Patterns across many accounts. Also carries the scopes that would otherwise be tools: `reporting`, `attention`, and `foundation:'icp'` — the ICP **as written**, so a skill can explain a score rather than just report it. |
 | `attention` | What needs attention now (`GET /v2/attention`): going dark, decayed facts, upcoming meetings, open commitments, hot intent, flags, each with a suggested action. Open commitments carry a task id. |
 | `tasks` | The task list (`GET /v2/action-items`) and closing it (`POST /v2/action-items/status`): list by owner, status, account or due date; `done` / `reopen` by task id. The same edit as ticking a task on the Tasks page, HubSpot write-back included. |
 | `rules` | The operator's own rules (`/v2/rules`), said once: `add` with an optional check (`next_step_after_meeting`, `reply_to_buyer_email`, `stage_without_meeting`) and its window, `list`, `pause`, `resume`, `remove`, `checks`. A checked rule is evaluated hourly; a broken one raises the account in attention and opens a task, and both clear once it is met. A rule with no check is guidance the agent applies. |
 | `get_insights` | The Insights board (`GET /v2/insights`): customer insights by lane and subtype, tagged, tied to the account that said them, filterable by account and date. |
 | `read_brain` | Cloud only. The GTM brain (`GET /v2/brain`, `/search`, `/page`): no arguments for the Overview and every page path, `search` for the pages that say it, `path` for one page. |
+| `read_intelligence` | Cloud only. The Intelligence files (`GET /v2/intelligence`): the Objection playbook, Battlecards, Win/loss and the ICP's learned block, whole, each point ending in its id. For one account, `get_context` carries the sections that bear on it. |
 
 ### Write
 

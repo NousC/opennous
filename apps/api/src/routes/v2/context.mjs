@@ -3,6 +3,7 @@ import { getSupabaseClient, assembleContext, resolveFocus, CONTEXT_INTENTS, read
 import { icpFit, fetchIcpLayers } from '../../lib/icpFit.mjs';
 import { accountMeetings } from '../../lib/calendar.mjs';
 import { resolveDealRef, loadPublicDeal, contextDealBlock } from '../../lib/publicApi.mjs';
+import { accountIntelligence } from '../../lib/accountIntelligence.mjs';
 
 export const contextV2Router = Router();
 
@@ -67,6 +68,9 @@ contextV2Router.post('/', async (req, res) => {
     const meetings = intent === 'meeting_prep' || intent === 'call_prep'
       ? await accountMeetings(supabase, workspaceId, resolution.entity_id).catch(() => null)
       : null;
+    // GET-1042: what the workspace has learned (the Intelligence files), the sections that bear on
+    // this account. Always present, null when there is no account or no Intelligence.
+    const intelligence = await accountIntelligence(supabase, workspaceId, context.entity, { intent }).catch(() => null);
     return res.json({
       // A deal focus leads with the deal it was asked about.
       ...(deal ? { deal } : {}),
@@ -76,6 +80,7 @@ contextV2Router.post('/', async (req, res) => {
       ...(icp ? { icp } : {}),
       ...(layered ? { layered } : {}),
       ...(scorecard ? { scorecard } : {}),
+      intelligence,
     });
   } catch (err) {
     console.error('[POST /v2/context]', err);

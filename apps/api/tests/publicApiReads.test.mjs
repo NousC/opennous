@@ -692,3 +692,43 @@ test('context: a deal focus resolves to its account and leads with the deal', as
   assert.equal(hidden.status, 404);
   assert.equal(hidden.body.error, 'deal_not_found');
 });
+
+// ── context carries the Intelligence (GET-1042) ──────────────────────────────
+
+test('context: an account focus carries what the workspace has learned, for that account', async () => {
+  const { registerIntelligenceSource } = await import('@nous/core');
+  const asked = [];
+  registerIntelligenceSource(async (_sb, ws, opts) => {
+    asked.push({ ws, ...opts });
+    return { text: '## Intelligence\n\nLead with the migration plan. [objections:b1]', used: [{ key: 'objections', section: 'migration', blocks: ['b1'] }] };
+  });
+  try {
+    // A person at a company reads it for their company; a draft asks for the draft cut.
+    const person = await call('POST', '/v2/context', { focus: SARAH, intent: 'draft_email' });
+    assert.equal(person.status, 200, JSON.stringify(person.body));
+    assert.match(person.body.intelligence.text, /migration plan\. \[objections:b1\]/);
+    assert.deepEqual(person.body.intelligence.used, [{ key: 'objections', section: 'migration', blocks: ['b1'] }]);
+    assert.deepEqual(asked.at(-1), { ws: WS, companyId: ACME, purpose: 'draft', budget: 3500 });
+    assert.ok(person.body.summary !== undefined, 'the rest of the context is unchanged');
+
+    // A company, and a deal (its account), read it as a brief.
+    const company = await call('POST', '/v2/context', { focus: GLOBEX, intent: 'meeting_prep' });
+    assert.ok(company.body.intelligence);
+    assert.deepEqual({ companyId: asked.at(-1).companyId, purpose: asked.at(-1).purpose }, { companyId: GLOBEX, purpose: 'brief' });
+    const deal = await call('POST', '/v2/context', { focus: D_OPEN });
+    assert.ok(deal.body.intelligence);
+    assert.equal(asked.at(-1).companyId, ACME);
+
+    // A person at no company is no account: null, and nothing asked.
+    const n = asked.length;
+    const loose = await call('POST', '/v2/context', { focus: COLD });
+    assert.equal(loose.status, 200, JSON.stringify(loose.body));
+    assert.equal(loose.body.intelligence, null);
+    assert.equal(asked.length, n);
+  } finally {
+    registerIntelligenceSource(null);
+  }
+  // No source (a self-hosted install): the field is there, null.
+  const plain = await call('POST', '/v2/context', { focus: SARAH });
+  assert.equal(plain.body.intelligence, null);
+});

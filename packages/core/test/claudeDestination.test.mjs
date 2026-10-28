@@ -21,6 +21,14 @@ test('the fire text says what happened, where, how to read the record, then the 
   assert.ok(t.includes('"summary": "Walked through the rollout."'));
 });
 
+test('the fire text tells the task to read get_context for the account first, for what the workspace has learned (GET-1042)', () => {
+  const t = claudeFireText('conversation.call_ended', meeting);
+  assert.match(t, /Before you act: OpenNous MCP get_context with focus "acc-1"[^\n]*what this workspace has learned/);
+  assert.ok(t.indexOf('get_context') < t.indexOf('The event as JSON:'));
+  const noAccount = claudeFireText('deal.stalled', { ...meeting, account: null });
+  assert.ok(!noAccount.includes('get_context'), 'no account, no line');
+});
+
 test('the names are the new ones', () => {
   assert.equal(eventLabel('conversation.call_ended'), 'Meeting ended');
   assert.equal(eventLabel('deal.stalled'), 'Stale deal detected');

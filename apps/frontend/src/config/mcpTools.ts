@@ -3,7 +3,7 @@
 // Mirrors PLUGIN_TOOLS in apps/mcp/src/server.js — the registry createServer() registers from.
 // tests/mcpTools.test.ts reads that file and fails when the two drift, so the Connect over MCP
 // dialog never quotes a tool the server doesn't have, or a count it doesn't list.
-// Cloud's server also lists read_brain and write_brain after `score` (GET-839); the dialog adds
+// Cloud's server also lists read_brain, write_brain and read_intelligence after `score` (GET-839, GET-1042); the dialog adds
 // them from the cloud registry (lib/cloud.ts `mcpTools`), as the server adds them from its own.
 export const MCP_TOOLS: readonly string[] = [
   "whoami", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",

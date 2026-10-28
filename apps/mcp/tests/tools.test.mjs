@@ -53,12 +53,12 @@ const ACC = '22222222-2222-4222-8222-222222222222';
 test('tools/list leads with the documented core, list_people is gone', async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
-  // Cloud's module adds read_brain and write_brain after score (GET-839); the open-source edition has neither.
+  // Cloud's module adds read_brain, write_brain (GET-839) and read_intelligence (GET-1042) after score; the open-source edition has none.
   const core = ['whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
-    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain'] : []), 'set_icp', 'webhooks'];
+    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain', 'read_intelligence'] : []), 'set_icp', 'webhooks'];
   assert.deepEqual(names.slice(0, core.length), core);
   assert.ok(!names.includes('list_people'));
-  assert.equal(names.length, HAS_CLOUD ? 23 : 21);
+  assert.equal(names.length, HAS_CLOUD ? 24 : 21);
 });
 
 test('find deals: filters map to GET /v2/deals and rows render on one line', async () => {
@@ -215,6 +215,26 @@ test('get_context without a deal is unchanged', async () => {
   });
   assert.match(text, /^Sarah summary/);
   assert.ok(!text.includes('DEAL:'));
+  assert.ok(!text.includes('INTELLIGENCE'), 'no Intelligence, no section');
+});
+
+test('get_context prints the Intelligence as its own section, after the account facts (GET-1042)', async () => {
+  const { text } = await callTool('get_context', { focus: 'sarah@acme.com', intent: 'draft_email' }, {
+    'POST /v2/context': () => [200, {
+      summary: 'Sarah summary', entity: { id: UUID },
+      current_position: [{ category: 'budget', content: 'Budget is 12k', date: null, freshness: 'fresh' }],
+      claims: [{ property: 'job_title', value: 'VP Sales', confidence: 0.9, freshness: 'fresh' }],
+      intelligence: {
+        text: '## Intelligence\n\n_What this workspace has learned, for this account._\n\n### Objection playbook — Migration\n\nLead with the migration plan. [objections:b1]',
+        used: [{ key: 'objections', section: 'migration', blocks: ['b1'] }],
+      },
+    }],
+  });
+  assert.match(text, /INTELLIGENCE \(what this workspace has learned/);
+  assert.match(text, /### Objection playbook — Migration\n\nLead with the migration plan\. \[objections:b1\]/);
+  assert.ok(!text.includes('## Intelligence\n'), 'the section header replaces the markdown heading');
+  assert.ok(text.indexOf('CURRENT POSITION') < text.indexOf('INTELLIGENCE'));
+  assert.ok(text.indexOf('INTELLIGENCE') < text.indexOf('ATTRIBUTES'));
 });
 
 test('whoami renders the usage block; null fields read as unlimited', async () => {

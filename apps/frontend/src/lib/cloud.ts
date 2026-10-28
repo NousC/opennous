@@ -175,7 +175,7 @@ export interface CloudRegistry {
   graph?: { scope?: (params: URLSearchParams) => GraphScope | null };
   /** Where "Contact us" goes (config/contact.ts). Absent → VITE_CONTACT_URL, else the project's site. */
   contactUrl?: string;
-  /** The MCP tools Cloud's server adds after `score` (read_brain, write_brain, GET-839). */
+  /** The MCP tools Cloud's server adds after `score` (read_brain, write_brain, GET-839; read_intelligence, GET-1042). */
   mcpTools?: string[];
   /** The Usage page's billing: checkout, the Stripe portal and invoices (useBilling). The usage
    *  meter itself is public. */
