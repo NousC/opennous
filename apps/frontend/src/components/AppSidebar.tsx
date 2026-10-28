@@ -13,17 +13,20 @@ import {
   Settings as SettingsIcon,
   UserPlus,
   Zap,
+  ArrowUpRight,
 } from "lucide-react";
 import { usePref } from "@/hooks/usePref";
 import { usePlan } from "@/hooks/usePlan";
 import { BackfillPill } from "@/components/BackfillPill";
 import { InviteMemberButton } from "@/components/InviteMemberButton";
 import { isApiTier, planTier } from "@/config/plans";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/contexts/AuthContext";
 import { activeTeam } from "@/lib/activeTeam";
 import { SidebarWorkspaceSelector } from "@/components/SidebarWorkspaceSelector";
+import { useCredits } from "@/hooks/useCredits";
 import { cloud, type CloudNavItem } from "@/lib/cloud";
 import { RAIL_STROKE, RAIL_TINT, railActive, railGroupLabel, railIcon, railIconActive, railIdle, railLabel, railLabelActive, railRow } from "@/components/shell/rail";
 
@@ -54,8 +57,7 @@ type NavItem = { title: string; url: string; icon: React.ElementType; end?: bool
 // is the Workspace layer's (cloud.nav, GET-754), so a build without it shows only what it has.
 // The workspace rail is split by JOB, not by data type (the market-ready redesign, Oct 2026):
 // the places a rep or a CSM spends the day on top, the read on the business under "Team".
-// Home is not a row any more: it leads the top row, beside Chat, Invite and Settings (sidebar
-// redesign, Oct 2026).
+// Home is not a row any more: it leads the top row, beside Invite (sidebar redesign, Oct 2026).
 const workNavItemsCustom: NavItem[] = [
   { title: "Accounts",  url: "/accounts",  icon: Building2 },
 ];
@@ -109,7 +111,7 @@ export function AppSidebar() {
 
   // Custom (teams) plan gets the full in-app nav; everyone else is on the Core (plugin)
   // plan — Install + Workflows instead of Home + Chat, and no in-app agent.
-  const { plan, can } = usePlan();
+  const { plan, selfHosted, can } = usePlan();
   const automationsRow = can("automations") ? [AUTOMATIONS_ITEM] : [];
   // Three plans now (GET-480): the API rail is its own shape, Workspace and Custom share
   // the full one.
@@ -137,6 +139,8 @@ export function AppSidebar() {
   // Group folds stick per workspace (usePref, GET-595).
   const [viewsOpen, setViewsOpen] = usePref<boolean>("sidebar.views.open", true, (v): v is boolean => typeof v === "boolean");
   const [workspaceOpen, setWorkspaceOpen] = usePref<boolean>("sidebar.workspace.open", true, (v): v is boolean => typeof v === "boolean");
+  // The credits card in the foot, from the same payload the Usage page reads; every billed plan.
+  const credits = useCredits(!selfHosted);
 
   // A choice you made sticks. With no choice yet, a narrow window starts collapsed: the open rail
   // is 232px, which on a phone leaves the page about a third of the screen.
@@ -251,7 +255,10 @@ export function AppSidebar() {
       </div>
     );
 
-  // The top row's square icon buttons (Invite, Settings), each with its name on hover. A disabled
+  const userName = userData?.user?.name || userData?.user?.email?.split("@")[0] || "Account";
+  const userEmail = userData?.user?.email || "";
+
+  // The top row's square icon button (Invite), each with its name on hover. A disabled
   // one stays hoverable (aria-disabled, not disabled) so its tooltip can say why.
   const topIcon = (label: string, Icon: React.ElementType, onClick: () => void, active = false, disabled = false) => (
     <Tooltip key={label} delayDuration={200}>
@@ -308,7 +315,7 @@ export function AppSidebar() {
       {/* A hairline between the workspace and the top row. */}
       <div className="mx-2.5 mt-1.5 border-t border-border/60" />
 
-      {/* TOP ROW — Home, then Invite teammates and Settings as icons. Collapsed, a column. */}
+      {/* TOP ROW — Home, then Invite teammates as an icon. Collapsed, a column. */}
       <div className={`flex items-center gap-0.5 px-2.5 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
         {withTip(
           <NavLink
@@ -324,8 +331,6 @@ export function AppSidebar() {
         )}
         {/* Invite a member (GET-571); the member onboards their own sources. */}
         <InviteMemberButton trigger={(open) => topIcon("Invite teammates", UserPlus, open ?? (() => {}), false, !open)} />
-        {/* Usage and billing live in Settings; the rail carries no credits meter. */}
-        {topIcon("Settings", SettingsIcon, () => navigate("/settings"), location.pathname.startsWith("/settings"))}
       </div>
 
       {/* Search — opens the ⌘K command palette (people, accounts, jump-to). */}
@@ -406,11 +411,77 @@ export function AppSidebar() {
             <BackfillPill collapsed={collapsed} reviewHref="/settings?section=billing" />
           </div>
         )}
-        {/* Credits and the API docs are off the rail (sidebar redesign, Oct 2026): Usage and billing
-            is in Settings, the API docs in the API plan's top bar (ApiTopBar). */}
+        {/* The month's credits (GET-620), on every billed plan; it opens Usage and billing. The API
+            docs stay off the rail: they are in the API plan's top bar (ApiTopBar). */}
+        {credits && !collapsed && !selfHosted && (
+          // Over the allowance (GET-733): red, and "Upgrade needed" opens Usage on the bundles. No
+          // pop-up at sign-in: the card is where it is said, on every page.
+          <NavLink
+            to={credits.over ? "/usage?upgrade=1" : "/usage"}
+            className={`mb-1.5 block rounded-[10px] bg-card px-[11px] pb-[11px] pt-2.5 transition-shadow duration-fast ${credits.over
+              ? "shadow-[0_0_0_1px_hsl(var(--risk)/0.45),0_1px_2px_rgba(20,20,18,0.04)] hover:shadow-[0_0_0_1px_hsl(var(--risk)/0.8),0_1px_2px_rgba(20,20,18,0.04)]"
+              : "shadow-[0_0_0_1px_hsl(var(--border)),0_1px_2px_rgba(20,20,18,0.04)] hover:shadow-[0_0_0_1px_hsl(var(--foreground)/0.2),0_1px_2px_rgba(20,20,18,0.04)]"}`}
+            activeClassName=""
+          >
+            <span className="flex items-baseline gap-1.5 text-[12px]">
+              <span className="flex-1 font-medium text-foreground">Credits</span>
+              <span className="tabular-nums">
+                <span className={`font-medium ${credits.over ? "text-risk" : "text-foreground"}`}>{credits.used}</span>
+                {credits.included && <span className="text-muted-foreground"> / {credits.included}</span>}
+              </span>
+            </span>
+            {credits.included && (
+              <span className="mt-[9px] block h-[3px] overflow-hidden rounded-full bg-muted" aria-hidden>
+                <span className={`block h-full rounded-full ${credits.over ? "bg-risk" : "bg-foreground"}`} style={{ width: `${credits.pct}%` }} />
+              </span>
+            )}
+            {credits.over ? (
+              <span className="mt-[7px] flex items-center justify-between text-[11px]">
+                <span className="font-medium text-risk">{credits.stopped ? "Paused · Upgrade needed" : "Upgrade needed"}</span>
+                <ArrowUpRight className="h-3 w-3 text-risk" strokeWidth={1.8} />
+              </span>
+            ) : credits.resets && <span className="mt-[7px] block text-[11px] text-muted-foreground">{credits.resets}</span>}
+          </NavLink>
+        )}
         {/* Workspace plan: Activity and Events, where the Workspace group used to be (GET-864). */}
         {!api && footerItemsWorkspace.length > 0 && <ul className="flex flex-col gap-px">{footerItemsWorkspace.map((i) => renderOpenItem(i))}</ul>}
-        {/* No profile row: you, and everything about your account, are in Settings, top row. */}
+        {/* You, then Settings: the profile row and the gear both open Settings. */}
+        <div className={`mt-1.5 flex items-center gap-1 border-t border-border/60 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
+          {withTip(
+            <button
+              onClick={() => navigate("/settings")}
+              className={`${rowBase} ${collapsed ? "justify-center px-0 py-1.5" : "min-w-0 flex-1 gap-[9px] px-1.5 py-1"} ${idleBg}`}
+            >
+              <Avatar className="h-6 w-6 flex-shrink-0 shadow-[inset_0_0_0_1px_hsl(var(--border)/0.6)]">
+                <AvatarImage src={userData?.user?.profile_picture_url || undefined} alt={userName} />
+                <AvatarFallback className="bg-card text-[11px] font-medium text-muted-foreground/80">
+                  {userName.charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              {!collapsed && (
+                <span className="flex min-w-0 flex-col text-left leading-tight">
+                  <span className="truncate text-[13px] text-foreground">{userName}</span>
+                  {userEmail && <span className="truncate text-[11.5px] text-muted-foreground/60">{userEmail}</span>}
+                </span>
+              )}
+            </button>,
+            userName
+          )}
+          {!collapsed && (
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => navigate("/settings")}
+                  aria-label="Settings"
+                  className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md transition-colors duration-fast ${location.pathname.startsWith("/settings") ? `${activeBg} text-foreground` : `${iconIdle} ${idleBg} hover:text-foreground`}`}
+                >
+                  <SettingsIcon className="h-4 w-4" strokeWidth={RAIL_STROKE} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       </div>
     </aside>
   );
