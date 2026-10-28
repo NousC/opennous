@@ -20,3 +20,24 @@ export const railLabelActive = "text-foreground";
 export const railGroupLabel = "text-[11px] font-medium text-muted-foreground/60";
 /** Shared icon stroke, the palette's. */
 export const RAIL_STROKE = 1.75;
+/** Each place in the app sidebar has its own icon colour, idle and active alike, so a row is found
+ *  by colour before it is read. Rows not listed keep the quiet grey icon. */
+export const RAIL_TINT: Record<string, string> = {
+  "/accounts":     "text-[#4F6BD8]",
+  "/inbox":        "text-[#7C5CD6]",
+  "/tasks":        "text-[#1F9D74]",
+  "/graph":        "text-[#C2417A]",
+  "/insights":     "text-[#D98A1C]",
+  "/gtm-insights": "text-[#D98A1C]",
+  "/workflows":    "text-[#E0662B]",
+  "/activity":     "text-[#2C8FBF]",
+  "/events":       "text-[#D64545]",
+};
+/** The tint for a page, by its path: the sidebar row it belongs to (longest prefix wins), so the
+ *  page's top-bar icon wears the same colour as its row. null where the row has none. */
+export function railTintFor(pathname: string): string | null {
+  const key = Object.keys(RAIL_TINT)
+    .filter((k) => pathname === k || pathname.startsWith(k + "/"))
+    .sort((a, b) => b.length - a.length)[0];
+  return key ? RAIL_TINT[key] : null;
+}

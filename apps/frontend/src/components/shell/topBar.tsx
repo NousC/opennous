@@ -14,6 +14,7 @@ import { isApiTier } from "@/config/plans";
 import { apiTopBarRoute } from "@/components/shell/ApiTopBar";
 import { usePlan } from "@/hooks/usePlan";
 import { cloud } from "@/lib/cloud";
+import { railTintFor } from "@/components/shell/rail";
 import { useDealPages } from "@/hooks/useDealPages";
 
 type Override = { crumbs: Crumb[] } | null;
@@ -97,7 +98,7 @@ export function AppTopBar() {
   if (apiBar) return null;
   return (
     <PageTopBar
-      icon={<Icon />}
+      icon={<Icon className={inChat ? undefined : railTintFor(pathname) ?? undefined} />}
       crumbs={crumbs}
       after={ctx ? <span ref={ctx.setSlot} className="contents" /> : undefined}
       actions={

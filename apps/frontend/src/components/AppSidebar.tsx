@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { VersionWidget } from "@/components/VersionWidget";
 import {
@@ -8,14 +8,10 @@ import {
   Network,
   Building2,
   Activity,
-  BarChart3,
   Radio,
   ChevronRight,
   Settings as SettingsIcon,
-  KeyRound,
-  BookOpen,
-  ArrowUpRight,
-  Users,
+  UserPlus,
   Zap,
 } from "lucide-react";
 import { usePref } from "@/hooks/usePref";
@@ -23,17 +19,13 @@ import { usePlan } from "@/hooks/usePlan";
 import { BackfillPill } from "@/components/BackfillPill";
 import { InviteMemberButton } from "@/components/InviteMemberButton";
 import { isApiTier, planTier } from "@/config/plans";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/contexts/AuthContext";
 import { activeTeam } from "@/lib/activeTeam";
 import { SidebarWorkspaceSelector } from "@/components/SidebarWorkspaceSelector";
-import { useCredits } from "@/hooks/useCredits";
-import { DOCS_URL } from "@/config/agentEndpoints";
 import { cloud, type CloudNavItem } from "@/lib/cloud";
-import { RAIL_STROKE, railActive, railGroupLabel, railIcon, railIconActive, railIdle, railLabel, railLabelActive, railRow } from "@/components/shell/rail";
-import { faviconUrl } from "@/lib/externalImages";
+import { RAIL_STROKE, RAIL_TINT, railActive, railGroupLabel, railIcon, railIconActive, railIdle, railLabel, railLabelActive, railRow } from "@/components/shell/rail";
 
 // The sidebar reads top to bottom as one idea: ASK → SPACES → SURFACES.
 //   ASK    — Home (the agent front door), Accounts, People. Chat is NOT a nav item:
@@ -62,10 +54,13 @@ type NavItem = { title: string; url: string; icon: React.ElementType; end?: bool
 // is the Workspace layer's (cloud.nav, GET-754), so a build without it shows only what it has.
 // The workspace rail is split by JOB, not by data type (the market-ready redesign, Oct 2026):
 // the places a rep or a CSM spends the day on top, the read on the business under "Team".
+// Home is not a row any more: it leads the top row, beside Chat, Invite and Settings (sidebar
+// redesign, Oct 2026).
 const workNavItemsCustom: NavItem[] = [
-  { title: "Home",      url: "/",          icon: HomeIcon,   end: true },
   { title: "Accounts",  url: "/accounts",  icon: Building2 },
 ];
+// The Graph closes the main rail on every plan.
+const GRAPH_ITEM: NavItem = { title: "Graph", url: "/graph", icon: Network };
 
 type ViewItem = NavItem & { swatch: string; match: (path: string, view: string | null) => boolean };
 
@@ -78,15 +73,12 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 // on the API plan). GET-864 had taken the row out when RevBoxes arrived; RevBox jobs stay out of the
 // Automations list (GET-868), so the two never show the same thing.
 const AUTOMATIONS_ITEM: NavItem = { title: "Workflows", url: "/workflows", icon: Zap };
-// Workspace plan (GET-872): Activity sits in the footer; Graph, Reporting, Forecast and Insights in a
-// collapsible Workspace group under the Workspace layer's groups.
+// Workspace plan (GET-872): Activity sits in the footer; Insights and Workflows in a collapsible
+// Workspace group under the Workspace layer's groups.
 const footerNavItemsWorkspace: NavItem[] = [
   { title: "Activity", url: "/activity", icon: Activity },
   // The Workspace sees the same events the API plan does (GET-942): what happened, and where it is sent.
   { title: "Events", url: "/events", icon: Radio },
-];
-const workspaceGroupItems: NavItem[] = [
-  { title: "Graph", url: "/graph", icon: Network },
 ];
 // Core (plugin) plan — the agent lives in the operator's own coding tool, so there is no
 // in-app chat. Sources moved into Settings with every other plan's (GET-426): connecting one
@@ -99,51 +91,16 @@ const workspaceGroupItems: NavItem[] = [
 // change what either of them contains. No inbox, no tasks — those are the app
 // doing the work for you, which is the Workspace plan (GET-908).
 const workNavItemsApi: NavItem[] = [
-  { title: "Home",     url: "/",         icon: HomeIcon, end: true },
   { title: "Accounts", url: "/accounts", icon: Building2 },
   // What happened, as events an engineer can pull or subscribe to (GET-939).
   { title: "Events",   url: "/events",   icon: Radio },
 ];
 // Integrations (Personal, Shared) and Webhooks are in Settings now, on every plan (GET-1043).
 
-/** "https://www.acme.example/about" → "acme.example"; null when there's nothing usable. */
-function domainOf(website?: string | null): string | null {
-  const d = String(website ?? "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0].toLowerCase();
-  return d.includes(".") ? d : null;
-}
-
-/**
- * The Space row's mark (GET-220): the company's own logo, from the website saved in
- * Admin → General, in the same 17px square the letter badge used. Same source as every
- * other company logo in the app (EntityAvatar). Google answers an unknown domain with a
- * tiny default globe rather than an error, so an image under 32px counts as "no logo" and
- * the orange letter comes back — as it does with no website or a failed load.
- */
-function SpaceMark({ letter, domain }: { letter: string; domain: string | null }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => { setFailed(false); }, [domain]);
-  const favicon = faviconUrl(domain);
-  if (favicon && !failed) {
-    return (
-      <img
-        src={favicon}
-        alt=""
-        referrerPolicy="no-referrer"
-        onLoad={(e) => { if (e.currentTarget.naturalWidth < 32) setFailed(true); }}
-        onError={() => setFailed(true)}
-        className="h-[17px] w-[17px] flex-shrink-0 rounded-[5px] bg-white object-contain"
-      />
-    );
-  }
-  return (
-    <span className="flex h-[17px] w-[17px] flex-shrink-0 items-center justify-center rounded-[5px] bg-[#FF5C00] text-[10px] font-bold text-white">{letter}</span>
-  );
-}
 // OpenNous v1 (GET-211): Reporting (/reporting) and Coaching (/coaching) are off the footer.
 // Their pages and the extraction feeding them keep running — flip to true to bring one back.
 
 const Recents = cloud.nav?.recents;
-const Brains = cloud.nav?.brains;
 
 export function AppSidebar() {
   const { session, userData } = useAuth();
@@ -152,25 +109,25 @@ export function AppSidebar() {
 
   // Custom (teams) plan gets the full in-app nav; everyone else is on the Core (plugin)
   // plan — Install + Workflows instead of Home + Chat, and no in-app agent.
-  const { plan, selfHosted, can } = usePlan();
+  const { plan, can } = usePlan();
   const automationsRow = can("automations") ? [AUTOMATIONS_ITEM] : [];
   // Three plans now (GET-480): the API rail is its own shape, Workspace and Custom share
   // the full one.
   const api = isApiTier(plan);
-  // Brains (GET-431) are Cloud's, drawn by its BrainsNav (GET-839). Recents are the in-app agent's thread list, so they follow the agent: Custom is the plan
+  // Recents are the in-app agent's thread list, so they follow the agent: Custom is the plan
   // where it runs in the app.
   const tier = planTier(plan);
   const showRecents = tier === "custom";
   // The API plan's rail, then the Workspace layer's rows for it (GTM insights, GET-973).
   const workNavItems = api ? [...workNavItemsApi, ...(cloud.nav?.api ?? []), ...automationsRow] : workNavItemsCustom;
   // Main rail on the workspace plans: Home, Accounts, then the Workspace layer's Tasks and Insights.
-  const mainItems = api ? workNavItems : [...workNavItems, ...cloudRows(cloud.nav?.main, tier)];
+  const mainItems = [...(api ? workNavItems : [...workNavItems, ...cloudRows(cloud.nav?.main, tier)]), GRAPH_ITEM];
   // Workspace (GET-665): on the workspace plan Reporting (the Workspace layer's) leads it; the API
   // plan has no Activity row because Activity is its Home.
   // Workspace footer: Activity and Graph, then Cloud's Reporting and Forecast (they sat in the old Workspace group).
   const footerItemsWorkspace = api ? [] : footerNavItemsWorkspace;
-  // Workspace group: Graph, then Cloud's Insights, then Automations under it.
-  const workspaceItems = api ? [] : [...workspaceGroupItems, ...cloudRows(cloud.nav?.workspace, tier), ...automationsRow];
+  // Workspace group: Cloud's Insights, then Automations under it.
+  const workspaceItems = api ? [] : [...cloudRows(cloud.nav?.workspace, tier), ...automationsRow];
   const viewNavItems = cloudRows(cloud.nav?.views, tier).filter((v): v is ViewItem => !!v.swatch && !!v.match);
   const showViews = !api && viewNavItems.length > 0;
   // Every plan gets the Workspace section (Activity, Automations, Graph), collapsible; the API plan
@@ -180,8 +137,6 @@ export function AppSidebar() {
   // Group folds stick per workspace (usePref, GET-595).
   const [viewsOpen, setViewsOpen] = usePref<boolean>("sidebar.views.open", true, (v): v is boolean => typeof v === "boolean");
   const [workspaceOpen, setWorkspaceOpen] = usePref<boolean>("sidebar.workspace.open", true, (v): v is boolean => typeof v === "boolean");
-  // API plan: the credits card in the foot, from the same payload the Usage page reads.
-  const credits = useCredits(api);
 
   // A choice you made sticks. With no choice yet, a narrow window starts collapsed: the open rail
   // is 232px, which on a phone leaves the page about a third of the screen.
@@ -200,7 +155,6 @@ export function AppSidebar() {
     });
   };
 
-  const workspaceName = userData?.workspace?.name || activeTeam(userData)?.name || "General";
   const openSearch = () => window.dispatchEvent(new CustomEvent("open-command-palette"));
 
   // An open chat lives at "/" too (?thread / ?chat / ?ask); the chat's own row is the active one
@@ -245,7 +199,7 @@ export function AppSidebar() {
             activeClassName=""
           >
             {lead && !collapsed ? lead : (
-              <item.icon className={`h-[15px] w-[15px] flex-shrink-0 transition-colors ${active ? iconActive : iconIdle}`} strokeWidth={RAIL_STROKE} />
+              <item.icon className={`h-[15px] w-[15px] flex-shrink-0 transition-colors ${RAIL_TINT[item.url] ?? (active ? iconActive : iconIdle)}`} strokeWidth={RAIL_STROKE} />
             )}
             <span className={`truncate text-[13px] leading-tight transition-all duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${collapsed ? "w-0 opacity-0" : "opacity-100"} ${active ? labelActive : labelIdle}`}>{item.title}</span>
           </NavLink>,
@@ -269,25 +223,6 @@ export function AppSidebar() {
           </ul>
         )}
       </li>
-    );
-  };
-
-  const buttonRow = (opts: {
-    icon: React.ElementType; label: string; active: boolean; onClick: () => void; badge?: string;
-    /** With `badge`: render this domain's logo in the badge's place, the letter as fallback. */
-    badgeDomain?: string | null;
-  }) => {
-    const { icon: Icon, label, active, onClick, badge, badgeDomain } = opts;
-    return withTip(
-      <button onClick={onClick} className={`${rowBase} ${rowPad} ${active ? activeBg : idleBg}`}>
-        {badge ? (
-          <SpaceMark letter={badge} domain={badgeDomain ?? null} />
-        ) : (
-          <Icon className={`h-[15px] w-[15px] flex-shrink-0 ${active ? iconActive : iconIdle}`} strokeWidth={RAIL_STROKE} />
-        )}
-        {!collapsed && <span className={`truncate text-[13px] leading-tight ${active ? labelActive : labelIdle}`}>{label}</span>}
-      </button>,
-      label
     );
   };
 
@@ -316,11 +251,24 @@ export function AppSidebar() {
       </div>
     );
 
-  // API plan only: Automations and the Graph stay quiet icons in the foot (its rail has no
-  // Workspace group).
-
-  const userName = userData?.user?.name || userData?.user?.email?.split("@")[0] || "Account";
-  const userEmail = userData?.user?.email || "";
+  // The top row's square icon buttons (Invite, Settings), each with its name on hover. A disabled
+  // one stays hoverable (aria-disabled, not disabled) so its tooltip can say why.
+  const topIcon = (label: string, Icon: React.ElementType, onClick: () => void, active = false, disabled = false) => (
+    <Tooltip key={label} delayDuration={200}>
+      <TooltipTrigger asChild>
+        <button
+          onClick={disabled ? undefined : onClick}
+          aria-label={label}
+          aria-disabled={disabled || undefined}
+          className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-colors duration-fast ${disabled ? `${iconIdle} cursor-default opacity-50` : active ? `${activeBg} text-foreground` : `${iconIdle} ${idleBg} hover:text-foreground`}`}
+        >
+          <Icon className="h-[15px] w-[15px]" strokeWidth={RAIL_STROKE} />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side={collapsed ? "right" : "bottom"} sideOffset={6}>{disabled ? `${label}: admins only` : label}</TooltipContent>
+    </Tooltip>
+  );
+  const homeActive = isItemActive("/", true);
 
 
   return (
@@ -356,6 +304,26 @@ export function AppSidebar() {
           <SidebarWorkspaceSelector collapsed />
         </div>
       )}
+
+      {/* TOP ROW — Home, then Chat, Invite teammates and Settings as icons. Collapsed, a column. */}
+      <div className={`flex items-center gap-0.5 px-2.5 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
+        {withTip(
+          <NavLink
+            to="/"
+            end
+            className={`flex h-8 flex-shrink-0 items-center rounded-lg transition-colors duration-fast ${collapsed ? "w-8 justify-center" : "gap-2 px-2.5"} ${homeActive ? activeBg : idleBg}`}
+            activeClassName=""
+          >
+            <HomeIcon className={`h-[15px] w-[15px] flex-shrink-0 ${homeActive ? iconActive : iconIdle}`} strokeWidth={RAIL_STROKE} />
+            {!collapsed && <span className={`text-[13px] leading-tight ${homeActive ? labelActive : labelIdle}`}>Home</span>}
+          </NavLink>,
+          "Home",
+        )}
+        {/* Invite a member (GET-571); the member onboards their own sources. */}
+        <InviteMemberButton trigger={(open) => topIcon("Invite teammates", UserPlus, open ?? (() => {}), false, !open)} />
+        {/* Usage and billing live in Settings; the rail carries no credits meter. */}
+        {topIcon("Settings", SettingsIcon, () => navigate("/settings"), location.pathname.startsWith("/settings"))}
+      </div>
 
       {/* Search — opens the ⌘K command palette (people, accounts, jump-to). */}
       <div className="px-2.5 pb-1.5 pt-1.5">
@@ -415,11 +383,7 @@ export function AppSidebar() {
           <ul className="flex flex-col gap-px">{workspaceItems.map((i) => renderOpenItem(i))}</ul>
         )}
 
-        {/* BRAINS — the company's own knowledge of how it sells (GET-431): Cloud's (GET-839). */}
-        {Brains && (
-          <Brains tier={tier} sectionLabel={(t) => sectionLabel(t)} buttonRow={buttonRow}
-            workspaceName={workspaceName} badgeDomain={domainOf(userData?.workspace?.website)} />
-        )}
+        {/* No Brains group any more (sidebar redesign, Oct 2026): brains are gone from the product. */}
 
         {/* CHATS — your conversations with Ask Nous: the Workspace layer's (GET-754). Mounted on the
             workspace plans, shown where the agent runs in the app (Custom). */}
@@ -439,93 +403,11 @@ export function AppSidebar() {
             <BackfillPill collapsed={collapsed} reviewHref="/settings?section=billing" />
           </div>
         )}
-        {/* API plan: the month's credits, then the API docs (GET-620). */}
-        {api && credits && !collapsed && !selfHosted && (
-          // Over the allowance (GET-733): red, and "Upgrade needed" opens Usage on the bundles. No
-          // pop-up at sign-in: the card is where it is said, on every page.
-          <NavLink
-            to={credits.over ? "/usage?upgrade=1" : "/usage"}
-            className={`mb-1.5 block rounded-[10px] bg-card px-[11px] pb-[11px] pt-2.5 transition-shadow duration-fast ${credits.over
-              ? "shadow-[0_0_0_1px_hsl(var(--risk)/0.45),0_1px_2px_rgba(20,20,18,0.04)] hover:shadow-[0_0_0_1px_hsl(var(--risk)/0.8),0_1px_2px_rgba(20,20,18,0.04)]"
-              : "shadow-[0_0_0_1px_hsl(var(--border)),0_1px_2px_rgba(20,20,18,0.04)] hover:shadow-[0_0_0_1px_hsl(var(--foreground)/0.2),0_1px_2px_rgba(20,20,18,0.04)]"}`}
-            activeClassName=""
-          >
-            <span className="flex items-baseline gap-1.5 text-[12px]">
-              <span className="flex-1 font-medium text-foreground">Credits</span>
-              <span className="tabular-nums">
-                <span className={`font-medium ${credits.over ? "text-risk" : "text-foreground"}`}>{credits.used}</span>
-                {credits.included && <span className="text-muted-foreground"> / {credits.included}</span>}
-              </span>
-            </span>
-            {credits.included && (
-              <span className="mt-[9px] block h-[3px] overflow-hidden rounded-full bg-muted" aria-hidden>
-                <span className={`block h-full rounded-full ${credits.over ? "bg-risk" : "bg-foreground"}`} style={{ width: `${credits.pct}%` }} />
-              </span>
-            )}
-            {credits.over ? (
-              <span className="mt-[7px] flex items-center justify-between text-[11px]">
-                <span className="font-medium text-risk">{credits.stopped ? "Paused · Upgrade needed" : "Upgrade needed"}</span>
-                <ArrowUpRight className="h-3 w-3 text-risk" strokeWidth={1.8} />
-              </span>
-            ) : credits.resets && <span className="mt-[7px] block text-[11px] text-muted-foreground">{credits.resets}</span>}
-          </NavLink>
-        )}
-        {api && withTip(
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noreferrer"
-            className={`${rowBase} ${rowPad} ${idleBg}`}
-          >
-            <BookOpen className={`h-[15px] w-[15px] flex-shrink-0 ${iconIdle}`} strokeWidth={RAIL_STROKE} />
-            {!collapsed && <span className={`flex-1 truncate text-[13px] leading-tight ${labelIdle}`}>API docs</span>}
-            {!collapsed && <ArrowUpRight className="h-3 w-3 flex-shrink-0 text-muted-foreground/70" strokeWidth={1.8} />}
-          </a>,
-          "API docs",
-        )}
-        {/* Graph, then Usage and billing; no Usage on self-host, where nothing is billed (GET-839). */}
-        {/* No Usage and billing row on the API plan (GET-872): the credits meter above opens it. */}
-        {api && <ul className="flex flex-col gap-px">{renderOpenItem({ title: "Graph", url: "/graph", icon: Network })}</ul>}
-        {/* Workspace plan: Activity, Graph, Reporting and Forecast, where the Workspace group used to be (GET-864). */}
+        {/* Credits and the API docs are off the rail (sidebar redesign, Oct 2026): Usage and billing
+            is in Settings, the API docs in the API plan's top bar (ApiTopBar). */}
+        {/* Workspace plan: Activity and Events, where the Workspace group used to be (GET-864). */}
         {!api && footerItemsWorkspace.length > 0 && <ul className="flex flex-col gap-px">{footerItemsWorkspace.map((i) => renderOpenItem(i))}</ul>}
-        {/* Invite a member (GET-571) — founders and admins; the member onboards their own sources. */}
-        <InviteMemberButton collapsed={collapsed} />
-        <div className={`mt-1.5 flex items-center gap-1 border-t border-border/60 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
-          {withTip(
-            <button
-              onClick={() => navigate("/settings")}
-              className={`${rowBase} ${collapsed ? "justify-center px-0 py-1.5" : "min-w-0 flex-1 gap-[9px] px-1.5 py-1"} ${idleBg}`}
-            >
-              <Avatar className="h-6 w-6 flex-shrink-0 shadow-[inset_0_0_0_1px_hsl(var(--border)/0.6)]">
-                <AvatarImage src={userData?.user?.profile_picture_url || undefined} alt={userName} />
-                <AvatarFallback className="bg-card text-[11px] font-medium text-muted-foreground/80">
-                  {userName.charAt(0).toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              {!collapsed && (
-                <span className="flex min-w-0 flex-col text-left leading-tight">
-                  <span className="truncate text-[13px] text-foreground">{userName}</span>
-                  {userEmail && <span className="truncate text-[11.5px] text-muted-foreground/60">{userEmail}</span>}
-                </span>
-              )}
-            </button>,
-            userName
-          )}
-          {!collapsed && (
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => navigate("/settings")}
-                  aria-label="Settings"
-                  className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md transition-colors duration-fast ${location.pathname.startsWith("/settings") ? `${activeBg} text-foreground` : `${iconIdle} ${idleBg} hover:text-foreground`}`}
-                >
-                  <SettingsIcon className="h-4 w-4" strokeWidth={RAIL_STROKE} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
-            </Tooltip>
-          )}
-        </div>
+        {/* No profile row: you, and everything about your account, are in Settings, top row. */}
       </div>
     </aside>
   );

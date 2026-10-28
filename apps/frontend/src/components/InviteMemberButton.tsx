@@ -6,9 +6,10 @@
 // Several addresses at once (type, paste a list, Enter or comma to add), Member or Admin, then one
 // send. Each address is its own POST, so one bad address never sinks the rest; the result lists
 // who was invited and who wasn't, with the invite link when no email went out.
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Check, Copy, UserPlus, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { activeTeam } from "@/lib/activeTeam";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -20,10 +21,11 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 type Role = "member" | "admin";
 type Result = { email: string; ok: boolean; link: string | null; error?: string };
 
-/** The team this session is acting in — the same read Settings and ShareBar do. */
+/** The team that owns the workspace on screen (lib/activeTeam), so an operator in a client's
+ *  workspace invites into that workspace, not their own. */
 function activeTeamId(userData: unknown): string | null {
-  const u = userData as { teams?: { id?: string }[]; team?: { id?: string } } | null;
-  return u?.team?.id ?? u?.teams?.[0]?.id ?? null;
+  const u = userData as { teams?: { id?: string }[] } | null;
+  return activeTeam(userData)?.id ?? u?.teams?.[0]?.id ?? null;
 }
 
 const ROLES: { value: Role; label: string; body: string }[] = [
@@ -31,7 +33,11 @@ const ROLES: { value: Role; label: string; body: string }[] = [
   { value: "admin", label: "Admin", body: "Also manages members, billing and integrations" },
 ];
 
-export function InviteMemberButton({ collapsed = false, className = "" }: { collapsed?: boolean; className?: string }) {
+/** `trigger` replaces the default rail row (the sidebar's top row draws its own icon button). It is
+ *  drawn for everyone; for a viewer who can't invite, `open` is null so it can show as disabled. */
+export function InviteMemberButton({ collapsed = false, className = "", trigger }: {
+  collapsed?: boolean; className?: string; trigger?: (open: (() => void) | null) => ReactNode;
+}) {
   const { session, userData } = useAuth();
   const token = session?.access_token ?? "";
   const teamId = activeTeamId(userData);
@@ -47,7 +53,7 @@ export function InviteMemberButton({ collapsed = false, className = "" }: { coll
   const [copied, setCopied] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
-  if (!isAdmin || !teamId) return null;
+  if (!isAdmin || !teamId) return trigger ? <>{trigger(null)}</> : null;
 
   const reset = () => { setEmails([]); setDraft(""); setRole("member"); setResults(null); };
   /** Add whatever is typed or pasted: split on commas, semicolons, spaces and new lines. */
@@ -92,15 +98,17 @@ export function InviteMemberButton({ collapsed = false, className = "" }: { coll
 
   return (
     <>
-      <button onClick={() => setOpen(true)} aria-label="Invite teammates"
-        className={cn(
-          railRow, railIdle, "text-[13px]", railLabel,
-          collapsed ? "justify-center px-0 py-[7px]" : "gap-2.5 px-2 py-[6px]",
-          className,
-        )}>
-        <UserPlus className={cn("h-[15px] w-[15px] flex-shrink-0", railIcon)} strokeWidth={RAIL_STROKE} />
-        {!collapsed && <span>Invite teammates</span>}
-      </button>
+      {trigger ? trigger(() => setOpen(true)) : (
+        <button onClick={() => setOpen(true)} aria-label="Invite teammates"
+          className={cn(
+            railRow, railIdle, "text-[13px]", railLabel,
+            collapsed ? "justify-center px-0 py-[7px]" : "gap-2.5 px-2 py-[6px]",
+            className,
+          )}>
+          <UserPlus className={cn("h-[15px] w-[15px] flex-shrink-0", railIcon)} strokeWidth={RAIL_STROKE} />
+          {!collapsed && <span>Invite teammates</span>}
+        </button>
+      )}
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
         <DialogContent className="max-w-[520px] gap-0 overflow-hidden p-0 outline-none">
           {/* The ⌘K palette's dialog language (GET-658, round 2): a quiet title, small light labels,

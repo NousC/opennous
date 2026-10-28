@@ -33,6 +33,7 @@ import {
 import { DOCS_URL } from "@/config/agentEndpoints";
 import { ClientLogo } from "@/components/connect/shared";
 import { cn } from "@/lib/utils";
+import { railTintFor } from "@/components/shell/rail";
 import { ApiTopBarContext, type ConnectKind, type Ctx, type Parent, type Slots } from "./apiTopBarContext";
 
 export { useApiTopBar, useInApiShell, useOpenConnect, type ConnectKind } from "./apiTopBarContext";
@@ -188,7 +189,7 @@ function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect 
   return (
     <PageTopBar
       className="bg-background pr-3 sm:pr-4"
-      icon={<Icon strokeWidth={1.6} />}
+      icon={<Icon strokeWidth={1.6} className={railTintFor(pathname) ?? undefined} />}
       crumbs={crumbs}
       actions={
         <>
