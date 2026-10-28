@@ -8,7 +8,7 @@ const ROUTES: [name: string, path: string][] = [
   ["pipeline-board", "/pipeline"],
   ["pipeline-list", "/pipeline?layout=list"],
   ["accounts", "/accounts"],
-  ["people", "/people"],
+  ["contacts", "/contacts"],
   ["customers", "/customers"],
   ["tasks", "/tasks"],
   ["account", "/accounts/c1"],
@@ -293,7 +293,7 @@ test("record-prev-next", async ({ page }, info) => {
 // account and the deal.
 test("person-record", async ({ page }, info) => {
   test.skip(info.project.name !== "desktop-light", "one view is enough");
-  await page.goto("/people/p1", { waitUntil: "networkidle" });
+  await page.goto("/contacts/p1", { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForFunction(() => !/\bLoading\b/.test(document.body.innerText), null, { timeout: 10_000 });
   await page.waitForTimeout(600);

@@ -32,7 +32,7 @@ test("pct and ms: a dash for nothing, never a fake zero", () => {
 
 test("about: a company links to its account, a person to their page, a deal and a raw target do not", () => {
   assert.equal(aboutHref({ id: "c1", type: "company", name: "Harborline Supply" }), "/accounts/c1");
-  assert.equal(aboutHref({ id: "p1", type: "person", name: "Dana" }), "/people/p1");
+  assert.equal(aboutHref({ id: "p1", type: "person", name: "Dana" }), "/contacts/p1");
   assert.equal(aboutHref({ id: "d1", type: "deal", name: "Platform" }), null);
   assert.equal(aboutHref(null), null);
   assert.equal(aboutLabel({ id: "c1", type: "company", name: "Harborline Supply" }, "c1"), "Harborline Supply");
