@@ -7,7 +7,7 @@ import * as React from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { createPortal } from "react-dom";
-import { ChevronDown, KeyRound, Pencil, SquareTerminal } from "lucide-react";
+import { ChevronDown, ChevronLeft, KeyRound, Pencil, SquareTerminal } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -88,8 +88,13 @@ function requestTime(at: string): string {
   return `${day(d)} ${time(d)}`;
 }
 
-export default function KeyDetail() {
-  const { id = "" } = useParams();
+/** Its own page at /keys/:id on self-host; elsewhere a view inside Settings → API keys (`embedded`,
+ *  with the id passed in), so opening a key never leaves Settings. */
+export default function KeyDetail({ id: givenId, embedded = false }: { id?: string; embedded?: boolean } = {}) {
+  const params = useParams();
+  const id = givenId ?? params.id ?? "";
+  const listHref = embedded ? "/settings?section=api-keys" : "/keys";
+  const hrefOf = (keyId: string) => (embedded ? `/settings?section=api-keys&key=${keyId}` : `/keys/${keyId}`);
   const api = useKeyApi();
   const navigate = useNavigate();
   const inShell = useInApiShell();
@@ -166,6 +171,7 @@ export default function KeyDetail() {
   const canRename = !!summary && summary.can_manage && !summary.revoked_at && state !== "missing";
 
   useApiTopBar({
+    enabled: !embedded,
     title: summary?.name ?? null, onRefresh: load, refreshing: state === "loading",
     rename: canRename ? {
       editing: editingName, onEdit: () => setEditingName(true), onSave: (n) => void rename(n),
@@ -175,9 +181,9 @@ export default function KeyDetail() {
 
   // Outside the API plan's bar (GET-660) the app's top bar carries the same thing: API keys / name,
   // and the name renames in place from there.
-  useTopBarCrumbs(inShell ? null : editingName ? [{ label: "API keys", href: "/keys" }] : [{ label: "API keys", href: "/keys" }, { label: summary?.name ?? "Key" }]);
+  useTopBarCrumbs(inShell || embedded ? null : editingName ? [{ label: "API keys", href: "/keys" }] : [{ label: "API keys", href: "/keys" }, { label: summary?.name ?? "Key" }]);
   const topBarSlot = useTopBarSlot();
-  const renameInBar = !inShell && canRename && topBarSlot ? createPortal(
+  const renameInBar = !inShell && !embedded && canRename && topBarSlot ? createPortal(
     editingName && summary ? (
       <span className="flex min-w-0 items-center gap-2">
         <span aria-hidden className="text-muted-foreground/30">/</span>
@@ -218,7 +224,7 @@ export default function KeyDetail() {
       setUnshown(null);
       await handoff(created.key, rotatedMessage(summary.name), setUnshown);
       // The old key is revoked; the new one carries its name, access and the rest of its life.
-      navigate(`/keys/${created.id}`, { replace: true });
+      navigate(hrefOf(created.id), { replace: true });
     } catch {
       toast.error("Couldn't rotate the key. The current one still works.");
     }
@@ -231,7 +237,7 @@ export default function KeyDetail() {
       setRevoking(false);
       // Back to the list; the toast (and its Undo) comes along.
       revokedToast(summary.name, { id: summary.id, restore: api.restore });
-      navigate("/keys");
+      navigate(listHref);
     } catch {
       toast.error("Couldn't revoke the key. It still works.");
     }
@@ -246,15 +252,44 @@ export default function KeyDetail() {
   const createdBy = summary?.created_by ? names.get(summary.created_by) : undefined;
   const revoked = !!summary?.revoked_at;
 
+  // In Settings there is no top bar to carry the name: a back arrow to the list, the name, and its
+  // rename, the way the settings rail's own back arrow works.
+  const header = embedded ? (
+    <div className="flex min-h-8 items-center gap-1.5">
+      <Link to={listHref} aria-label="API keys" title="API keys"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors duration-fast hover:bg-hover hover:text-foreground">
+        <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
+      </Link>
+      {editingName && summary ? (
+        <InlineEditInput
+          value={summary.name} label="Name" validate={keyNameError} maxLength={80}
+          onSave={(n) => void rename(n)} onCancel={() => setEditingName(false)}
+          className="w-full max-w-[280px]"
+        />
+      ) : (
+        <>
+          <span className="min-w-0 truncate text-[14px] font-medium">{summary?.name ?? "Key"}</span>
+          {canRename && (
+            <button type="button" onClick={() => setEditingName(true)} title="Rename" aria-label="Rename"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 outline-none transition-colors duration-fast hover:bg-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+              <Pencil className="h-3 w-3" strokeWidth={1.8} />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  ) : null;
+
   const content = (
-    <div className="flex w-full flex-col gap-4 p-4 sm:p-5">
+    <div className={cn("flex w-full flex-col gap-4", !embedded && "p-4 sm:p-5")}>
+      {header}
       {state === "loading" && !summary ? (
         <div className={cn(card, "h-[76px] animate-pulse bg-muted/40")} />
       ) : state === "missing" || !summary ? (
         <EmptyState
           icon={<KeyRound strokeWidth={1.7} />}
           title="This key doesn't exist or was revoked"
-          action={<Button variant="outline" asChild><Link to="/keys">All keys</Link></Button>}
+          action={<Button variant="outline" asChild><Link to={listHref}>All keys</Link></Button>}
         />
       ) : (
         <>
@@ -452,6 +487,7 @@ export default function KeyDetail() {
     </div>
   );
 
+  if (embedded) return <div className="text-[13px]">{content}</div>;
   return (
     <div className="h-full overflow-y-auto bg-background text-[13px]">
       {content}

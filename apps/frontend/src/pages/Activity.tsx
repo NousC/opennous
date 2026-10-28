@@ -4,7 +4,8 @@ import { InstanceSetupCard } from "@/components/settings/InstanceSetupCard";
 import { BackfillProgressButton } from "@/components/BackfillProgressButton";
 import { usePlan } from "@/hooks/usePlan";
 import { isApiTier } from "@/config/plans";
-import { Check, Filter, RefreshCw } from "lucide-react";
+import { CalendarDays, CircleDot, Filter, Plug, RefreshCw } from "lucide-react";
+import { FilterMenu, type FilterGroup } from "@/components/ui/filter-menu";
 import { format } from "date-fns";
 import { useAuth } from "@/contexts/AuthContext";
 import { freshAccessToken } from "@/lib/freshToken";
@@ -59,19 +60,6 @@ const prettySource = (s: string) => SOURCE_LABEL[(s ?? "").toLowerCase()] ?? (s 
 const WINDOWS: [string, number | null][] = [
   ["Last 7 days", 7], ["Last 30 days", 30], ["Last 60 days", 60], ["Last 90 days", 90], ["All time", null],
 ];
-
-function Row({ label }: { label: string }) {
-  return <div className="px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">{label}</div>;
-}
-
-function Opt({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[13px] text-foreground transition-colors duration-fast hover:bg-hover">
-      <span className="truncate">{children}</span>
-      {on && <Check className="h-3.5 w-3.5 flex-shrink-0 text-foreground" />}
-    </button>
-  );
-}
 
 export default function Activity(_props: { mine?: boolean } = {}) {
   const { plan, selfHosted } = usePlan();
@@ -150,56 +138,45 @@ export default function Activity(_props: { mine?: boolean } = {}) {
   const creditTotal = shownConvos.reduce((n, c) => n + c.credits, 0);
 
   const activeCount = sources.size + statuses.size + (days === 30 ? 0 : 1);
-  const toggleStatus = (key: string) => setStatuses((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
-  const toggleSource = (key: string) => setSources((prev) => {
-    const next = new Set(prev);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
   const clearAll = () => { setDays(30); setSources(new Set()); setStatuses(new Set()); };
 
   // The API plan's shared top bar (GET-621) carries the title, Get started, the filter and the
   // refresh; the page keeps only the backfill progress under it.
   const inShell = useInApiShell();
   useApiTopBar({ onRefresh: load, refreshing: loading });
-  const filterContent = (
-    <>
-      <Row label="Window" />
-      {WINDOWS.map(([label, value]) => (
-        <Opt key={label} on={days === value} onClick={() => setDays(value)}>{label}</Opt>
-      ))}
-      {presentSources.length > 0 && (
-        <>
-          <Row label="Source" />
-          {presentSources.map(([key, label]) => (
-            <Opt key={key} on={sources.has(key)} onClick={() => toggleSource(key)}>{label}</Opt>
-          ))}
-        </>
-      )}
-      <Row label="Status" />
-      {STATUS_OPTIONS.map(([key, label]) => (
-        <Opt key={key} on={statuses.has(key)} onClick={() => toggleStatus(key)}>{label}</Opt>
-      ))}
-      {!!activeCount && (
-        <button
-          onClick={clearAll}
-          className="mt-1 flex w-full items-center rounded-lg px-2 py-1.5 text-[13px] text-muted-foreground transition-colors duration-fast hover:bg-hover hover:text-foreground"
-        >
-          Clear filters
-        </button>
-      )}
-    </>
-  );
+  // Counts beside each source and status, over the conversations loaded for this window.
+  const countBy = (key: (c: NonNullable<typeof convos>[number]) => string) => {
+    const m = new Map<string, number>();
+    for (const c of convos ?? []) m.set(key(c), (m.get(key(c)) ?? 0) + 1);
+    return m;
+  };
+  const sourceCounts = countBy((c) => (c.source ?? "").toLowerCase());
+  const statusCounts = countBy((c) => c.status ?? "unknown");
+  const filterGroups: FilterGroup[] = [
+    {
+      key: "window", label: "Time", icon: CalendarDays, defaultValue: "30",
+      options: WINDOWS.map(([label, value]) => ({ value: value == null ? "all" : String(value), label })),
+      selected: [days == null ? "all" : String(days)],
+      onChange: ([v]) => setDays(v === "all" ? null : Number(v)),
+    },
+    {
+      key: "source", label: "Source", icon: Plug, multi: true,
+      options: presentSources.map(([key, label]) => ({ value: key, label, count: sourceCounts.get(key) ?? 0 })),
+      selected: [...sources], onChange: (next) => setSources(new Set(next)),
+    },
+    {
+      key: "status", label: "Status", icon: CircleDot, multi: true,
+      options: STATUS_OPTIONS.map(([key, label]) => ({ value: key, label, count: statusCounts.get(key) ?? 0 })),
+      selected: [...statuses], onChange: (next) => setStatuses(new Set(next)),
+    },
+  ];
+  const filterContent = <FilterMenu groups={filterGroups} onClearAll={clearAll} />;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {inShell ? (
         <>
-          <ApiTopBarFilter active={activeCount} className="max-h-[70vh] overflow-y-auto p-1">{filterContent}</ApiTopBarFilter>
+          <ApiTopBarFilter active={activeCount} className="w-[290px]">{filterContent}</ApiTopBarFilter>
           <div className="flex flex-shrink-0 items-center justify-end gap-2 px-5 pt-4 empty:hidden">
             <BackfillProgressButton />
           </div>
@@ -225,7 +202,7 @@ export default function Activity(_props: { mine?: boolean } = {}) {
               {!!activeCount && <span className="text-[11px] font-medium tabular-nums">{activeCount}</span>}
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="max-h-[70vh] w-60 overflow-y-auto p-1">{filterContent}</PopoverContent>
+          <PopoverContent align="end" className="w-[290px] p-0">{filterContent}</PopoverContent>
         </Popover>
         <button onClick={load} title="Refresh" aria-label="Refresh" className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-border bg-card text-ink-2 shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover hover:text-foreground">
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} strokeWidth={1.8} />

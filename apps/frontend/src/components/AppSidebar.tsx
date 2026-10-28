@@ -7,13 +7,12 @@ import {
   PanelLeft,
   Network,
   Building2,
-  Activity,
   Radio,
   ChevronRight,
-  Settings as SettingsIcon,
   UserPlus,
   Zap,
   ArrowUpRight,
+  UserRound,
 } from "lucide-react";
 import { usePref } from "@/hooks/usePref";
 import { usePlan } from "@/hooks/usePlan";
@@ -57,12 +56,14 @@ type NavItem = { title: string; url: string; icon: React.ElementType; end?: bool
 // is the Workspace layer's (cloud.nav, GET-754), so a build without it shows only what it has.
 // The workspace rail is split by JOB, not by data type (the market-ready redesign, Oct 2026):
 // the places a rep or a CSM spends the day on top, the read on the business under "Team".
-// Home is not a row any more: it leads the top row, beside Invite (sidebar redesign, Oct 2026).
-const workNavItemsCustom: NavItem[] = [
-  { title: "Accounts",  url: "/accounts",  icon: Building2 },
-];
-// The Graph closes the main rail on every plan.
+// Home is not a row any more: it leads the top row, beside the Graph and Invite (sidebar redesign, Oct 2026).
+// People opens under Accounts while you are on either page, and folds away elsewhere.
+const ACCOUNTS_ITEM: NavItem = { title: "Accounts", url: "/accounts", icon: Building2, children: [{ title: "People", url: "/people", icon: UserRound }] };
+const workNavItemsCustom: NavItem[] = [ACCOUNTS_ITEM];
+// The Graph is an icon in the top row on every plan, not a rail row.
 const GRAPH_ITEM: NavItem = { title: "Graph", url: "/graph", icon: Network };
+// Events sits in the main rail on every plan, after Accounts (and Inbox and Tasks on Cloud).
+const EVENTS_ITEM: NavItem = { title: "Events", url: "/events", icon: Radio };
 
 type ViewItem = NavItem & { swatch: string; match: (path: string, view: string | null) => boolean };
 
@@ -75,13 +76,6 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 // on the API plan). GET-864 had taken the row out when RevBoxes arrived; RevBox jobs stay out of the
 // Automations list (GET-868), so the two never show the same thing.
 const AUTOMATIONS_ITEM: NavItem = { title: "Workflows", url: "/workflows", icon: Zap };
-// Workspace plan (GET-872): Activity sits in the footer; Insights and Workflows in a collapsible
-// Workspace group under the Workspace layer's groups.
-const footerNavItemsWorkspace: NavItem[] = [
-  { title: "Activity", url: "/activity", icon: Activity },
-  // The Workspace sees the same events the API plan does (GET-942): what happened, and where it is sent.
-  { title: "Events", url: "/events", icon: Radio },
-];
 // Core (plugin) plan — the agent lives in the operator's own coding tool, so there is no
 // in-app chat. Sources moved into Settings with every other plan's (GET-426): connecting one
 // is something you do at the start and then twice a year, which is a setting, not a rail row.
@@ -93,9 +87,9 @@ const footerNavItemsWorkspace: NavItem[] = [
 // change what either of them contains. No inbox, no tasks — those are the app
 // doing the work for you, which is the Workspace plan (GET-908).
 const workNavItemsApi: NavItem[] = [
-  { title: "Accounts", url: "/accounts", icon: Building2 },
+  ACCOUNTS_ITEM,
   // What happened, as events an engineer can pull or subscribe to (GET-939).
-  { title: "Events",   url: "/events",   icon: Radio },
+  EVENTS_ITEM,
 ];
 // Integrations (Personal, Shared) and Webhooks are in Settings now, on every plan (GET-1043).
 
@@ -120,27 +114,22 @@ export function AppSidebar() {
   // where it runs in the app.
   const tier = planTier(plan);
   const showRecents = tier === "custom";
-  // The API plan's rail, then the Workspace layer's rows for it (GTM insights, GET-973).
-  const workNavItems = api ? [...workNavItemsApi, ...(cloud.nav?.api ?? []), ...automationsRow] : workNavItemsCustom;
-  // Main rail on the workspace plans: Home, Accounts, then the Workspace layer's Tasks and Insights.
-  const mainItems = [...(api ? workNavItems : [...workNavItems, ...cloudRows(cloud.nav?.main, tier)]), GRAPH_ITEM];
-  // Workspace (GET-665): on the workspace plan Reporting (the Workspace layer's) leads it; the API
-  // plan has no Activity row because Activity is its Home.
-  // Workspace footer: Activity and Graph, then Cloud's Reporting and Forecast (they sat in the old Workspace group).
-  const footerItemsWorkspace = api ? [] : footerNavItemsWorkspace;
-  // Workspace group: Cloud's Insights, then Automations under it.
-  const workspaceItems = api ? [] : [...cloudRows(cloud.nav?.workspace, tier), ...automationsRow];
+  // One rail on every plan (sidebar redesign, Oct 2026): Accounts, then (Cloud) Inbox and Tasks,
+  // then Events, Workflows and Insights. The two Insights are different pages: the API plan's is
+  // GTM insights (/gtm-insights, cloud.nav.api), Cloud's its own (/insights, cloud.nav.workspace).
+  // No Workspace group and no Activity or Events in the foot any more.
+  const mainItems = api
+    ? [...workNavItemsApi, ...automationsRow, ...(cloud.nav?.api ?? [])]
+    : [...workNavItemsCustom, ...cloudRows(cloud.nav?.main, tier), EVENTS_ITEM, ...automationsRow, ...cloudRows(cloud.nav?.workspace, tier)];
   const viewNavItems = cloudRows(cloud.nav?.views, tier).filter((v): v is ViewItem => !!v.swatch && !!v.match);
   const showViews = !api && viewNavItems.length > 0;
-  // Every plan gets the Workspace section (Activity, Automations, Graph), collapsible; the API plan
-  // used to carry two unlabelled icons at the foot instead (product decision, GET-661).
   const viewParam = new URLSearchParams(location.search).get("view");
 
   // Group folds stick per workspace (usePref, GET-595).
   const [viewsOpen, setViewsOpen] = usePref<boolean>("sidebar.views.open", true, (v): v is boolean => typeof v === "boolean");
-  const [workspaceOpen, setWorkspaceOpen] = usePref<boolean>("sidebar.workspace.open", true, (v): v is boolean => typeof v === "boolean");
-  // The credits card in the foot, from the same payload the Usage page reads; every billed plan.
-  const credits = useCredits(!selfHosted);
+  // The credits card in the foot, from the same payload the Usage page reads: the API plan only.
+  // Cloud keeps usage in Settings → Usage and billing.
+  const credits = useCredits(api && !selfHosted);
 
   // A choice you made sticks. With no choice yet, a narrow window starts collapsed: the open rail
   // is 232px, which on a phone leaves the page about a third of the screen.
@@ -218,7 +207,7 @@ export function AppSidebar() {
               return (
                 <li key={child.title}>
                   <NavLink to={child.url} className={`${rowBase} ${rowPad} ${ca ? activeBg : idleBg}`} activeClassName="">
-                    <child.icon className={`h-[14px] w-[14px] flex-shrink-0 transition-colors ${ca ? iconActive : iconIdle}`} strokeWidth={RAIL_STROKE} />
+                    <child.icon className={`h-[14px] w-[14px] flex-shrink-0 transition-colors ${RAIL_TINT[child.url] ?? (ca ? iconActive : iconIdle)}`} strokeWidth={RAIL_STROKE} />
                     <span className={`truncate text-[12.5px] leading-tight transition-colors ${ca ? labelActive : labelIdle}`}>{child.title}</span>
                   </NavLink>
                 </li>
@@ -258,9 +247,9 @@ export function AppSidebar() {
   const userName = userData?.user?.name || userData?.user?.email?.split("@")[0] || "Account";
   const userEmail = userData?.user?.email || "";
 
-  // The top row's square icon button (Invite), each with its name on hover. A disabled
+  // The top row's square icon buttons (Graph, Invite), each with its name on hover. A disabled
   // one stays hoverable (aria-disabled, not disabled) so its tooltip can say why.
-  const topIcon = (label: string, Icon: React.ElementType, onClick: () => void, active = false, disabled = false) => (
+  const topIcon = (label: string, Icon: React.ElementType, onClick: () => void, active = false, disabled = false, tint?: string) => (
     <Tooltip key={label} delayDuration={200}>
       <TooltipTrigger asChild>
         <button
@@ -269,7 +258,7 @@ export function AppSidebar() {
           aria-disabled={disabled || undefined}
           className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-colors duration-fast ${disabled ? `${iconIdle} cursor-default opacity-50` : active ? `${activeBg} text-foreground` : `${iconIdle} ${idleBg} hover:text-foreground`}`}
         >
-          <Icon className="h-[15px] w-[15px]" strokeWidth={RAIL_STROKE} />
+          <Icon className={`h-[15px] w-[15px] ${tint ?? ""}`} strokeWidth={RAIL_STROKE} />
         </button>
       </TooltipTrigger>
       <TooltipContent side={collapsed ? "right" : "bottom"} sideOffset={6}>{disabled ? `${label}: admins only` : label}</TooltipContent>
@@ -315,7 +304,7 @@ export function AppSidebar() {
       {/* A hairline between the workspace and the top row. */}
       <div className="mx-2.5 mt-1.5 border-t border-border/60" />
 
-      {/* TOP ROW — Home, then Invite teammates as an icon. Collapsed, a column. */}
+      {/* TOP ROW — Home, then the Graph and Invite teammates as icons. Collapsed, a column. */}
       <div className={`flex items-center gap-0.5 px-2.5 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
         {withTip(
           <NavLink
@@ -330,6 +319,7 @@ export function AppSidebar() {
           "Home",
         )}
         {/* Invite a member (GET-571); the member onboards their own sources. */}
+        {topIcon(GRAPH_ITEM.title, GRAPH_ITEM.icon, () => navigate(GRAPH_ITEM.url), isItemActive(GRAPH_ITEM.url), false, RAIL_TINT[GRAPH_ITEM.url])}
         <InviteMemberButton trigger={(open) => topIcon("Invite teammates", UserPlus, open ?? (() => {}), false, !open)} />
       </div>
 
@@ -385,12 +375,6 @@ export function AppSidebar() {
             renderItem={(item) => renderOpenItem(item)} />
         ))}
 
-        {/* WORKSPACE (GET-872): Graph, Reporting, Forecast, Insights, collapsible, under the groups above. */}
-        {!api && workspaceItems.length > 0 && sectionLabel("Workspace", { open: workspaceOpen || collapsed, toggle: () => setWorkspaceOpen((o) => !o) })}
-        {!api && workspaceItems.length > 0 && (workspaceOpen || collapsed) && (
-          <ul className="flex flex-col gap-px">{workspaceItems.map((i) => renderOpenItem(i))}</ul>
-        )}
-
         {/* No Brains group any more (sidebar redesign, Oct 2026): brains are gone from the product. */}
 
         {/* CHATS — your conversations with Ask Nous: the Workspace layer's (GET-754). Mounted on the
@@ -411,9 +395,9 @@ export function AppSidebar() {
             <BackfillPill collapsed={collapsed} reviewHref="/settings?section=billing" />
           </div>
         )}
-        {/* The month's credits (GET-620), on every billed plan; it opens Usage and billing. The API
+        {/* The month's credits (GET-620), on the API plan; it opens Usage and billing. The API
             docs stay off the rail: they are in the API plan's top bar (ApiTopBar). */}
-        {credits && !collapsed && !selfHosted && (
+        {api && credits && !collapsed && !selfHosted && (
           // Over the allowance (GET-733): red, and "Upgrade needed" opens Usage on the bundles. No
           // pop-up at sign-in: the card is where it is said, on every page.
           <NavLink
@@ -443,9 +427,7 @@ export function AppSidebar() {
             ) : credits.resets && <span className="mt-[7px] block text-[11px] text-muted-foreground">{credits.resets}</span>}
           </NavLink>
         )}
-        {/* Workspace plan: Activity and Events, where the Workspace group used to be (GET-864). */}
-        {!api && footerItemsWorkspace.length > 0 && <ul className="flex flex-col gap-px">{footerItemsWorkspace.map((i) => renderOpenItem(i))}</ul>}
-        {/* You, then Settings: the profile row and the gear both open Settings. */}
+        {/* You: the profile row opens Settings. */}
         <div className={`mt-1.5 flex items-center gap-1 border-t border-border/60 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
           {withTip(
             <button
@@ -466,20 +448,6 @@ export function AppSidebar() {
               )}
             </button>,
             userName
-          )}
-          {!collapsed && (
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => navigate("/settings")}
-                  aria-label="Settings"
-                  className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md transition-colors duration-fast ${location.pathname.startsWith("/settings") ? `${activeBg} text-foreground` : `${iconIdle} ${idleBg} hover:text-foreground`}`}
-                >
-                  <SettingsIcon className="h-4 w-4" strokeWidth={RAIL_STROKE} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
-            </Tooltip>
           )}
         </div>
       </div>

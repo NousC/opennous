@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useQuery, useInfiniteQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, Check, Linkedin, Trash2, RefreshCw, Search, Download, Upload, FileText, Filter, X, Users } from "lucide-react";
+import { ArrowLeft, Check, Linkedin, Trash2, RefreshCw, Search, Download, Upload, FileText, Filter, X, Users, MapPin, Tag } from "lucide-react";
+import { FilterMenu } from "@/components/ui/filter-menu";
 import { RowMenu } from "@/components/RowMenu";
 import { useAuth } from "@/contexts/AuthContext";
 import { relTime, eventTime, tierFromScore, TIER_UI, type IcpTier } from "@/components/mind/shared";
@@ -726,27 +727,19 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
       {showImport && <PeopleImportModal workspaceId={workspaceId} token={token} onClose={()=>setShowImport(false)} onDone={()=>{ setShowImport(false); refetch(); }}/>}
 
       {inApiShell && (
-        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (ptype !== "all" ? 1 : 0)}>
-          <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Type</div>
-          {PEOPLE_TYPES.map(o => (
-            <button key={o.value} onClick={() => setPtype(o.value)}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-hover">
-              <Check className={cn("h-3.5 w-3.5 flex-shrink-0", ptype === o.value ? "text-foreground" : "opacity-0")} />
-              <span className="min-w-0 flex-1 truncate">{o.label}</span>
-            </button>
-          ))}
-          {countryOptions.length > 0 && <div className="mt-1 border-t border-hairline px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>}
-          {countryOptions.length > 0 && locationRows.map(o => {
-            const on = o.country === "all" ? !appliedCountry : appliedCountry === o.country;
-            return (
-              <button key={o.country} onClick={() => chooseCountry(o.country)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-hover">
-                <Check className={cn("h-3.5 w-3.5 flex-shrink-0", on ? "text-foreground" : "opacity-0")} />
-                <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                {o.accounts != null && <span className="text-[12px] tabular-nums text-muted-foreground">{o.accounts.toLocaleString()}</span>}
-              </button>
-            );
-          })}
+        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (ptype !== "all" ? 1 : 0)} className="w-[290px]">
+          <FilterMenu groups={[
+            {
+              key: "type", label: "Type", icon: Tag, defaultValue: "all",
+              options: PEOPLE_TYPES.map((o) => ({ value: o.value, label: o.label })),
+              selected: [ptype], onChange: ([v]) => setPtype(v as PeopleType),
+            },
+            {
+              key: "location", label: "Location", icon: MapPin, defaultValue: "all",
+              options: countryOptions.length ? locationRows.map((o) => ({ value: o.country, label: o.label, count: o.accounts })) : [],
+              selected: [appliedCountry ?? "all"], onChange: ([v]) => chooseCountry(v),
+            },
+          ]} />
         </ApiTopBarFilter>
       )}
 

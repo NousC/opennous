@@ -8,7 +8,7 @@ import { groupNav, resolveSection, settingsNav } from "../src/components/setting
 
 const ids = (xs: { id: string }[]) => xs.map((x) => x.id);
 
-test("API plan admin: Account, Connections (Integrations, Webhooks), Workspace; billing goes to /usage, no Repo (GET-882)", () => {
+test("API plan admin: Account, Connections (Integrations, Webhooks), Workspace; billing in Settings, no Repo (GET-882)", () => {
   const nav = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false });
   assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Connections", "Workspace"]);
   assert.deepEqual(ids(nav), [
@@ -18,7 +18,7 @@ test("API plan admin: Account, Connections (Integrations, Webhooks), Workspace; 
   ]);
   const billing = nav.find((i) => i.id === "billing")!;
   assert.equal(billing.label, "Usage and billing");
-  assert.equal(billing.href, "/usage");
+  assert.equal(billing.href, undefined, "opens in Settings, not /usage");
   // Integrations (Personal and Shared as tabs) and Webhooks moved off the sidebar into Settings
   // (GET-1043). Shared is one page's tab, so its id stays routable but is not its own row.
   // API keys are the account's own and live here, under Account, in the pane (GET-1030).
@@ -34,7 +34,7 @@ test("Custom plan admin: Billing is the Usage page too (GET-660), no Repo, no Ag
   const nav = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false });
   const billing = nav.find((i) => i.id === "billing")!;
   assert.equal(billing.label, "Usage and billing");
-  assert.equal(billing.href, "/usage");
+  assert.equal(billing.href, undefined, "opens in Settings, not /usage");
   assert.ok(!ids(nav).includes("repo"));
   assert.ok(!nav.some((i) => i.group === "Agent"));
 });
@@ -70,14 +70,14 @@ test("resolveSection: aliases, unknown and out-of-rail ids fall back", () => {
   assert.equal(resolveSection("members", member), "profile");
 });
 
-test("Integrations and Webhooks open inside Settings on every plan (GET-1043); keys and billing stay pages", () => {
+test("Integrations, Webhooks, API keys and billing open inside Settings on every plan", () => {
   for (const tier of ["api", "custom"] as const) {
     const nav = settingsNav({ tier, isWorkspaceAdmin: true, isOwner: false });
     const href = (id: string) => nav.find((i) => i.id === id)?.href;
     for (const id of ["integrations", "company-sources", "webhooks"]) assert.equal(href(id), undefined, `${tier}: ${id} in Settings`);
     assert.equal(resolveSection("company-sources", nav), "company-sources", `${tier}: the Shared tab still resolves`);
-    if (tier === "custom") assert.equal(href("api-keys"), "/keys", tier);
-    assert.equal(href("billing"), "/usage", tier);
+    assert.equal(href("api-keys"), undefined, `${tier}: api-keys in Settings`);
+    assert.equal(href("billing"), undefined, `${tier}: billing in Settings`);
   }
   const plain = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false });
   for (const id of ["profile", "notifications", "security", "general", "members"]) {

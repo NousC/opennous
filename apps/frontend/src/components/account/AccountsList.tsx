@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Search, X, MoreHorizontal, Check } from "lucide-react";
+import { Search, X, MoreHorizontal, Check, MapPin, Network } from "lucide-react";
+import { FilterMenu } from "@/components/ui/filter-menu";
 import { PageToolbar } from "@/components/ui/page-top-bar";
 import { ViewTabs } from "@/components/ui/view-tabs";
 import { OwnerFilter, UNASSIGNED, avatarTint, initialsOf, type Person } from "@/components/ui/owner-filter";
@@ -974,27 +975,21 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       {inShell && !scopeId && (
-        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (showNetwork ? 0 : 1)}>
-          <div className="px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Network</div>
-          {[{ on: !showNetwork, label: "Hidden" }, { on: showNetwork, label: "Shown" }].map((o) => (
-            <button key={o.label} onClick={() => { setShowNetwork(o.label === "Shown"); setPages(1); }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-hover">
-              <Check className={`h-3.5 w-3.5 flex-shrink-0 ${o.on ? "text-foreground" : "opacity-0"}`} />
-              <span className="min-w-0 flex-1 truncate">{o.label}</span>
-            </button>
-          ))}
-          {countryOptions.length > 0 && <div className="mt-1 border-t border-hairline px-3 pb-1.5 pt-2 text-[11.5px] font-medium text-muted-foreground">Location</div>}
-          {countryOptions.length > 0 && [{ country: "all", label: "All locations", accounts: null as number | null }, ...countryOptions.map((o) => ({ ...o, label: o.country }))].map((o) => {
-            const on = o.country === "all" ? !appliedCountry : appliedCountry === o.country;
-            return (
-              <button key={o.country} onClick={() => chooseCountry(o.country)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-hover">
-                <Check className={`h-3.5 w-3.5 flex-shrink-0 ${on ? "text-foreground" : "opacity-0"}`} />
-                <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                {o.accounts != null && <span className="tabular-nums text-[12px] text-muted-foreground">{o.accounts.toLocaleString()}</span>}
-              </button>
-            );
-          })}
+        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (showNetwork ? 0 : 1)} className="w-[290px]">
+          <FilterMenu groups={[
+            {
+              key: "network", label: "Network", icon: Network, defaultValue: "shown",
+              options: [{ value: "hidden", label: "Hidden" }, { value: "shown", label: "Shown" }],
+              selected: [showNetwork ? "shown" : "hidden"],
+              onChange: ([v]) => { setShowNetwork(v === "shown"); setPages(1); },
+            },
+            {
+              key: "location", label: "Location", icon: MapPin, defaultValue: "all",
+              options: countryOptions.length ? [{ value: "all", label: "All locations" }, ...countryOptions.map((o) => ({ value: o.country, label: o.country, count: o.accounts }))] : [],
+              selected: [appliedCountry ?? "all"],
+              onChange: ([v]) => chooseCountry(v),
+            },
+          ]} />
         </ApiTopBarFilter>
       )}
       <PageToolbar>

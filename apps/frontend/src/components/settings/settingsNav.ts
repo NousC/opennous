@@ -67,7 +67,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "integrations",    label: "Integrations",          group: "Connections" },
     { id: "company-sources", label: "Shared integrations",   group: "Connections", unlisted: true },
     { id: "webhooks",        label: "Webhooks",              group: "Connections" },
-    ...(core ? [] : [{ id: "api-keys", label: "API keys", group: "Connections", href: "/keys", show: !selfHosted } as Row]),
+    ...(core ? [] : [{ id: "api-keys", label: "API keys", group: "Connections", show: !selfHosted } as Row]),
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
     { id: "repo",            label: "Repo",                  group: "Connections", show: false },
@@ -83,8 +83,8 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // When, how often and about what the workspace's API and MCP were called (GET-898). Admins, both
     // plans; not self-host, whose Settings keeps only what lives nowhere else (GET-839).
     { id: "activity-log",    label: "Agent activity",        group: "Workspace", show: isWorkspaceAdmin && !selfHosted },
-    // Billing IS the Usage page on every plan (GET-660), so the row says so and goes there.
-    { id: "billing",         label: "Usage and billing",     group: "Workspace", href: "/usage", show: isWorkspaceAdmin && !selfHosted },
+    // Billing IS the Usage page on every plan (GET-660), shown inside Settings like every other row.
+    { id: "billing",         label: "Usage and billing",     group: "Workspace", show: isWorkspaceAdmin && !selfHosted },
     // Support — the operator's Admin row is the Workspace layer's (cloud/settings/navRows, GET-761).
   ];
   for (const { show, before, ...row } of extra) {

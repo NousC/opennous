@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import UsageBilling from "@/pages/UsageBilling";
 import ApiKeys from "@/pages/ApiKeys";
+import KeyDetail from "@/pages/KeyDetail";
 import Integrations from "@/pages/Integrations";
 import Webhooks from "@/pages/Webhooks";
 import { AutomationsPanel } from "@/components/AutomationsPanel";
@@ -227,7 +228,6 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
   const section: SettingsTab = forceSection ?? (resolveSection(searchParams.get("section"), inScope, fallback) as SettingsTab);
   // The Workspace layer's sections (GET-754); "billing" is its Billing for the workspace plans.
   const CloudSection = cloud.settings?.sections?.[section];
-  const CloudBilling = cloud.settings?.sections?.billing;
   const goto = (id: SettingsTab) => navigate(`${basePath}?section=${id}`);
   const activeItem = inScope.find(s => s.id === section);
 
@@ -890,11 +890,14 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
             </SectionShell>
           )}
 
-          {/* ── Notifications (GET-636, board SettingsNotifications). The API-plan alerts are
-              emailed (GET-635); the rest are saved now and apply as each channel ships. ── */}
+          {/* ── Notifications (GET-636, board SettingsNotifications). The digest, account signals
+              and the API-plan alerts are emailed; the rest apply as each channel ships. ── */}
           {section === "notifications" && (
             <SectionShell title="Notifications" description="What Nous tells you, and where.">
-              <SettingsGroup title="Email">
+              {/* Every email goes to the address the member signed up with. */}
+              <SettingsGroup title="Email" action={userData?.user?.email && (
+                <span className="truncate text-[12px] text-muted-foreground/70">Sent to {userData.user.email}</span>
+              )}>
                 <SettingsRow label="Daily digest" hint="A morning summary of what needs you today, in one email.">
                   <Switch aria-label="Daily digest" className={smallSwitchCls} checked={notif.daily_digest} onCheckedChange={setDigest} disabled={!notifLoaded} />
                 </SettingsRow>
@@ -1403,7 +1406,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {/* Integrations: one page, Personal and Shared as tabs (GET-1043). Each tab keeps its own
               ?section= id, so old links and the cross-scope connect forwarding land on the right tab. */}
           {(section === "integrations" || section === "company-sources") && (
-            <SectionShell wide>
+            <SectionShell>
               <ViewTabs<"integrations" | "company-sources">
                 aria-label="Integrations"
                 value={section}
@@ -1414,7 +1417,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
               <Integrations key={section} embedded scope={section === "company-sources" ? "company" : "personal"} onWrongScope={forwardSource} />
             </SectionShell>
           )}
-          {section === "webhooks"     && <SectionShell wide><Webhooks embedded /></SectionShell>}
+          {section === "webhooks"     && <SectionShell><Webhooks embedded /></SectionShell>}
           {/* Full width, like the other connection pages (GET-668). */}
           {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}
           {section === "activity-log" && <SectionShell title="Agent activity" wide><ApiActivity /></SectionShell>}
@@ -1424,21 +1427,19 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {CloudSection && section !== "billing" && (
             <Suspense fallback={null}><CloudSection token={token ?? ""} workspaceId={workspaceId} /></Suspense>
           )}
+          {/* API keys, and one key opened from the list (?key=), both inside Settings. */}
           {section === "api-keys"     && (
-            <SectionShell title="API keys" wide>
-              <ApiKeys embedded />
+            <SectionShell title="API keys">
+              {searchParams.get("key")
+                ? <KeyDetail key={searchParams.get("key")} id={searchParams.get("key") ?? ""} embedded />
+                : <ApiKeys embedded />}
             </SectionShell>
           )}
-          {/* Billing. Custom gets the contract view (GET-637); on the API plan this section
-              redirects to /usage above, and an embedded caller still gets the Usage page. */}
+          {/* Usage and billing: the Usage page on every plan (GET-660), inside Settings; /usage forwards here. */}
           {section === "billing"      && (
-            core || !CloudBilling ? (
-              <SectionShell title="Usage and billing" wide>
-                <UsageBilling embedded />
-              </SectionShell>
-            ) : (
-              <Suspense fallback={null}><CloudBilling token={token ?? ""} workspaceId={workspaceId} /></Suspense>
-            )
+            <SectionShell title="Usage and billing">
+              <UsageBilling embedded />
+            </SectionShell>
           )}
 
         </div>

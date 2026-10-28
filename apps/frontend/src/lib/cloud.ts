@@ -177,11 +177,10 @@ export interface CloudRegistry {
   contactUrl?: string;
   /** The MCP tools Cloud's server adds after `score` (read_brain, write_brain, GET-839). */
   mcpTools?: string[];
-  /** The Usage page's billing: checkout, the Stripe portal and invoices (useBilling), and the
-   *  plan cards an embedded Usage page shows (billingPanel). The usage meter itself is public. */
+  /** The Usage page's billing: checkout, the Stripe portal and invoices (useBilling). The usage
+   *  meter itself is public. */
   usage?: {
     useBilling?: (args: { token: string; workspaceId: string; reload: () => Promise<void> | void }) => BillingActions;
-    billingPanel?: CloudComponent;
   };
 }
 

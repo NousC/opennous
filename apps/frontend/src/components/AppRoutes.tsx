@@ -15,10 +15,18 @@ function RedirectToAccount() {
 // Usage kept its own page there as `spend`, because `usage` was already an alias for Billing.
 // On the API plan the keys live in Settings under Account (GET-1030); every old "/keys" link lands
 // there. Self-hosting and the other plans keep the page.
+// API keys live in Settings on every hosted plan; self-host keeps the standalone pages.
 function KeysRoute() {
-  const { planId, selfHosted } = usePlan();
-  if (isCorePlan(planId) && !selfHosted) return <Navigate to="/settings?section=api-keys" replace />;
+  const { selfHosted } = usePlan();
+  if (!selfHosted) return <Navigate to="/settings?section=api-keys" replace />;
   return <Suspense fallback={<MinimalLoader />}><ApiKeys /></Suspense>;
+}
+
+function KeyDetailRoute() {
+  const { id = "" } = useParams();
+  const { selfHosted } = usePlan();
+  if (!selfHosted) return <Navigate to={`/settings?section=api-keys&key=${encodeURIComponent(id)}`} replace />;
+  return <Suspense fallback={<MinimalLoader />}><KeyDetail /></Suspense>;
 }
 
 function WorkspaceToSettings({ tab: fixed }: { tab?: string }) {
@@ -74,11 +82,12 @@ function PagesIndexRoute() {
 }
 
 // Self-host bills nothing, so it has no Usage and billing page (GET-839).
+// Usage and billing is a Settings section (its query kept: ?plan, ?interval, ?code, ?upgrade).
 function UsageRoute() {
   const { selfHosted, loading } = usePlan();
   if (loading) return <MinimalLoader />;
   if (selfHosted) return <Navigate to="/" replace />;
-  return <Suspense fallback={<MinimalLoader />}><UsageBilling /></Suspense>;
+  return <ToSettingsSection section="billing" />;
 }
 
 function HomeRoute() {
@@ -140,7 +149,6 @@ const Companies       = lazyWithErrorBoundary(() => import("@/pages/Companies"))
 const Accounts        = lazyWithErrorBoundary(() => import("@/pages/Accounts"));
 const AccountsIndex   = lazyWithErrorBoundary(() => import("@/pages/AccountsIndex"));
 const GraphPage       = lazyWithErrorBoundary(() => import("@/pages/GraphPage"));
-const UsageBilling    = lazyWithErrorBoundary(() => import("@/pages/UsageBilling"));
 // Lists / triggers / reports / tasks / skills are headless — backends live, no pages.
 // The Vault retired 2026-07-31: only the ICP survived, and it lives on /icp now.
 const Note            = lazyWithErrorBoundary(() => import("@/pages/Note"));
@@ -328,7 +336,7 @@ export function AppRoutes() {
             <Route path="/automations"     element={<LegacyAutomationsRedirect />} />
             <Route path="/automations/:id" element={<LegacyAutomationsRedirect />} />
             <Route path="/keys"       element={<KeysRoute />} />
-            <Route path="/keys/:id"   element={<Suspense fallback={<MinimalLoader />}><KeyDetail /></Suspense>} />
+            <Route path="/keys/:id"   element={<KeyDetailRoute />} />
             {/* Integrations + Webhooks live inside Settings now (2026-07-31). The old
                 standalone paths redirect into their section so nothing 404s. */}
             <Route path="/webhooks"   element={<ToSettingsSection section="webhooks" />} />
@@ -338,7 +346,7 @@ export function AppRoutes() {
                 there's no page. Old links redirect so nothing 404s. */}
             <Route path="/triggers"   element={<Navigate to="/accounts" replace />} />
 
-            <Route path="/billing" element={<Suspense fallback={<MinimalLoader />}><UsageBilling /></Suspense>} />
+            <Route path="/billing" element={<UsageRoute />} />
             {/* Open on self-host too. There's no bill there, but "how big has my
                 graph grown" is a real question, and the page answers it — plus it's
                 where we say WHY it's free (your own model key, your own extraction

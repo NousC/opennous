@@ -43,6 +43,8 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
   // The page itself (GET-629) on every plan since GET-660; the API plan's bar or the app's top bar
   // names it. Embedded in another surface it keeps its card.
   const inShell = !embedded;
+  // Embedded in Settings, a key opens inside Settings; the standalone page (self-host) keeps /keys/:id.
+  const keyHref = (keyId: string) => (embedded ? `/settings?section=api-keys&key=${keyId}` : `/keys/${keyId}`);
   const handoff = useSecretHandoff();
 
   const [keys, setKeys] = React.useState<ApiKeyRow[]>([]);
@@ -206,7 +208,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
             <div key={k.id}
               className="flex items-center gap-2.5 rounded-[10px] border border-warning/25 bg-warning/[0.07] py-2 pl-3 pr-2 text-[13px]">
               <Clock className="h-4 w-4 shrink-0 text-warning" strokeWidth={1.7} />
-              <Link to={`/keys/${k.id}`} className="min-w-0 flex-1 truncate hover:underline">
+              <Link to={keyHref(k.id)} className="min-w-0 flex-1 truncate hover:underline">
                 <span className="font-mono text-[12px] text-foreground">{k.name}</span>{" "}
                 <span className="text-ink-2">{expiresInLabel(k.expires_at!)}</span>
               </Link>
@@ -218,20 +220,21 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
         </div>
       )}
 
+      {/* In Settings' narrower column the Created date gives way (it is on the key's own view). */}
       <div className="relative overflow-x-auto">
         {loading && !keys.length ? (
           <div className="flex flex-col">
             {[0, 1, 2].map((i) => <div key={i} className="h-12 animate-pulse border-b border-hairline bg-muted/40" />)}
           </div>
         ) : keys.length ? (
-          <table className="w-full min-w-[760px] border-collapse text-[13px]">
+          <table className={cn("w-full border-collapse text-[13px]", embedded ? "min-w-[560px]" : "min-w-[760px]")}>
             <thead>
               <tr className="border-b border-hairline text-left text-[11.5px] font-normal text-muted-foreground/70">
                 <th className="h-[34px] w-[22%] whitespace-nowrap px-3 pl-4 font-medium sm:pl-5">Name</th>
                 <th className="h-[34px] whitespace-nowrap px-3 font-medium">Key</th>
                 <th className="h-[34px] whitespace-nowrap px-3 font-medium">Access</th>
                 <th className="h-[34px] whitespace-nowrap px-3 font-medium">Last used</th>
-                <th className="h-[34px] whitespace-nowrap px-3 font-medium">Created</th>
+                {!embedded && <th className="h-[34px] whitespace-nowrap px-3 font-medium">Created</th>}
                 <th className="h-[34px] w-9 px-3 pr-4"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
@@ -242,7 +245,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
                 return (
                   <tr
                     key={k.id}
-                    onClick={() => navigate(`/keys/${k.id}`)}
+                    onClick={() => navigate(keyHref(k.id))}
                     className={cn("cursor-pointer border-b border-hairline last:border-b-0 transition-colors duration-fast hover:bg-hover", isFresh && "bg-hover")}
                   >
                     <td className="h-12 whitespace-nowrap px-3 pl-4 sm:pl-5">
@@ -252,7 +255,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
                           onSave={(n) => void rename(k, n)} onCancel={() => setRenamingId(null)}
                         />
                       ) : (
-                        <Link to={`/keys/${k.id}`} onClick={(e) => e.stopPropagation()} className="font-medium text-foreground hover:underline">
+                        <Link to={keyHref(k.id)} onClick={(e) => e.stopPropagation()} className="font-medium text-foreground hover:underline">
                           {k.name}
                         </Link>
                       )}
@@ -274,7 +277,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
                       )}
                     </td>
                     <td className="h-12 whitespace-nowrap px-3 text-muted-foreground">{k.last_used_at ? when(k.last_used_at) : "Never"}</td>
-                    <td className="h-12 whitespace-nowrap px-3 text-muted-foreground">{when(k.created_at)}</td>
+                    {!embedded && <td className="h-12 whitespace-nowrap px-3 text-muted-foreground">{when(k.created_at)}</td>}
                     <td className="h-12 px-3 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
@@ -292,7 +295,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
                             renameNext.current = null;
                           }}
                         >
-                          <DropdownMenuItem className="text-[12.5px]" onSelect={() => navigate(`/keys/${k.id}`)}>Open</DropdownMenuItem>
+                          <DropdownMenuItem className="text-[12.5px]" onSelect={() => navigate(keyHref(k.id))}>Open</DropdownMenuItem>
                           {canManageKey(k) && (
                             <>
                               <DropdownMenuItem className="text-[12.5px]" onSelect={() => { renameNext.current = k.id; }}>Rename</DropdownMenuItem>

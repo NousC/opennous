@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useApiTopBar } from "@/components/shell/apiTopBarContext";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,7 +13,6 @@ const apiUrl = import.meta.env.VITE_API_URL ?? "";
 // billing comes from the Workspace layer.
 const noBilling = (): BillingActions => ({ invoices: [], action: null, subscribe: async () => {}, openPortal: async () => {} });
 const useBilling = cloud.usage?.useBilling ?? noBilling;
-const BillingPanel = cloud.usage?.billingPanel;
 
 /**
  * Billing, in one view.
@@ -74,7 +73,7 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
   // Checkout, the Stripe portal and the invoices are the Workspace layer's (GET-754).
   const billing = useBilling({ token, workspaceId, reload: load });
 
-  // Its own page at /usage, and a tab inside Settings.
+  // A section of Settings (its old address /usage forwards there), and its own page on self-host.
   //
   // The two cards are the page and they fit without scrolling — that was the point. The
   // container still scrolls rather than clipping, because the invoice list sits under them
@@ -128,32 +127,10 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
   }
 
   // The page (GET-633, board Usage): plan, meters, daily bars, per-key calls and invoices. On every
-  // plan since GET-660 — Custom reads its quote into the same layout. Embedded (an API-plan caller
-  // that mounts it inside another surface) keeps the two cards below.
-  if (!embedded) {
-    return (
-      <div className="h-full min-w-0 overflow-y-auto bg-background">
-        <ApiUsage
-          state={state}
-          invoices={billing.invoices}
-          creditDaily={creditDaily}
-          token={token}
-          workspaceId={workspaceId}
-          action={billing.action}
-          onPortal={billing.openPortal}
-          onSubscribe={(credits) => billing.subscribe("api", { credits })}
-          onBackfillStarted={load}
-        />
-      </div>
-    );
-  }
-
-  // Embedded: the plan cards, the Workspace layer's (GET-754). Without it, the page's own view.
-  if (BillingPanel) {
-    return <Suspense fallback={null}><BillingPanel state={state} billing={billing} creditDaily={creditDaily} load={load} Shell={Shell} /></Suspense>;
-  }
+  // plan since GET-660 — Custom reads its quote into the same layout. Embedded in Settings it is the
+  // same view in Settings' own column, without a scroller of its own.
   return (
-    <Shell>
+    <div className={embedded ? "min-w-0" : "h-full min-w-0 overflow-y-auto bg-background"}>
       <ApiUsage
         state={state}
         invoices={billing.invoices}
@@ -165,6 +142,6 @@ export default function UsageBilling({ embedded = false }: { embedded?: boolean 
         onSubscribe={(credits) => billing.subscribe("api", { credits })}
         onBackfillStarted={load}
       />
-    </Shell>
+    </div>
   );
 }

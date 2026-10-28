@@ -8,7 +8,7 @@ import { groupNav, type SettingsNavItem } from "./settingsNav";
 import { RAIL_STROKE, railActive, railGroupLabel, railIcon, railIconActive, railIdle, railLabel, railLabelActive } from "@/components/shell/rail";
 
 // The settings rail (GET-625, board SettingsRail): replaces the app sidebar while you are in
-// Settings. "Back to app", the groups, and the workspace + plan at the foot. No counts, no price.
+// Settings. A back arrow, the groups, and the workspace + plan at the foot. No counts, no price.
 
 const ICONS: Record<string, LucideIcon> = {
   profile: User, notifications: Bell, security: Shield,
@@ -61,14 +61,17 @@ export function SettingsRail({ items, active, onSelect, onBack, onSignOut, works
       className="flex shrink-0 flex-col bg-frame p-2.5 md:h-full md:w-[232px]"
     >
       <div className="mb-1 flex items-center md:mb-2">
+        {/* Back is just the arrow; the label is its name and tooltip. */}
         <button
           type="button"
           onClick={onBack}
-          className="flex h-9 flex-1 shrink-0 items-center gap-2 rounded-lg px-2 text-[13px] text-foreground/85 transition-colors duration-fast hover:text-foreground"
+          aria-label={backLabel}
+          title={backLabel}
+          className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors duration-fast hover:text-foreground", railIdle, railIcon)}
         >
-          <ChevronLeft className={cn("h-[15px] w-[15px]", railIcon)} strokeWidth={RAIL_STROKE} />
-          {backLabel}
+          <ChevronLeft className="h-4 w-4" strokeWidth={RAIL_STROKE} />
         </button>
+        <div className="flex-1" />
         <button
           type="button"
           onClick={onSignOut}

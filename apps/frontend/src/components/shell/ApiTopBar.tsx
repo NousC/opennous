@@ -1,7 +1,7 @@
 // The API plan's top bar (GET-621): one bar on every API-plan page.
 //
 //   left  — the page's icon and title, with its parent as a breadcrumb link when it has one
-//   right — Get started (until setup is done) · Filter · Refresh | Connect agent
+//   right — Get started (until setup is done) · Filter | Connect agent (no refresh button)
 //
 // The shell (StandardLayout) renders it for the API plan and wraps the page in the provider, so a
 // page only says what is its own:
@@ -19,9 +19,8 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { Link, matchPath, useLocation } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, BarChart3, Building2, ChevronDown, Filter, Home as HomeIcon, KeyRound, Plug, RefreshCw,
+  Activity, BarChart3, Building2, ChevronDown, Filter, Home as HomeIcon, KeyRound, Plug,
   Pencil, SquareTerminal, Code2, Users2, Webhook, ArrowUpRight, Zap, Network, Radio, Lightbulb } from "lucide-react";
 import { InlineEditInput } from "@/components/ui/inline-edit-input";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
@@ -57,8 +56,8 @@ const ROUTES: [pattern: string, meta: RouteMeta][] = [
   ["/accounts/:id",    { title: "Account",           icon: Building2, parent: { label: "Accounts", href: "/accounts" } }],
   ["/events",          { title: "Events",            icon: Radio }],
   // The Workspace layer's page on this plan (GET-973); a build without it never routes here.
-  ["/gtm-insights",      { title: "GTM insights",      icon: Lightbulb }],
-  ["/gtm-insights/:key", { title: "Insight",           icon: Lightbulb, parent: { label: "GTM insights", href: "/gtm-insights" } }],
+  ["/gtm-insights",      { title: "Insights",          icon: Lightbulb }],
+  ["/gtm-insights/:key", { title: "Insight",           icon: Lightbulb, parent: { label: "Insights", href: "/gtm-insights" } }],
   ["/people",          { title: "People",            icon: Users2 }],
   ["/people/:id",      { title: "Person",            icon: Users2,    parent: { label: "People", href: "/people" } }],
   ["/integrations",    { title: "Personal",          icon: Plug,      parent: INTEGRATIONS }],
@@ -114,7 +113,7 @@ export function ApiTopBarFilter({ active = 0, children, className }: { active?: 
 /** Wraps the API-plan page area. Renders the bar itself when the path is an API-plan page. */
 export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
   const [slots, setSlots] = React.useState<Slots | null>(null);
-  const [refresh, setRefresh] = React.useState<(() => void) | null>(null);
+  const [, setRefresh] = React.useState<(() => void) | null>(null);
   const [filterSlot, setFilterSlot] = React.useState<HTMLElement | null>(null);
   const [filterCount, setFilterCount] = React.useState(0);
   const [connect, setConnect] = React.useState<ConnectKind | null>(null);
@@ -135,7 +134,6 @@ export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
         <ApiTopBar
           route={route}
           slots={slots}
-          refresh={refresh}
           hasFilter={filterCount > 0}
           filterSlotRef={setFilterSlot}
           onConnect={setConnect}
@@ -151,16 +149,14 @@ export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect }: {
+function ApiTopBar({ route, slots, hasFilter, filterSlotRef, onConnect }: {
   route: RouteMeta;
   slots: Slots | null;
-  refresh: (() => void) | null;
   hasFilter: boolean;
   filterSlotRef: (el: HTMLElement | null) => void;
   onConnect: (kind: ConnectKind) => void;
 }) {
   const { pathname } = useLocation();
-  const queryClient = useQueryClient();
   const Icon = route.icon;
   const parent = slots?.parent === null ? null : slots?.parent ?? route.parent ?? null;
   const title = slots?.title || route.title;
@@ -184,7 +180,6 @@ function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect 
   );
   // While the title is being edited the parent crumb steps aside, so the field has the room on a phone.
   const crumbs: Crumb[] = parent && !rename?.editing ? [{ label: parent.label, href: parent.href }, { label: titleLabel }] : [{ label: titleLabel }];
-  const onRefresh = refresh ?? (() => { queryClient.invalidateQueries(); });
 
   return (
     <PageTopBar
@@ -208,9 +203,6 @@ function ApiTopBar({ route, slots, refresh, hasFilter, filterSlotRef, onConnect 
               <TooltipContent side="bottom">Nothing to filter on this page</TooltipContent>
             </Tooltip>
           )}
-          <button onClick={onRefresh} aria-label="Refresh" title="Refresh" className={iconButton}>
-            <RefreshCw className={cn("h-3.5 w-3.5", slots?.refreshing && "animate-spin")} strokeWidth={1.8} />
-          </button>
           <span aria-hidden className="mx-0.5 hidden h-[18px] w-px shrink-0 bg-border sm:block" />
           {/* API keys live in Settings under Account (GET-1030), not up here. */}
           <DropdownMenu>
