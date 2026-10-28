@@ -1,4 +1,4 @@
-// API-plan notification emails (GET-635): webhook failures, a key about to expire, credits low.
+// API-plan notification emails (GET-635): webhook failures and credits low.
 //
 // The api decides who is due one and reserves it (POST /internal/api-notifications/sweep, see
 // apps/api/src/lib/apiNotifications.mjs); this worker only writes the email and sends it, like
@@ -15,12 +15,6 @@ function appUrl(path) {
   return `${process.env.APP_URL || 'https://app.opennous.cloud'}${path}`;
 }
 
-/** The day a key expires, written out ("9 October"). */
-function day(iso) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' });
-}
-
 /** Subject, plain text and html for one queued alert. Pure, so the copy can be pinned. */
 export function template(item) {
   let subject, intro, cta, path;
@@ -34,11 +28,6 @@ export function template(item) {
     intro = `${intro.trim()} You can resend any delivery from the Webhooks page.`;
     cta = 'View deliveries';
     path = '/webhooks';
-  } else if (item.kind === 'key_expiring') {
-    subject = `Your API key "${item.keyName}" expires on ${day(item.expiresAt)}`;
-    intro = `The API key "${item.keyName}" stops working on ${day(item.expiresAt)}. Anything using it will get a 401 after that. Create a new key and swap it in before then.`;
-    cta = 'Manage keys';
-    path = '/keys';
   } else { // credits_low
     subject = `You've used ${item.percentUsed}% of this month's credits`;
     intro = `You've used ${n(item.used)} of the ${n(item.included)} credits on your plan this month (${item.percentUsed}%). Nothing changes yet.`;

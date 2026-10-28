@@ -1,4 +1,4 @@
-// API-plan notifications (GET-635): webhook failures, a key about to expire, credits running low.
+// API-plan notifications (GET-635): webhook failures and credits running low.
 //
 // Same shape as the ops-limit emails (routes/opsEmails.mjs): the api decides WHO is due an
 // alert and RESERVES the send in team_ops_email_log, the worker cron does the sending. The log's
@@ -7,15 +7,13 @@
 //   webhook_failures  kind 'webhook_failures:<subscription id>', period_start = the UTC day.
 //                     Plus a lookback: never within 24h of the last alert for that subscription,
 //                     and only again if it has failed since that alert.
-//   key_expiring      kind 'key_expiring:<key id>', period_start = the key's expires_at. Once per
-//                     expiry; a key given a new expiry can warn again.
 //   credits_low       kind 'api_credits_low', period_start = the billing period's start. Credits
 //                     are counted per team (getTeamAiCredits, what the Usage page reads), so this
 //                     is once per billing period per team.
 //
 // Who gets them: the members of the workspace, read from workspace_members.notification_prefs.
-// A member who never set the key gets it when they are an owner or admin, not otherwise; a member
-// who set it gets what they set. The API plan has no in-app inbox, so email is the channel, and a
+// A member who never set the key gets webhook failures when they are an owner or admin, and
+// credits running low whatever their role; a member who set it gets what they set. The API plan has no in-app inbox, so email is the channel, and a
 // row reads as on when either stored channel is (the same rule the Settings switch shows).
 //
 // Only the API plan. A workspace on any other plan is skipped before anything is read about it.
@@ -24,24 +22,25 @@
 
 import { getPlanFromSubscription, getTeamAiCredits, isApiTier, planIsLive } from './plans.mjs';
 
-export const API_ALERT_KEYS = ['webhook_failures', 'key_expiring', 'credits_low'];
+export const API_ALERT_KEYS = ['webhook_failures', 'credits_low'];
 
 export const WEBHOOK_FAILURE_THRESHOLD = 3;
 export const WEBHOOK_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-export const KEY_EXPIRY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const CREDITS_LOW_PCT = 80;
 
 const ADMIN_ROLES = new Set(['owner', 'admin']);
+/** Alerts on for every member who never set them, not just owners and admins. */
+const ON_FOR_EVERYONE = new Set(['credits_low']);
 const BATCH = 100; // PostgREST .in() stays well under the URL limit at this size
 
 // ── The preference model ────────────────────────────────────────────────────
 
-/** Does this member want this alert? Stored value wins; unset means on for owners/admins only. */
+/** Does this member want this alert? Stored value wins; unset means on for owners/admins (credits: everyone). */
 export function wantsAlert(prefs, key, role) {
   const v = prefs && typeof prefs === 'object' ? prefs[key] : undefined;
   if (v && typeof v === 'object') return !!(v.email || v.app);
   if (typeof v === 'boolean') return v;
-  return ADMIN_ROLES.has(String(role ?? '').toLowerCase());
+  return ON_FOR_EVERYONE.has(key) || ADMIN_ROLES.has(String(role ?? '').toLowerCase());
 }
 
 /** Unique emails of the members who want `key`. members: [{ role, notification_prefs, email }] */
@@ -84,14 +83,6 @@ export function webhookCooldownClear({ lastAlertAt, lastFailureAt, now = Date.no
   return !!lastFailureAt && Date.parse(lastFailureAt) > last;
 }
 
-/** Expires within 7 days, has not expired yet, and is not revoked. */
-export function keyExpiringDue(key, now = Date.now()) {
-  if (!key || key.revoked_at || !key.expires_at) return false;
-  const at = Date.parse(key.expires_at);
-  if (Number.isNaN(at)) return false;
-  return at > now && at - now <= KEY_EXPIRY_WINDOW_MS;
-}
-
 /**
  * 80% of a real allowance and not yet over it. Over 100% is said by the existing credits_over
  * email, and from 90% (credits.state 'warn') the existing credits_warn90 ops email says it, so a
@@ -120,23 +111,9 @@ export function dayBucket(now = Date.now()) {
 export async function sweepApiNotifications(db, { kinds = API_ALERT_KEYS, now = Date.now() } = {}) {
   const want = new Set(kinds.filter((k) => API_ALERT_KEYS.includes(k)));
   const queued = [];
-  const plans = new Map(); // team_id → { api, sub }
-
-  const teamPlan = async (teamId) => {
-    if (!plans.has(teamId)) {
-      const sub = await db.teamSubscription(teamId);
-      plans.set(teamId, { sub, api: isApiTier(getPlanFromSubscription(sub)) });
-    }
-    return plans.get(teamId);
-  };
-
   if (want.has('webhook_failures')) {
     try { queued.push(...await sweepWebhooks(db, now)); }
     catch (e) { console.error('[api-notifications] webhooks:', e?.message); }
-  }
-  if (want.has('key_expiring')) {
-    try { queued.push(...await sweepKeys(db, now, teamPlan)); }
-    catch (e) { console.error('[api-notifications] keys:', e?.message); }
   }
   if (want.has('credits_low')) {
     try { queued.push(...await sweepCredits(db, now)); }
@@ -190,27 +167,6 @@ async function sweepWebhooks(db, now) {
       subscriptionName: s.name, url: s.url ?? (s.github_repo ? `github.com/${s.github_repo}` : null),
       failures: consecutiveFailures(attempts), deadLettered: !!deadAt,
       lastStatus: last?.status_code ?? null, lastError: last?.error ?? null,
-    });
-  }
-  return out;
-}
-
-async function sweepKeys(db, now, teamPlan) {
-  const keys = (await db.expiringKeys(new Date(now).toISOString(), new Date(now + KEY_EXPIRY_WINDOW_MS).toISOString()))
-    .filter((k) => keyExpiringDue(k, now));
-  if (!keys.length) return [];
-  const workspaces = await db.workspacesByIds([...new Set(keys.map((k) => k.workspace_id))]);
-  const out = [];
-  for (const k of keys) {
-    const ws = workspaces.get(k.workspace_id);
-    if (!ws) continue;
-    if (!(await teamPlan(ws.team_id)).api) continue;
-    const to = alertRecipients(await db.members([k.workspace_id]), 'key_expiring');
-    if (!to.length) continue;
-    if (!(await db.reserve(ws.team_id, `key_expiring:${k.id}`, new Date(k.expires_at).toISOString()))) continue;
-    out.push({
-      kind: 'key_expiring', to, workspace_id: k.workspace_id, workspaceName: ws.name,
-      keyName: k.name, expiresAt: k.expires_at,
     });
   }
   return out;
@@ -285,27 +241,8 @@ export function supabaseDb(supabase) {
         .select('ok, status_code, error, created_at').eq('subscription_id', subscriptionId)
         .order('created_at', { ascending: false }).limit(n), 'recent attempts');
     },
-    async expiringKeys(fromIso, untilIso) {
-      return must(await supabase.from('api_keys')
-        .select('id, workspace_id, name, expires_at, revoked_at').is('revoked_at', null)
-        .gt('expires_at', fromIso).lte('expires_at', untilIso), 'expiring keys');
-    },
-    async workspacesByIds(ids) {
-      const map = new Map();
-      for (const c of chunks(ids)) {
-        for (const w of must(await supabase.from('workspaces').select('id, team_id, name').in('id', c), 'workspaces')) {
-          map.set(w.id, w);
-        }
-      }
-      return map;
-    },
     async teamWorkspaces(teamId) {
       return must(await supabase.from('workspaces').select('id, team_id, name').eq('team_id', teamId), 'team workspaces');
-    },
-    async teamSubscription(teamId) {
-      const { data, error } = await supabase.from('subscriptions').select('*').eq('team_id', teamId).maybeSingle();
-      if (error) throw new Error(`subscription: ${error.message}`);
-      return data ?? null;
     },
     async allSubscriptions() {
       return must(await supabase.from('subscriptions').select('*'), 'subscriptions')

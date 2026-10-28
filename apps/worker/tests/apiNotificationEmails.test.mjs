@@ -12,12 +12,6 @@ test('webhook failures: names the endpoint, the count and the last status', () =
   assert.match(t.text, /\/webhooks/);
 });
 
-test('key expiring: names the key and the day', () => {
-  const t = template({ kind: 'key_expiring', keyName: 'prod', expiresAt: '2026-10-09T10:00:00Z' });
-  assert.equal(t.subject, 'Your API key "prod" expires on 9 October');
-  assert.match(t.text, /\/keys/);
-});
-
 test('credits low: the numbers, plainly', () => {
   const t = template({ kind: 'credits_low', used: 1600, included: 2000, percentUsed: 80 });
   assert.equal(t.subject, "You've used 80% of this month's credits");
@@ -26,7 +20,7 @@ test('credits low: the numbers, plainly', () => {
 });
 
 test('html escapes what the customer named', () => {
-  const t = template({ kind: 'key_expiring', keyName: '<b>x</b>', expiresAt: '2026-10-09T10:00:00Z' });
+  const t = template({ kind: 'webhook_failures', subscriptionName: '<b>x</b>', url: 'https://a.example/hook', failures: 3 });
   assert.ok(!t.html.includes('<b>x</b>'));
 });
 

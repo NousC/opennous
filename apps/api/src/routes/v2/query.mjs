@@ -1,10 +1,10 @@
 import { roleTags, THEME_ROLES, objectionReaches } from '../../lib/roleProfiles.mjs';
 import { Router } from 'express';
-import { getSupabaseClient, runQuery, readContextFromReq, resolveFocus, listFlags } from '@nous/core';
+import { getSupabaseClient, runQuery, readContextFromReq, resolveFocus } from '@nous/core';
 import { readIcp } from '../../lib/icp.mjs';
 import { getVisibilityScope } from '../../lib/visibility.mjs';
 import { expandRoles } from '../../lib/agentDirectives.mjs';
-import { getMeetings } from '../../lib/calendar.mjs';
+import { loadWorklist, scopeWorklist } from '../../lib/worklist.mjs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -88,66 +88,17 @@ async function runReporting(supabase, workspaceId, req, { reporting, role }) {
 // the follow-ups you owe, and the accounts to focus on (open attention flags) — scoped
 // to the caller: a MEMBER key sees only its owned book; an ADMIN/founder key (no bound
 // user) sees the whole workspace. Ownership = relationship_owner.primary === the caller.
-// Ported from apps/frontend/src/pages/Focus.tsx + /api/tasks — keep the three in sync.
+// Ported from apps/frontend/src/pages/Focus.tsx + /api/tasks — keep the three in sync. The reads
+// are lib/worklist.mjs, shared with the daily digest email.
 async function runWorklist(supabase, workspaceId, req) {
   const me = req.memberUserId ?? null;
-
-  // 1. Upcoming meetings (next 14 days) — same source the Studio page uses.
-  let meetings = [];
-  try {
-    meetings = ((await getMeetings(supabase, workspaceId, { fromDays: 0, toDays: 14, upcomingOnly: true })) || [])
-      .filter((m) => m.status !== 'cancelled')
-      .map((m) => ({ entity_id: m.entity_id, account: m.name || m.company || null, when: m.when ?? m.observed_at ?? null }));
-  } catch (e) { console.error('[worklist] meetings:', e.message); }
-
-  // 2. Open action items — the follow-ups you owe (action_item.* claims).
-  const { data: aiRows } = await supabase.from('claims')
-    .select('entity_id, value').eq('workspace_id', workspaceId)
-    .like('property', 'action_item.%').is('invalid_at', null).limit(200);
-  let followUps = (aiRows || [])
-    .map((r) => ({ entity_id: r.entity_id, title: r.value?.title || null, due: r.value?.due_phrase || null, status: r.value?.status || 'open' }))
-    .filter((i) => i.title && i.status === 'open');
-
-  // 3. Accounts to focus on — the engine's open attention flags.
-  let flags = [];
-  try {
-    flags = ((await listFlags(supabase, workspaceId, { statuses: ['open'], limit: 60 })) || [])
-      .map((f) => ({ entity_id: f.entity_id, flag_type: f.flag_type, reason: f.reason || null }));
-  } catch (e) { console.error('[worklist] flags:', e.message); }
-
-  // Personal scope — a member sees only accounts they own; an admin/founder key sees all.
-  if (me) {
-    const ids = [...new Set([...meetings, ...followUps, ...flags].map((x) => x.entity_id).filter(Boolean))];
-    const owned = new Set();
-    if (ids.length) {
-      const { data: oc } = await supabase.from('claims').select('entity_id, value')
-        .eq('workspace_id', workspaceId).eq('property', 'relationship_owner').in('entity_id', ids);
-      for (const c of oc || []) if (c.value?.primary === me) owned.add(c.entity_id);
-    }
-    meetings  = meetings.filter((m) => owned.has(m.entity_id));
-    followUps = followUps.filter((i) => owned.has(i.entity_id));
-    flags     = flags.filter((f) => owned.has(f.entity_id));
-  }
-
-  // Name the accounts behind the follow-ups + flags (meetings already carry a name).
-  const nameIds = [...new Set([...followUps, ...flags].map((x) => x.entity_id).filter(Boolean))];
-  if (nameIds.length) {
-    const { data: nameClaims } = await supabase.from('claims')
-      .select('entity_id, property, value').eq('workspace_id', workspaceId)
-      .in('entity_id', nameIds).in('property', ['first_name', 'last_name', 'name', 'company']);
-    const byId = new Map();
-    for (const c of nameClaims || []) { const m = byId.get(c.entity_id) ?? {}; m[c.property] = c.value; byId.set(c.entity_id, m); }
-    const nameOf = (id) => { const m = byId.get(id) ?? {}; return (m.name && String(m.name)) || [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || (m.company && String(m.company)) || null; };
-    followUps.forEach((i) => { i.account = nameOf(i.entity_id); });
-    flags.forEach((f) => { f.account = nameOf(f.entity_id); });
-  }
-
+  const w = scopeWorklist(await loadWorklist(supabase, workspaceId), me);
   return {
     attention: 'mine',
     scope: me ? 'member' : 'workspace',
-    upcoming_meetings: meetings.slice(0, 20),
-    follow_ups: followUps.slice(0, 30),
-    accounts_to_focus: flags.slice(0, 20),
+    upcoming_meetings: w.meetings.slice(0, 20),
+    follow_ups: w.followUps.slice(0, 30),
+    accounts_to_focus: w.flags.slice(0, 20),
   };
 }
 

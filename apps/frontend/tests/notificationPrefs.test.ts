@@ -8,30 +8,32 @@ import {
   API_NOTIF_KEYS, defaultNotifPrefs, effectiveNotifPrefs, isOn, modeOf, notifRowsFor, setMode, setOn,
 } from "../src/components/settings/notificationPrefs.ts";
 
-test("the API plan shows its own five rows; Custom never shows the API alerts", () => {
+test("the API plan shows its own four rows; Custom never shows the API alerts", () => {
   assert.deepEqual(notifRowsFor(true).map((r) => r.key),
-    ["account_signals", "sync_failures", "webhook_failures", "key_expiring", "credits_low"]);
+    ["account_signals", "sync_failures", "webhook_failures", "credits_low"]);
   assert.deepEqual(notifRowsFor(true).slice(2).map((r) => r.label),
-    ["Webhook failures", "Key expiring", "Credits running low"]);
+    ["Webhook failures", "Credits running low"]);
   assert.equal(notifRowsFor(false).length, 5);
-  for (const k of ["webhook_failures", "key_expiring", "credits_low"]) {
+  for (const k of ["webhook_failures", "credits_low"]) {
     assert.ok(!notifRowsFor(false).some((r) => r.key === k));
     assert.ok(API_NOTIF_KEYS.includes(k));
   }
 });
 
-test("API alerts default on for owners and admins, off for members (what the api sends)", () => {
-  for (const k of ["webhook_failures", "key_expiring", "credits_low"]) {
+test("webhook failures default on for owners and admins only, credits low for everyone (what the api sends)", () => {
+  for (const k of ["webhook_failures", "credits_low"]) {
     assert.equal(isOn(defaultNotifPrefs(), k), true);
     assert.equal(isOn(defaultNotifPrefs({ admin: true }), k), true);
-    assert.equal(isOn(defaultNotifPrefs({ admin: false }), k), false);
   }
+  assert.equal(isOn(defaultNotifPrefs({ admin: false }), "webhook_failures"), false);
+  assert.equal(isOn(defaultNotifPrefs({ admin: false }), "credits_low"), true);
   assert.equal(isOn(defaultNotifPrefs({ admin: false }), "sync_failures"), true);
 });
 
-test("defaults are all on, both channels", () => {
+test("defaults are on, both channels, except the digest and account signals", () => {
   const p = defaultNotifPrefs();
-  assert.equal(p.daily_digest, true);
+  assert.equal(p.daily_digest, false);
+  assert.equal(isOn(p, "account_signals"), false);
   assert.equal(isOn(p, "mentions"), true);
   assert.equal(modeOf(p, "mentions"), "both");
 });
@@ -42,7 +44,7 @@ test("the switch clears and restores both channels; the stored shape is unchange
   assert.equal(isOn(off, "sync_failures"), false);
   const on = setOn(off, "sync_failures", true);
   assert.deepEqual(on.sync_failures, { email: true, app: true });
-  assert.equal(on.daily_digest, true);
+  assert.equal(on.daily_digest, false); // untouched: off by default
 });
 
 test("mode maps onto the two channels", () => {

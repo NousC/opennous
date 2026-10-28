@@ -2,9 +2,10 @@
 // pinned by `node --test`. The stored shape is unchanged: `daily_digest` plus one
 // `{ email, app }` per key, saved per member per workspace by PATCH /api/me/notification-prefs.
 //
-// The three API-plan alerts (GET-635) are delivered: the api reads these same keys
-// (apps/api/src/lib/apiNotifications.mjs) and emails them. The rest are saved now and applied
-// as each channel ships.
+// Emailed to the address the member signed up with, from these same keys: the API-plan alerts
+// (apps/api/src/lib/apiNotifications.mjs), the daily digest and account signals
+// (apps/api/src/cloud/lib/memberNotifications.mjs). Sync failures go to Slack. The rest are saved
+// now and applied as each channel ships.
 
 export const NOTIF_ROWS: { key: string; label: string; desc: string }[] = [
   { key: "revenue_report",   label: "Weekly Revenue Report", desc: "The accounts you should reach out to this week." },
@@ -17,7 +18,6 @@ export const NOTIF_ROWS: { key: string; label: string; desc: string }[] = [
 // Only on the API plan: it is the plan with keys, webhooks and a credit allowance.
 export const API_ALERT_ROWS: { key: string; label: string; desc: string }[] = [
   { key: "webhook_failures", label: "Webhook failures",      desc: "Your endpoint keeps returning errors." },
-  { key: "key_expiring",     label: "Key expiring",          desc: "An API key expires within 7 days." },
   { key: "credits_low",      label: "Credits running low",   desc: "You've used 80% of this month's credits." },
 ];
 const API_ALERT_KEYS = API_ALERT_ROWS.map((r) => r.key);
@@ -28,20 +28,30 @@ export const API_NOTIF_KEYS = ["account_signals", "sync_failures", ...API_ALERT_
 export type NotifChannels = { email: boolean; app: boolean };
 export type NotifPrefs = { daily_digest: boolean } & Record<string, boolean | NotifChannels>;
 
+/** Rows off for a member who never saved anything (the api sends nothing for them unset). */
+const OFF_BY_DEFAULT = ["account_signals"];
+/** Alerts on for every member who never saved anything, not just owners and admins. */
+const ON_FOR_EVERYONE = ["credits_low"];
+
 /**
- * What a member who never saved anything sees. The API alerts are on for owners and admins and
- * off for everyone else, which is what the api sends to a member with nothing stored.
+ * What a member who never saved anything sees. Webhook failures are on for owners and admins and
+ * off for everyone else; credits running low is on for everyone. That is what the api sends to a
+ * member with nothing stored.
  */
 export function defaultNotifPrefs({ admin = true }: { admin?: boolean } = {}): NotifPrefs {
-  const p: NotifPrefs = { daily_digest: true };
-  for (const r of NOTIF_ROWS) p[r.key] = { email: true, app: true };
-  for (const k of API_ALERT_KEYS) p[k] = { email: admin, app: admin };
+  // The digest and account signals are emails nobody asked for yet: off until turned on.
+  const p: NotifPrefs = { daily_digest: false };
+  for (const r of NOTIF_ROWS) p[r.key] = OFF_BY_DEFAULT.includes(r.key) ? { email: false, app: false } : { email: true, app: true };
+  for (const k of API_ALERT_KEYS) {
+    const on = admin || ON_FOR_EVERYONE.includes(k);
+    p[k] = { email: on, app: on };
+  }
   return p;
 }
 
 /**
  * What the Notifications section shows: the role's defaults under what the member stored. The
- * defaults depend on the role (API alerts are on for owners/admins only), and the role can arrive
+ * defaults depend on the role (webhook failures are on for owners/admins only), and the role can arrive
  * after the stored prefs do, so this is recomputed from both rather than frozen at first load.
  */
 export function effectiveNotifPrefs(stored: Partial<NotifPrefs> | null | undefined, admin: boolean): NotifPrefs {

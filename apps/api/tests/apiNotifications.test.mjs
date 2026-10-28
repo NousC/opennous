@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   wantsAlert, alertRecipients, consecutiveFailures, webhookAlertDue, webhookCooldownClear,
-  keyExpiringDue, creditsLowDue, dayBucket, sweepApiNotifications,
+  creditsLowDue, dayBucket, sweepApiNotifications,
   WEBHOOK_FAILURE_THRESHOLD, CREDITS_LOW_PCT,
 } from '../src/lib/apiNotifications.mjs';
 
@@ -32,15 +32,6 @@ test('webhook: a dead-lettered event triggers on its own', () => {
   assert.equal(webhookAlertDue({ attempts: [{ ok: false }], deadLettered: true }), true);
 });
 
-test('key: within 7 days and not yet expired, never when revoked', () => {
-  assert.equal(keyExpiringDue({ expires_at: iso(NOW + 6 * D) }, NOW), true);
-  assert.equal(keyExpiringDue({ expires_at: iso(NOW + 7 * D) }, NOW), true);
-  assert.equal(keyExpiringDue({ expires_at: iso(NOW + 8 * D) }, NOW), false);
-  assert.equal(keyExpiringDue({ expires_at: iso(NOW - H) }, NOW), false);
-  assert.equal(keyExpiringDue({ expires_at: null }, NOW), false);
-  assert.equal(keyExpiringDue({ expires_at: iso(NOW + D), revoked_at: iso(NOW - D) }, NOW), false);
-});
-
 test('credits: from 80% of a real allowance until it is over; unlimited never warns', () => {
   assert.equal(CREDITS_LOW_PCT, 80);
   assert.equal(creditsLowDue({ included: 2000, used: 1600, percentUsed: 80 }), true);
@@ -53,10 +44,12 @@ test('credits: from 80% of a real allowance until it is over; unlimited never wa
 
 // ── The toggle ──────────────────────────────────────────────────────────────
 
-test('toggle: unset is on for owners and admins only; a stored value always wins', () => {
+test('toggle: unset is on for owners and admins (credits: everyone); a stored value always wins', () => {
   assert.equal(wantsAlert(null, 'credits_low', 'owner'), true);
   assert.equal(wantsAlert(null, 'credits_low', 'admin'), true);
-  assert.equal(wantsAlert(null, 'credits_low', 'member'), false);
+  assert.equal(wantsAlert(null, 'credits_low', 'member'), true);
+  assert.equal(wantsAlert(null, 'webhook_failures', 'owner'), true);
+  assert.equal(wantsAlert(null, 'webhook_failures', 'member'), false);
   assert.equal(wantsAlert({ daily_digest: true }, 'credits_low', 'admin'), true);
   assert.equal(wantsAlert({ credits_low: { email: false, app: false } }, 'credits_low', 'owner'), false);
   assert.equal(wantsAlert({ credits_low: { email: true, app: true } }, 'credits_low', 'member'), true);
@@ -66,12 +59,12 @@ test('toggle: unset is on for owners and admins only; a stored value always wins
 test('recipients: switched-off members are skipped, emails are unique', () => {
   const to = alertRecipients([
     { role: 'owner', email: 'a@x.co', notification_prefs: null },
-    { role: 'admin', email: 'b@x.co', notification_prefs: { key_expiring: { email: false, app: false } } },
+    { role: 'admin', email: 'b@x.co', notification_prefs: { webhook_failures: { email: false, app: false } } },
     { role: 'member', email: 'c@x.co', notification_prefs: null },
-    { role: 'member', email: 'd@x.co', notification_prefs: { key_expiring: { email: true, app: true } } },
+    { role: 'member', email: 'd@x.co', notification_prefs: { webhook_failures: { email: true, app: true } } },
     { role: 'owner', email: 'a@x.co', notification_prefs: null },
     { role: 'owner', email: null, notification_prefs: null },
-  ], 'key_expiring');
+  ], 'webhook_failures');
   assert.deepEqual(to, ['a@x.co', 'd@x.co']);
 });
 
@@ -86,7 +79,7 @@ test('webhook cooldown: none within 24h, and only again after a new failure', ()
 });
 
 /** A fake of supabaseDb: two teams, one per plan, with a reservation table that rejects repeats. */
-function fakeDb({ apiTeamPlan = 'api', attempts = null, keys = null, credits = null } = {}) {
+function fakeDb({ apiTeamPlan = 'api', attempts = null, credits = null } = {}) {
   const live = { status: 'active', stripe_subscription_id: 'sub_1' };
   const subs = {
     tApi: { team_id: 'tApi', plan_id: apiTeamPlan, ...live },
@@ -121,15 +114,7 @@ function fakeDb({ apiTeamPlan = 'api', attempts = null, keys = null, credits = n
       return attempts ?? [0, 1, 2].map(() => ({ ...fail, created_at: db.failureAt }));
     },
     async lastDeadLetter(id) { db.calls.lastDeadLetter.push(id); return db.deadAt; },
-    async expiringKeys() {
-      return keys ?? [
-        { id: 'k1', workspace_id: 'wApi', name: 'prod', expires_at: iso(NOW + 3 * D), revoked_at: null },
-        { id: 'k2', workspace_id: 'wCustom', name: 'prod', expires_at: iso(NOW + 3 * D), revoked_at: null },
-      ];
-    },
-    async workspacesByIds(ids) { return new Map([...workspaces].filter(([id]) => ids.includes(id))); },
     async teamWorkspaces(teamId) { return [...workspaces.values()].filter((w) => w.team_id === teamId); },
-    async teamSubscription(teamId) { return subs[teamId] ?? null; },
     async allSubscriptions() { return Object.values(subs).map((sub) => ({ team_id: sub.team_id, sub })); },
     async members(ids) { return ids.flatMap((id) => members[id] ?? []); },
     async lastAlert(teamId, kind) {
@@ -148,11 +133,12 @@ function fakeDb({ apiTeamPlan = 'api', attempts = null, keys = null, credits = n
   return db;
 }
 
-test('sweep: each alert goes to the API-plan owner only — not the Custom workspace, not the member', async () => {
+test('sweep: API-plan workspace only; webhook alerts the owner, credits every member', async () => {
   const db = fakeDb();
   const queued = await sweepApiNotifications(db, { now: NOW });
-  assert.deepEqual(queued.map((q) => q.kind).sort(), ['credits_low', 'key_expiring', 'webhook_failures']);
-  for (const q of queued) assert.deepEqual(q.to, ['owner@acme.co']);
+  assert.deepEqual(queued.map((q) => q.kind).sort(), ['credits_low', 'webhook_failures']);
+  assert.deepEqual(queued.find((q) => q.kind === 'webhook_failures').to, ['owner@acme.co']);
+  assert.deepEqual(queued.find((q) => q.kind === 'credits_low').to, ['owner@acme.co', 'rep@acme.co']);
   const hook = queued.find((q) => q.kind === 'webhook_failures');
   assert.equal(hook.subscriptionName, 'CRM sync');
   assert.equal(hook.failures, 3);
@@ -161,9 +147,9 @@ test('sweep: each alert goes to the API-plan owner only — not the Custom works
 
 test('sweep: run twice, sends once', async () => {
   const db = fakeDb();
-  assert.equal((await sweepApiNotifications(db, { now: NOW })).length, 3);
+  assert.equal((await sweepApiNotifications(db, { now: NOW })).length, 2);
   assert.equal((await sweepApiNotifications(db, { now: NOW + 15 * 60_000 })).length, 0);
-  // A day on with no new failure: still nothing. The key and the credits never repeat.
+  // A day on with no new failure: still nothing. The credits never repeat.
   assert.deepEqual(await sweepApiNotifications(db, { now: NOW + 25 * H }), []);
   // A day on and failing again: the webhook alerts once more, nothing else does.
   db.failureAt = iso(NOW + 24.5 * H);
@@ -177,13 +163,11 @@ test('sweep: nothing at all when the team is not on the API plan', async () => {
   assert.equal(db.log.length, 0);
 });
 
-test('sweep: a member who switched it off gets nothing, and nothing is reserved', async () => {
+test('sweep: members who switched it off get nothing, and nothing is reserved', async () => {
   const db = fakeDb();
-  db.memberRows.wApi[0].notification_prefs = {
-    webhook_failures: { email: false, app: false },
-    key_expiring: { email: false, app: false },
-    credits_low: { email: false, app: false },
-  };
+  const off = { webhook_failures: { email: false, app: false }, credits_low: { email: false, app: false } };
+  db.memberRows.wApi[0].notification_prefs = off;
+  db.memberRows.wApi[1].notification_prefs = off;
   assert.deepEqual(await sweepApiNotifications(db, { now: NOW }), []);
   assert.equal(db.log.length, 0);
 });
@@ -191,15 +175,14 @@ test('sweep: a member who switched it off gets nothing, and nothing is reserved'
 test('sweep: below the thresholds, nothing', async () => {
   const db = fakeDb({
     attempts: [{ ok: false }, { ok: false }, { ok: true }],
-    keys: [{ id: 'k1', workspace_id: 'wApi', name: 'prod', expires_at: iso(NOW + 9 * D), revoked_at: null }],
     credits: { used: 1000, included: 2000, percentUsed: 50, unlimited: false, periodStart: '2026-09-20T00:00:00.000Z' },
   });
   assert.deepEqual(await sweepApiNotifications(db, { now: NOW }), []);
 });
 
 test('sweep: only the kinds asked for', async () => {
-  const queued = await sweepApiNotifications(fakeDb(), { kinds: ['key_expiring'], now: NOW });
-  assert.deepEqual(queued.map((q) => q.kind), ['key_expiring']);
+  const queued = await sweepApiNotifications(fakeDb(), { kinds: ['credits_low'], now: NOW });
+  assert.deepEqual(queued.map((q) => q.kind), ['credits_low']);
 });
 
 test('sweep: webhook reads are per API-plan subscription, last 3 attempts each — never a global scan', async () => {

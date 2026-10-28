@@ -16,7 +16,7 @@ apiNotificationsRouter.use((req, res, next) => {
   next();
 });
 
-// POST /internal/api-notifications/sweep   body { kinds?: ['webhook_failures'|'key_expiring'|'credits_low'] }
+// POST /internal/api-notifications/sweep   body { kinds?: ['webhook_failures'|'credits_low'] }
 // → { queued: [{ kind, to[], ... }] }
 apiNotificationsRouter.post('/sweep', async (req, res) => {
   try {

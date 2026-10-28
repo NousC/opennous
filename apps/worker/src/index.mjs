@@ -898,14 +898,13 @@ cron.schedule('15 * * * *', runStageDerivationSafe);
 console.log('[WORKER] Pipeline-stage derivation — hourly at :15');
 
 // ── API-plan notifications (GET-635) ─────────────────────────────────────────
-// Webhook failures every 15 min, keys expiring daily (credits running low is Cloud's, in cloud/index.mjs). The api
+// Webhook failures every 15 min (credits running low is Cloud's, in cloud/index.mjs). The api
 // decides who is due one and de-duplicates; this only sends. Dormant unless
 // WORKER_INTERNAL_SECRET is set. See workers/apiNotificationEmails.mjs.
 const runApiNotify = (kinds) => () => runApiNotificationEmails(kinds)
   .catch((err) => console.error('[WORKER] api notifications error:', err?.message));
 cron.schedule('8-59/15 * * * *', runApiNotify(['webhook_failures']));
-cron.schedule('10 8 * * *', runApiNotify(['key_expiring']), { timezone: 'UTC' });
-console.log('[WORKER] API-plan notifications — webhooks every 15 min, keys daily 08:10 UTC');
+console.log('[WORKER] API-plan notifications — webhooks every 15 min');
 
 // The automation engine's daily pass (GET-426). Turns a deal changing stage into the
 // artifact somebody asked for and sends it where they asked. A poll rather than a webhook
