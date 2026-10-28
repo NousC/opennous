@@ -22,7 +22,10 @@ Ines Halloran: Honestly I haven't looked at budget at all yet. Money is Odile's 
 Theo Bramwell: Makes sense. Would it help if I put together a one-pager for her?
 Ines Halloran: Yes. She reads everything on paper before she signs off on a new tool.`,
     },
-    must: ['A claim records that budget decisions at Brindle sit with Odile, the CFO, and that Ines has not looked at budget yet.'],
+    // The case guards attribution: the buyer's own answer is kept, the rep's guess never becomes
+    // theirs. "Ines has not looked at budget yet" was dropped from the must: it is a passing remark
+    // the deal bar rightly leaves out, and asking for it scored a correct read as a failure.
+    must: ['A claim records that budget or spend decisions at Brindle sit with Odile, the CFO.'],
     traps: [
       'A claim says Ines Halloran or Brindle finds seven hundred dollars a month expensive, or has a budget of about seven hundred dollars a month.',
     ],
