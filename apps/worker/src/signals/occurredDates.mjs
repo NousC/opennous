@@ -79,7 +79,20 @@ export function renderAnchor(anchorIso) {
 export function anchorLine(anchorIso) {
   const shown = renderAnchor(anchorIso);
   if (!shown) return '';
-  return `\nThis conversation is dated ${shown}. That is the ANCHOR: resolve every relative date in it ("yesterday", "last month", "next Friday", "in Q1") against it — in a thread, against the date of the message the phrase appears in.\n`;
+  // The quarters spelled out (GET-1051 follow-up): said in October, "next quarter" came back as the
+  // quarter the call was in. The model counts quarters badly; it copies them well.
+  const [last, cur, next] = [-1, 0, 1].map(k => quarterSpan(strictIsoDate(anchorIso), k));
+  const q = ([s, e]) => `Q${Math.floor(Number(s.slice(5, 7)) / 3) + 1} ${s.slice(0, 4)} (${s} to ${e})`;
+  return `\nThis conversation is dated ${shown}. That is the ANCHOR: resolve every relative date in it ("yesterday", "last month", "next Friday", "in Q1") against it — in a thread, against the date of the message the phrase appears in. Against it, "this quarter" is ${q(cur)}, "next quarter" is ${q(next)} and "last quarter" is ${q(last)}.\n`;
+}
+
+/** The calendar quarter `k` quarters from the one `iso` is in, as [start, end]. Pure. */
+export function quarterSpan(iso, k = 0) {
+  const [y, m] = iso.split('-').map(Number);
+  const idx = y * 4 + Math.floor((m - 1) / 3) + k;
+  const qy = Math.floor(idx / 4), qm = (idx % 4) * 3;
+  const first = new Date(Date.UTC(qy, qm, 1, 12)), lastDay = new Date(Date.UTC(qy, qm + 3, 0, 12));
+  return [first.toISOString().slice(0, 10), lastDay.toISOString().slice(0, 10)];
 }
 
 /** The temporal rules, word for word in the shared system prompt (GET-1051, from Hindsight, MIT). */
@@ -139,6 +152,9 @@ const RELATIVE = [
   // A month is a coarse period, so it spans the whole calendar month (the prompt's rule too).
   [/\blast month\b/gi, (a) => monthSpan(a, -1)],
   [/\bnext month\b/gi, (a) => monthSpan(a, 1)],
+  [/\blast quarter\b/gi, (a) => quarterSpan(a, -1)],
+  [/\bthis quarter\b/gi, (a) => quarterSpan(a, 0)],
+  [/\bnext quarter\b/gi, (a) => quarterSpan(a, 1)],
   [new RegExp(`\\bin ${COUNT} days?\\b`, 'gi'), (a, n) => [shift(a, n), shift(a, n)]],
   [new RegExp(`\\bin ${COUNT} weeks?\\b`, 'gi'), (a, n) => [shift(a, 7 * n), shift(a, 7 * n)]],
   [new RegExp(`\\b${COUNT} days? ago\\b`, 'gi'), (a, n) => [shift(a, -n), shift(a, -n)]],

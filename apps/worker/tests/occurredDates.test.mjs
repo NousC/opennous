@@ -264,3 +264,22 @@ test('the eval claim carries the occurred range persistFacts would store', async
   const s = toEvalClaim({ category: 'firmographic', about: 'company', content: 'y', fact_kind: 'state', contactId: CONTACT }, { people, account: { name: 'Brindle' }, saidAt: '2026-10-14' });
   assert.equal(s.occurred, undefined);
 });
+
+// GET-1051 follow-up: said in October 2026, "next quarter" came back as Q4 2026, the quarter the
+// call was in. The anchor now spells the quarters out, and the fallback knows them.
+test('the anchor names this, next and last quarter, across a year end', async () => {
+  const { anchorLine, quarterSpan } = await import('../src/signals/occurredDates.mjs');
+  assert.deepEqual(quarterSpan('2026-10-14', 0), ['2026-10-01', '2026-12-31']);
+  assert.deepEqual(quarterSpan('2026-10-14', 1), ['2027-01-01', '2027-03-31']);
+  assert.deepEqual(quarterSpan('2026-02-03', -1), ['2025-10-01', '2025-12-31']);
+  const line = anchorLine('2026-10-14');
+  assert.match(line, /"this quarter" is Q4 2026 \(2026-10-01 to 2026-12-31\)/);
+  assert.match(line, /"next quarter" is Q1 2027 \(2027-01-01 to 2027-03-31\)/);
+  assert.match(line, /"last quarter" is Q3 2026 \(2026-07-01 to 2026-09-30\)/);
+});
+
+test('the fallback resolves this, next and last quarter', async () => {
+  const { relativeOccurred } = await import('../src/signals/occurredDates.mjs');
+  assert.deepEqual(relativeOccurred('Ines wants it live before the end of next quarter', '2026-10-14'), { start: '2027-01-01', end: '2027-03-31' });
+  assert.deepEqual(relativeOccurred('we signed it last quarter', '2026-01-20'), { start: '2025-10-01', end: '2025-12-31' });
+});

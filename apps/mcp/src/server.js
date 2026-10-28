@@ -103,8 +103,13 @@ function factsHeader(r) {
 const FRESHNESS_WORD = { aging: "aging", suspect: "stale", expired: "out of date" };
 // An event also says when it HAPPENS or happened (GET-1051): "moved off Ledgerway in March", said
 // in October, reads "said Oct 14 · … · happened 2026-03-01 to 2026-03-31", never as an October move.
+function occurredAhead(label) {
+  const last = String(label).match(/\d{4}-\d{2}-\d{2}/g)?.at(-1);
+  return !!last && last >= new Date().toISOString().slice(0, 10);
+}
 function saidTag(f) {
-  const happened = f.occurred ? `happened ${f.occurred}` : "";
+  // Ahead of today it "happens" ("happens by 2026-12-31"); behind, it "happened".
+  const happened = f.occurred ? `${occurredAhead(f.occurred) ? "happens" : "happened"} ${f.occurred.replace(/^until /, "by ")}` : "";
   if (!f.date) return happened ? `  (${happened})` : "";
   const day = new Date(f.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const word = FRESHNESS_WORD[f.freshness];

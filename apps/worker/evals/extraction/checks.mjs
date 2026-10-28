@@ -142,7 +142,7 @@ function tagText(tags = {}) {
 function happenedText(o) {
   if (!o || (!o.start && !o.end)) return '';
   if (o.start && o.end) return ` [happened ${o.start === o.end ? o.start : `${o.start} to ${o.end}`}]`;
-  return o.start ? ` [happened from ${o.start}]` : ` [happened until ${o.end}]`;
+  return o.start ? ` [happened from ${o.start}]` : ` [happens by ${o.end}]`;
 }
 
 /** One line per claim: `- [category] text (tags) [said date] [happened …] {person: Name}`. */
