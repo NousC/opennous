@@ -21,6 +21,7 @@
 //    meeting, never two cards.
 
 import { emailVoiceBlock } from './emailVoiceBlock.mjs';
+import { intelligenceRule, withoutIntelligenceRefs } from '../intelligencePrompt.mjs';
 
 /** Meeting events a card can come from. */
 export const FOLLOW_UP_MEETING_PROPERTIES = ['interaction.meeting_held', 'interaction.meeting_scheduled'] as const;
@@ -95,6 +96,8 @@ export interface FollowUpContent {
   insights?: { category: string; text: string; quote?: string | null }[];
   /** The model's own call that there is something to follow up on. False drops the card. */
   worth?: boolean;
+  /** The Intelligence points the writer was shown (GET-1042), as `key:blockId`, so a sent email can be traced to them. */
+  intelligence?: string[];
 }
 export interface FollowUpCardRow {
   id: string;
@@ -317,6 +320,11 @@ export interface FollowUpPromptInput {
    * follow-up. When set, the email is written in it; when absent, the email line reads as it always did.
    */
   emailVoice?: string | null;
+  /**
+   * What the workspace has learned for this account (GET-1042): intelligenceFor's text, read as a
+   * draft. When set, the email may use an answer that has worked before; when absent, nothing changes.
+   */
+  intelligence?: string | null;
 }
 
 const FOLLOW_UP_SYSTEM = `You prepare the follow-up a salesperson or account manager does right after a customer meeting.
@@ -325,6 +333,8 @@ products, names or commitments. If something is unclear, leave it out.`;
 
 export function buildFollowUpPrompt(input: FollowUpPromptInput): { system: string; user: string } {
   const voice = emailVoiceBlock(input.emailVoice ?? '');
+  const intel = String(input.intelligence ?? '').trim();
+  const learned = intel ? `\n\n${intelligenceRule('draft', { field: 'The "Intelligence" section below' })} It is for the email only: it is not what happened in the meeting, so no task, update or insight comes from it.\n\n${intel}` : '';
   const deals = input.deals.length
     ? input.deals.map((d) => `- ${d.name ?? 'Deal'} · stage ${d.stage ?? '?'} · ${d.value != null ? `$${d.value}` : 'no amount'} · closes ${d.close_date ?? '?'}`).join('\n')
     : '- (no open deal in the CRM)';
@@ -356,7 +366,7 @@ Return ONLY a JSON object, no prose, with exactly these keys:
   "stage_change": { "should_move": true | false, "reason": "only when the text clearly shows the deal moved (e.g. they asked for a proposal, signed, or said no); else null" },
   "insights": [ { "category": "pain | goal | objection | budget | timeline | competitor | authority | risk_signal | expansion_signal", "text": "one line", "quote": "supporting words" } ]
 }
-Rules: 0-6 tasks, 0-5 updates, 0-5 insights. Tasks are only things OUR side must do (a thing the customer owes becomes "Follow up with <name> on …"). No task that repeats one already on our list. If the meeting was internal or had no customer substance, return empty arrays and "email": null.${voice ? `\n\n${voice}` : ''}`;
+Rules: 0-6 tasks, 0-5 updates, 0-5 insights. Tasks are only things OUR side must do (a thing the customer owes becomes "Follow up with <name> on …"). No task that repeats one already on our list. If the meeting was internal or had no customer substance, return empty arrays and "email": null.${voice ? `\n\n${voice}` : ''}${learned}`;
   return { system: FOLLOW_UP_SYSTEM, user };
 }
 
@@ -421,8 +431,10 @@ export function parseFollowUpAnswer(
     .filter((u) => u.value).slice(0, 5);
 
   const e = (j.email ?? null) as Record<string, unknown> | null;
-  const email = e && clean(e.body, 4000)
-    ? { to: recipients, subject: clean(e.subject, 160) ?? 'Following up', body: clean(e.body, 4000) as string }
+  // An Intelligence id the writer echoed (GET-1042) is our note, not the customer's to read.
+  const unref = (v: unknown) => (typeof v === 'string' ? withoutIntelligenceRefs(v) : v);
+  const email = e && clean(unref(e.body), 4000)
+    ? { to: recipients, subject: clean(unref(e.subject), 160) ?? 'Following up', body: clean(unref(e.body), 4000) as string }
     : null;
 
   const sc = (j.stage_change ?? null) as Record<string, unknown> | null;

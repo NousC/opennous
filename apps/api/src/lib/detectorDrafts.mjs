@@ -40,7 +40,8 @@
 
 import { getSupabaseClient, getAccountRecord, mirrorDraftAsDecision, loadDealCandidates, getRelationshipOwners,
   effectiveOwnerUserId, getInternalEntityIds, bindingConstraints, filterDerivedForViewer, filterByCitedClaimsForViewer,
-  TEAM_VIEWER, emailVoiceBlock, touchDirection, REPLY_TOUCH_PROPERTIES, quietOpenDeals, staleDealFiring } from '@nous/core';
+  TEAM_VIEWER, emailVoiceBlock, touchDirection, REPLY_TOUCH_PROPERTIES, quietOpenDeals, staleDealFiring,
+  intelligenceFor, intelligenceRefs, intelligenceRule, withoutIntelligenceRefs } from '@nous/core';
 import { pickRecipientEmail } from './recipientEmail.mjs';
 import { EMAIL_DRAFT_SYSTEM, parseEmailDraft, DEFAULT_SUBJECT } from './emailDraft.mjs';
 
@@ -536,8 +537,9 @@ export function voiceFor(firing, voices) {
 }
 
 /** A draft's system prompt: the shared house rules, the sender's directives, then the team's voice (GET-902). Pure. */
-export function draftSystem({ memberBlock = '', voice = null } = {}) {
-  return [EMAIL_DRAFT_SYSTEM, memberBlock, emailVoiceBlock(voice)].filter(Boolean).join('\n\n');
+export function draftSystem({ memberBlock = '', voice = null, intelligence = false } = {}) {
+  return [EMAIL_DRAFT_SYSTEM, intelligence ? intelligenceRule('draft', { field: 'The "Intelligence" part of the request' }) : null,
+    memberBlock, emailVoiceBlock(voice)].filter(Boolean).join('\n\n');
 }
 
 /** What the play found out about the person a signal named (GET-944), as the brief says it. Pure. */
@@ -555,7 +557,7 @@ export function stepLine(t) {
 }
 
 /** The model's user turn for one draft. Pure. */
-export function draftRequest(firing, { recipient, context }) {
+export function draftRequest(firing, { recipient, context, intelligence = null }) {
   const d = DETECTORS[firing.automation];
   return [
     `Recipient: ${recipient}`,
@@ -566,6 +568,8 @@ export function draftRequest(firing, { recipient, context }) {
     `What to write (the ${d?.name ?? 'automation'} instructions): ${firing.prompt ?? d?.prompt ?? 'a timely, specific follow-up'}`,
     '',
     `Account record:\n${context}`,
+    // What the workspace has learned (GET-1042), after the record: what has worked before, not what happened here.
+    intelligence ? `\n${intelligence}` : null,
   ].filter((l) => l !== null).join('\n');
 }
 
@@ -859,6 +863,8 @@ async function settleSubject(supabase, id, firing, prevEvidence, outcome, now, e
   // A snooze was on the last draft (GET-944); a new draft starts awake.
   // A new draft is a new case (GET-949): the last one's tracking stays with the last one.
   if (outcome === 'drafted') { delete evidence.snoozed_until; delete evidence.snoozed_action_id; delete evidence.tracking; }
+  // The Intelligence points are the new draft's (GET-1042): one written without any keeps none of the last one's.
+  if (outcome === 'drafted' && !extra.intelligence) delete evidence.intelligence;
   const { error } = await supabase.from('ri_recommendations')
     .update({ evidence, status: outcome === 'drafted' ? 'drafted' : 'settled', decided_at: at, updated_at: at })
     .eq('id', id);
@@ -927,15 +933,21 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
 
   const profile = await deps.loadMemberProfile(supabase, workspaceId, sender);
   const memberBlock = deps.buildMemberBlock(profile, { includePrefs: false });
+  // What the workspace has learned for this account (GET-1042): the Objection playbook's answer to
+  // what was raised, the Battlecard for the competitor named, Win/loss. Read as a draft (the buyer
+  // reads it); none, or unreadable, and the draft is written as it always was.
+  const intel = await Promise.resolve(deps.intelligenceFor?.(supabase, workspaceId, { companyId: firing.accountId, purpose: 'draft', budget: 2500 })).catch(() => null);
+  const shown = intel?.text ? intelligenceRefs(intel.text) : [];
   ctx.onSpend?.();
   const resp = await deps.createMessage({
     meter: false,
     feature: DRAFT_FEATURE, tier: 'writing', max_tokens: 1000,
-    system: draftSystem({ memberBlock, voice: voiceFor(firing, ctx.voices) }),
-    messages: [{ role: 'user', content: draftRequest(firing, { recipient, context }) }],
+    system: draftSystem({ memberBlock, voice: voiceFor(firing, ctx.voices), intelligence: !!intel?.text }),
+    messages: [{ role: 'user', content: draftRequest(firing, { recipient, context, intelligence: intel?.text ?? null }) }],
   });
   deps.trackLlmUsage(supabase, { workspaceId, userId: sender, feature: DRAFT_FEATURE, model: resp.model, usage: resp.usage });
-  const { subject, body } = parseEmailDraft(deps.messageText(resp));
+  // An id the writer echoed is our note, not the buyer's to read: taken out before the draft is queued.
+  const { subject, body } = parseEmailDraft(withoutIntelligenceRefs(deps.messageText(resp)));
   if (!body) return { outcome: 'failed', reason: 'empty_draft' };
 
   const row = {
@@ -958,11 +970,13 @@ async function draftOne(supabase, workspaceId, firing, ctx) {
     ({ data: action, error } = await supabase.from('pending_actions').insert(rest).select('*').single());
   }
   if (error) return { outcome: 'failed', reason: `insert: ${error.message}` };
+  // Which Intelligence points the draft was shown ride on its decision and its ledger row (the
+  // pending action has no jsonb of its own to keep them), so what came of it can be traced to them.
   await deps.mirrorDraftAsDecision(supabase, workspaceId, action, {
     actionType: 'email_send', category: 'outreach', surface: 'automation', agent: firing.automation,
-    payload: originMarker(firing, { contactId: person.id }),
+    payload: { ...originMarker(firing, { contactId: person.id }), ...(shown.length ? { intelligence: shown } : {}) },
   });
-  return { outcome: 'drafted', action_id: action.id, contact_id: person.id, sender };
+  return { outcome: 'drafted', action_id: action.id, contact_id: person.id, sender, intelligence: shown };
 }
 
 // ─── After Send: did the signal's move work? (GET-949) ──────────────────────────────
@@ -1225,6 +1239,8 @@ export const CORE_DEPS = {
   emailVoices: null,
   // Who a stakeholder signal named (GET-944): Cloud's web research (registerSignalResearch), none without it.
   signalResearch: null,
+  // What the workspace has learned for the account (GET-1042): Cloud registers the source; none without it.
+  intelligenceFor,
 };
 /** Where the built-in drafters' email voices come from (GET-910): (supabase, workspaceId) -> Map(key -> { text }). */
 export function registerEmailVoices(fn) { CORE_DEPS.emailVoices = fn ?? null; }
@@ -1324,6 +1340,7 @@ export async function runDetectorDraftsForWorkspace(supabase, workspaceId, { now
     if (r.action_id) { extra.action_id = r.action_id; extra.drafted_at = new Date(now).toISOString(); }
     if (r.contact_id) extra.contact_id = r.contact_id;
     if (r.reason) extra.reason = r.reason;
+    if (r.intelligence?.length) extra.intelligence = r.intelligence;
     try { await settleSubject(supabase, recId, firing, prev, r.outcome, now, extra); }
     catch (e) {
       // The row stays 'drafting' and holds the subject for an hour; the person-level check (a draft

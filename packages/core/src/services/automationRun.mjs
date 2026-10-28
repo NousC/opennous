@@ -38,6 +38,8 @@ import { roleFromAuthorityClaims } from './committee.js';
 import { championLeftEvent, expansionRequestedEvent, stalledDealEvent, quietOpenDeals, REPLACEMENT_WINDOW_DAYS } from './interpretedEvents.mjs';
 import { loadDealCandidates } from './crmAgent.js';
 import { meetingsStillOn } from '../attention.js';
+import { intelligenceFor, intelligenceRefs } from '../intelligenceContext.mjs';
+import { intelligenceRule, withoutIntelligenceRefs } from '../intelligencePrompt.mjs';
 import { stepFromClaim, missedNextStep, slippedNextSteps, MISSED_GRACE_DAYS, MISSED_MAX_AGE_DAYS, SLIPPED_MAX_AGE_DAYS } from './nextStepSignals.mjs';
 import { hubspotTemplateVars } from './hubspotVars.mjs';
 import { workspacesSubscribedTo } from '../db/triggers.js';
@@ -928,6 +930,18 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
   const wanted = stage === 'closed_lost' ? 'lost' : 'won';
   const thisDeal = (dealId && g.deals.find(d => d.deal_id === dealId)) || g.deals.find(d => d.outcome === wanted) || null;
   const dealRecord = thisDeal?.deal_id ? await dealDetail(supabase, workspaceId, thisDeal.deal_id) : null;
+  // WHAT THE WORKSPACE HAS LEARNED (GET-1042): the parts of the Objection playbook, the Battlecards,
+  // Win/loss and the ICP's learned block that bear on this account, for an account's write-up (a
+  // brief, a handoff, a follow-up), not a call's. An email is a draft the buyer reads, so it is
+  // read as one. None (a self-hosted install, nothing learned yet): the material is as it was.
+  const intel = kind === 'account_summary' && entityId
+    ? await intelligenceFor(supabase, workspaceId, { companyId: entityId, purpose: format === 'email' ? 'draft' : 'brief' })
+    : null;
+  // Which points the writer was shown, kept on what it wrote (and so on the run's log line), so an
+  // outcome can be traced back to the point that was used.
+  const shown = intel ? intelligenceRefs(intel.text) : [];
+  const withShown = (d) => (shown.length && d ? { ...d, intelligence: shown } : d);
+  const rule = intel ? intelligenceRule(format === 'email' ? 'draft' : 'brief') : null;
   const materialObject = fitMaterial(withContext({
     // "Deal status: closed_won" is a column name wearing a suit. The model echoes whatever
     // it is handed, so hand it the words a person would use.
@@ -987,6 +1001,7 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
         : { cite, content: f.content, category: f.category, said_by: f.speaker, quote: f.quote };
     }),
     open_commitments: g.owed,
+    ...(intel ? { intelligence: intel.text } : {}),
   }, context));
   // "View context" in the editor: exactly what the model would be handed, and nothing written.
   if (materialOnly) return { material: materialObject, sources };
@@ -1002,22 +1017,23 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
       const msg = await createMessage({
         meter: false,
         feature: 'automation-handoff', tier: 'writing', max_tokens: 1200,
-        system: prompt ? `${EMAIL_DRAFT_SYSTEM}\n\n---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}` : EMAIL_DRAFT_SYSTEM,
+        system: [EMAIL_DRAFT_SYSTEM, rule, prompt ? `---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}` : null].filter(Boolean).join('\n\n'),
         messages: [{ role: 'user', content: JSON.stringify(materialObject) }],
       });
       const requestId = runId ? `automation-run:${runId}:step:${agentStep ?? 1}` : null;
       Promise.resolve(STEP_HANDLERS.meter?.({ supabase, workspaceId, feature: 'automation-handoff', model: msg?.model ?? null, usage: msg?.usage ?? null, requestId }))
         .catch(() => {});
-      const { subject, body } = parseEmailDraft(messageText(msg));
+      // An id the writer echoed is our note, not the buyer's to read: taken out before it is saved.
+      const { subject, body } = parseEmailDraft(withoutIntelligenceRefs(messageText(msg)));
       if (body) { headline = subject; sections = [{ label: 'Email', body }]; }
     } catch (err) {
       console.warn('[automations] email writer unavailable:', err?.message ?? err);
     }
-    if (dryRun) return { id: null, title: `${name} — follow-up`, headline, sections: sections ?? [], sources };
-    return writeDocument(supabase, workspaceId, {
+    if (dryRun) return withShown({ id: null, title: `${name} — follow-up`, headline, sections: sections ?? [], sources });
+    return withShown(await writeDocument(supabase, workspaceId, {
       kind: 'account_summary', title: `${name} — follow-up`, headline, subjectEntityId: entityId,
       sections: sections ?? [{ label: 'Email', body: '' }], sources, writtenBy: 'automation',
-    });
+    }));
   }
   try {
     const msg = await createMessage({
@@ -1033,9 +1049,9 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
       // somebody who did not tell us what they wanted; this person did. If they ask for two
       // hundred characters, two hundred characters is the answer and the nine sections are
       // not — a prompt that is quietly overruled by ours is a prompt box that lies.
-      system: prompt
-        ? `${HANDOFF_SYSTEM}\n\n---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}\n\nWhere that contradicts anything above — the sections, the length, the format, the order — THEIRS WINS. Everything above is what to do when nobody said otherwise. Somebody said otherwise.`
-        : HANDOFF_SYSTEM,
+      system: [HANDOFF_SYSTEM, rule, prompt
+        ? `---\n\nThe person who set this automation up asked for this specifically:\n\n${prompt}\n\nWhere that contradicts anything above — the sections, the length, the format, the order — THEIRS WINS. Everything above is what to do when nobody said otherwise. Somebody said otherwise.`
+        : null].filter(Boolean).join('\n\n'),
       messages: [{ role: 'user', content: material }],
     });
     // Metered as the workspace's credits (GET-710): the process registers how (the API's tracker,
@@ -1044,7 +1060,7 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
     const requestId = runId ? `automation-run:${runId}:step:${agentStep ?? 1}` : null;
     Promise.resolve(STEP_HANDLERS.meter?.({ supabase, workspaceId, feature: 'automation-handoff', model: msg?.model ?? null, usage: msg?.usage ?? null, requestId }))
       .catch(() => {});
-    const raw = tidyCites(messageText(msg));
+    const raw = tidyCites(withoutIntelligenceRefs(messageText(msg)));
     const parsed = parseHandoff(raw);
     if (!parsed.sections.length) {
       // Say so. A silent fallback is indistinguishable from a model that was never called.
@@ -1077,9 +1093,9 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
 
   // A dry run returns the same object the writer would have filed, unfiled. Reading it is
   // the only way to know whether it is worth filing.
-  if (dryRun) return { id: null, title, headline, sections, sources };
+  if (dryRun) return withShown({ id: null, title, headline, sections, sources });
 
-  return writeDocument(supabase, workspaceId, {
+  return withShown(await writeDocument(supabase, workspaceId, {
     kind,
     title,
     headline,
@@ -1087,7 +1103,7 @@ async function makeArtifact(supabase, workspaceId, { artifact, entityId, dealId 
     sections,
     sources,
     writtenBy: 'automation',
-  });
+  }));
 }
 
 /** The same writer, reachable by the one-account test. */
@@ -2278,8 +2294,10 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
     // The step went through: say what it did, in words (and which document an AI step wrote).
     if (s?.type === 'agent') {
       const named = doc?.id ? await namedAccounts({ text: documentText(doc), title: doc.title }) : null;
+      // The Intelligence points it was shown (GET-1042), so what came of it can be traced to them.
+      const shown = Array.isArray(doc?.intelligence) && doc.intelligence.length ? { intelligence: doc.intelligence } : {};
       if (doc?.fallback) note(s, 'ok', 'No answer from the AI, so the data went on as read', { document_id: doc?.id ?? null, ...(named ?? {}) });
-      else note(s, 'ok', doc?.title ? `Wrote ${emailParts(doc) ? 'the email' : `"${String(doc.headline || doc.title).slice(0, 80)}"`}` : 'Wrote it', { document_id: doc?.id ?? null, ...(named ?? {}) });
+      else note(s, 'ok', doc?.title ? `Wrote ${emailParts(doc) ? 'the email' : `"${String(doc.headline || doc.title).slice(0, 80)}"`}` : 'Wrote it', { document_id: doc?.id ?? null, ...(named ?? {}), ...shown });
     } else if (s?.type === 'only_if') {
       note(s, 'ok', 'The rules matched');
     } else if (s?.type !== 'approval') {

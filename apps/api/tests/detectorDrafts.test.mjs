@@ -693,6 +693,38 @@ test('a deal signal drafts once, to whoever raised it, with its own instruction;
   assert.equal(calls.model, 1);
 });
 
+test('an objection draft reads the account\'s Intelligence, never writes its ids, and the ledger keeps which points it was shown (GET-1042)', async () => {
+  const s = world();
+  s.db.account_signals = [sig('s1', 'a_acme', 'objection_raised', 1, { content: 'Security review needs SOC 2', speaker: 'Rita' })];
+  const asked = [];
+  const intel = '## Intelligence\n\n### Objection playbook — Security review\n\nSend the SOC 2 report before the legal call. [objections:b1a2b3c4]';
+  const { deps, calls } = fakeDeps({
+    intelligenceFor: async (_s, ws, opts) => { asked.push({ ws, ...opts }); return { text: intel, used: [] }; },
+    createMessage: async (req) => { calls.model += 1; calls.last = req; return { model: 'm', usage: {}, text: 'Subject SOC 2 for legal\n\nHi Rita,\n\nI will send our SOC 2 report before the legal call. [objections:b1a2b3c4]\n\nTheo' }; },
+  });
+  const r = await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.equal(r.drafted, 1, JSON.stringify(r));
+  assert.deepEqual(asked.map((a) => [a.ws, a.companyId, a.purpose]), [[WS, 'a_acme', 'draft']]);
+  assert.match(calls.last.messages[0].content, /Send the SOC 2 report before the legal call/);
+  assert.match(calls.last.system, /never tell the buyer it exists/);
+  const [d] = s.db.pending_actions;
+  assert.doesNotMatch(d.body, /\[objections:/);
+  assert.match(d.body, /SOC 2 report before the legal call\./);
+  const ledger = s.db.ri_recommendations.find((l) => l.rec_key === recKeyOf('deal_signal'));
+  assert.deepEqual(ledger.evidence.intelligence, ['objections:b1a2b3c4']);
+  assert.deepEqual(calls.mirrored[0].opts.payload.intelligence, ['objections:b1a2b3c4']);
+});
+
+test('no Intelligence: the draft\'s prompt is as it was and the ledger records none', async () => {
+  const s = world();
+  s.db.account_signals = [sig('s1', 'a_acme', 'objection_raised', 1, { content: 'Security review needs SOC 2', speaker: 'Rita' })];
+  const { deps, calls } = fakeDeps({ intelligenceFor: async () => null });
+  await runDetectorDraftsForWorkspace(s, WS, { now: NOW, deps, opts: { ...OPTS, only: ['deal_signal'] } });
+  assert.doesNotMatch(calls.last.system, /WHAT HAS WORKED BEFORE/);
+  const ledger = s.db.ri_recommendations.find((l) => l.rec_key === recKeyOf('deal_signal'));
+  assert.equal(ledger.evidence.intelligence, undefined);
+});
+
 test('the hourly deal-signal pass does not run the other detectors', async () => {
   const s = world();
   let candidates = 0;

@@ -48,6 +48,9 @@ export {
   INTERPRET_MIN_ACCOUNTS, INTERPRET_STEP, interpretStep, registerCompanyContextSource, ourCompanyContext, buildInterpretationPrompt,
   parseInterpretation, needsInterpretation, patternSources, interpretPattern, patternsToInterpret, INTERPRET_RETRY_DAYS,
 } from './db/insightInterpretation.mjs';
+// What the workspace has learned, for the next action (GET-1042); the Cloud layer registers the source.
+export { registerIntelligenceSource, intelligenceFor, intelligenceRefs } from './intelligenceContext.mjs';
+export { intelligenceRule, withoutIntelligenceRefs } from './intelligencePrompt.mjs';
 export * from './db/flags.js';
 export * from './db/features.js';
 export * from './db/canonicalAxes.js';
