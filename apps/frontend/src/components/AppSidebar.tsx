@@ -305,7 +305,10 @@ export function AppSidebar() {
         </div>
       )}
 
-      {/* TOP ROW — Home, then Chat, Invite teammates and Settings as icons. Collapsed, a column. */}
+      {/* A hairline between the workspace and the top row. */}
+      <div className="mx-2.5 mt-1.5 border-t border-border/60" />
+
+      {/* TOP ROW — Home, then Invite teammates and Settings as icons. Collapsed, a column. */}
       <div className={`flex items-center gap-0.5 px-2.5 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
         {withTip(
           <NavLink
