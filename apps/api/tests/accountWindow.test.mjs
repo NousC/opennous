@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   accountWindowFilter, dealWindowFilter, inDealWindow,
-  activityCutoff, lostCutoff, ACTIVITY_WINDOW_DAYS, DEAL_WINDOW_MONTHS,
+  activityCutoff, lostCutoff, ACTIVITY_WINDOW_DAYS, DEAL_WINDOW_MONTHS, NEW_WORKSPACE_WINDOW_DAYS,
 } from '../src/lib/dealListWindow.mjs';
 
 const NOW = new Date('2026-09-21T12:00:00.000Z');
@@ -98,4 +98,29 @@ test('the deal window itself is untouched by this change', () => {
   assert.equal(inDealWindow({ status: 'lost', close_date: '2026-09-01' }, lostCutoff(NOW)), true);
   assert.equal(inDealWindow({ status: 'lost', close_date: '2023-01-01' }, lostCutoff(NOW)), false);
   assert.equal(inDealWindow({ status: 'lost', close_date: null }, lostCutoff(NOW)), false);
+});
+
+// GET-1057: a real conversation, not any answer. `last_engaged_at` leaves out a "no", an
+// unsubscribe and an out-of-office, and counts LinkedIn replies.
+test('with the engaged column a never-dealt account must be in a real conversation', () => {
+  const f = accountWindowFilter(NOW, { inbound: true, engaged: true });
+  assert.deepEqual(topLevelClauses(f), [
+    'open_deals.gt.0',
+    'won_deals.gt.0',
+    'child_deals.gt.0',
+    `last_lost_at.gte.${LOST}`,
+    `and(last_lost_at.not.is.null,last_activity_at.gte.${TOUCH})`,
+    `last_engaged_at.gte.${TOUCH}`,
+  ]);
+  assert.ok(!f.includes('last_inbound_at'), 'any answer, a no included, must not admit an account');
+});
+
+test('a new workspace reaches further back, and only on the conversation clauses', () => {
+  const f = accountWindowFilter(NOW, { inbound: true, engaged: true, days: NEW_WORKSPACE_WINDOW_DAYS });
+  const far = activityCutoff(NOW, NEW_WORKSPACE_WINDOW_DAYS).toISOString();
+  assert.ok(f.includes(`last_engaged_at.gte.${far}`));
+  assert.ok(f.includes(`and(last_lost_at.not.is.null,last_activity_at.gte.${far})`));
+  assert.ok(f.includes(`last_lost_at.gte.${LOST}`), 'the deal window does not move');
+  assert.equal(accountWindowFilter(NOW, { inbound: true, engaged: true, days: undefined }),
+    accountWindowFilter(NOW, { inbound: true, engaged: true }), 'no days is the normal window');
 });

@@ -18,6 +18,7 @@ import { intelTopicsFor } from '../../lib/intelTopics.mjs';
 import { loadIntelTimeline, timelineDays } from '../../lib/intelTimeline.mjs';
 import { auditFromReq } from '../../lib/audit.mjs';
 import { getVisibilityScope, memberVisibleAccounts, entityVisibleToMember, viewerVisibleAccountSet } from '../../lib/visibility.mjs';
+import { NEW_WORKSPACE_WINDOW_DAYS } from '../../lib/dealListWindow.mjs';
 import { hasListRows, listRows, facesForAccounts, listDealRows, accountCountries, dealValueByCompany } from '../../lib/listRows.mjs';
 import { dealVerdict, stalePipeline } from '../../lib/dealSignals.mjs';
 import { listAccountDeals, getAccountDeal, withDealPipelines, readPrimaryPipelineRef, ACCOUNT_DEAL_ID } from '../../lib/accountDeals.mjs';
@@ -336,27 +337,31 @@ companiesApiRouter.get('/list', verifySupabaseAuth, async (req, res) => {
       // Market focus (GET-311). `country=` narrows the list, `country=all` clears it, and nothing
       // asked means the workspace's own default — one customer's workspace opens on its home country because that is where
       // their founder sells. The page is told both, so it can show which filter is on and offer the
-      // rest; the focus is never applied silently to a total.
-      const { data: wsRow } = await supabase.from('workspaces').select('focus_country').eq('id', workspaceId).maybeSingle();
+      // rest; the focus is never applied silently to a total. `created_at` is for the new-workspace
+      // window below, which read it from a row that never selected it, so it never applied.
+      const { data: wsRow } = await supabase.from('workspaces').select('focus_country, created_at').eq('id', workspaceId).maybeSingle();
       const asked = String(req.query.country ?? '').trim();
       const country = asked === 'all' ? null : (asked || wsRow?.focus_country || null);
       // An account shows when it holds a deal the lists show, and when it is the viewer's.
       // Both are null-safe: an unmapped viewer sees the whole workspace exactly as before.
       const { owner } = mineScope ?? await resolveScopedOwner(supabase, workspaceId, req, scope);
-      // A NEW WORKSPACE SEES ITS WHOLE BOOK (GET-557). The window shows accounts with a deal or
-      // activity in the last 45 days — right for a working book, wrong in the first weeks, when the
-      // CRM has just imported every account and the backfill has filed three months of history:
-      // accounts touched 50 or 80 days ago were hidden, and the page showed a handful of its accounts. For the first
-      // 30 days, no window.
+      // ACCOUNTS IS THE ACCOUNTS WE ARE WORKING (GET-1057): customers, deals, and accounts in a real
+      // conversation with us (dealListWindow.mjs). Everyone we merely contacted, and everyone who
+      // said no, stays reachable by search and off the page.
+      //
+      // A new workspace reaches further back (GET-557): in its first 30 days the backfill has just
+      // filed months of history, and a conversation from 60 days ago is still live. It used to see
+      // its whole book instead, which is every cold contact the import brought in.
       const isNew = wsRow?.created_at && Date.now() - Date.parse(wsRow.created_at) < 30 * 86_400_000;
+      // A search looks at every account, not only the ones the window shows.
+      const windowed = !q;
+      const windowDays = isNew ? NEW_WORKSPACE_WINDOW_DAYS : undefined;
       // A Network account (marked personal, or all its people are) is someone we know, not an
       // account we sell to: off this list; its people stay on People (GET-1017).
       const excludeIds = await networkExcludeIds(supabase, workspaceId, req.query);
-      let { rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: !isNew, owner, excludeIds });
-      // And when the window holds nothing at all, show the accounts there are.
-      if (!isNew && !total && !q && !offset) {
-        ({ rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed: false, owner, excludeIds }));
-      }
+      // No fallback to every account when the window is empty: an empty page that says so is
+      // the truth, and "everyone" is what made this list a lead list.
+      const { rows, total } = await listRows(supabase, workspaceId, 'account', { q, limit, offset, country, focusCountry: wsRow?.focus_country ?? null, windowed, windowDays, owner, excludeIds });
       const vis = await getVisibilityScope(supabase, workspaceId, req);
       let visible = rows;
       if (vis.restrict) {

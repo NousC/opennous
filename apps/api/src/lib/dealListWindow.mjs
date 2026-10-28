@@ -51,11 +51,21 @@ export const DEAL_WINDOW_MONTHS = 12;
 //
 // An account whose only deal was lost longer ago than the deal window still earns its place on a
 // plain touch, because working a dead account IS the re-engagement; see accountWindowFilter.
+//
+// A REAL CONVERSATION, NOT ANY ANSWER (GET-1057, 2026-10-28). `last_inbound_at` counted a "not
+// interested", an unsubscribe and an out-of-office as an answer, and missed LinkedIn replies
+// altogether. Once the column exists the window reads `last_engaged_at` instead: a reply on any
+// channel that is not a no and not a machine, a meeting, a call from them, a sign-up; empty again
+// once they have said no (2026_10_28_engaged_accounts.sql).
 export const ACTIVITY_WINDOW_DAYS = 45;
 
+// A workspace in its first 30 days reaches further back, because its backfill has just filed months
+// of history at once and a conversation from 60 days ago is still the one to pick up (GET-557).
+export const NEW_WORKSPACE_WINDOW_DAYS = 120;
+
 /** The oldest activity an account may carry and still appear on a list without a deal. */
-export function activityCutoff(now = new Date()) {
-  return new Date(now.getTime() - ACTIVITY_WINDOW_DAYS * 86_400_000);
+export function activityCutoff(now = new Date(), days = ACTIVITY_WINDOW_DAYS) {
+  return new Date(now.getTime() - days * 86_400_000);
 }
 
 /** The oldest close date a LOST deal may carry and still appear on a list. */
@@ -107,12 +117,15 @@ export function dealWindowFilter(now = new Date()) {
  *
  * `inbound` is false until the column exists (see hasInboundColumn in listRows.mjs), and false
  * reproduces the pre-2026-09-21 rule exactly, so an unmigrated database keeps today's lists.
+ * `engaged` is the same for `last_engaged_at` (hasEngagedColumn) and wins over `inbound`.
+ * `days` widens the conversation clauses for a new workspace (NEW_WORKSPACE_WINDOW_DAYS).
  */
-export function accountWindowFilter(now = new Date(), { inbound = false } = {}) {
-  const touched = activityCutoff(now).toISOString();
+export function accountWindowFilter(now = new Date(), { inbound = false, engaged = false, days = ACTIVITY_WINDOW_DAYS } = {}) {
+  const touched = activityCutoff(now, days).toISOString();
   const base = `open_deals.gt.0,won_deals.gt.0,child_deals.gt.0,last_lost_at.gte.${lostCutoffISO(now)}`;
-  if (!inbound) return `${base},last_activity_at.gte.${touched}`;
-  return `${base},and(last_lost_at.not.is.null,last_activity_at.gte.${touched}),last_inbound_at.gte.${touched}`;
+  if (!inbound && !engaged) return `${base},last_activity_at.gte.${touched}`;
+  const answered = engaged ? 'last_engaged_at' : 'last_inbound_at';
+  return `${base},and(last_lost_at.not.is.null,last_activity_at.gte.${touched}),${answered}.gte.${touched}`;
 }
 
 /** The same rule in memory, for the path that assembles deals from claims rather than rows. */

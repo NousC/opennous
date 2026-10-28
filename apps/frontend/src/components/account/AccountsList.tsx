@@ -1135,7 +1135,8 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
             <EmptyState className="mx-4 mt-4"
               title={segment === "customers" ? (hasMore ? "No customers among the accounts loaded so far." : "No customers.")
                 : segment === "prospects" ? (hasMore ? "No prospects among the accounts loaded so far." : "No prospects.")
-                : "No accounts."} />
+                : debouncedQ ? "No accounts match." : "No active accounts yet."}
+              body={segment === "all" && !debouncedQ ? "An account shows here once it has a deal or is in a conversation with you. Search finds every account." : undefined} />
           }
         />
         {accountRows.length > 0 && (

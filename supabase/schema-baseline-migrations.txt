@@ -269,6 +269,7 @@
 2026_10_27_claims_search_indexes.sql
 2026_10_27_hybrid_claim_search.sql
 2026_10_27_market_entities.sql
+2026_10_28_engaged_accounts.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql

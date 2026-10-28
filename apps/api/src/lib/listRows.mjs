@@ -45,8 +45,8 @@ export function isFocusCountry(country, focusCountry) {
 //   detail   also select industry, won_deals and (once migrated) last_inbound_at
 //   refine   (query, { ready, inbound }) => query — extra PostgREST filters, ANDed with the rest
 //   orderBy  { col, ascending } — the primary order; entity_id stays the tie-break
-export async function listRows(supabase, workspaceId, kind, { q = '', limit = 200, offset = 0, companyId = null, country = null, focusCountry = null, windowed = false, owner = null, detail = false, refine = null, orderBy = null, excludeIds = [] } = {}) {
-  const [ready, inbound] = await Promise.all([hasOwnershipColumns(supabase), hasInboundColumn(supabase)]);
+export async function listRows(supabase, workspaceId, kind, { q = '', limit = 200, offset = 0, companyId = null, country = null, focusCountry = null, windowed = false, windowDays = undefined, owner = null, detail = false, refine = null, orderBy = null, excludeIds = [] } = {}) {
+  const [ready, inbound, engaged] = await Promise.all([hasOwnershipColumns(supabase), hasInboundColumn(supabase), hasEngagedColumn(supabase)]);
   let cols = ready ? `${LEGACY_ACCOUNT_COLS}, owner_name, owner_email` : LEGACY_ACCOUNT_COLS;
   if (detail) cols += `, industry${ready ? ', won_deals' : ''}${inbound ? ', last_inbound_at' : ''}`;
   let query = supabase.from('entity_list_rows')
@@ -57,8 +57,9 @@ export async function listRows(supabase, workspaceId, kind, { q = '', limit = 20
   // Left off the list (the Network accounts, GET-1017). Few, so one `not in` fits the URL.
   if (excludeIds.length) query = query.not('entity_id', 'in', `(${excludeIds.join(',')})`);
   // An account earns its place by holding a deal the lists would show (dealListWindow.mjs), or by
-  // having answered us recently. Only accounts: a person is not filtered by someone else's deals.
-  if (ready && windowed && kind === 'account') query = query.or(accountWindowFilter(new Date(), { inbound }));
+  // being in a real conversation with us recently. Only accounts: a person is not filtered by
+  // someone else's deals.
+  if (ready && windowed && kind === 'account') query = query.or(accountWindowFilter(new Date(), { inbound, engaged, days: windowDays }));
   // ...and a rep sees their own book. `owner` is null for an admin or anyone we could not resolve
   // to a CRM owner, and a null filter is no filter — never an empty list.
   if (ready && owner) {
@@ -134,6 +135,16 @@ export async function hasInboundColumn(supabase) {
   const { error } = await supabase.from('entity_list_rows').select('last_inbound_at').limit(1);
   if (!error) inboundColumnPresent = true;
   return inboundColumnPresent;
+}
+
+// Does it have `last_engaged_at` (2026_10_28_engaged_accounts.sql, GET-1057)? Same posture: only a
+// true answer sticks, and until it does the window reads `last_inbound_at` as before.
+let engagedColumnPresent = false;
+export async function hasEngagedColumn(supabase) {
+  if (engagedColumnPresent) return true;
+  const { error } = await supabase.from('entity_list_rows').select('last_engaged_at').limit(1);
+  if (!error) engagedColumnPresent = true;
+  return engagedColumnPresent;
 }
 
 // Does it have the stored deal health (2026_10_02_deal_health_rows.sql)? Same posture as the two
