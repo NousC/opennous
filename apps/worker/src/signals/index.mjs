@@ -14,7 +14,8 @@ import { listNotes, saveNote, corroborateNote, searchClaims, listActivities, rec
   isEntityInternal, isContactPersonal, linkPersonMention, resolvePersonMention, tagClaimMentions,
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS, ACCOUNT_ROLLUP_CATEGORIES,
   resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, activityDirection, claimSubtagsFor, claimFreeTextFor,
-  violatesPronounRule, isTitleOnlyFact, TITLE_ONLY_REASON, emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact, isIntelClaim } from '@nous/core';
+  violatesPronounRule, isTitleOnlyFact, TITLE_ONLY_REASON, emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact, isIntelClaim,
+  isoDateIn, resolveSaidAt } from '@nous/core';
 import { extractCallInsights } from './insights.mjs';
 import { screenFeatureRequests } from './alreadyHave.mjs';
 import { recomputeEntityStage } from '../workers/stageDerivation.mjs';
@@ -28,6 +29,7 @@ import { externalEvidence } from '../noema/externalEvidence.mjs';
 import { splitForExtraction, halveForRetry, loadOurSide, ourSideLabel, ourSideRule, tidyFactContent, ourOfferBlock, factWording } from './extractionText.mjs';
 import { accountBriefBlock, loadAccountBrief } from './accountBrief.mjs';
 import { checkSignals, READ_IN_CONTEXT } from './signalCheck.mjs';
+import { OCCURRED_RULES, OCCURRED_FIELDS, anchorLine, normalizeOccurred, occurredMetaFor } from './occurredDates.mjs';
 import { readWithRepair, readReply, usableFacts, unusable, splitOnOverflow } from './extractionReply.mjs';
 
 
@@ -888,11 +890,15 @@ ${DEAL_BAR}
 
 ${SELECTIVITY_RULES}
 
-${ROUTING_RULES}`;
+${ROUTING_RULES}
+
+${OCCURRED_RULES}`;
   return systemPrompt;
 }
 
-export function buildActivitySignalsPrompt({ contactName, company = null, type, summary, maxFactsOverride = null, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
+// `anchor` (GET-1051): the conversation's date as YYYY-MM-DD, read in the workspace's zone. It is
+// shown in the user message (anchorLine) so relative dates resolve against it; absent, no line.
+export function buildActivitySignalsPrompt({ contactName, company = null, type, summary, maxFactsOverride = null, ourSide = null, part = null, positionsOnFile = [], accountBrief = '', anchor = null }) {
     const contactCtx  = [contactName, company].filter(Boolean).join(' at ');
     // Who "our side" is — a teammate's name, else "the <Company> team". The prompt used to
     // say "the user (us)", and the models wrote exactly that into facts.
@@ -954,7 +960,7 @@ export function buildActivitySignalsPrompt({ contactName, company = null, type, 
     const user = `Extract durable CRM intelligence about ${contactName} from this private ${channelLabel}.
 ${provenance}
 Record facts about ${contactName}, drawn from what THEY reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between ${contactName} and ${we}: how ${contactName} found ${we} or why they reached out (a video, post, referral, or event), anything ${contactName} offered ${we} or introductions they can make, and any objection or critique ${contactName} raised about the product or how it differs from alternatives. Do NOT turn ${we}'s OWN questions or statements into facts about ${contactName} (e.g. if ${we} asked "what's behind your product?", that is NOT a fact that ${contactName} is interested in the product) — but an offer, an introduction, a critique, or a reason-for-reaching-out that ${contactName} genuinely voices IS a fact about ${contactName} and must be recorded.
-${contactCtx ? `Contact: ${contactCtx}` : ''}
+${contactCtx ? `Contact: ${contactCtx}` : ''}${anchorLine(anchor)}
 ${accountBriefBlock(accountBrief)}${partPreamble(part, 'Message')}
 
 Message: "${summary}"
@@ -1001,7 +1007,7 @@ ${ourOfferBlock(ourSide)}Rules:
 
 ${positionShiftBlock(positionsOnFile)}
 
-Output ONLY valid JSON: [{${HOME_FIELD}, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<one category key>", "about": "person|company", "job_title": "<their bare title, when the text states one — or omit>", "entity": "<competitor name, competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>"${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
+Output ONLY valid JSON: [{${HOME_FIELD}, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<one category key>", "about": "person|company", "job_title": "<their bare title, when the text states one — or omit>", "entity": "<competitor name, competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>", ${OCCURRED_FIELDS}${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
 
   - If category is "staff_change": set "change" to one of: "left", "joined", "moved", "reorg", "away" (out for months on parental or medical leave — not a week off). Name the person the change is about in "content".
 
@@ -1070,7 +1076,12 @@ export async function extractFactsFromText({
   // deal signals get their second read (signalCheck.mjs). The eval runs with it on, so it scores what
   // is filed; scores from before GET-1033 measured the extractor alone.
   accountBrief = '', check = true,
+  // When the conversation was said (GET-1051): the instant (or YYYY-MM-DD) relative dates resolve
+  // against, read as a calendar date in `timeZone` (the workspace's). No anchor reads as today, as
+  // persistFacts files an undated source under now (resolveSaidAt).
+  anchor = null, timeZone = undefined,
 }) {
+  const anchorIso = isoDateIn(resolveSaidAt(anchor), timeZone);
   const { context, parts } = splitForExtraction(text);
   const out = { facts: [], aboutUs: [], failedParts: 0, parts: parts.length, calls: [], offered: 0, grounded: 0, routed: { our_product: 0, market: 0, low_importance: 0 } };
   // Read one piece of text; on no answer, once, read it as two halves (GET-415). Each yields
@@ -1086,7 +1097,7 @@ export async function extractFactsFromText({
     // What earlier parts already found, so this part does not find it again (GET-789).
     const part = { index, total: parts.length, context, already: out.facts.map(f => f.content) };
     const { system, user, maxFacts, maxTokens } = buildActivitySignalsPrompt({
-      contactName, company, type, summary: piece, maxFactsOverride: budget, ourSide, part, positionsOnFile, accountBrief,
+      contactName, company, type, summary: piece, maxFactsOverride: budget, ourSide, part, positionsOnFile, accountBrief, anchor: anchorIso,
     });
     const label = `${type} part ${index + 1}/${parts.length}`;
     const { reply, msg } = await readWithRepair({
@@ -1200,6 +1211,7 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     const read = await extractFactsFromText({
       contactName: contact.name, company: contact.company, type, text: summary, maxFactsOverride, ourSide, strict, positionsOnFile, ourNames, accountBrief,
       evidenceMessages, evidenceContactId: contactId,
+      anchor: occurredAt, timeZone: await getWorkspaceTimezone(supabase, workspaceId).catch(() => undefined),   // GET-1051
       criteria: await extractionCriteria(supabase, workspaceId),
       onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-extraction', msg),
       onPart: async (facts, { index, total, model }) => {
@@ -1334,6 +1346,15 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
   if (titlesFiled) console.log(`[JOB_TITLE] ${titlesFiled} title(s) filed from ${type}/${source}`);
 
   if (!kept.length) return [];
+
+  // WHEN IT HAPPENED (GET-1051): each fact's fact_kind and occurred dates held to the rules
+  // (occurredDates.mjs) against the day it was said, in the workspace's zone — one place, so every
+  // extractor that files through here (1:1, meeting, Gmail thread) gets the same validation and
+  // fallback. The said date itself is not touched: it stays the clock for freshness and replacement.
+  if (kept.some(f => f.fact_kind != null || f.occurred_start != null || f.occurred_end != null)) {
+    const tz = await getWorkspaceTimezone(supabase, workspaceId).catch(() => undefined);
+    kept = kept.map(f => normalizeOccurred(f, isoDateIn(resolveSaidAt(f.saidAt ?? occurredAt), tz)));
+  }
 
   // Catch pronoun violations mechanically rather than hoping the model always complies.
   // One guard here covers both the 1:1 and the meeting extractor.
@@ -1555,6 +1576,9 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
           // Free text beside the closed sets: `competitor.entity`, `expansion_signal.product`.
           // Declared with the taxonomy for the same two-writer reason (GET-401).
           ...claimFreeTextFor(cat, fact),
+          // When it HAPPENS or happened, beside when it was said (GET-1051): fact_kind, and for an
+          // event occurred_start / occurred_end (YYYY-MM-DD). Only the keys the fact has.
+          ...occurredMetaFor(fact),
           graph_layer:        'private',
         },
       });
@@ -1804,11 +1828,13 @@ export async function extractMeetingSignals({
     // One part, read once — or, when the model returns nothing for it, read again as two halves
     // (GET-415). Returns the facts found and the transcript text they must be grounded against.
     const criteria = await extractionCriteria(supabase, workspaceId);
+    // The call's date, as the calendar date relative dates resolve against (GET-1051).
+    const anchor = isoDateIn(resolveSaidAt(occurredAt), await getWorkspaceTimezone(supabase, workspaceId).catch(() => undefined));
     // GET-1050: one repair turn, categories held to the list, a split on overflow (see readPiece in
     // extractFactsFromText). Every call is metered, the repair turn included.
     const readPart = async (text, label, allowHalving, depth = 0, budget = partBudget) => {
       const { system, user } = buildMeetingSignalsMessages({
-        roster, transcript: text, maxFacts: budget, ourSide, positionsOnFile, accountBrief,
+        roster, transcript: text, maxFacts: budget, ourSide, positionsOnFile, accountBrief, anchor,
         part: { ...label, context, already: saved.map(f => f.content).filter(Boolean) },
       });
       const tag = `meeting part ${label.index + 1}/${label.total}`;
@@ -1896,7 +1922,7 @@ export function buildMeetingSignalsPrompt(args) {
 }
 
 /** The meeting prompt as the model gets it: the shared system prompt, and this call's user message (GET-1050). Pure. */
-export function buildMeetingSignalsMessages({ roster, transcript, maxFacts, ourSide = null, part = null, positionsOnFile = [], accountBrief = '' }) {
+export function buildMeetingSignalsMessages({ roster, transcript, maxFacts, ourSide = null, part = null, positionsOnFile = [], accountBrief = '', anchor = null }) {
   const we = ourSideLabel(ourSide);
   return { system: extractionSystemPrompt(), user: `Extract durable CRM intelligence from this meeting transcript.
 
@@ -1904,7 +1930,7 @@ These are notes/transcript from a call. The people below are the EXTERNAL attend
 
 EXTERNAL ATTENDEES:
 ${roster}
-
+${anchorLine(anchor)}
 Our side of the call is ${we}. Do NOT turn our side's questions or statements into facts about an attendee — if ${we} asked "what's driving the timeline?", that is NOT a fact that they care about timelines. But an offer, an introduction, a critique, or a reason-for-reaching-out that an ATTENDEE genuinely voices IS a fact about them and must be recorded.
 
 ${accountBriefBlock(accountBrief)}${partPreamble(part)}
@@ -1948,7 +1974,7 @@ ${ourOfferBlock(ourSide)}Rules:
 
 ${positionShiftBlock(positionsOnFile)}
 
-Output ONLY valid JSON: [{${HOME_FIELD}, "person": 1, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<key>", "about": "person|company", "entity": "<competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>"${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
+Output ONLY valid JSON: [{${HOME_FIELD}, "person": 1, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<key>", "about": "person|company", "entity": "<competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>", ${OCCURRED_FIELDS}${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
 
   - staff_change → set "change": "left" / "joined" / "moved" / "reorg" / "away" (out for months, not a week off). Name the person in "content".
   - authority → set "role": "economic_buyer" (holds the budget or signs) / "decision_maker" (chooses, or their approval unblocks it) / "champion" (pushes for us internally) / "blocker" (is stopping it) / "technical" (judges whether it works). It must describe the attendee the fact is ABOUT. Leave it out when the fact names someone else's authority, when it only restates a job title, or when they simply use the product.

@@ -14,7 +14,7 @@ import { CLAIM_CATEGORY_KEYS } from '@nous/core';
 
 export const CASE_CATEGORIES = ['selectivity', 'attribution', 'category', 'temporal', 'no_invention', 'competitor_naming'];
 const CASE_KEYS = new Set(['id', 'category', 'origin', 'minimum', 'input', 'must', 'traps', 'expect']);
-const EXPECT_KEYS = new Set(['maxClaims', 'categories', 'contains', 'notCategories']);
+const EXPECT_KEYS = new Set(['maxClaims', 'categories', 'contains', 'notCategories', 'occurred']);
 const KINDS = new Set(['meeting', 'email']);
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const nonEmpty = (s) => typeof s === 'string' && s.trim().length > 0;
@@ -63,12 +63,37 @@ export function validateCase(c) {
       && e.contains.every(x => nonEmpty(x) || (Array.isArray(x) && x.length && x.every(nonEmpty))))) {
       errs.push(`${at}: expect.contains must be an array of strings (or of string arrays, any one of which counts)`);
     }
-    if (e.maxClaims === 0 && (e.categories?.length || e.contains?.length)) errs.push(`${at}: expect.maxClaims 0 contradicts categories/contains`);
+    if (e.occurred !== undefined) errs.push(...occurredExpectProblems(e.occurred).map(p => `${at}: expect.occurred ${p}`));
+    if (e.maxClaims === 0 && (e.categories?.length || e.contains?.length || e.occurred?.length)) errs.push(`${at}: expect.maxClaims 0 contradicts categories/contains`);
   }
   // A case that checks nothing passes everything.
   if (Array.isArray(c.must) && Array.isArray(c.traps) && e && !c.must.length && !c.traps.length && !Object.keys(e).length) {
     errs.push(`${at}: a case needs at least one must, trap or expect check`);
   }
+  return errs;
+}
+
+/**
+ * What is wrong with an `expect.occurred` list (GET-1051), as sentence fragments. Each entry picks
+ * the claims whose text contains `contains` (a string, or strings any one of which counts) and says
+ * when the event happens: `start` and `end` (YYYY-MM-DD), or `none: true` for a state that must
+ * carry no occurred date. Pure.
+ */
+export function occurredExpectProblems(list) {
+  if (!Array.isArray(list) || !list.length) return ['must be a non-empty array'];
+  const errs = [];
+  list.forEach((o, n) => {
+    const at = `[${n}]`;
+    if (!o || typeof o !== 'object') { errs.push(`${at} is not an object`); return; }
+    for (const k of Object.keys(o)) if (!['contains', 'start', 'end', 'none'].includes(k)) errs.push(`${at} has unknown key "${k}"`);
+    if (!(nonEmpty(o.contains) || (Array.isArray(o.contains) && o.contains.length && o.contains.every(nonEmpty)))) errs.push(`${at}.contains must be a string or an array of strings`);
+    if (o.none !== undefined && o.none !== true) errs.push(`${at}.none must be true when given`);
+    if (o.none && (o.start !== undefined || o.end !== undefined)) errs.push(`${at} has none and a date`);
+    if (!o.none) {
+      for (const k of ['start', 'end']) if (!DAY_RE.test(String(o[k] ?? '')) || Number.isNaN(Date.parse(o[k]))) errs.push(`${at}.${k} must be a YYYY-MM-DD date`);
+      if (DAY_RE.test(String(o.start ?? '')) && DAY_RE.test(String(o.end ?? '')) && o.end < o.start) errs.push(`${at}.end is before its start`);
+    }
+  });
   return errs;
 }
 
@@ -113,10 +138,17 @@ function tagText(tags = {}) {
   return parts.length ? ` (${parts.join('; ')})` : '';
 }
 
-/** One line per claim: `- [category] text (tags) [said date] {person: Name}`. */
+/** When the event happens or happened (GET-1051): " [happened 2026-03-01 to 2026-03-31]", or "". */
+function happenedText(o) {
+  if (!o || (!o.start && !o.end)) return '';
+  if (o.start && o.end) return ` [happened ${o.start === o.end ? o.start : `${o.start} to ${o.end}`}]`;
+  return o.start ? ` [happened from ${o.start}]` : ` [happened until ${o.end}]`;
+}
+
+/** One line per claim: `- [category] text (tags) [said date] [happened …] {person: Name}`. */
 export function renderClaim(claim) {
   const subject = claim.subject?.name ? `{${claim.subject.kind ?? 'person'}: ${claim.subject.name}}` : '{unattributed}';
-  return `- [${claim.category ?? 'general'}] ${String(claim.content ?? '').trim()}${tagText(claim.tags)} [${claim.saidAt ?? 'undated'}] ${subject}`;
+  return `- [${claim.category ?? 'general'}] ${String(claim.content ?? '').trim()}${tagText(claim.tags)} [${claim.saidAt ?? 'undated'}]${happenedText(claim.occurred)} ${subject}`;
 }
 
 /** The whole set, as the judge reads it. An empty set says so in words, so "no claims" is judgeable. */
@@ -181,6 +213,35 @@ export function deterministicChecks(claims, c) {
       reasons.push(`contains: no claim mentions ${Array.isArray(want) ? want.map(s => `"${s}"`).join(' or ') : `"${want}"`}`);
     }
   }
+  reasons.push(...occurredProblems(claims, e.occurred));
   reasons.push(...placeholderYearProblems(claims, c.input));
   return { pass: reasons.length === 0, reasons };
+}
+
+/**
+ * The expected occurred ranges (GET-1051), as failure reasons. For each entry, some claim whose text
+ * contains it must carry exactly that range (or, with `none`, every such claim must carry none). No
+ * matching claim at all fails a range (a check that finds nothing to check has not passed), not a
+ * `none`. Pure.
+ */
+export function occurredProblems(claims, list = []) {
+  const out = [];
+  for (const o of list ?? []) {
+    const any = (Array.isArray(o.contains) ? o.contains : [o.contains]).map(s => s.toLowerCase());
+    const label = any.map(s => `"${s}"`).join(' or ');
+    const hits = claims.filter(x => any.some(s => haystack(x).includes(s)));
+    // `none` checks that a state is not dated; no such claim dated nothing (whether it should have
+    // been recorded at all is the case's `must`, for the judge).
+    if (!hits.length) { if (!o.none) out.push(`occurred: no claim mentions ${label}`); continue; }
+    const shown = (x) => (x.occurred ? `${x.occurred.start ?? '…'} to ${x.occurred.end ?? '…'}` : 'none');
+    if (o.none) {
+      const dated = hits.filter(x => x.occurred?.start || x.occurred?.end);
+      if (dated.length) out.push(`occurred: a state mentioning ${label} carries an occurred date (${dated.map(shown).join(', ')})`);
+      continue;
+    }
+    if (!hits.some(x => x.occurred?.start === o.start && x.occurred?.end === o.end)) {
+      out.push(`occurred: no claim mentioning ${label} happens ${o.start} to ${o.end} (got ${hits.map(shown).join(', ')})`);
+    }
+  }
+  return out;
 }

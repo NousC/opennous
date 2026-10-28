@@ -4,7 +4,7 @@ import { getObservations } from './observations.js';
 import { collapseMeetingDupes } from './activities.js';
 import { fireClaimTransitionTriggers } from './triggers.js';
 import { listDealScopeNotes, listRecentlyReplaced } from './notes.js';
-import { shapeContextFacts, type TechStackGroup, type Replacement } from './claimTime.js';
+import { shapeContextFacts, occurredLabel, type TechStackGroup, type Replacement } from './claimTime.js';
 import { documentPreviews } from './documents.js';
 import type { ReadContext } from './readContext.js';
 import { derivedViewerForContext, filterDerivedForViewer, isDerivedProperty } from '../privacy/messagePrivacy.mjs';
@@ -50,6 +50,9 @@ export interface AccountFact {
   content: string;
   /** When it was SAID (the source's date), not when it was written (GET-770). */
   date: string;
+  /** When it HAPPENS or happened, for an event (GET-1051): "2026-03-14", "2026-03-01 to
+   *  2026-03-31", "from …" / "until …". Absent for a state or an undated event. */
+  occurred?: string;
   /** How current it is now, from its category's clock and when it was said (claimTime.ts). */
   freshness?: Freshness;
   /** The call or message this was extracted from, so the fact can be checked against it.
@@ -737,9 +740,12 @@ export async function getAccountRecord(
     // The note's own ref wins when it has one; otherwise follow the activity. Both are the
     // same pointer shape, so the citation panel does not care which road it came by.
     const ref = m.source_ref ?? (m.source_activity_id ? refByActivity.get(m.source_activity_id) : undefined);
+    // When the event happened, beside when it was said (GET-1051).
+    const occurred = occurredLabel(n.metadata as Record<string, unknown> | null);
     return {
       id: n.id,
       category: n.category, content: n.content, date: n.created_at, freshness: n.freshness,
+      ...(occurred ? { occurred } : {}),
       ...(m.quote ? { quote: m.quote } : {}),
       ...(m.speaker ? { speaker: m.speaker } : {}),
       ...(m.extraction_source ? { source: m.extraction_source } : {}),

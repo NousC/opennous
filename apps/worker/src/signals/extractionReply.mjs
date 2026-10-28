@@ -108,7 +108,7 @@ export function repairTurn(reply) {
     : `${reply.problems.length} of your ${reply.facts.length} facts could not be used (${[...new Set(reply.problems)].slice(0, 4).join('; ')}).`;
   const used = reply.keys.length ? ` You used the keys: ${reply.keys.slice(0, 20).join(', ')}.` : '';
   return `${what}${used}
-Every fact needs "content" (one sentence) and, for home "claim", "category" set to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}. The other keys are the ones the instructions list ("home", "importance", "quote", "speaker", "label", "about" and the category's tags).
+Every fact needs "content" (one sentence) and, for home "claim", "category" set to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}. The other keys are the ones the instructions list ("home", "importance", "quote", "speaker", "label", "about", the category's tags, and "fact_kind" with an event's "occurred_start" / "occurred_end").
 Reply exactly with a JSON array [...] of the same facts, corrected, and nothing else. Do not add facts. If there is nothing to record, reply exactly [].`;
 }
 

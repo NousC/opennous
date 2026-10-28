@@ -94,6 +94,23 @@ export function resolveSaidAt(input: string | null | undefined, now: number = Da
   return new Date(t).toISOString();
 }
 
+/**
+ * When a claim's event HAPPENS or happened, as a reader shows it (GET-1051), from the claim's
+ * value metadata: occurred_start / occurred_end (YYYY-MM-DD), set by extraction for a fact_kind
+ * "event" only. One day: "2026-03-14"; a period: "2026-03-01 to 2026-03-31"; open-ended:
+ * "from 2026-03-01" / "until 2026-03-31". Undefined for a state or an undated event.
+ * This is never the claim's clock: freshness and replacement still run on when it was SAID.
+ */
+export function occurredLabel(meta: { occurred_start?: unknown; occurred_end?: unknown; fact_kind?: unknown } | null | undefined): string | undefined {
+  if (!meta || (meta.fact_kind != null && meta.fact_kind !== 'event')) return undefined;
+  const iso = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const s = iso(meta.occurred_start), e = iso(meta.occurred_end);
+  if (s && e) return s === e ? s : `${s} to ${e}`;
+  if (s) return `from ${s}`;
+  if (e) return `until ${e}`;
+  return undefined;
+}
+
 const TIER: Record<Freshness, number> = { fresh: 0, aging: 1, suspect: 2, expired: 3 };
 
 interface DatedFact {

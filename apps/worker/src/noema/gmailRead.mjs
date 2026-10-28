@@ -482,6 +482,9 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
     text,
     ourSide,
     groundAgainst: (partText) => theirSideOf(partText),
+    // Relative dates resolve against the thread's newest message, the date its claims are filed
+    // under (GET-1051); the prompt asks for each message's own date where the thread shows it.
+    anchor: lastAt(thread), timeZone: await getWorkspaceTimezone(supabase, workspaceId).catch(() => undefined),
     // What is on file that this thread may move (GET-770).
     positionsOnFile: await loadPositionsOnFile(supabase, workspaceId, [contactId, contact.company_id], { excludeSourceRef: sourceRef }),
     // What is known about the account, so each line is read in context (GET-1033).

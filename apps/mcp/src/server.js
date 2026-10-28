@@ -101,11 +101,14 @@ function factsHeader(r) {
 // When it was said, and — once it is past fresh — whether it still holds (GET-770). The date is
 // the source's (the call, the message), not when we wrote it down.
 const FRESHNESS_WORD = { aging: "aging", suspect: "stale", expired: "out of date" };
+// An event also says when it HAPPENS or happened (GET-1051): "moved off Ledgerway in March", said
+// in October, reads "said Oct 14 · … · happened 2026-03-01 to 2026-03-31", never as an October move.
 function saidTag(f) {
-  if (!f.date) return "";
+  const happened = f.occurred ? `happened ${f.occurred}` : "";
+  if (!f.date) return happened ? `  (${happened})` : "";
   const day = new Date(f.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const word = FRESHNESS_WORD[f.freshness];
-  return `  (said ${day} \u00b7 ${relAge(f.date)}${word ? ` \u00b7 ${word}` : ""})`;
+  return `  (said ${day} \u00b7 ${relAge(f.date)}${word ? ` \u00b7 ${word}` : ""}${happened ? ` \u00b7 ${happened}` : ""})`;
 }
 
 const shortDay = (ts) => (ts ? new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "undated");

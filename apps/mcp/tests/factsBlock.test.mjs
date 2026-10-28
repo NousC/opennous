@@ -73,3 +73,15 @@ test('a payload with only facts (older callers) renders just FACTS', () => {
   assert.doesNotMatch(text, /TECH STACK|RECENTLY REPLACED|CURRENT POSITION/);
   assert.match(text, /FACTS \(1/);
 });
+
+test('an event says when it happened beside when it was said (GET-1051)', () => {
+  const lines = factsBlock({
+    facts: [
+      { category: 'tech_stack', content: 'Brindle moved off Marrowdesk in March 2026.', date: daysAgo(3), freshness: 'fresh', occurred: '2026-03-01 to 2026-03-31' },
+      { category: 'firmographic', content: 'Brindle has forty account executives.', date: daysAgo(3), freshness: 'fresh' },
+    ],
+  }).join('\n');
+  assert.match(lines, /moved off Marrowdesk in March 2026\.\s+\(said [A-Z][a-z]{2} \d+ · [^)]*· happened 2026-03-01 to 2026-03-31\)/);
+  assert.match(lines, /forty account executives\.\s+\(said [^)]*\)/);
+  assert.doesNotMatch(lines.split('\n').find(l => l.includes('forty')), /happened/);
+});

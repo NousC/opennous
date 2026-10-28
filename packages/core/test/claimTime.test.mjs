@@ -87,3 +87,18 @@ test('current positions: the newest live fact per time-bound category, nothing e
     'Wants to present it to the other stakeholders.',
   ]);
 });
+
+// ── When it happened (GET-1051) ────────────────────────────────────────────────────────────
+
+test('occurredLabel: a day, a period, an open bound; nothing for a state or an undated event', async () => {
+  const { occurredLabel } = await import('../dist/db/claimTime.js');
+  assert.equal(occurredLabel({ fact_kind: 'event', occurred_start: '2026-03-14', occurred_end: '2026-03-14' }), '2026-03-14');
+  assert.equal(occurredLabel({ fact_kind: 'event', occurred_start: '2026-03-01', occurred_end: '2026-03-31' }), '2026-03-01 to 2026-03-31');
+  assert.equal(occurredLabel({ fact_kind: 'event', occurred_start: '2024-01-01' }), 'from 2024-01-01');
+  assert.equal(occurredLabel({ fact_kind: 'event', occurred_end: '2026-12-31' }), 'until 2026-12-31');
+  assert.equal(occurredLabel({ occurred_start: '2026-03-01', occurred_end: '2026-03-31' }), '2026-03-01 to 2026-03-31', 'written before fact_kind existed');
+  assert.equal(occurredLabel({ fact_kind: 'state', occurred_start: '2026-03-01' }), undefined);
+  assert.equal(occurredLabel({ fact_kind: 'event' }), undefined);
+  assert.equal(occurredLabel({ fact_kind: 'event', occurred_start: 'March' }), undefined);
+  assert.equal(occurredLabel(null), undefined);
+});

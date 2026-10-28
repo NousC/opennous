@@ -79,7 +79,17 @@ export function toEvalClaim(f, { people, account, saidAt }) {
     // The tags exactly as they would be stored (the same declarations persistFacts writes with).
     tags: { ...claimSubtagsFor(category, f), ...claimFreeTextFor(category, f) },
     quote: f.quote ?? null,
+    // When it happens or happened (GET-1051), as persistFacts would store it in the claim's metadata.
+    ...occurredOf(f),
   };
+}
+
+/** A fact's fact_kind and occurred dates, only the ones it has. Pure. */
+function occurredOf(f) {
+  const out = {};
+  if (f.fact_kind) out.fact_kind = f.fact_kind;
+  if (f.occurred_start || f.occurred_end) out.occurred = { start: f.occurred_start ?? null, end: f.occurred_end ?? null };
+  return out;
 }
 
 /** Token use from the llm_usage rows the read metered into the fake database. */
