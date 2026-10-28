@@ -81,11 +81,13 @@ export async function judgeMust(ask, args) {
  * Judge one case's claims. Traps first; a confirmed trap fails the case without asking its musts.
  * @returns {{ pass: boolean, reasons: string[], traps: object[], musts: object[] }}
  */
-export async function judgeCase(ask, c, rendered) {
+export async function judgeCase(ask, c, rendered, { claimCount } = {}) {
   const base = { input: c.input, rendered };
   const reasons = [];
   const traps = [];
-  for (const criterion of c.traps ?? []) {
+  // A trap is a wrong claim; with no claims recorded there is none to be wrong, so the judge is not
+  // asked (it once read "no claim records his interest" as the trap "a claim says he is interested").
+  for (const criterion of claimCount === 0 ? [] : c.traps ?? []) {
     const r = await judgeTrap(ask, { ...base, criterion });
     traps.push({ criterion, ...r });
     if (r.hit) reasons.push(`trap hit: ${criterion} — ${r.verdicts.at(-1).reasoning}`);

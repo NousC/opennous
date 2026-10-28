@@ -78,7 +78,7 @@ export async function runEval({ cases, extract, ask, meta = {}, log = () => {} }
       r.reasons.push(...r.deterministic.reasons);
       // The judge is slow and costs money; a case the checks already failed is not asked about.
       if (r.deterministic.pass && (c.traps.length || c.must.length)) {
-        r.judge = await judgeCase(ask, c, renderClaims(claims));
+        r.judge = await judgeCase(ask, c, renderClaims(claims), { claimCount: claims.length });
         r.reasons.push(...r.judge.reasons);
       }
       r.pass = r.reasons.length === 0;

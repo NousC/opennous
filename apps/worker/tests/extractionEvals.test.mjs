@@ -404,3 +404,17 @@ test('a link expectation accepts "a|b", and still names an unknown category', as
   assert.deepEqual(linksExpectProblems([{ from: 'blocker|budget', to: 'staff_change' }]), []);
   assert.match(linksExpectProblems([{ from: 'blocker|bugdet', to: 'staff_change' }])[0], /"bugdet" is not a claim/);
 });
+
+test('judgeCase: with no claims recorded, traps are not asked (none can be hit)', async () => {
+  const c = aCase({ traps: ['wrong fact'], must: [], expect: {} });
+  const j = scripted([true, true]);
+  const r = await judgeCase(j.ask, c, '(no claims were recorded)', { claimCount: 0 });
+  assert.equal(r.pass, true);
+  assert.deepEqual(j.asked, []);
+});
+
+test('the check pass keeps a doubted condition an objection, resolved when settled', async () => {
+  const { READ_IN_CONTEXT } = await import('../src/signals/signalCheck.mjs');
+  assert.match(READ_IN_CONTEXT, /A condition they DOUBT we meet .* is an objection, not a requirement/);
+  assert.match(READ_IN_CONTEXT, /Never move such an objection to requirement because it was satisfied/);
+});
