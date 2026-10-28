@@ -17,6 +17,7 @@ import { latestStages, lifecycleDeptScope, wonCompanyIds, ownerDeptForCompany } 
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
 import { requireEnrichmentQuota, requireAccountsBalance } from '../../lib/access.mjs';
 import { enrichContact } from '../../services/enrichment.mjs';
+import { PERSON_WORKING_STAGES, NEW_WORKSPACE_WINDOW_DAYS } from '../../lib/dealListWindow.mjs';
 import { hasListRows, listRows, accountCountries, domainsForAccounts, photosForPeople, crmLinkedPeople, workspaceHasCrm } from '../../lib/listRows.mjs';
 
 // Pulling a missing profile photo over Unipile (LinkedIn) is Cloud's: cloud/index.mjs registers
@@ -109,6 +110,8 @@ const stageQueryValues = (raw) => {
 const EMPTY = Symbol('no one');
 const SALES_STAGES = [...ALL_PIPELINE_STAGES, ...Object.keys(LEGACY_STAGE_MAP)];
 const CLIENT_STAGES = ['closed_won', ...Object.keys(LEGACY_STAGE_MAP).filter(k => LEGACY_STAGE_MAP[k] === 'closed_won')];
+// A deal stage or a client, in every spelling a row may carry (GET-1058).
+const WORKING_STAGES = [...PERSON_WORKING_STAGES, ...Object.keys(LEGACY_STAGE_MAP).filter(k => PERSON_WORKING_STAGES.includes(LEGACY_STAGE_MAP[k]))];
 export async function peopleTypeRefine(supabase, workspaceId, type) {
   const among = (ids) => (ids.length ? (q) => q.in('entity_id', ids) : EMPTY);
   if (type === 'network') return among([...await getPersonalEntityIds(supabase, workspaceId)]);
@@ -148,14 +151,21 @@ contactsApiRouter.get('/', verifySupabaseAuth, async (req, res) => {
       const off = Math.max(0, Number(offset) || 0);
       // The same market filter the Accounts list uses (GET-311): a person is in the market their
       // employer is in. Nothing asked = the workspace's own focus; `all` clears it.
-      const { data: wsRow } = await supabase.from('workspaces').select('focus_country').eq('id', workspaceId).maybeSingle();
+      const { data: wsRow } = await supabase.from('workspaces').select('focus_country, created_at').eq('id', workspaceId).maybeSingle();
       const asked = String(req.query.country ?? '').trim();
       const country = asked === 'all' ? null : (asked || wsRow?.focus_country || null);
+      // CONTACTS IS THE PEOPLE WE ARE WORKING (GET-1058), the rule Accounts uses (GET-1057): in a real
+      // conversation with us, at a deal stage, or a client (dealListWindow.mjs personWindowFilter).
+      // A search, or a type asked for by name (Network, Team, User, Client), looks at everyone.
+      const term = String(search ?? '').trim();
+      const windowed = !term && !type;
+      const isNew = wsRow?.created_at && Date.now() - Date.parse(wsRow.created_at) < 30 * 86_400_000;
       // `type` (GET-1018): the People filter — network, team, user or client. Unknown = everyone.
       const refine = await peopleTypeRefine(supabase, workspaceId, String(type ?? ''));
       if (refine === EMPTY) return res.json({ contacts: [], total: 0, limit: lim, offset: off, country, focus_country: wsRow?.focus_country ?? null, countries: await accountCountries(supabase, workspaceId) });
       const { rows, total } = await listRows(supabase, workspaceId, 'person', {
-        q: String(search ?? '').trim(), limit: lim, offset: off, country, focusCountry: wsRow?.focus_country ?? null, refine,
+        q: term, limit: lim, offset: off, country, focusCountry: wsRow?.focus_country ?? null, refine,
+        windowed, windowDays: isNew ? NEW_WORKSPACE_WINDOW_DAYS : undefined, windowStages: WORKING_STAGES,
       });
       // The logo and the face: the employer's domain (off its account row, else a work address)
       // and any photo on file. The flattened person row carries neither.

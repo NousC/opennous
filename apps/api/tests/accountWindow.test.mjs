@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   accountWindowFilter, dealWindowFilter, inDealWindow,
-  activityCutoff, lostCutoff, ACTIVITY_WINDOW_DAYS, DEAL_WINDOW_MONTHS, NEW_WORKSPACE_WINDOW_DAYS,
+  activityCutoff, lostCutoff, ACTIVITY_WINDOW_DAYS, DEAL_WINDOW_MONTHS, NEW_WORKSPACE_WINDOW_DAYS, personWindowFilter, PERSON_WORKING_STAGES,
 } from '../src/lib/dealListWindow.mjs';
 
 const NOW = new Date('2026-09-21T12:00:00.000Z');
@@ -123,4 +123,16 @@ test('a new workspace reaches further back, and only on the conversation clauses
   assert.ok(f.includes(`last_lost_at.gte.${LOST}`), 'the deal window does not move');
   assert.equal(accountWindowFilter(NOW, { inbound: true, engaged: true, days: undefined }),
     accountWindowFilter(NOW, { inbound: true, engaged: true }), 'no days is the normal window');
+});
+
+// GET-1065: Contacts lists the people we are working, by the same conversation rule.
+test('a person is on Contacts in a real conversation, at a deal stage, or as a client', () => {
+  const f = personWindowFilter(NOW, { stages: ['discovery', 'demo', 'negotiation', 'closed_won', 'proposal', 'client'] });
+  assert.deepEqual(topLevelClauses(f), [
+    `last_engaged_at.gte.${TOUCH}`,
+    'stage.in.(discovery,demo,negotiation,closed_won,proposal,client)',
+  ]);
+  assert.ok(!f.includes('last_activity_at') && !f.includes('last_inbound_at'), 'our own outreach and a no never put a person on the list');
+  assert.deepEqual(PERSON_WORKING_STAGES, ['discovery', 'demo', 'negotiation', 'closed_won']);
+  assert.ok(personWindowFilter(NOW, { days: NEW_WORKSPACE_WINDOW_DAYS }).startsWith(`last_engaged_at.gte.${activityCutoff(NOW, NEW_WORKSPACE_WINDOW_DAYS).toISOString()}`));
 });

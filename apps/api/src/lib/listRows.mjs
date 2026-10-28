@@ -12,7 +12,7 @@
 // It is a CACHE, not the truth: when a workspace has no rows yet (a fresh workspace, or one whose
 // refresh has not run), the caller falls back to reading the substrate as before.
 
-import { dealWindowFilter, accountWindowFilter } from './dealListWindow.mjs';
+import { dealWindowFilter, accountWindowFilter, personWindowFilter } from './dealListWindow.mjs';
 import { ownerFilter } from './ownerScope.mjs';
 import { isUsablePhotoUrl } from '@nous/core';
 
@@ -45,7 +45,7 @@ export function isFocusCountry(country, focusCountry) {
 //   detail   also select industry, won_deals and (once migrated) last_inbound_at
 //   refine   (query, { ready, inbound }) => query — extra PostgREST filters, ANDed with the rest
 //   orderBy  { col, ascending } — the primary order; entity_id stays the tie-break
-export async function listRows(supabase, workspaceId, kind, { q = '', limit = 200, offset = 0, companyId = null, country = null, focusCountry = null, windowed = false, windowDays = undefined, owner = null, detail = false, refine = null, orderBy = null, excludeIds = [] } = {}) {
+export async function listRows(supabase, workspaceId, kind, { q = '', limit = 200, offset = 0, companyId = null, country = null, focusCountry = null, windowed = false, windowDays = undefined, windowStages = undefined, owner = null, detail = false, refine = null, orderBy = null, excludeIds = [] } = {}) {
   const [ready, inbound, engaged] = await Promise.all([hasOwnershipColumns(supabase), hasInboundColumn(supabase), hasEngagedColumn(supabase)]);
   let cols = ready ? `${LEGACY_ACCOUNT_COLS}, owner_name, owner_email` : LEGACY_ACCOUNT_COLS;
   if (detail) cols += `, industry${ready ? ', won_deals' : ''}${inbound ? ', last_inbound_at' : ''}`;
@@ -60,6 +60,9 @@ export async function listRows(supabase, workspaceId, kind, { q = '', limit = 20
   // being in a real conversation with us recently. Only accounts: a person is not filtered by
   // someone else's deals.
   if (ready && windowed && kind === 'account') query = query.or(accountWindowFilter(new Date(), { inbound, engaged, days: windowDays }));
+  // A person is on Contacts when we are working them (GET-1058). Until the engaged column exists the
+  // list is unwindowed, exactly as before.
+  if (engaged && windowed && kind === 'person') query = query.or(personWindowFilter(new Date(), { stages: windowStages, days: windowDays }));
   // ...and a rep sees their own book. `owner` is null for an admin or anyone we could not resolve
   // to a CRM owner, and a null filter is no filter — never an empty list.
   if (ready && owner) {

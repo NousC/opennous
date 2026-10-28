@@ -852,7 +852,10 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
         {loading && contacts.length === 0 && <div className="py-12 text-center text-[13px] text-muted-foreground">Loading…</div>}
         {!loading && shown.length === 0 && (
           <div className="py-12 text-center text-[13px] text-muted-foreground">
-            {serverQ ? "No people match" : activeTab !== "all" ? "No people in this tier" : "No people yet"}
+            {serverQ ? "No people match" : activeTab !== "all" ? "No people in this tier" : "No active contacts yet"}
+            {!serverQ && activeTab === "all" && (
+              <div className="mt-1">A contact shows here once they are in a conversation with you or in a deal. Search finds everyone.</div>
+            )}
           </div>
         )}
       </div>

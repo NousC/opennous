@@ -128,6 +128,23 @@ export function accountWindowFilter(now = new Date(), { inbound = false, engaged
   return `${base},and(last_lost_at.not.is.null,last_activity_at.gte.${touched}),${answered}.gte.${touched}`;
 }
 
+// The person stages that mean a deal is being worked with them, or they are a client. Legacy spellings
+// are mapped by the caller's stage list; these are the canonical ladder (packages/core/src/pipeline.ts).
+export const PERSON_WORKING_STAGES = ['discovery', 'demo', 'negotiation', 'closed_won'];
+
+/**
+ * The window asked of a PERSON (GET-1058): Contacts lists the people we are working, as Accounts
+ * lists the accounts. A person shows when they are in a real conversation with us inside the window
+ * (`last_engaged_at`: a reply that is not a no and not a machine, a meeting, a call, a sign-up), or
+ * stand at a deal stage, or are a client. Everyone we only contacted, and everyone whose latest
+ * answer was a no, is off the list and still found by search.
+ *
+ * `stages` is PERSON_WORKING_STAGES plus their legacy spellings, given by the caller.
+ */
+export function personWindowFilter(now = new Date(), { stages = PERSON_WORKING_STAGES, days = ACTIVITY_WINDOW_DAYS } = {}) {
+  return `last_engaged_at.gte.${activityCutoff(now, days).toISOString()},stage.in.(${stages.join(',')})`;
+}
+
 /** The same rule in memory, for the path that assembles deals from claims rather than rows. */
 export function inDealWindow(deal, cutoff = lostCutoff()) {
   if (!deal) return false;
