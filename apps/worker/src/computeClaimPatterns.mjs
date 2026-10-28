@@ -121,6 +121,7 @@ export async function computeClaimPatterns(supabase, workspaceId) {
   const claims = await pageAll((a, b) => supabase.from('claims')
     .select('id, entity_id, value, embedding')
     .eq('workspace_id', workspaceId).like('property', 'note.%').is('invalid_at', null)
+    .is('value->metadata->>side', null)   // GET-1052: patterns are the buyers', never our pitch
     .not('embedding', 'is', null).range(a, b));
   if (claims.length < MIN_CLUSTER) { console.log(`  ${workspaceId}: ${claims.length} embedded claims — skip`); return 0; }
 

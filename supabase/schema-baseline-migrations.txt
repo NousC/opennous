@@ -265,6 +265,9 @@
 2026_10_21_slack_dm_privacy.sql
 2026_10_22_insight_pattern_interpretations.sql
 2026_10_26_webhook_claude_destination.sql
+2026_10_27_claim_links.sql
+2026_10_27_claims_search_indexes.sql
+2026_10_27_hybrid_claim_search.sql
 2026_10_27_market_entities.sql
 agent_actions.sql
 backfill_credit_control.sql

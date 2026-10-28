@@ -104,6 +104,7 @@ async function computeWorkspace(supabase, workspaceId, { dry, thresh }) {
     .select('id,entity_id,value,embedding')
     .eq('workspace_id', workspaceId).like('property', 'note.%')
     .filter('value->>source', 'eq', 'signal_extraction')
+    .is('value->metadata->>side', null)   // GET-1052: patterns are the buyers', never our pitch
     .not('embedding', 'is', null).range(a, b));
 
   const contacts = await pageAll((a, b) => supabase.from('contacts')

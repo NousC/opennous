@@ -26,6 +26,7 @@ export * from './db/predictions.js';
 export * from './db/externalScores.js';
 export * from './db/notes.js';
 export * from './db/marketEntities.js';
+export * from './db/claimLinks.js';
 export * from './db/intelTimeline.js';
 export * from './db/conversationCredits.js';
 export * from './db/intelTopics.js';
@@ -53,6 +54,8 @@ export * from './db/canonicalAxes.js';
 export * from './db/conflicts.js';
 export * from './db/identityProposals.js';
 export * from './db/search.js';
+export * from './db/hybridSearch.js';      // GET-1056
+export * from './db/temporalWindow.js';    // GET-1056
 export * from './context.js';
 export * from './query.js';
 export * from './attention.js';

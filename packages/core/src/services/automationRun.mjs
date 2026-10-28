@@ -383,6 +383,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
     // The intel, newest first, with its category so the writer can tell a risk from a fact.
     supabase.from('claims').select('value, computed_at').eq('workspace_id', workspaceId).eq('entity_id', entityId)
       .gte('property', 'note.').lt('property', 'note/').is('invalid_at', null)
+      .is('value->metadata->>side', null)   // GET-1052: the account's intel, not what we said
       .order('computed_at', { ascending: false }).limit(80),
     // Who is involved. A handoff whose first question is "who do I email" has failed.
     supabase.from('contacts').select('id, first_name, last_name, job_title, email')

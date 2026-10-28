@@ -260,6 +260,7 @@ evidenceRouter.post('/source', verifySupabaseAuth, async (req, res) => {
         .eq('workspace_id', workspaceId)
         .like('property', 'note.%')
         .is('invalid_at', null)
+        .is('value->metadata->>side', null)   // GET-1052: our side's statement is not the meeting's text
         .filter('value->metadata->>source_ref', 'eq', meetingRef)
         .limit(1);
       const row = data?.[0];

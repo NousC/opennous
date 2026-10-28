@@ -123,7 +123,9 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
 
   // INTEL — the extracted facts (note.* claims), with verbatim content + category.
   const { data: notes } = await supabase.from('claims')
-    .select('entity_id, value').in('entity_id', contactIds).like('property', 'note.%').limit(6000);
+    .select('entity_id, value').in('entity_id', contactIds).like('property', 'note.%')
+    .is('value->metadata->>side', null)   // GET-1052: our side's words are not intel about them
+    .limit(6000);
   for (const n of notes || []) {
     const a = byId.get(n.entity_id); if (!a) continue;
     // Documents (transcripts, meeting notes, recaps) live under note.* too, with a doc_type.

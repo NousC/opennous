@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient, redactObservationRowsForViewer, filterDerivedForViewer } from '@nous/core';
+import { getSupabaseClient, redactObservationRowsForViewer, filterDerivedForViewer, isOurSideClaim } from '@nous/core';
 import { requestMessageViewer } from '../../lib/messagePrivacy.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam, workspaceInTeam } from '../../lib/auth.mjs';
@@ -177,7 +177,9 @@ observationsLogRouter.get('/', verifySupabaseAuth, async (req, res) => {
     // What was read out of a message (an action item, a fact) is shared; its quote follows the message (GET-985).
     const visibleObs = await filterDerivedForViewer(supabase, workspace_id,
       await redactObservationRowsForViewer(supabase, workspace_id, obsData || [], viewer), viewer);
-    const visibleClaims = await filterDerivedForViewer(supabase, workspace_id, claimRes.data || [], viewer);
+    // GET-1052: what our side said is never listed among the record's claims.
+    const visibleClaims = (await filterDerivedForViewer(supabase, workspace_id, claimRes.data || [], viewer))
+      .filter((c) => !(String(c.property || '').startsWith('note.') && isOurSideClaim(c.value)));
 
     // Raw observations, minus any intel root (those come from the reconciled claim
     // layer instead, so intent/deal-health aren't shown twice) and minus any

@@ -68,6 +68,7 @@ async function main() {
     .eq('workspace_id', WORKSPACE)
     .like('property', 'note.%')
     .is('invalid_at', null)
+    .is('value->metadata->>side', null)   // GET-1052: our side's facts name no buyer by design
     .order('computed_at', { ascending: false })
     .limit(LIMIT);
   if (error) throw error;

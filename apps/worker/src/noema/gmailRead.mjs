@@ -26,12 +26,14 @@ import {
   isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, saveAboutUsClaims,
 } from '@nous/core';
 import { read, parseArray, acceptsArray } from './read.mjs';
-import { theirSideOf, groundQuote } from './grounding.mjs';
+import { theirSideOf, sideBlocks, groundQuote } from './grounding.mjs';
 import { renderThread, lastAt } from './emailThreads.mjs';
 import { extractFactsFromText, persistFacts, loadSubject, loadPositionsOnFile } from '../signals/index.mjs';
 import { extractCallInsights } from '../signals/insights.mjs';
 import { screenFeatureRequests } from '../signals/alreadyHave.mjs';
 import { loadAccountBrief } from '../signals/accountBrief.mjs';
+import { saveOurSideFacts } from '../signals/ourSide.mjs';
+import { CauseLedger, saveCauseLinks } from '../signals/causeLinks.mjs';
 import { meterLLM } from '../utils/meterLLM.mjs';
 import { loadOurSide, tidyFactContent } from '../signals/extractionText.mjs';
 
@@ -482,6 +484,8 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
     text,
     ourSide,
     groundAgainst: (partText) => theirSideOf(partText),
+    // What we wrote (GET-1052) rests only on our own messages.
+    oursFrom: (partText) => sideBlocks(partText, 'us'),
     // Relative dates resolve against the thread's newest message, the date its claims are filed
     // under (GET-1051); the prompt asks for each message's own date where the thread shows it.
     anchor: lastAt(thread), timeZone: await getWorkspaceTimezone(supabase, workspaceId).catch(() => undefined),
@@ -504,15 +508,23 @@ export async function readGmailThread({ supabase, workspaceId, thread, dryRun = 
     companyId: contact.company_id ?? null,
   }));
 
+  // Cause links (GET-1053): noted by both writes below, written once after them.
+  const causes = new CauseLedger();
   const facts = await persistFacts(supabase, workspaceId, kept, {
     // Filed under the thread's newest message, not under the day we read it (GET-770).
-    type: 'email_thread', source: SOURCE, dryRun, sourceRef, occurredAt: lastAt(thread),
+    type: 'email_thread', source: SOURCE, dryRun, sourceRef, occurredAt: lastAt(thread), links: causes,
   });
   // What they said about us (GET-969): the same read, their side of the thread only.
   if (!dryRun && out.aboutUs?.length) {
     await saveAboutUsClaims(supabase, workspaceId, (await screenFeatureRequests(supabase, workspaceId, out.aboutUs)).map(f => ({ ...f, contactId, companyId: contact.company_id ?? null })),
       { sourceRef, sourceSystem: SOURCE, occurredAt: lastAt(thread), quotePrivate: true });
   }
+  // What we wrote (GET-1052): our replies, promises and pitch lines, on the account, flagged as ours.
+  if (!dryRun && out.ours?.length) {
+    await saveOurSideFacts(supabase, workspaceId, out.ours.map(f => ({ ...f, contactId, activityId: ourFirst?.id ?? null, companyId: contact.company_id ?? null })),
+      { type: 'email_thread', source: SOURCE, sourceRef, occurredAt: lastAt(thread), links: causes });
+  }
+  await saveCauseLinks(supabase, workspaceId, causes, { dryRun });
 
   // INSIGHTS — the half that was never wired. Claims are about THEM; insights are about US, and
   // the Gmail Read filed only the first. Every market signal, product ask and positioning

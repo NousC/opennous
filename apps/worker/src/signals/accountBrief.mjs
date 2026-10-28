@@ -6,7 +6,7 @@
 // objection. A rep reading the same line knows the account. This is that knowledge, built from what
 // is already on file (no model call): who they are, the people, their stack and their own tools,
 // and what they are doing with us. It is context for reading, never a source of facts.
-import { listNotes, teamReadContext } from '@nous/core';
+import { listNotes, teamReadContext, isOurSideClaim } from '@nous/core';
 
 const BRIEF_CHARS = 2500;
 const PEOPLE = 10;
@@ -19,7 +19,9 @@ const day = (ts) => (ts ? String(ts).slice(0, 10) : 'undated');
 
 /** The brief as prompt text, or '' when nothing is on file. Pure. */
 export function buildAccountBrief({ account = null, people = [], notes = [] } = {}) {
-  const live = (notes ?? []).filter(n => n && !n.superseded_by && n.content && n.freshness !== 'expired' && !n.metadata?.doc_type)
+  // Buyer facts only: never what OUR side said (GET-1052) — listNotes already drops those; a caller
+  // handing in its own notes is held to the same rule here.
+  const live = (notes ?? []).filter(n => n && !n.superseded_by && n.content && n.freshness !== 'expired' && !n.metadata?.doc_type && !isOurSideClaim(n))
     .sort((a, b) => String(b.said_at ?? '').localeCompare(String(a.said_at ?? '')));
   const lines = [];
   if (account?.name) {

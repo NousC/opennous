@@ -5,7 +5,7 @@ import { rawVisible, type ReadContext } from './readContext.js';
 import { derivedViewerForContext, filterDerivedForViewer } from '../privacy/messagePrivacy.mjs';
 import { noteFreshness, noteDecaysAt, resolveSaidAt, pairReplacements, DEAL_POSITION_CATEGORIES, type Replacement } from './claimTime.js';
 import type { Freshness } from './claims.js';
-import { normalizeClaimCategory, ACCOUNT_ROLLUP_CATEGORIES, isIntelClaim, claimLabel } from './claimCategories.js';
+import { normalizeClaimCategory, ACCOUNT_ROLLUP_CATEGORIES, isIntelClaim, isOurSideClaim, claimLabel } from './claimCategories.js';
 import { resolveClaimMarketEntity } from './marketEntities.js';
 
 // Build the text we embed for a note claim. MUST match the embeddings worker's
@@ -145,6 +145,10 @@ export interface ListNotesOpts {
   /** Also claims retired at or after this ISO time (GET-804): the health trend scores past dates
    *  against the claims that were valid then, so a fact retired last week still counts before it. */
   retiredSince?: string;
+  /** Also OUR side's statements (GET-1052: our replies, commitments, pitch lines). Off by default:
+   *  every reader of listNotes is a buyer view unless it says otherwise, and these are never a
+   *  fact about the buyer. Only the Intelligence files (objection playbook, win/loss) opt in. */
+  includeOurSide?: boolean;
 }
 
 /** List notes, newest first.
@@ -187,6 +191,9 @@ export async function listNotes(
 
   // Category is inside JSONB value — filter in JS to keep the query portable.
   let notes = (data ?? []).map(c => noteFromClaim(c as unknown as Record<string, unknown>));
+  // Our side's words are kept out of every buyer read (GET-1052) — the account page, get_account,
+  // deal health, the brief, the dedup corpus, the positions on file — unless the caller opts in.
+  if (!opts.includeOurSide) notes = notes.filter(n => !isOurSideClaim(n));
   if (opts.categories?.length) {
     const set = new Set(opts.categories);
     // saveNote stores a label outside the taxonomy ('ICP', 'Market') as 'general' and keeps the
@@ -259,7 +266,7 @@ export async function listAccountNotes(
   const rollup = new Set(ACCOUNT_ROLLUP_CATEGORIES);
   let fromPeople = (data ?? [])
     .map(c => noteFromClaim(c as unknown as Record<string, unknown>))
-    .filter(n => rollup.has(n.category))
+    .filter(n => rollup.has(n.category) && !isOurSideClaim(n))   // GET-1052: never a buyer fact
     .map(n => ({ ...n, metadata: { ...n.metadata, voiced_by_contact_id: n.metadata.voiced_by_contact_id ?? n.entity_id } }));
   const viewer = await derivedViewerForContext(supabase, ctx);
   if (viewer) fromPeople = await filterDerivedForViewer(supabase, workspaceId, fromPeople, viewer);

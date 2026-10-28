@@ -113,7 +113,9 @@ async function computeWorkspace(supabase, workspaceId, { dry }) {
   const rawClaims = await pageAll((a, b) => supabase.from('claims')
     .select('id,entity_id,value')
     .eq('workspace_id', workspaceId).like('property', 'note.%')
-    .filter('value->>source', 'eq', 'signal_extraction').range(a, b));
+    .filter('value->>source', 'eq', 'signal_extraction')
+    .is('value->metadata->>side', null)   // GET-1052: concepts are the buyers', never our pitch
+    .range(a, b));
 
   const contacts = await pageAll((a, b) => supabase.from('contacts')
     .select('id,first_name,last_name').eq('workspace_id', workspaceId).range(a, b));

@@ -69,10 +69,12 @@ export async function runEval({ cases, extract, ask, meta = {}, log = () => {} }
   for (const c of cases) {
     const r = { id: c.id, category: c.category, minimum: !!c.minimum, origin: c.origin, status: 'fail', pass: false, reasons: [], claims: [], deterministic: null, judge: null };
     try {
-      const { claims, usage } = await extract(c);
+      const { claims, ours = [], usage } = await extract(c);
       addUsage(extractionUsage, usage);
       r.claims = claims.length ? renderClaims(claims).split('\n') : [];
-      r.deterministic = deterministicChecks(claims, c);
+      // What our side said (GET-1052): shown in the result, checked by code, never judged as a claim.
+      r.ours = ours.map(o => `- [${o.category}] ${o.content}${o.speaker ? ` {said by: ${o.speaker}}` : ''}`);
+      r.deterministic = deterministicChecks(claims, c, ours);
       r.reasons.push(...r.deterministic.reasons);
       // The judge is slow and costs money; a case the checks already failed is not asked about.
       if (r.deterministic.pass && (c.traps.length || c.must.length)) {

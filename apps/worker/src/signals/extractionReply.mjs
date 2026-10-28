@@ -13,7 +13,7 @@
 // silent zero. Now both get one repair turn, and what is still unusable after it is an error.
 //
 // Pure, except readWithRepair (which calls the model it is handed). No database.
-import { normalizeClaimCategory, CLAIM_CATEGORY_KEYS, parseJsonArray, messageText } from '@nous/core';
+import { normalizeClaimCategory, normalizeOurSideCategory, CLAIM_CATEGORY_KEYS, parseJsonArray, messageText } from '@nous/core';
 
 // More than this share of malformed facts and the answer is sent back once for repair (Hindsight's bar).
 export const MALFORMED_SHARE = 0.2;
@@ -31,9 +31,10 @@ export function isKnownCategory(category) {
   return raw === 'general' || normalizeClaimCategory(raw) !== 'general';
 }
 
+const homeOf = (f) => String(f?.home ?? '').trim().toLowerCase();
 const isClaimHome = (f) => {
-  const h = String(f?.home ?? '').trim().toLowerCase();
-  return h !== 'our_product' && h !== 'market';
+  const h = homeOf(f);
+  return h !== 'our_product' && h !== 'market' && h !== 'our_side';
 };
 
 /**
@@ -44,6 +45,8 @@ const isClaimHome = (f) => {
 export function factProblem(f) {
   if (!f || typeof f !== 'object' || Array.isArray(f)) return 'not an object';
   if (typeof f.content !== 'string' || !f.content.trim()) return 'no "content"';
+  // Our side's words (GET-1052) need one of their own three categories.
+  if (homeOf(f) === 'our_side') return normalizeOurSideCategory(f.category) ? null : `our_side category "${String(f.category ?? '').slice(0, 40)}" is not our_reply, commitment or pitch_line`;
   if (!isClaimHome(f)) return null;
   if (f.category == null || String(f.category).trim() === '') return 'no "category"';
   if (!isKnownCategory(f.category)) return `category "${String(f.category).slice(0, 40)}" is not in the list`;
@@ -108,7 +111,7 @@ export function repairTurn(reply) {
     : `${reply.problems.length} of your ${reply.facts.length} facts could not be used (${[...new Set(reply.problems)].slice(0, 4).join('; ')}).`;
   const used = reply.keys.length ? ` You used the keys: ${reply.keys.slice(0, 20).join(', ')}.` : '';
   return `${what}${used}
-Every fact needs "content" (one sentence) and, for home "claim", "category" set to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}. The other keys are the ones the instructions list ("home", "importance", "quote", "speaker", "label", "about", the category's tags, and "fact_kind" with an event's "occurred_start" / "occurred_end").
+Every fact needs "content" (one sentence) and, for home "claim", "category" set to exactly one of: ${CLAIM_CATEGORY_KEYS.join(', ')}. The other keys are the ones the instructions list ("home", "importance", "quote", "speaker", "label", "about", the category's tags, "fact_kind" with an event's "occurred_start" / "occurred_end", and "caused_by").
 Reply exactly with a JSON array [...] of the same facts, corrected, and nothing else. Do not add facts. If there is nothing to record, reply exactly [].`;
 }
 

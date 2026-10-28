@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { cosine, parseVector } from './aboutUsClaims.js';
 import { getInternalEntityIds } from './teamMembers.js';
 import { canonicalEntityNames } from './marketEntities.js';
+import { isOurSideClaim } from './claimCategories.js';
 
 // The insight engine (GET-971): one way to turn what customers said into insights.
 //
@@ -297,6 +298,10 @@ export async function loadMembers(supabase: SupabaseClient, workspaceId: string)
     for (const r of rows) {
       const v = r.value ?? {};
       if (internal.has(r.entity_id)) continue;
+      // Our side's words never count toward an insight (GET-1052, founder's call: not in Insights
+      // for now). The category filter above already excludes them; this holds if one is ever
+      // filed under a buyer category with the side flag.
+      if (isOurSideClaim(v)) continue;
       // A competitor named only in passing is not one we compete with.
       if (t.accountCategory === 'competitor' && v.metadata?.stance === 'mentioned') continue;
       const person = company.get(r.entity_id) === r.entity_id ? (v.metadata?.voiced_by_contact_id ?? null) : r.entity_id;

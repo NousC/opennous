@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { searchObservations, searchClaims } from './db/search.js';
+import { searchObservations } from './db/search.js';
+import { hybridSearchClaims } from './db/hybridSearch.js';
 import { rawVisible, type ReadContext } from './db/readContext.js';
 import { loadMessageViewer, redactObservationRowsForViewer, filterDerivedForViewer } from './privacy/messagePrivacy.mjs';
 import { getInternalEntityIds } from './db/teamMembers.js';
 import { getPersonalEntityIds, getProductUserEntityIds } from './db/relationship.js';
+import { isOurSideClaim } from './db/claimCategories.js';
 
 // runQuery() — the corpus-query engine behind POST /v2/query.
 //
@@ -82,7 +84,8 @@ export interface FactItem {
   content: string;
   source: string | null;
   date: string | null;        // when the fact was learned (claim valid_from)
-  similarity: number;
+  similarity: number;         // fused relevance vs the top hit, 0..1 (GET-1056; was cosine similarity)
+  matched_by?: string[];      // the hybrid arms that found it: semantic, keyword, names, dates, expansion
 }
 
 export interface QueryResult {
@@ -105,6 +108,7 @@ export interface QueryResult {
 
 const DAY = 86_400_000;
 const ENTITY_FETCH_CAP = 1_000;             // when computing return='entities' or without-set
+const FACTS_FETCH_CAP = 300;                // fused facts considered by a facts query (GET-1056)
 
 // Claim properties fetched alongside names so the agent can group results by
 // firmographics (e.g. "reply rate by industry") without a call per entity.
@@ -200,9 +204,11 @@ async function resolveEntityNames(
   return nameByEntity;
 }
 
-// Facts-corpus query — semantic search over note.* claims (cross-account fact
-// search). scope.facts routes here. Returns FactItems; return:'entities'
-// collapses to the single best-matching fact per account.
+// Facts-corpus query — hybrid search over note.* claims (cross-account fact search, GET-1056):
+// keywords + names + the question's date window + same-account expansion, fused with the
+// semantic arm when embeddings are available (hybridSearch.ts). scope.facts routes here. Returns
+// FactItems in fused order; return:'entities' collapses to the single best-ranked fact per account.
+// It used to be embedding-only, so a workspace without an OpenAI key got no facts at all.
 async function runFactsQuery(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -217,20 +223,20 @@ async function runFactsQuery(
     matched: 0, returned: 0, sampled: false, items: [],
     rollups: { by_type: {}, by_source: {} }, meta: { token_estimate: 0 },
   };
-  // Facts search is inherently semantic — without a question there's nothing to
-  // rank against.
+  // Facts search ranks against the question — without one there's nothing to rank against.
   if (!question || !question.trim()) return empty;
 
-  const hits = await searchClaims(supabase, workspaceId, question, {
-    propertyPrefix: 'note.', limit: ENTITY_FETCH_CAP, threshold: 0.3,
-  }, ctx);
-  const factHits = hits.filter(h => {
-    const v = h.value as { content?: string; metadata?: { doc_type?: string } } | null;
-    return h.entity_id && v?.content && !v.metadata?.doc_type;   // facts only, not documents
+  // One fused pass, wide enough for the per-account collapse; the slice to `limit` is below.
+  const res = await hybridSearchClaims(supabase, workspaceId, question, {
+    limit: FACTS_FETCH_CAP, armLimit: 200, readContext: ctx,
   });
+  const factHits = res.hits;
   if (!factHits.length) return empty;
 
   const names = await resolveEntityNames(supabase, workspaceId, [...new Set(factHits.map(h => h.entity_id))]);
+  // `similarity` is now the fused relevance relative to the best hit (1 = the top fact), so the
+  // number the agent sees orders the list whichever arms found each fact.
+  const top = factHits[0].fused || 1;
   let factItems: FactItem[] = factHits.map(h => {
     const v = h.value as { category?: string; content?: string; source?: string };
     return {
@@ -240,19 +246,17 @@ async function runFactsQuery(
       content: String(v.content ?? '').trim(),
       source: v.source ?? null,
       date: h.valid_from ?? null,
-      similarity: Math.round((h.similarity ?? 0) * 100) / 100,
+      similarity: Math.round((h.fused / top) * 100) / 100,
+      matched_by: Object.keys(h.arms),
     };
   });
 
   if (returnMode === 'entities') {
+    // Fused order is best-first, so the first fact seen per account is its best.
     const best = new Map<string, FactItem>();
-    for (const f of factItems) {
-      const cur = best.get(f.entity_id);
-      if (!cur || f.similarity > cur.similarity) best.set(f.entity_id, f);
-    }
+    for (const f of factItems) if (!best.has(f.entity_id)) best.set(f.entity_id, f);
     factItems = [...best.values()];
   }
-  factItems.sort((a, b) => b.similarity - a.similarity);
 
   const matched = factItems.length;
   const out = factItems.slice(0, limit);

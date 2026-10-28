@@ -19,7 +19,8 @@ export async function accountContext(supabase, workspaceId) {
   // Claim categories discussed, per account (what's been qualified).
   const { data: claims } = await supabase.from('claims')
     .select('entity_id, value').eq('workspace_id', workspaceId)
-    .like('property', 'note.%').is('invalid_at', null);
+    .like('property', 'note.%').is('invalid_at', null)
+    .is('value->metadata->>side', null);   // GET-1052: what we said qualifies nothing about them
   for (const cl of claims ?? []) {
     const cid = toCompany(cl.entity_id);
     if (!cid) continue;

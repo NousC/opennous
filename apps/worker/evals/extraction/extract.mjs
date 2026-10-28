@@ -81,7 +81,30 @@ export function toEvalClaim(f, { people, account, saidAt }) {
     quote: f.quote ?? null,
     // When it happens or happened (GET-1051), as persistFacts would store it in the claim's metadata.
     ...occurredOf(f),
+    ...causesOf(f),
   };
+}
+
+/**
+ * One of OUR side's facts (GET-1052) as the runner holds it: kept apart from the claims, which are
+ * the buyer's and what the judge reads. Checked deterministically (expect.ours). Pure.
+ */
+export function toEvalOurs(f) {
+  return {
+    category: f.category,
+    content: f.content,
+    quote: f.quote ?? null,
+    speaker: f.speaker ?? null,
+    ...(f.answers ? { answers: f.answers } : {}),
+    ...occurredOf(f),
+    ...causesOf(f),
+  };
+}
+
+/** A fact's place in its read and the facts that caused it (GET-1053): `ref`, and `causedBy` when it
+ *  names any. expect.links reads them; a link to a fact the read dropped finds no end. Pure. */
+function causesOf(f) {
+  return { ...(f.fact_ref ? { ref: f.fact_ref } : {}), ...(f.caused_by_refs?.length ? { causedBy: f.caused_by_refs } : {}) };
 }
 
 /** A fact's fact_kind and occurred dates, only the ones it has. Pure. */
@@ -118,17 +141,19 @@ export async function extractCase(c) {
   const db = fakeDb(seed);
   const occurredAt = `${saidAt}T12:00:00.000Z`;
   const ourNames = ourSide.names ?? [];
+  const ours = [];   // our side's facts (GET-1052), handed over by the read in a dry run too
+  const onOurs = (fs) => { ours.push(...fs); };
   let facts;
   if (kind === 'email' || people.length === 1) {
     // strict: every failure throws here instead of returning [].
     facts = await extractActivitySignals({
       supabase: db, workspaceId, contactId: people[0].id, activityId: null,
       type: kind === 'email' ? 'email_reply' : 'meeting_held', source: 'eval', summary: text,
-      dryRun: true, strict: true, occurredAt, ourNames, aboutUs: false,
+      dryRun: true, strict: true, occurredAt, ourNames, aboutUs: false, onOurs,
     });
   } else {
     facts = await extractMeetingSignals({
-      supabase: db, workspaceId, source: 'eval', summary: text, dryRun: true, occurredAt, ourNames, insights: false,
+      supabase: db, workspaceId, source: 'eval', summary: text, dryRun: true, occurredAt, ourNames, insights: false, onOurs,
       participants: people.map(p => ({ contactId: p.id, activityId: null, name: p.name, company: account.name, companyId })),
     });
   }
@@ -138,7 +163,7 @@ export async function extractCase(c) {
   const usage = usageFrom(db);
   if (!Object.keys(usage).length) throw new Error('extraction made no model call (the read stopped before the model)');
   const claims = (facts ?? []).filter(f => f && f.action !== 'SKIP').map(f => toEvalClaim(f, { people, account, saidAt }));
-  return { claims, usage };
+  return { claims, ours: ours.map(toEvalOurs), usage };
 }
 
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 12);

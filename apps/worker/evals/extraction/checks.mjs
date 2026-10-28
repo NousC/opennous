@@ -10,11 +10,13 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CLAIM_CATEGORY_KEYS } from '@nous/core';
+import { CLAIM_CATEGORY_KEYS, OUR_SIDE_CATEGORY_KEYS } from '@nous/core';
 
 export const CASE_CATEGORIES = ['selectivity', 'attribution', 'category', 'temporal', 'no_invention', 'competitor_naming'];
 const CASE_KEYS = new Set(['id', 'category', 'origin', 'minimum', 'input', 'must', 'traps', 'expect']);
-const EXPECT_KEYS = new Set(['maxClaims', 'categories', 'contains', 'notCategories', 'occurred']);
+const EXPECT_KEYS = new Set(['maxClaims', 'categories', 'contains', 'notCategories', 'occurred', 'ours', 'links']);
+// What our side said (GET-1052), checked apart from the buyer's claims: the judge never reads them.
+const OURS_KEYS = new Set(['max', 'categories', 'notCategories', 'contains', 'occurred']);
 const KINDS = new Set(['meeting', 'email']);
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const nonEmpty = (s) => typeof s === 'string' && s.trim().length > 0;
@@ -64,6 +66,8 @@ export function validateCase(c) {
       errs.push(`${at}: expect.contains must be an array of strings (or of string arrays, any one of which counts)`);
     }
     if (e.occurred !== undefined) errs.push(...occurredExpectProblems(e.occurred).map(p => `${at}: expect.occurred ${p}`));
+    if (e.ours !== undefined) errs.push(...oursExpectProblems(e.ours).map(p => `${at}: expect.ours ${p}`));
+    if (e.links !== undefined) errs.push(...linksExpectProblems(e.links).map(p => `${at}: expect.links ${p}`));
     if (e.maxClaims === 0 && (e.categories?.length || e.contains?.length || e.occurred?.length)) errs.push(`${at}: expect.maxClaims 0 contradicts categories/contains`);
   }
   // A case that checks nothing passes everything.
@@ -93,6 +97,42 @@ export function occurredExpectProblems(list) {
       for (const k of ['start', 'end']) if (!DAY_RE.test(String(o[k] ?? '')) || Number.isNaN(Date.parse(o[k]))) errs.push(`${at}.${k} must be a YYYY-MM-DD date`);
       if (DAY_RE.test(String(o.start ?? '')) && DAY_RE.test(String(o.end ?? '')) && o.end < o.start) errs.push(`${at}.end is before its start`);
     }
+  });
+  return errs;
+}
+
+/** What is wrong with an `expect.ours` block (GET-1052), as sentence fragments. Pure.
+ *  { max, categories, notCategories, contains, occurred } over OUR side's facts; categories are the
+ *  stored our-side keys (our_reply, our_commitment, pitch_line). */
+export function oursExpectProblems(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return ['must be an object'];
+  const errs = [];
+  for (const k of Object.keys(o)) if (!OURS_KEYS.has(k)) errs.push(`has unknown key "${k}"`);
+  if (o.max !== undefined && !(Number.isInteger(o.max) && o.max >= 0)) errs.push('max must be a whole number >= 0');
+  for (const k of ['categories', 'notCategories']) {
+    if (o[k] === undefined) continue;
+    if (!Array.isArray(o[k])) { errs.push(`${k} must be an array`); continue; }
+    for (const cat of o[k]) if (!OUR_SIDE_CATEGORY_KEYS.includes(cat)) errs.push(`${k} has unknown our-side category "${cat}"`);
+  }
+  if (o.contains !== undefined && !(Array.isArray(o.contains)
+    && o.contains.every(x => nonEmpty(x) || (Array.isArray(x) && x.length && x.every(nonEmpty))))) errs.push('contains must be an array of strings (or of string arrays)');
+  if (o.occurred !== undefined) errs.push(...occurredExpectProblems(o.occurred).map(p => `occurred ${p}`));
+  if (o.max === 0 && (o.categories?.length || o.contains?.length || o.occurred?.length)) errs.push('max 0 contradicts categories/contains');
+  return errs;
+}
+
+/** What is wrong with an `expect.links` list (GET-1053), as sentence fragments. Pure.
+ *  Each entry is { from, to }: a cause link from a fact of category `from` (the effect) to one of
+ *  category `to` (the cause), either a claim category or one of our side's (our_reply, …). An empty
+ *  list means the read must link nothing. */
+export function linksExpectProblems(list) {
+  if (!Array.isArray(list)) return ['must be an array (use [] for "no link")'];
+  const known = new Set([...CLAIM_CATEGORY_KEYS, ...OUR_SIDE_CATEGORY_KEYS]);
+  const errs = [];
+  list.forEach((l, n) => {
+    if (!l || typeof l !== 'object' || Array.isArray(l)) { errs.push(`[${n}] is not an object`); return; }
+    for (const k of Object.keys(l)) if (!['from', 'to'].includes(k)) errs.push(`[${n}] has unknown key "${k}"`);
+    for (const k of ['from', 'to']) if (!known.has(l[k])) errs.push(`[${n}].${k} "${l[k]}" is not a claim or our-side category`);
   });
   return errs;
 }
@@ -190,12 +230,55 @@ export function placeholderYearProblems(claims, input) {
 
 const haystack = (c) => `${c.content ?? ''} ${Object.values(c.tags ?? {}).filter(v => v != null).join(' ')}`.toLowerCase();
 
+/** The checks over OUR side's facts (GET-1052), as failure reasons prefixed "ours". Pure. */
+export function oursProblems(ours = [], o = undefined) {
+  if (!o) return [];
+  const out = [];
+  if (o.max !== undefined && ours.length > o.max) out.push(`ours.max: ${ours.length} of our side's fact(s), at most ${o.max} expected`);
+  const present = new Set(ours.map(x => x.category));
+  for (const cat of o.categories ?? []) if (!present.has(cat)) out.push(`ours.categories: no [${cat}] fact of ours`);
+  for (const cat of o.notCategories ?? []) {
+    const hits = ours.filter(x => x.category === cat);
+    if (hits.length) out.push(`ours.notCategories: ${hits.length} [${cat}] fact(s) of ours: ${hits.map(h => `"${h.content}"`).join(', ')}`);
+  }
+  const hay = (x) => `${x.content ?? ''} ${x.answers ?? ''}`.toLowerCase();
+  for (const want of o.contains ?? []) {
+    const any = (Array.isArray(want) ? want : [want]).map(s => s.toLowerCase());
+    if (!ours.some(x => any.some(s => hay(x).includes(s)))) out.push(`ours.contains: no fact of ours mentions ${any.map(s => `"${s}"`).join(' or ')}`);
+  }
+  out.push(...occurredProblems(ours.map(x => ({ ...x, tags: {} })), o.occurred).map(r => `ours.${r}`));
+  return out;
+}
+
+/**
+ * The cause links (GET-1053) among a read's output, as failure reasons prefixed "links". Each fact
+ * (claim or ours) carries `ref` and `causedBy` (refs of its causes, extract.mjs); a link counts only
+ * when both ends are in the output, as production files it. `[]` expects none; otherwise each
+ * expected { from, to } pair must be present (others may be too). Pure.
+ */
+export function linkProblems(claims = [], ours = [], list = undefined) {
+  if (list === undefined) return [];
+  const all = [...claims, ...ours];
+  const byRef = new Map(all.filter(x => x?.ref).map(x => [x.ref, x]));
+  const got = [];
+  for (const x of all) for (const r of x?.causedBy ?? []) { const cause = byRef.get(r); if (cause && cause !== x) got.push({ from: x, to: cause }); }
+  const shown = (l) => `[${l.from.category}] "${l.from.content}" caused_by [${l.to.category}] "${l.to.content}"`;
+  if (!list.length) return got.length ? [`links: expected none, got ${got.length}: ${got.map(shown).join('; ')}`] : [];
+  const out = [];
+  for (const want of list) {
+    if (!got.some(l => l.from.category === want.from && l.to.category === want.to)) {
+      out.push(`links: no [${want.from}] caused_by [${want.to}] link${got.length ? ` (got ${got.map(shown).join('; ')})` : ' (no links at all)'}`);
+    }
+  }
+  return out;
+}
+
 /**
  * The checks that need no judge, in order: claim count, categories present, categories absent,
- * text contained, placeholder years. Returns { pass, reasons } — every failing check is listed,
- * not just the first, so one run shows everything a prompt change broke.
+ * text contained, placeholder years, and (GET-1052) our side's facts. Returns { pass, reasons } —
+ * every failing check is listed, not just the first, so one run shows everything a prompt change broke.
  */
-export function deterministicChecks(claims, c) {
+export function deterministicChecks(claims, c, ours = []) {
   const e = c.expect ?? {};
   const reasons = [];
   if (e.maxClaims !== undefined && claims.length > e.maxClaims) {
@@ -215,6 +298,8 @@ export function deterministicChecks(claims, c) {
   }
   reasons.push(...occurredProblems(claims, e.occurred));
   reasons.push(...placeholderYearProblems(claims, c.input));
+  reasons.push(...oursProblems(ours, e.ours));
+  reasons.push(...linkProblems(claims, ours, e.links));
   return { pass: reasons.length === 0, reasons };
 }
 

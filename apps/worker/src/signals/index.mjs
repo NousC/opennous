@@ -15,7 +15,7 @@ import { listNotes, saveNote, corroborateNote, searchClaims, listActivities, rec
   normalizeClaimCategory, normalizeClaimAbout, claimCategoryPromptBlock, CLAIM_CATEGORY_KEYS, ACCOUNT_ROLLUP_CATEGORIES,
   resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, activityDirection, claimSubtagsFor, claimFreeTextFor,
   violatesPronounRule, isTitleOnlyFact, TITLE_ONLY_REASON, emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact, isIntelClaim,
-  isoDateIn, resolveSaidAt } from '@nous/core';
+  isoDateIn, resolveSaidAt, isOurSideCategory } from '@nous/core';
 import { extractCallInsights } from './insights.mjs';
 import { screenFeatureRequests } from './alreadyHave.mjs';
 import { recomputeEntityStage } from '../workers/stageDerivation.mjs';
@@ -28,6 +28,8 @@ import { groundFacts, spokenByOurSide } from '../noema/grounding.mjs';
 import { externalEvidence } from '../noema/externalEvidence.mjs';
 import { splitForExtraction, halveForRetry, loadOurSide, ourSideLabel, ourSideRule, tidyFactContent, ourOfferBlock, factWording } from './extractionText.mjs';
 import { accountBriefBlock, loadAccountBrief } from './accountBrief.mjs';
+import { OUR_SIDE_RULES, speakerRolesLine, sellerNames, checkOurSide, saveOurSideFacts } from './ourSide.mjs';
+import { CAUSE_RULES, CAUSED_BY_FIELD, stampCauses, CauseLedger, saveCauseLinks } from './causeLinks.mjs';
 import { checkSignals, READ_IN_CONTEXT } from './signalCheck.mjs';
 import { OCCURRED_RULES, OCCURRED_FIELDS, anchorLine, normalizeOccurred, occurredMetaFor } from './occurredDates.mjs';
 import { readWithRepair, readReply, usableFacts, unusable, splitOnOverflow } from './extractionReply.mjs';
@@ -723,29 +725,38 @@ WHAT THEY SAY ABOUT US IS KEPT TOO. The bars above decide what is a claim about 
 - "asked_by": their role or title as stated ("Head of RevOps"). Omit when unsaid.
 - "job": for a pain, a wish or a goal, the job they are trying to get done, in one short line. This is YOUR reading, not their words, so it never goes in "content" or "quote".`;
 
-const HOMES = new Set(['claim', 'our_product', 'market']);
+const HOMES = new Set(['claim', 'our_product', 'market', 'our_side']);
 
 // The fields only a claim about us carries (GET-969); a claim about them never keeps them.
 const ABOUT_US_FIELDS = ['kind', 'what', 'use_case', 'product_area', 'asked_by', 'job'];
 
-/** Claims about them, and claims about us (GET-969: kept, no longer counted away), each in its own
- *  list. A missing or unknown home is a claim, never a silent drop. Low importance is dropped for
- *  claims about them only: one customer's small ask is exactly what an insight counts. Pure. */
+/** Claims about them, claims about us (GET-969: kept, no longer counted away), and our side's own
+ *  words (GET-1052), each in its own list. A missing or unknown home is a claim, never a silent
+ *  drop. Low importance is dropped for claims about them only: one customer's small ask is exactly
+ *  what an insight counts. A fact filed under an our-side category (our_reply, pitch_line) is ours
+ *  whatever home it was given: it is never a buyer claim. Pure. */
 export function routeFacts(facts) {
   const claims = [];
   const aboutUs = [];
-  const routed = { our_product: 0, market: 0, low_importance: 0 };
+  const ours = [];
+  const routed = { our_product: 0, market: 0, our_side: 0, low_importance: 0 };
   for (const f of facts ?? []) {
     if (!f || typeof f !== 'object') continue;
     const { home, importance, ...rest } = f;
     const h = String(home ?? '').trim().toLowerCase();
+    if (h === 'our_side' || isOurSideCategory(rest.category)) {
+      routed.our_side++;
+      for (const k of ABOUT_US_FIELDS) delete rest[k];
+      ours.push({ ...rest, home: 'our_side' });
+      continue;
+    }
     if (HOMES.has(h) && h !== 'claim') { routed[h]++; aboutUs.push({ ...rest, home: h }); continue; }
     // Ranking, not holding back (GET-789): the model rates each fact and the low ones are not filed.
     if (String(importance ?? '').trim().toLowerCase() === 'low') { routed.low_importance++; continue; }
     for (const k of ABOUT_US_FIELDS) delete rest[k];
     claims.push(rest);
   }
-  return { claims, aboutUs, routed };
+  return { claims, aboutUs, ours, routed };
 }
 
 // What the claims about us add to a read's answer, on top of its facts' budget.
@@ -754,6 +765,19 @@ const ABOUT_US_TOKENS = 800;
 // Marks a claim about us on its way through grounding, so the two can be told apart afterwards.
 const ABOUT_US = Symbol('aboutUs');
 export const markAboutUs = (f) => ({ ...f, [ABOUT_US]: true });
+
+// And our side's words (GET-1052): taken out before grounding and the our-side-quote guard, which
+// would (rightly) drop every one of them as a buyer fact, and checked on their own (checkOurSide).
+const OURS = Symbol('ours');
+export const markOurs = (f) => ({ ...f, [OURS]: true });
+/** Split our side's facts off a read's facts, unmarked. Pure. */
+export function splitOurs(facts) {
+  const rest = [], ours = [];
+  for (const f of facts ?? []) {
+    if (f?.[OURS]) { const { [OURS]: _, ...plain } = f; ours.push(plain); } else rest.push(f);
+  }
+  return { rest, ours };
+}
 
 /** After grounding: claims about them, and claims about us that kept a checked quote (an insight
  *  rests on their own words, GET-974; a claim about them may stand without one). Pure. */
@@ -766,7 +790,7 @@ export function splitAboutUs(facts) {
   return { claims, aboutUs };
 }
 
-const HOME_FIELD = '"home": "claim|our_product|market", "importance": "high|medium|low", "kind": "<our_product or market only>", "what": "<our_product or market only>", "use_case": "<our_product only>", "product_area": "<our_product only>", "asked_by": "<our_product or market only>", "job": "<our_product or market only, your reading>"';
+const HOME_FIELD = '"home": "claim|our_product|market|our_side", "importance": "high|medium|low", "answers": "<our_reply only: the concern it answered>", "kind": "<our_product or market only>", "what": "<our_product or market only>", "use_case": "<our_product only>", "product_area": "<our_product only>", "asked_by": "<our_product or market only>", "job": "<our_product or market only, your reading>"';
 
 // ── Position shifts (GET-770) ─────────────────────────────────────────────────
 //
@@ -892,7 +916,11 @@ ${SELECTIVITY_RULES}
 
 ${ROUTING_RULES}
 
-${OCCURRED_RULES}`;
+${OUR_SIDE_RULES}
+
+${OCCURRED_RULES}
+
+${CAUSE_RULES}`;
   return systemPrompt;
 }
 
@@ -960,7 +988,8 @@ export function buildActivitySignalsPrompt({ contactName, company = null, type, 
     const user = `Extract durable CRM intelligence about ${contactName} from this private ${channelLabel}.
 ${provenance}
 Record facts about ${contactName}, drawn from what THEY reveal about themselves, their company, needs, constraints, opinions, or plans. ALSO record facts about the RELATIONSHIP between ${contactName} and ${we}: how ${contactName} found ${we} or why they reached out (a video, post, referral, or event), anything ${contactName} offered ${we} or introductions they can make, and any objection or critique ${contactName} raised about the product or how it differs from alternatives. Do NOT turn ${we}'s OWN questions or statements into facts about ${contactName} (e.g. if ${we} asked "what's behind your product?", that is NOT a fact that ${contactName} is interested in the product) — but an offer, an introduction, a critique, or a reason-for-reaching-out that ${contactName} genuinely voices IS a fact about ${contactName} and must be recorded.
-${contactCtx ? `Contact: ${contactCtx}` : ''}${anchorLine(anchor)}
+${contactCtx ? `Contact: ${contactCtx}` : ''}
+${speakerRolesLine(ourSide, [contactName])}${type === 'conversation_thread' ? ` Lines beginning "You:" are the seller's.` : ''}${anchorLine(anchor)}
 ${accountBriefBlock(accountBrief)}${partPreamble(part, 'Message')}
 
 Message: "${summary}"
@@ -1002,12 +1031,12 @@ ${ourOfferBlock(ourSide)}Rules:
   - "requirement" is a hard condition for buying, not a wish or a feature idea.
 - Extract EVERY fact that clears all four bars — there is no target number. A thin message often yields none or one; a content-rich meeting may yield many. NEVER pad to reach a count, NEVER split one fact into several, and NEVER restate the same fact in different words.
 - Quality over quantity: one sharp, specific fact is worth more than five vague ones. If nothing clears all four bars, return [].
-- Hard ceiling of ${maxFacts} facts with home "claim" — a safety limit, not a goal. What they say about us (our_product, market) does not count toward it. Stop when you run out of facts that genuinely clear the bar, well before the ceiling.
+- Hard ceiling of ${maxFacts} facts with home "claim" — a safety limit, not a goal. What they say about us (our_product, market) and what our side said (our_side) do not count toward it. Stop when you run out of facts that genuinely clear the bar, well before the ceiling.
 - The deal bar, where each statement belongs (home), and the categories are in the instructions above; they apply here.
 
 ${positionShiftBlock(positionsOnFile)}
 
-Output ONLY valid JSON: [{${HOME_FIELD}, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<one category key>", "about": "person|company", "job_title": "<their bare title, when the text states one — or omit>", "entity": "<competitor name, competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>", ${OCCURRED_FIELDS}${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
+Output ONLY valid JSON: [{${HOME_FIELD}, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<one category key>", "about": "person|company", "job_title": "<their bare title, when the text states one — or omit>", "entity": "<competitor name, competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>", ${OCCURRED_FIELDS}${CAUSED_BY_FIELD}${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
 
   - If category is "staff_change": set "change" to one of: "left", "joined", "moved", "reorg", "away" (out for months on parental or medical leave — not a week off). Name the person the change is about in "content".
 
@@ -1065,6 +1094,9 @@ export async function extractFactsFromText({
   contactName, company = null, type, text, maxFactsOverride = null, ourSide = null,
   model = null, fallback = undefined, strict = false, onPart = null, onCall = null,
   groundAgainst = null, criteria = '',   // what the workspace adds to the prompt (lib/extractionCriteria.mjs)
+  // GET-1052: the text OUR side's quotes must rest on, when the source marks it (an email thread's
+  // "us" blocks: sideBlocks). Default: what was shown, with each quote's speaker checked.
+  oursFrom = null,
   evidenceMessages = null, evidenceContactId = null,
   // The dated positions on file (GET-770): shown to the model, and its "replaces" resolved to ids.
   positionsOnFile = [],
@@ -1083,7 +1115,10 @@ export async function extractFactsFromText({
 }) {
   const anchorIso = isoDateIn(resolveSaidAt(anchor), timeZone);
   const { context, parts } = splitForExtraction(text);
-  const out = { facts: [], aboutUs: [], failedParts: 0, parts: parts.length, calls: [], offered: 0, grounded: 0, routed: { our_product: 0, market: 0, low_importance: 0 } };
+  const out = { facts: [], aboutUs: [], ours: [], failedParts: 0, parts: parts.length, calls: [], offered: 0, grounded: 0, routed: { our_product: 0, market: 0, our_side: 0, low_importance: 0 } };
+  // Who our side is, by name, for checking our side's facts (GET-1052): the transcript's labels, the
+  // team, and "You" — a thread's own label for our lines.
+  const sellers = sellerNames(ourSide, [...ourNames, ...(type === 'conversation_thread' ? ['You'] : [])]);
   // Read one piece of text; on no answer, once, read it as two halves (GET-415). Each yields
   // {raw, shown, maxFacts} — the facts and the exact text they must be grounded against.
   // One budget per CALL, split across its parts (GET-789): a long call no longer yields more facts
@@ -1115,10 +1150,10 @@ export async function extractFactsFromText({
       onCall: async (m) => { out.calls.push(m); await onCall?.(m); },
     });
     if ((reply.status === 'facts' && !unusable(reply)) || reply.status === 'empty') {
-      const { claims, aboutUs, routed } = routeFacts(resolveReplaces(usableFacts(reply.facts, { label }), positionsOnFile));
-      out.routed.our_product += routed.our_product; out.routed.market += routed.market; out.routed.low_importance += routed.low_importance;
+      const { claims, aboutUs, ours, routed } = routeFacts(resolveReplaces(usableFacts(stampCauses(reply.facts), { label }), positionsOnFile));
+      out.routed.our_product += routed.our_product; out.routed.market += routed.market; out.routed.our_side += routed.our_side; out.routed.low_importance += routed.low_importance;
       if (routed.our_product || routed.market || routed.low_importance) console.log(`[ROUTER] ${type}: ${routed.our_product} product feedback, ${routed.market} market view(s) kept as claims about us, ${routed.low_importance} low-importance dropped`);
-      return [{ raw: [...claims, ...aboutUs.map(markAboutUs)], shown: piece, maxFacts }];
+      return [{ raw: [...claims, ...aboutUs.map(markAboutUs), ...ours.map(markOurs)], shown: piece, maxFacts }];
     }
     if (reply.status === 'truncated') {
       // The answer overflowed: the same text is too much for one answer, so read it as two (GET-1050).
@@ -1147,7 +1182,12 @@ export async function extractFactsFromText({
     return [];
   };
   for (let index = 0; index < parts.length; index++) {
-    for (const { raw, shown, maxFacts } of await readPiece(parts[index], index, true)) {
+    for (const { raw: read, shown, maxFacts } of await readPiece(parts[index], index, true)) {
+      // Our side's words (GET-1052) leave here: their own light check (a verbatim quote our side
+      // spoke), never the buyer guards below, which exist to drop exactly these lines.
+      const { rest: raw, ours } = splitOurs(read);
+      out.ours.push(...checkOurSide(ours.map(f => ({ ...f, content: tidyFactContent(f.content, ourSide) })),
+        oursFrom ? { text: oursFrom(shown), ourNames: sellers, allOurs: true } : { text: shown, ourNames: sellers }));
       // A quote the model did not read in this piece is one it made up, and an unchecked quote is
       // worse than none: it looks like evidence. Grounded against the exact text the model was
       // shown — or, for a two-sided source, the narrower slice of it the claim may speak for.
@@ -1181,7 +1221,8 @@ export async function extractFactsFromText({
 // `aboutUsRef`: the conversation's identity for claims about us when it has no sourceRef (a LinkedIn
 // thread rollup), so a re-read files nothing twice. `quotePrivate`: the conversation is a private
 // message whatever its type says.
-export async function extractActivitySignals({ supabase, activityId, sourceActivityIds, contactId, workspaceId, type, source, summary, maxFactsOverride, dryRun = false, strict = false, sourceRef = null, occurredAt = null, ourNames = [], evidenceMessages = null, aboutUs = true, aboutUsRef = null, quotePrivate = false, sourceHash = null }) {
+// `onOurs(facts)` (GET-1052): handed our side's checked facts, dry run or not, so the eval can see them.
+export async function extractActivitySignals({ supabase, activityId, sourceActivityIds, contactId, workspaceId, type, source, summary, maxFactsOverride, dryRun = false, strict = false, sourceRef = null, occurredAt = null, ourNames = [], evidenceMessages = null, aboutUs = true, aboutUsRef = null, quotePrivate = false, sourceHash = null, onOurs = null }) {
   try {
     // THE CREDIT GATE (GET-531). Reading is what spends credits, so this is where the band
     // has to bite — one question per workspace per five minutes, in front of every caller:
@@ -1208,6 +1249,9 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
     // Part by part, persisting as it goes: a later part's merge decision then sees the
     // facts an earlier part already saved, so the overlap between parts dedupes.
     const saved = [];
+    // Cause links (GET-1053): every write of this conversation notes the claim each fact became;
+    // the links between them are written once, after the last write.
+    const causes = new CauseLedger();
     const read = await extractFactsFromText({
       contactName: contact.name, company: contact.company, type, text: summary, maxFactsOverride, ourSide, strict, positionsOnFile, ourNames, accountBrief,
       evidenceMessages, evidenceContactId: contactId,
@@ -1223,13 +1267,19 @@ export async function extractActivitySignals({ supabase, activityId, sourceActiv
         if (!facts.length) return;
         const kept = facts.map(f => ({ ...f, contactId, activityId: f.activityId ?? activityId,
           sourceActivityIds: f.sourceActivityIds ?? sourceActivityIds, companyId: contact?.company_id ?? null }));
-        saved.push(...await persistFacts(supabase, workspaceId, kept, { type, source, dryRun, sourceRef, sourceHash, occurredAt, strict }));
+        saved.push(...await persistFacts(supabase, workspaceId, kept, { type, source, dryRun, sourceRef, sourceHash, occurredAt, strict, links: causes }));
       },
     });
     if (!dryRun && aboutUs && read.aboutUs.length) {
       await saveAboutUsClaims(supabase, workspaceId, (await screenFeatureRequests(supabase, workspaceId, read.aboutUs)).map(f => ({ ...f, contactId, companyId: contact?.company_id ?? null })),
         { sourceRef: sourceRef ?? aboutUsRef, sourceSystem: source ?? null, occurredAt, quotePrivate: quotePrivate || isPrivateMessageType(type) || type === 'email_thread' });
     }
+    // What our side said (GET-1052): on the account, flagged side = 'ours', read only by the
+    // Intelligence files. Best-effort; never costs the buyer facts above.
+    const ours = (read.ours ?? []).map(f => ({ ...f, contactId, activityId: activityId ?? null, companyId: contact?.company_id ?? null }));
+    if (ours.length) await onOurs?.(ours);
+    if (!dryRun && ours.length) await saveOurSideFacts(supabase, workspaceId, ours, { type, source, sourceRef: sourceRef ?? aboutUsRef, sourceHash, occurredAt, links: causes });
+    await saveCauseLinks(supabase, workspaceId, causes, { dryRun });
     return saved;
   } catch (err) {
     if (err instanceof ModelUnavailableError) {
@@ -1339,7 +1389,9 @@ const REFILE_ON_ACCOUNT = new Set(['authority', 'budget', 'blocker']);
 // "The CFO decides" → "the CFO decides" after "At Brindle, "; a name or an acronym keeps its capital.
 const leadLower = (s) => /^(The|A|An|Their|Its|Budget|Money|Spending|Approval|Sign-off|Every|All|No)\b/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
 
-export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, sourceHash = null, occurredAt = null, strict = false }) {
+// `links` (GET-1053): the conversation's CauseLedger. Each fact that reaches a claim is noted with
+// that claim's id — the one it became, or the one it repeats — so its cause links can be written.
+export async function persistFacts(supabase, workspaceId, kept, { type, source, dryRun = false, sourceRef = null, sourceHash = null, occurredAt = null, strict = false, links = null }) {
   // Titles first, and they are filed whether or not the fact survives the guards below: a title is
   // an attribute of the person and does not depend on the claim it arrived with being keepable.
   const titlesFiled = await persistJobTitles(supabase, workspaceId, kept, { source, dryRun });
@@ -1497,6 +1549,8 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
     if (action === 'SKIP') {
       if (!dryRun && restates && uuidRe.test(restates)) {
         await corroborateNote(supabase, workspaceId, restates, factSourceIds(fact)).catch(() => {});
+        // A repeat stands for the claim it corroborates: a link to or from it lands there (GET-1053).
+        links?.claim(fact, restates);
       }
       results.push({ ...fact, action: 'SKIP' });
       continue;
@@ -1599,6 +1653,7 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
     }
 
     if (newMem) {
+      links?.claim(fact, newMem.id);   // GET-1053
       saved.push({ content: fact.content, memoryId: newMem.id });
       if (targetEntity !== fact.companyId) touchedContacts.add(targetEntity);
       if (fact.companyId && (targetEntity === fact.companyId || ACCOUNT_ROLLUP_CATEGORIES.includes(cat))) {
@@ -1745,6 +1800,8 @@ export async function extractMeetingSignals({
   // a backfill never sends the same call to the model twice. Live webhooks leave it off, since a
   // meeting can legitimately arrive twice (the summary first, the full transcript later).
   onceOnly = false,
+  // Handed our side's checked facts, dry run or not (GET-1052): the eval reads them through this.
+  onOurs = null,
 }) {
   try {
     if (onceOnly && sourceRef && !dryRun && await meetingAlreadyRead(supabase, workspaceId, sourceRef)) return [];
@@ -1800,7 +1857,7 @@ export async function extractMeetingSignals({
         type: 'meeting_held', source, summary, maxFactsOverride, dryRun, occurredAt, ourNames,
         // The meeting path already holds the ref; dropping it here is what made a
         // 1:1 call indistinguishable from an unread one (GET-375).
-        sourceRef, sourceHash,
+        sourceRef, sourceHash, onOurs,
       });
     }
 
@@ -1825,6 +1882,8 @@ export async function extractMeetingSignals({
     const partBudget = perPartFactCap(callFactBudget(maxFacts, parts.length), parts.length);   // one budget per call, growing a little with length (GET-789)
     const saved = [];
     const heardAboutUs = [];   // claims about us (GET-969), filed once the whole call is read
+    const saidByUs = [];       // our side's words (GET-1052), filed once the whole call is read
+    const causes = new CauseLedger();   // cause links (GET-1053), written once the whole call is filed
     // One part, read once — or, when the model returns nothing for it, read again as two halves
     // (GET-415). Returns the facts found and the transcript text they must be grounded against.
     const criteria = await extractionCriteria(supabase, workspaceId);
@@ -1852,9 +1911,9 @@ export async function extractMeetingSignals({
         onCall: (m) => meterLLM(supabase, workspaceId, 'signal-extraction', m),
       });
       if ((reply.status === 'facts' && !unusable(reply)) || reply.status === 'empty') {
-        const { claims, aboutUs, routed } = routeFacts(resolveReplaces(usableFacts(reply.facts, { label: tag }), positionsOnFile));
+        const { claims, aboutUs, ours, routed } = routeFacts(resolveReplaces(usableFacts(stampCauses(reply.facts), { label: tag }), positionsOnFile));
         if (routed.our_product || routed.market || routed.low_importance) console.log(`[ROUTER] meeting: ${routed.our_product} product feedback, ${routed.market} market view(s) kept as claims about us, ${routed.low_importance} low-importance dropped`);
-        return [{ facts: [...claims.slice(0, budget), ...aboutUs.map(markAboutUs)], text }];
+        return [{ facts: [...claims.slice(0, budget), ...aboutUs.map(markAboutUs), ...ours.map(markOurs)], text }];
       }
       if (reply.status === 'truncated') {
         const halves = depth < MAX_SPLIT_DEPTH ? splitOnOverflow(text) : null;
@@ -1879,7 +1938,14 @@ export async function extractMeetingSignals({
       return [];
     };
     for (let index = 0; index < parts.length; index++) {
-      for (const { facts, text: shown } of await readPart(parts[index], { index, total: parts.length }, true)) {
+      for (const { facts: read, text: shown } of await readPart(parts[index], { index, total: parts.length }, true)) {
+      // Our side's words (GET-1052): checked on their own and filed on the account the call is with
+      // (the attendee it was said to when the model named one, else the lead attendee).
+      const { rest: facts, ours } = splitOurs(read);
+      for (const f of checkOurSide(ours, { text: shown, ourNames: sellerNames(ourSide, ourNames) })) {
+        const p = participants[Number(f.person) - 1] ?? lead;
+        if (p) saidByUs.push({ ...f, content: tidyFactContent(f.content, ourSide), contactId: p.contactId, activityId: p.activityId, companyId: p.companyId ?? null });
+      }
       const kept = facts
         .filter(f => f?.content && typeof f.content === 'string')
         .map((f) => {
@@ -1901,10 +1967,13 @@ export async function extractMeetingSignals({
       const forThem = await checkSignals(found, { text: shown, brief: accountBrief, offer: ourSide?.offer, label: 'meeting',
         onCall: (msg) => meterLLM(supabase, workspaceId, 'signal-check', msg) });
       if (!forThem.length) continue;
-      saved.push(...await persistFacts(supabase, workspaceId, forThem, { type: 'meeting_held', source, dryRun, sourceRef, sourceHash, occurredAt }));
+      saved.push(...await persistFacts(supabase, workspaceId, forThem, { type: 'meeting_held', source, dryRun, sourceRef, sourceHash, occurredAt, links: causes }));
       }
     }
     if (!dryRun && heardAboutUs.length) await saveAboutUsClaims(supabase, workspaceId, await screenFeatureRequests(supabase, workspaceId, heardAboutUs), { sourceRef, sourceSystem: source ?? null, occurredAt });
+    if (saidByUs.length) await onOurs?.(saidByUs);
+    if (!dryRun && saidByUs.length) await saveOurSideFacts(supabase, workspaceId, saidByUs, { type: 'meeting_held', source, sourceRef, sourceHash, occurredAt, links: causes });
+    await saveCauseLinks(supabase, workspaceId, causes, { dryRun });
     return saved;
   } catch (err) {
     console.warn('[MEETING_EXTRACTOR_ERROR]', err.message);
@@ -1913,6 +1982,11 @@ export async function extractMeetingSignals({
     }
     return [];
   }
+}
+
+/** The attendee names out of a numbered roster ("1. Ines Halloran (Brindle)"). Pure. */
+function rosterNames(roster) {
+  return String(roster ?? '').split('\n').map(l => l.replace(/^\s*\d+\.\s*/, '').replace(/\s*\(.*\)\s*$/, '').trim()).filter(Boolean);
 }
 
 /** The multi-attendee meeting prompt. One part of the transcript per call; see splitForExtraction. */
@@ -1930,6 +2004,7 @@ These are notes/transcript from a call. The people below are the EXTERNAL attend
 
 EXTERNAL ATTENDEES:
 ${roster}
+${speakerRolesLine(ourSide, rosterNames(roster))}
 ${anchorLine(anchor)}
 Our side of the call is ${we}. Do NOT turn our side's questions or statements into facts about an attendee — if ${we} asked "what's driving the timeline?", that is NOT a fact that they care about timelines. But an offer, an introduction, a critique, or a reason-for-reaching-out that an ATTENDEE genuinely voices IS a fact about them and must be recorded.
 
@@ -1969,12 +2044,12 @@ ${ourOfferBlock(ourSide)}Rules:
 - ${READ_IN_CONTEXT}
 - Attribute each fact to the attendee it is genuinely ABOUT. A fact one person states about another belongs to whoever it describes.
 - Extract EVERY fact that clears all four bars — there is no target number, and no requirement that every attendee yields one. A quiet attendee may yield none. NEVER pad, NEVER split one fact into several, NEVER restate the same fact twice.
-- Hard ceiling of ${maxFacts} facts with home "claim" across ALL attendees — a safety limit, not a goal. What they say about us (our_product, market) does not count toward it.
+- Hard ceiling of ${maxFacts} facts with home "claim" across ALL attendees — a safety limit, not a goal. What they say about us (our_product, market) and what our side said (our_side) do not count toward it.
 - The deal bar, where each statement belongs (home), and the categories are in the instructions above; they apply here.
 
 ${positionShiftBlock(positionsOnFile)}
 
-Output ONLY valid JSON: [{${HOME_FIELD}, "person": 1, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<key>", "about": "person|company", "entity": "<competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>", ${OCCURRED_FIELDS}${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
+Output ONLY valid JSON: [{${HOME_FIELD}, "person": 1, "content": "...", "quote": "...", "speaker": "...", "label": "2-4 word tag", "category": "<key>", "about": "person|company", "entity": "<competitor only>", "stance": "<competitor only>", "status": "<objection or blocker only>", "tool": "<tech_stack only>", "hardness": "<objection only>", "change": "<staff_change only>", "role": "<authority only>", "product": "<expansion_signal only>", "severity": "<risk_signal only>", ${OCCURRED_FIELDS}${CAUSED_BY_FIELD}${positionsOnFile?.length ? REPLACES_FIELD : ''}}]
 
   - staff_change → set "change": "left" / "joined" / "moved" / "reorg" / "away" (out for months, not a week off). Name the person in "content".
   - authority → set "role": "economic_buyer" (holds the budget or signs) / "decision_maker" (chooses, or their approval unblocks it) / "champion" (pushes for us internally) / "blocker" (is stopping it) / "technical" (judges whether it works). It must describe the attendee the fact is ABOUT. Leave it out when the fact names someone else's authority, when it only restates a job title, or when they simply use the product.

@@ -32,7 +32,7 @@ test('product feedback and market views come back as claims about us, low ones t
   assert.equal(claims[0].what, undefined, 'a claim about them never carries the about-us fields');
   assert.deepEqual(aboutUs.map(f => [f.home, f.kind, f.what ?? null]), [['our_product', 'feature', 'Date filter'], ['market', 'buyers', null]]);
   assert.equal(aboutUs[0].importance, undefined);
-  assert.deepEqual(routed, { our_product: 1, market: 1, low_importance: 0 });
+  assert.deepEqual(routed, { our_product: 1, market: 1, our_side: 0, low_importance: 0 });   // our_side: GET-1052
 });
 
 test('after grounding, a claim about us with no checked quote is dropped; a claim about them stays', () => {

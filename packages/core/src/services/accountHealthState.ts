@@ -213,6 +213,7 @@ export async function getAccountHealth(
     .eq('entity_id', entityId)
     .like('property', 'note.%')
     .is('invalid_at', null)
+    .is('value->metadata->>side', null)   // GET-1052: what we said is never a health driver
     .limit(1000);
 
   const signals: HealthDriver[] = [];

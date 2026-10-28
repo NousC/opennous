@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import {
-  CASE_CATEGORIES, validateCase, loadCases, selectCases, renderClaim, renderClaims, deterministicChecks, allowedYears,
+  CASE_CATEGORIES, validateCase, loadCases, selectCases, renderClaim, renderClaims, deterministicChecks, allowedYears, oursExpectProblems, oursProblems,
 } from '../evals/extraction/checks.mjs';
 import { parseVerdict, judgeTrap, judgeMust, judgeCase, modelFamily, judgeModelFor, buildJudgePrompt, createModelJudge } from '../evals/extraction/judge.mjs';
 import { runEval, parseArgs, summaryLines } from '../evals/extraction/run.mjs';
@@ -27,7 +27,7 @@ const claim = (over = {}) => ({ category: 'tech_stack', content: 'Brindle runs s
 
 test('every shipped case is valid, and the set covers each category with a minimum subset', async () => {
   const cases = await loadCases(CASES_DIR);
-  assert.ok(cases.length >= 20 && cases.length <= 30, `${cases.length} cases`);
+  assert.ok(cases.length >= 20 && cases.length <= 37, `${cases.length} cases`);   // 34: + four our-side cases (GET-1052); 37: + three cause-link cases (GET-1053)
   for (const cat of CASE_CATEGORIES) assert.ok(cases.some(c => c.category === cat), `no ${cat} case`);
   const minimum = cases.filter(c => c.minimum);
   assert.ok(minimum.length >= 5 && minimum.length <= 8, `${minimum.length} minimum cases`);
@@ -368,4 +368,28 @@ test('extractCase runs the production read into the in-memory database (fake mod
   const info = extractorInfo();
   assert.equal(info.models.extraction, 'claude-haiku-4-5-20251001');
   assert.match(info.prompts.activity, /^[0-9a-f]{12}$/);
+});
+
+// ── our side's facts (GET-1052) ─────────────────────────────────────────────────────────────
+
+test('expect.ours is validated against the our-side categories', () => {
+  assert.deepEqual(oursExpectProblems({ categories: ['our_reply'], max: 2, contains: ['review queue'] }), []);
+  assert.ok(oursExpectProblems({ categories: ['objection'] }).some(e => /unknown our-side category "objection"/.test(e)));
+  assert.ok(oursExpectProblems({ maxx: 1 }).some(e => /unknown key "maxx"/.test(e)));
+  assert.ok(oursExpectProblems({ max: 0, categories: ['pitch_line'] }).some(e => /contradicts/.test(e)));
+});
+
+test('our side\'s facts are checked by code, apart from the buyer\'s claims', () => {
+  const ours = [
+    { category: 'our_reply', content: 'Answered the sync worry with the review queue.', answers: 'HubSpot sync' },
+    { category: 'our_commitment', content: 'Promised the security doc by Friday, October 23, 2026.', occurred: { start: '2026-10-23', end: '2026-10-23' } },
+  ];
+  assert.deepEqual(oursProblems(ours, { categories: ['our_reply', 'our_commitment'], contains: [['hubspot']], occurred: [{ contains: 'security doc', start: '2026-10-23', end: '2026-10-23' }] }), []);
+  assert.deepEqual(oursProblems(ours, { max: 0 }), ['ours.max: 2 of our side\'s fact(s), at most 0 expected']);
+  assert.match(oursProblems(ours, { notCategories: ['our_reply'] })[0], /^ours\.notCategories: 1 \[our_reply\]/);
+  assert.match(oursProblems([], { categories: ['pitch_line'] })[0], /no \[pitch_line\] fact of ours/);
+  assert.deepEqual(oursProblems(ours, undefined), []);
+  const c = { input: { saidAt: '2026-10-20', text: 'x' }, expect: { ours: { max: 0 } } };
+  assert.equal(deterministicChecks([], c, ours).pass, false);
+  assert.equal(deterministicChecks([], c).pass, true, 'no facts of ours, none expected');
 });

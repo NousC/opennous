@@ -398,6 +398,101 @@ export const CLAIM_CATEGORIES: ClaimCategoryDef[] = [
 
 export const CLAIM_CATEGORY_KEYS: string[] = CLAIM_CATEGORIES.map(c => c.key);
 
+// ── Our side (GET-1052) ──────────────────────────────────────────────────────
+//
+// What OUR side said on a call — the answer we gave to an objection, a promise we made, a line we
+// pitched — is real and worth keeping: the objection playbook can only say "this is how we answered
+// it" if the answers were recorded, and win/loss reads differently when it knows what we promised.
+// It is never a fact about the buyer. So it is its own group, deliberately OUTSIDE CLAIM_CATEGORIES:
+//   - not in the extractor's category list (claimCategoryPromptBlock), so a buyer claim can never
+//     be filed under one of these;
+//   - not in any domain, the rollup or the Intel taxonomy a UI lists;
+//   - every claim carries metadata.side = 'ours' (OUR_SIDE) as well, and isOurSideClaim answers on
+//     EITHER mark, so a reader that checks one is safe against a writer that set only the other.
+// Product decision (founder, GET-1052): these never reach Insights or any buyer view for now. Only
+// the Intelligence files (objection playbook, win/loss) read them; listNotes and isIntelClaim drop
+// them for everyone else.
+//
+// `our_commitment`, not `commitment`: "commitment" is already an alias of buying_signal (ALIASES
+// below), and roughly fifteen readers normalise a raw category — a stored "commitment" would read as
+// the buyer's buying signal and advance the deal stage. The model is offered all three names below;
+// "commitment" from it is mapped here, inside the our_side home only.
+
+/** The metadata.side value every our-side claim carries. */
+export const OUR_SIDE = 'ours';
+
+export interface OurSideCategoryDef {
+  key: string;
+  label: string;
+  /** Always 'our_side': the group these sit in, apart from the buyer taxonomy's domains. */
+  group: 'our_side';
+  description: string;
+  example: string;
+}
+
+export const OUR_SIDE_CATEGORIES: OurSideCategoryDef[] = [
+  {
+    key: 'our_reply',
+    label: 'Our reply',
+    group: 'our_side',
+    description: 'Our answer to an objection, question or concern the buyer raised: what we said, and what it answered.',
+    example: 'Answered the concern about CRM sync by saying the HubSpot integration writes tasks back within a minute.',
+  },
+  {
+    key: 'our_commitment',
+    label: 'Our commitment',
+    group: 'our_side',
+    description: 'Something we promised to do or send, with when if it was said.',
+    example: 'Promised to send the security questionnaire by Friday.',
+  },
+  {
+    key: 'pitch_line',
+    label: 'Pitch line',
+    group: 'our_side',
+    description: 'A claim or framing we used about our product or its value, including our guess about the buyer ("you would find that expensive") — never the buyer\'s own fact.',
+    example: 'Framed the product as replacing two tools and a weekly reporting hour.',
+  },
+];
+
+export const OUR_SIDE_CATEGORY_KEYS: string[] = OUR_SIDE_CATEGORIES.map(c => c.key);
+const OUR_SIDE_KEY_SET = new Set(OUR_SIDE_CATEGORY_KEYS);
+
+const OUR_SIDE_ALIASES: Record<string, string> = {
+  reply: 'our_reply', answer: 'our_reply', response: 'our_reply', rebuttal: 'our_reply',
+  commitment: 'our_commitment', promise: 'our_commitment', our_promise: 'our_commitment',
+  pitch: 'pitch_line', pitch_lines: 'pitch_line', claim: 'pitch_line', framing: 'pitch_line', our_pitch: 'pitch_line',
+};
+
+/** Whether a category key is one of ours (no aliases: a stored key, as written). Pure. */
+export function isOurSideCategory(category?: string | null): boolean {
+  return OUR_SIDE_KEY_SET.has(String(category ?? '').trim().toLowerCase());
+}
+
+/** The our-side key for what the model wrote in the our_side home, or null when it is none of
+ *  them. Only for that home: elsewhere "commitment" still means a buying signal. Pure. */
+export function normalizeOurSideCategory(input?: string | null): string | null {
+  const raw = String(input ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!raw) return null;
+  if (OUR_SIDE_KEY_SET.has(raw)) return raw;
+  return OUR_SIDE_ALIASES[raw] ?? null;
+}
+
+/**
+ * Whether a claim (a claims.value, or a Note) is one of OUR side's statements (GET-1052). Either
+ * mark is enough: metadata.side = 'ours', or an our-side category. Every buyer-facing reader that
+ * reads note.* claims across categories asks this and drops them. Pure.
+ */
+export function isOurSideClaim(value: Record<string, any> | null | undefined): boolean {
+  if (!value || typeof value !== 'object') return false;
+  if (value.metadata?.side === OUR_SIDE) return true;
+  return isOurSideCategory(value.category);
+}
+
+/** The our-side categories, one line each, for the extraction prompt. */
+export function ourSidePromptBlock(): string {
+  return OUR_SIDE_CATEGORIES.map(c => `- ${c.key === 'our_commitment' ? 'commitment' : c.key} — ${c.description} e.g. "${c.example}"`).join('\n');
+}
+
 const DOMAIN_OF: Record<string, ClaimDomain> = Object.fromEntries(CLAIM_CATEGORIES.map(c => [c.key, c.domain]));
 
 /** The domain of a category key; `general` for anything the taxonomy does not know. */
@@ -531,6 +626,8 @@ export function normalizeClaimCategory(input?: string | null): string {
   if (!input) return 'general';
   const raw = String(input).trim().toLowerCase();
   if (KEY_SET.has(raw)) return raw;
+  // An our-side key stays itself (GET-1052): read back as `general`, our pitch would be a buyer fact.
+  if (OUR_SIDE_KEY_SET.has(raw)) return raw;
   const underscored = raw.replace(/\s+/g, '_');
   if (KEY_SET.has(underscored)) return underscored;
   if (ALIASES[raw]) return ALIASES[raw];
@@ -547,7 +644,7 @@ export function isValidClaimCategory(input?: string | null): boolean {
 }
 
 export function claimCategoryLabel(key: string): string {
-  return CLAIM_CATEGORIES.find(c => c.key === key)?.label ?? 'General';
+  return CLAIM_CATEGORIES.find(c => c.key === key)?.label ?? OUR_SIDE_CATEGORIES.find(c => c.key === key)?.label ?? 'General';
 }
 
 /**
@@ -700,6 +797,8 @@ export function claimSubtagsFor(
 export function isIntelClaim(value: Record<string, any> | null | undefined): boolean {
   const meta = value?.metadata ?? {};
   if (meta.doc_type) return false;
+  // What we said is not a fact about the account (GET-1052): no chip, no FACTS line, no dedup candidate.
+  if (isOurSideClaim(value)) return false;
   if (meta.summary === true) return false;
   if (meta.flag === 'speaker_name_link') return false;
   if (meta.signal_type === 'health_adoption') return false;

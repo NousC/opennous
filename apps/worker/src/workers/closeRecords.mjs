@@ -178,7 +178,7 @@ export async function buildCloseRecordsForWorkspace(supabase, workspaceId, { for
     const claims = (await readInGroups('claims', entityIds, (ids) => supabase.from('claims')
       .select('id, entity_id, value, valid_from, computed_at, supporting_observation_ids')
       .eq('workspace_id', workspaceId).is('invalid_at', null).in('entity_id', ids)
-      .like('property', 'note.%').limit(4000)))
+      .like('property', 'note.%').is('value->metadata->>side', null).limit(4000)))   // GET-1052: buyer facts only
       .filter(c => !c.valid_from || c.valid_from >= lookback);
     const touches = (await readInGroups('touches', entityIds, (ids) => supabase.from('observations')
       .select('entity_id, property, observed_at')
