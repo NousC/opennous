@@ -361,7 +361,7 @@ export function TaskRow({ t, checked: checkedProp, onToggle, personOf, showQuote
               <span className="w-[72px] flex-shrink-0 text-[12px] text-muted-foreground pt-px">{t.awaiting_them ? "Waiting on" : "Owed to"}</span>
               <div className="min-w-0 flex-1">
                 {forName ? (
-                  <button type="button" disabled={!forPerson} onClick={() => forPerson && navigate(`/people/${forPerson.id}`)}
+                  <button type="button" disabled={!forPerson} onClick={() => forPerson && navigate(`/contacts/${forPerson.id}`)}
                     className={cn("flex items-center gap-2 text-left", forPerson ? "hover:underline underline-offset-2" : "cursor-default")}>
                     <EntityAvatar kind="person" name={forName} photoUrl={forPerson?.photo_url ?? null} className="h-5 w-5 rounded-full flex-shrink-0" textClassName="text-[8px] font-medium" />
                     <span className="text-foreground/90">{forName}</span>

@@ -36,7 +36,7 @@ export default function Shared() {
     return () => { alive = false; };
   }, [workspaceId, token]);
 
-  const open = (s: Share) => navigate(s.entity_kind === "company" ? `/accounts/${s.entity_id}` : `/people/${s.entity_id}`);
+  const open = (s: Share) => navigate(s.entity_kind === "company" ? `/accounts/${s.entity_id}` : `/contacts/${s.entity_id}`);
 
   if (!loading && shares.length === 0) {
     return (

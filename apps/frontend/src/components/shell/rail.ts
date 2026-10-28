@@ -24,7 +24,7 @@ export const RAIL_STROKE = 1.75;
  *  by colour before it is read. Rows not listed keep the quiet grey icon. */
 export const RAIL_TINT: Record<string, string> = {
   "/accounts":     "text-[#4F6BD8]",
-  "/people":       "text-[#3E9C9C]",
+  "/contacts":     "text-[#3E9C9C]",
   "/inbox":        "text-[#7C5CD6]",
   "/tasks":        "text-[#1F9D74]",
   "/graph":        "text-[#C2417A]",

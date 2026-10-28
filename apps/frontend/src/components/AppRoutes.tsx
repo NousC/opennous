@@ -22,6 +22,13 @@ function KeysRoute() {
   return <Suspense fallback={<MinimalLoader />}><ApiKeys /></Suspense>;
 }
 
+/** /people/:id, the old address of a contact. */
+function PeopleToContact() {
+  const { id = "" } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={`/contacts/${id}${search}`} replace />;
+}
+
 function KeyDetailRoute() {
   const { id = "" } = useParams();
   const { selfHosted } = usePlan();
@@ -392,14 +399,17 @@ export function AppRoutes() {
                 (next to /graph) — it is not routed here. */}
 
             {/* Accounts = the deal board + companies; People = the contacts list + people.
-                URLs match the nav names: /accounts, /accounts/:id, /people, /people/:id. */}
+                URLs match the nav names: /accounts, /accounts/:id, /contacts, /contacts/:id. People was the
+                old name: /people and /people/:id forward. */}
             <Route path="/accounts"      element={<RequiresFeature feature="accounts"><Suspense fallback={<MinimalLoader />}><AccountsIndex /></Suspense></RequiresFeature>} />
             <Route path="/accounts/:id"  element={<RequiresFeature feature="accounts"><Suspense fallback={<MinimalLoader />}><Companies /></Suspense></RequiresFeature>} />
             {/* One deal's page is Cloud's, on the workspace plans only (cloud.dealPages, GET-1008). Without
                 it a deal is listed on its account and never opens, so an old deal link lands on the account. */}
             {!cloud.dealPages && <Route path="/accounts/:id/deals/:dealId" element={<RedirectToAccount />} />}
-            <Route path="/people"        element={<Suspense fallback={<MinimalLoader />}><Accounts /></Suspense>} />
-            <Route path="/people/:id"    element={<Suspense fallback={<MinimalLoader />}><People /></Suspense>} />
+            <Route path="/contacts"      element={<Suspense fallback={<MinimalLoader />}><Accounts /></Suspense>} />
+            <Route path="/contacts/:id"  element={<Suspense fallback={<MinimalLoader />}><People /></Suspense>} />
+            <Route path="/people"        element={<Navigate to="/contacts" replace />} />
+            <Route path="/people/:id"    element={<PeopleToContact />} />
             {/* Back-compat redirects for the old paths. (/pipeline is now the Pipeline
                 page itself — see below — so it no longer redirects to the board.) */}
             <Route path="/companies"     element={<Navigate to="/accounts" replace />} />

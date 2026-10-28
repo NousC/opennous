@@ -55,7 +55,7 @@ export function SlackText({ text, mentions }: { text: string; mentions?: SlackMe
     const person = names[match[1]];
     const label = `@${person?.name || match[2] || "Slack member"}`;
     return person?.personId && /^[0-9a-f-]{36}$/i.test(person.personId)
-      ? <Link key={index} to={`/people/${person.personId}`} className="text-foreground hover:underline" onClick={e => e.stopPropagation()}>{label}</Link>
+      ? <Link key={index} to={`/contacts/${person.personId}`} className="text-foreground hover:underline" onClick={e => e.stopPropagation()}>{label}</Link>
       : <span key={index}>{label}</span>;
   })}</>;
 }

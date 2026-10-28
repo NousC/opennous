@@ -610,7 +610,7 @@ function FitIntentMap({ accounts }: { accounts: Acct[] }) {
             fill={work ? ACCENT : "#94a3b8"} fillOpacity={on ? 1 : work ? 0.92 : 0.48}
             stroke="hsl(var(--card))" strokeWidth={1} style={{ cursor: "pointer", transition: "r 0.1s" }}
             onMouseEnter={() => setHover(a)} onMouseLeave={() => setHover((h) => (h?.id === a.id ? null : h))}
-            onClick={() => navigate(`/people/${a.id}`)} />;
+            onClick={() => navigate(`/contacts/${a.id}`)} />;
         })}
         {hover && <circle cx={hx} cy={hyp} r="10" fill="none" stroke={ACCENT} strokeWidth="1.25" strokeOpacity="0.5" className="pointer-events-none" />}
         {hover && <MapTooltip x={hx} y={hyp} a={hover} W={W} />}

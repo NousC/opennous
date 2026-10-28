@@ -445,7 +445,7 @@ export default function Companies({ embedded = false, leadingTab = null }: { emb
       <Suspense fallback={null}>
       <CompanyDetailView
         cd={cd as any}
-        onOpenPerson={(pid) => navigate(`/people/${pid}`)}
+        onOpenPerson={(pid) => navigate(`/contacts/${pid}`)}
         onPatch={patchCompany}
         onSetDealValue={setDealValue}
         getVal={getCoVal}
@@ -577,7 +577,7 @@ export default function Companies({ embedded = false, leadingTab = null }: { emb
               <div key={pn.id}
                    className="flex items-center px-4 py-2 border-b border-border/60 bg-muted/20 hover:bg-muted/50 transition-colors group/p">
                 <button
-                  onClick={() => navigate(`/people/${pn.id}`)}
+                  onClick={() => navigate(`/contacts/${pn.id}`)}
                   className="flex-shrink-0 text-left min-w-0 pr-3 pl-6 sticky left-0 z-10 bg-muted/20 group-hover/p:bg-muted/50"
                   style={{width:colW("name")}}
                 >

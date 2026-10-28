@@ -428,7 +428,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   }, [id, inList, token]);
   const detail = inList ?? fetchedDetail;
   // Name the workspace tab after the person, not a generic "Person" — openTab refreshes
-  // the title of the tab the router already opened for this /people/:id path, so an open
+  // the title of the tab the router already opened for this /contacts/:id path, so an open
   // record reads as "Tobin Marsh" up top. Only on the standalone route (not embedded in
   // the Accounts list, which owns its own tab).
   useEffect(() => {
@@ -437,7 +437,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
   // Back goes to wherever you came from (e.g. the lead list), not always Accounts.
   const setDetail = (c: ContactInfo | null) => {
     if (c && onOpen) { onOpen({ id: c.id, name: c.name || "Account" }); return; }
-    navigate(c ? `/people/${c.id}` : ((location.state as { from?: string } | null)?.from || "/people"));
+    navigate(c ? `/contacts/${c.id}` : ((location.state as { from?: string } | null)?.from || "/contacts"));
   };
 
   const deleteContact = async (cid: string, e: React.MouseEvent) => {
@@ -747,7 +747,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
         {leadingTab}
         {tiers && (
           <ViewTabs<TierTab>
-            aria-label="People views"
+            aria-label="Contact views"
             value={activeTab}
             onChange={setTab}
             options={[
@@ -760,7 +760,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
         )}
         <span className="flex-1" />
         {!inApiShell && (
-          <select value={ptype} onChange={e => setPtype(e.target.value as PeopleType)} aria-label="Filter people by type"
+          <select value={ptype} onChange={e => setPtype(e.target.value as PeopleType)} aria-label="Filter contacts by type"
             className="h-7 rounded-lg border border-border bg-card px-2 text-[12.5px] font-medium text-foreground">
             {PEOPLE_TYPES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
@@ -770,7 +770,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
           <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
           <input
             type="search" value={q} onChange={e => handleSearch(e.target.value)}
-            placeholder="Search people" aria-label="Search people"
+            placeholder="Search contacts" aria-label="Search contacts"
             className="h-7 w-full rounded-lg border border-border bg-card pl-8 pr-7 text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground focus-visible:border-foreground/30 [&::-webkit-search-cancel-button]:hidden"
           />
           {q && (
@@ -785,7 +785,7 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
         <table className="w-full min-w-[860px] border-collapse text-[13px]">
           <thead className="sticky top-0 z-10 bg-card">
             <tr className="[&>th]:h-[34px] [&>th]:whitespace-nowrap [&>th]:border-b [&>th]:border-border [&>th]:px-3 [&>th]:text-left [&>th]:text-[12px] [&>th]:font-medium [&>th]:text-muted-foreground">
-              <th className="w-[32%] !pl-5">Person</th>
+              <th className="w-[32%] !pl-5">Contact</th>
               <th className="w-[24%]">Company</th>
               {sortTh("icp", "ICP", "desc")}
               {tiers && sortTh("tier", "Tier", "desc")}

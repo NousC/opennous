@@ -54,7 +54,7 @@ function ResultAvatar({ item }: { item: Item }) {
       </span>
     );
   }
-  const isPerson = item.group === "People";
+  const isPerson = item.group === "Contacts";
   const src = !broken
     ? (item.photo || faviconUrl(item.domain))
     : null;
@@ -177,9 +177,9 @@ export function CommandPalette() {
       id: `pe-${c.id}`,
       label: [c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || "—",
       sublabel: c.job_title ?? c.email ?? undefined,
-      group: "People", badge: ([c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || "?").charAt(0).toUpperCase(),
+      group: "Contacts", badge: ([c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || "?").charAt(0).toUpperCase(),
       photo: c.photo_url ?? null,
-      action: () => go(`/people/${c.id}`),
+      action: () => go(`/contacts/${c.id}`),
     }));
 
     const navItems: Item[] = NAV_ITEMS

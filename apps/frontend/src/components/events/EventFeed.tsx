@@ -114,7 +114,7 @@ function EventTableRow({ e, open, onToggle, copied, onCopy }: {
           {people.length ? (
             <>
               {people.slice(0, 3).map((p, i) => (
-                <Link key={p.entity_id} to={`/people/${p.entity_id}`} onClick={(ev) => ev.stopPropagation()}
+                <Link key={p.entity_id} to={`/contacts/${p.entity_id}`} onClick={(ev) => ev.stopPropagation()}
                   title={p.title ? `${p.name}, ${p.title}` : p.name ?? undefined} aria-label={p.name ?? undefined}
                   className={cn("relative flex size-5 items-center justify-center overflow-hidden rounded-full text-[8.5px] font-semibold shadow-[0_0_0_2px_hsl(var(--card))] transition-transform duration-fast hover:-translate-y-0.5", avatarTint(p.name ?? p.entity_id))}
                   style={{ marginLeft: i === 0 ? 0 : -5, zIndex: 10 - i }}>

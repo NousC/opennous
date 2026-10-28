@@ -260,7 +260,7 @@ function RecordPanel({ node, graph, claims, claimsLoading, setFocus }: {
     : [{ label: "Value", value: money(node.value) ?? "—" }, { label: "Stage", value: node.sub ?? "—" }, { label: "Last touch", value: ago(node.days) ?? "—" }];
 
   const dealAccount = node.type === "deal" ? m.account : null;
-  const href = node.type === "account" ? `/accounts/${node.id}` : node.type === "person" ? `/people/${node.id}`
+  const href = node.type === "account" ? `/accounts/${node.id}` : node.type === "person" ? `/contacts/${node.id}`
     // An account's own (implied) deal opens as /deals/account, as on the account page. Only where
     // deals have pages (the workspace plans on Cloud, GET-1008); elsewhere a deal does not open.
     : node.type === "deal" && dealAccount && dealPages ? `/accounts/${dealAccount.id}/deals/${node.id.startsWith("implied:") ? "account" : node.id}` : null;

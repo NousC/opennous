@@ -884,7 +884,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
     },
     {
       key: "people", header: "People",
-      cell: (c) => <PeopleStack contacts={c.contacts ?? []} total={c.contactCount ?? (c.contacts?.length ?? 0)} onOpenPerson={(id) => navigate(`/people/${id}`)} />,
+      cell: (c) => <PeopleStack contacts={c.contacts ?? []} total={c.contactCount ?? (c.contacts?.length ?? 0)} onOpenPerson={(id) => navigate(`/contacts/${id}`)} />,
     },
     { key: "icp", header: "ICP", cell: (c) => <IcpScore score={c.icpScore} /> },
     { key: "tier", header: "Tier", cell: (c) => <TierMark score={c.icpScore} /> },
@@ -1312,7 +1312,7 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
                     </RecordPreview>
                   </div>
                   <div className="flex-shrink-0 pr-2" style={{ width: 110 }}>
-                    <PeopleStack contacts={r.people} total={r.peopleTotal} onOpenPerson={(id) => navigate(`/people/${id}`)} />
+                    <PeopleStack contacts={r.people} total={r.peopleTotal} onOpenPerson={(id) => navigate(`/contacts/${id}`)} />
                   </div>
                   <div className="flex-shrink-0 truncate pr-2 text-[13px] text-foreground/80" style={{ width: 130 }} title={r.owners.join(", ")}>
                     {r.owners.length ? `${r.owners[0]}${r.owners.length > 1 ? ` +${r.owners.length - 1}` : ""}` : <span className="text-muted-foreground/40">—</span>}

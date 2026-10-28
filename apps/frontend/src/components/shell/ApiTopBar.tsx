@@ -58,8 +58,8 @@ const ROUTES: [pattern: string, meta: RouteMeta][] = [
   // The Workspace layer's page on this plan (GET-973); a build without it never routes here.
   ["/gtm-insights",      { title: "Insights",          icon: Lightbulb }],
   ["/gtm-insights/:key", { title: "Insight",           icon: Lightbulb, parent: { label: "Insights", href: "/gtm-insights" } }],
-  ["/people",          { title: "People",            icon: Users2 }],
-  ["/people/:id",      { title: "Person",            icon: Users2,    parent: { label: "People", href: "/people" } }],
+  ["/contacts",        { title: "Contacts",          icon: Users2 }],
+  ["/contacts/:id",    { title: "Contact",           icon: Users2,    parent: { label: "Contacts", href: "/contacts" } }],
   ["/integrations",    { title: "Personal",          icon: Plug,      parent: INTEGRATIONS }],
   ["/company-sources", { title: "Shared",            icon: Users2,    parent: INTEGRATIONS }],
   ["/webhooks",        { title: "Webhooks",          icon: Webhook }],

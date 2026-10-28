@@ -9,7 +9,6 @@ import {
   Building2,
   Radio,
   ChevronRight,
-  UserPlus,
   Zap,
   ArrowUpRight,
   UserRound,
@@ -46,7 +45,7 @@ import { RAIL_STROKE, RAIL_TINT, railActive, railGroupLabel, railIcon, railIconA
 type NavItem = { title: string; url: string; icon: React.ElementType; end?: boolean; children?: NavItem[]; action?: React.ReactNode };
 
 // PEOPLE IS NOT A DESTINATION (GET-426). It was a nav row whose list view rendered the
-// Accounts page — the only real thing behind it was /people/:id, and you reach a person the
+// Accounts page — the only real thing behind it was /contacts/:id, and you reach a person the
 // way you think of one: through the account they work at. A top-level row that opens someone
 // else's page is a row that teaches the wrong model of the product.
 
@@ -58,7 +57,7 @@ type NavItem = { title: string; url: string; icon: React.ElementType; end?: bool
 // the places a rep or a CSM spends the day on top, the read on the business under "Team".
 // Home is not a row any more: it leads the top row, beside the Graph and Invite (sidebar redesign, Oct 2026).
 // People opens under Accounts while you are on either page, and folds away elsewhere.
-const ACCOUNTS_ITEM: NavItem = { title: "Accounts", url: "/accounts", icon: Building2, children: [{ title: "People", url: "/people", icon: UserRound }] };
+const ACCOUNTS_ITEM: NavItem = { title: "Accounts", url: "/accounts", icon: Building2, children: [{ title: "Contacts", url: "/contacts", icon: UserRound }] };
 const workNavItemsCustom: NavItem[] = [ACCOUNTS_ITEM];
 // The Graph is an icon in the top row on every plan, not a rail row.
 const GRAPH_ITEM: NavItem = { title: "Graph", url: "/graph", icon: Network };
@@ -318,9 +317,7 @@ export function AppSidebar() {
           </NavLink>,
           "Home",
         )}
-        {/* Invite a member (GET-571); the member onboards their own sources. */}
         {topIcon(GRAPH_ITEM.title, GRAPH_ITEM.icon, () => navigate(GRAPH_ITEM.url), isItemActive(GRAPH_ITEM.url), false, RAIL_TINT[GRAPH_ITEM.url])}
-        <InviteMemberButton trigger={(open) => topIcon("Invite teammates", UserPlus, open ?? (() => {}), false, !open)} />
       </div>
 
       {/* Search — opens the ⌘K command palette (people, accounts, jump-to). */}
@@ -427,6 +424,8 @@ export function AppSidebar() {
             ) : credits.resets && <span className="mt-[7px] block text-[11px] text-muted-foreground">{credits.resets}</span>}
           </NavLink>
         )}
+        {/* Invite a member (GET-571), just above you; admins only, so it is not drawn for anyone else. */}
+        <InviteMemberButton collapsed={collapsed} className="mt-1" />
         {/* You: the profile row opens Settings. */}
         <div className={`mt-1.5 flex items-center gap-1 border-t border-border/60 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
           {withTip(

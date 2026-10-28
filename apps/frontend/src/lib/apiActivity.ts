@@ -80,7 +80,7 @@ export const surfaceLabel = (s: Surface) => (s === "mcp" ? "MCP" : "REST");
 export function aboutHref(a: About): string | null {
   if (!a) return null;
   if (a.type === "company") return `/accounts/${a.id}`;
-  if (a.type === "person") return `/people/${a.id}`;
+  if (a.type === "person") return `/contacts/${a.id}`;
   return null;
 }
 
