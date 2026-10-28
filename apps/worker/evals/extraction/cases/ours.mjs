@@ -22,8 +22,9 @@ Ines Halloran: What I can say is we're replacing our call recorder at the end of
     },
     must: ['A claim records that Brindle is replacing its call recorder at the end of the year.'],
     traps: ['A claim says Ines Halloran or Brindle finds seven hundred a month expensive, or has a budget of about seven hundred a month.'],
+    // The buyer's own "I haven't been given a budget" is a true budget fact and may be kept; what
+    // must never happen is our $700 guess becoming theirs, which the trap judges.
     expect: {
-      notCategories: ['budget'],
       ours: { notCategories: ['our_reply', 'our_commitment'], max: 2 },
     },
   },

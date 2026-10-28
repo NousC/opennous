@@ -393,3 +393,14 @@ test('our side\'s facts are checked by code, apart from the buyer\'s claims', ()
   assert.equal(deterministicChecks([], c, ours).pass, false);
   assert.equal(deterministicChecks([], c).pass, true, 'no facts of ours, none expected');
 });
+
+// A link may accept either of two categories where both fit the same fact (a budget freeze is a
+// budget or a blocker fact); the link itself is what the case measures.
+test('a link expectation accepts "a|b", and still names an unknown category', async () => {
+  const { linkProblems, linksExpectProblems } = await import('../evals/extraction/checks.mjs');
+  const claims = [{ ref: 'a', category: 'budget', content: 'Froze the budget.', causedBy: ['b'] }, { ref: 'b', category: 'staff_change', content: 'The CFO left.' }];
+  assert.deepEqual(linkProblems(claims, [], [{ from: 'blocker|budget', to: 'staff_change' }]), []);
+  assert.equal(linkProblems(claims, [], [{ from: 'blocker', to: 'staff_change' }]).length, 1);
+  assert.deepEqual(linksExpectProblems([{ from: 'blocker|budget', to: 'staff_change' }]), []);
+  assert.match(linksExpectProblems([{ from: 'blocker|bugdet', to: 'staff_change' }])[0], /"bugdet" is not a claim/);
+});

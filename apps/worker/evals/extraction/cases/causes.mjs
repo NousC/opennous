@@ -26,7 +26,8 @@ Ines Halloran: Keep me posted on the roadmap, but there's no money until then.`,
     traps: [],
     expect: {
       categories: ['staff_change'],
-      links: [{ from: 'blocker', to: 'staff_change' }],
+      // A budget freeze is a blocker or a budget fact; either is right, the link is what is measured.
+      links: [{ from: 'blocker|budget', to: 'staff_change' }],
     },
   },
   {

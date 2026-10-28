@@ -123,8 +123,9 @@ export function oursExpectProblems(o) {
 
 /** What is wrong with an `expect.links` list (GET-1053), as sentence fragments. Pure.
  *  Each entry is { from, to }: a cause link from a fact of category `from` (the effect) to one of
- *  category `to` (the cause), either a claim category or one of our side's (our_reply, …). An empty
- *  list means the read must link nothing. */
+ *  category `to` (the cause), either a claim category or one of our side's (our_reply, …); "a|b"
+ *  accepts either, where two categories fit the same fact (a budget freeze is budget or blocker).
+ *  An empty list means the read must link nothing. */
 export function linksExpectProblems(list) {
   if (!Array.isArray(list)) return ['must be an array (use [] for "no link")'];
   const known = new Set([...CLAIM_CATEGORY_KEYS, ...OUR_SIDE_CATEGORY_KEYS]);
@@ -132,7 +133,7 @@ export function linksExpectProblems(list) {
   list.forEach((l, n) => {
     if (!l || typeof l !== 'object' || Array.isArray(l)) { errs.push(`[${n}] is not an object`); return; }
     for (const k of Object.keys(l)) if (!['from', 'to'].includes(k)) errs.push(`[${n}] has unknown key "${k}"`);
-    for (const k of ['from', 'to']) if (!known.has(l[k])) errs.push(`[${n}].${k} "${l[k]}" is not a claim or our-side category`);
+    for (const k of ['from', 'to']) for (const c of String(l[k] ?? '').split('|')) if (!known.has(c)) errs.push(`[${n}].${k} "${c}" is not a claim or our-side category`);
   });
   return errs;
 }
@@ -266,7 +267,8 @@ export function linkProblems(claims = [], ours = [], list = undefined) {
   if (!list.length) return got.length ? [`links: expected none, got ${got.length}: ${got.map(shown).join('; ')}`] : [];
   const out = [];
   for (const want of list) {
-    if (!got.some(l => l.from.category === want.from && l.to.category === want.to)) {
+    const is = (cat, w) => String(w).split('|').includes(cat);
+    if (!got.some(l => is(l.from.category, want.from) && is(l.to.category, want.to))) {
       out.push(`links: no [${want.from}] caused_by [${want.to}] link${got.length ? ` (got ${got.map(shown).join('; ')})` : ' (no links at all)'}`);
     }
   }

@@ -803,6 +803,7 @@ const POSITION_SHIFT_RULES = `WHEN A POSITION MOVES — a later statement replac
 - Readiness or a decision: "we're ready", "let's do it", "I want to present it to the other stakeholders", "let's take it to the CRO / the board", "send the paperwork" → buying_signal. Taking it to the people who decide is the deal moving forward, not a goal.
 - A timeline that moved: sooner, later, paused, or a deadline that now exists → timeline, with the new timing and its reason.
 - An objection resolved or dropped ("that's fixed now", "the price doesn't scare me") → objection with "status": "resolved".
+- A condition they DOUBT we meet ("auditors need recordings kept in the EU — is that true of you?", "can it write back to HubSpot?") is an objection about us, even when it is worded as a requirement. When our side answers it in the same conversation and they accept the answer ("that settles it", "good, that was my worry"), it is an objection with "status": "resolved"; answered but not yet accepted is "addressed". A condition stated with no doubt about us stays a requirement.
 - Budget freed, approved, cut or frozen → budget.
 - A deal going backwards: "not a priority this quarter", "we need to pause", "the CEO wants to wait" → timeline or risk_signal.
 - A competitor chosen, dropped, or newly in the running → competitor with its new "stance".
