@@ -9172,6 +9172,9 @@ CREATE TABLE public.workspace_context_files (
     icp_marked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    repo_path text,
+    git_sha text,
+    repo_synced_at timestamp with time zone,
     CONSTRAINT workspace_context_files_about_is_shared CHECK (((kind <> 'about'::text) OR (visibility = 'workspace'::text))),
     CONSTRAINT workspace_context_files_body_check CHECK ((octet_length(body) <= 262144)),
     CONSTRAINT workspace_context_files_icp_is_shared CHECK (((kind <> 'icp'::text) OR (visibility = 'workspace'::text))),
@@ -9187,6 +9190,31 @@ CREATE TABLE public.workspace_context_files (
 --
 
 COMMENT ON TABLE public.workspace_context_files IS 'Workspace context library (GET-875): reference/instructions/ICP knowledge. kind=icp (one per workspace, always visibility=workspace) is the file ICP scoring reads. On Cloud, tagged to RevBoxes through revbox_context_links.';
+
+
+--
+-- Name: workspace_context_repos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workspace_context_repos (
+    workspace_id uuid NOT NULL,
+    github_repo text NOT NULL,
+    github_branch text DEFAULT 'main'::text NOT NULL,
+    base_path text DEFAULT 'context'::text NOT NULL,
+    github_token_enc text NOT NULL,
+    webhook_id bigint,
+    webhook_secret text,
+    sync_token text,
+    auto_sync boolean DEFAULT true NOT NULL,
+    sync_status text DEFAULT 'idle'::text NOT NULL,
+    last_error text,
+    last_synced_at timestamp with time zone,
+    last_synced_via text,
+    last_polled_at timestamp with time zone,
+    connected_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
@@ -11492,6 +11520,22 @@ ALTER TABLE ONLY public.workspace_context_files
 
 
 --
+-- Name: workspace_context_repos workspace_context_repos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_repos
+    ADD CONSTRAINT workspace_context_repos_pkey PRIMARY KEY (workspace_id);
+
+
+--
+-- Name: workspace_context_repos workspace_context_repos_sync_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_repos
+    ADD CONSTRAINT workspace_context_repos_sync_token_key UNIQUE (sync_token);
+
+
+--
 -- Name: workspace_crm_owners workspace_crm_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13770,6 +13814,13 @@ CREATE UNIQUE INDEX workspace_context_files_one_icp ON public.workspace_context_
 
 
 --
+-- Name: workspace_context_files_repo_path; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workspace_context_files_repo_path ON public.workspace_context_files USING btree (workspace_id, repo_path) WHERE (repo_path IS NOT NULL);
+
+
+--
 -- Name: workspace_context_files_ws; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15515,6 +15566,22 @@ ALTER TABLE ONLY public.workspace_context_files
 
 
 --
+-- Name: workspace_context_repos workspace_context_repos_connected_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_repos
+    ADD CONSTRAINT workspace_context_repos_connected_by_fkey FOREIGN KEY (connected_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: workspace_context_repos workspace_context_repos_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_repos
+    ADD CONSTRAINT workspace_context_repos_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workspace_crm_owners workspace_crm_owners_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16983,6 +17050,12 @@ ALTER TABLE public.workspace_context_file_versions ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE public.workspace_context_files ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: workspace_context_repos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workspace_context_repos ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: workspace_crm_owners; Type: ROW SECURITY; Schema: public; Owner: -
@@ -19389,6 +19462,15 @@ GRANT ALL ON TABLE public.workspace_context_file_versions TO service_role;
 --
 
 GRANT ALL ON TABLE public.workspace_context_files TO service_role;
+
+
+--
+-- Name: TABLE workspace_context_repos; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.workspace_context_repos TO anon;
+GRANT ALL ON TABLE public.workspace_context_repos TO authenticated;
+GRANT ALL ON TABLE public.workspace_context_repos TO service_role;
 
 
 --

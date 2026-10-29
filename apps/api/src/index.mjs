@@ -124,6 +124,7 @@ import { personalRouter } from './routes/api/personal.mjs';
 import { entityNotesRouter } from './routes/api/notes.mjs';
 import { sharesRouter } from './routes/api/shares.mjs';
 import { githubVaultWebhookHandler, personalSyncInternalRouter } from './routes/personalGithubSync.mjs';
+import { contextRepoWebhookHandler, contextRepoInternalRouter } from './routes/contextRepoSync.mjs';
 import { activityStatsRouter } from './routes/api/activityStats.mjs';
 import { backfillRouter } from './routes/api/backfillPreview.mjs';
 import { evidenceRouter } from './routes/api/evidence.mjs';
@@ -184,6 +185,8 @@ app.use(cors({
 // Personal-vault GitHub webhook — HMAC-verified over the raw body, so it too mounts
 // before express.json(). A push to a member's connected repo ingests into their vault.
 app.post('/api/personal/github/webhook/:token', express.raw({ type: 'application/json' }), githubVaultWebhookHandler);
+// The company repo behind Knowledge (GET-1037): GitHub signs the raw body.
+app.post('/api/context-repo/webhook/:token', express.raw({ type: 'application/json' }), contextRepoWebhookHandler);
 
 cloud?.mountRaw?.(app, cloudDeps);
 
@@ -436,6 +439,8 @@ app.use('/api/mentions',              mentionsRouter);
 app.use('/api/billing',               billingRouter);
 app.use('/internal/api-notifications', apiNotificationsRouter);
 app.use('/internal/personal-sync',    personalSyncInternalRouter);
+// The company repo's poll (GET-1037). Same WORKER_SECRET guard.
+app.use('/internal/context-repo',     contextRepoInternalRouter);
 // The detector automations' nightly drafting (GET-685). Same WORKER_SECRET guard.
 app.use('/internal/detector-drafts',   detectorDraftsInternalRouter);
 app.use('/internal/automation-steps', automationStepsInternalRouter);

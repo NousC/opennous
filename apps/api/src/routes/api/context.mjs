@@ -7,13 +7,17 @@
 //   DELETE /files/:fileId                       delete it (its versions stay)
 //   GET    /files/:fileId/versions              its versions (GET-1038), newest first
 //   POST   /files/:fileId/versions/:id/restore  put one back, as a new version
+//   GET    /repo                                the company repo (GET-1037), and whether the viewer may manage it
+//   POST   /repo                                connect it: { repo, token, branch?, base_path? } (owner/admin)
+//   POST   /repo/sync                           read it now
+//   DELETE /repo                                disconnect it (owner/admin); the files stay in both places
 //
-// The About us file (GET-1036) is mirrored into the positioning foundation on every save. What a save
-// does beyond the library is Cloud's and plugs in through registerKnowledgeHooks: marking a file ICP
-// builds ICP scoring from it (GET-878), the ICP file's text is mirrored into the workspace ICP, and with
-// a company repo connected (GET-1037) each save is committed there. Without them a file can still be
-// the ICP file; scoring simply does not read it. RevBox tags are the library's own seam
-// (registerContextBoxes in @nous/core).
+// The About us file (GET-1036) is mirrored into the positioning foundation on every save, and with a
+// company repo connected (GET-1037, open source since 2026-10-29: lib/contextRepo.mjs) each save is
+// committed there. What a save does beyond that is Cloud's and plugs in through registerKnowledgeHooks:
+// marking a file ICP builds ICP scoring from it (GET-878) and the ICP file's text is mirrored into the
+// workspace ICP. Without them a file can still be the ICP file; scoring simply does not read it.
+// RevBox tags are the library's own seam (registerContextBoxes in @nous/core).
 import { Router } from 'express';
 import {
   getSupabaseClient, getDocument, listContextLibrary, loadContextFile, createContextFile, updateContextFile,
@@ -21,6 +25,7 @@ import {
 } from '@nous/core';
 import { viewerVisibleAccountSet } from '../../lib/visibility.mjs';
 import { mirrorAboutFile } from '../../lib/aboutContextFile.mjs';
+import { loadContextRepo, repoOut, connectContextRepo, disconnectContextRepo, pullContextRepo, pushContextFile } from '../../lib/contextRepo.mjs';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const invalid = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
@@ -28,12 +33,23 @@ const invalid = (message, status = 400) => { throw Object.assign(new Error(messa
 // ── Cloud's side of a save ───────────────────────────────────────────────────
 //   markIcp(sb, ws, { confirm, admin, rebuild? }, write?) -> { result, icp }   mark (or rebuild) and score
 //   mirrorIcp(sb, ws) -> { status }                                          the ICP file's text, mirrored
-//   commit(sb, req, fileId, changelog)                                       the save, committed to the repo
 let HOOKS = {};
 export function registerKnowledgeHooks(hooks) { HOOKS = { ...HOOKS, ...hooks }; }
 const markIcp = (sb, ws, opts, write) => HOOKS.markIcp ? HOOKS.markIcp(sb, ws, opts, write) : write().then(result => ({ result }));
 const mirrorIcp = (sb, ws) => HOOKS.mirrorIcp ? HOOKS.mirrorIcp(sb, ws) : Promise.resolve({ status: 'not_available' });
-const commit = (sb, req, fileId, changelog) => { HOOKS.commit?.(sb, req, fileId, changelog); };
+
+// ── The company repo (GET-1037) ──────────────────────────────────────────────
+// Each save is committed in the background: GitHub's latency never holds the save, and a failure is
+// recorded on the connection, shown on the Knowledge page, and retried by the next save or the poll.
+const commit = (sb, req, fileId, changelog) => {
+  pushContextFile(sb, req.workspaceId, fileId, { who: { kind: 'person', userId: req.internalUserId }, changelog })
+    .catch(e => console.warn('[context-repo] commit failed:', e?.message ?? e));
+};
+/** What the repo changed, applied where it is read: the ICP and About us mirrors. */
+export async function afterRepoChange(sb, ws, file) {
+  if (file.kind === 'icp') await mirrorIcp(sb, ws);
+  if (file.kind === 'about') await mirrorAboutFile(sb, ws);
+}
 
 /** The route wrapper: a signed-in member, valid ids, and the library's errors as JSON. */
 export function knowledgeRoute(fn) {
@@ -158,4 +174,25 @@ contextRouter.post('/files/:fileId/versions/:versionId/restore', knowledgeRoute(
   if (file.kind === 'about') await mirrorAboutFile(sb, req.workspaceId);
   commit(sb, req, file.id, 'Restored a version');
   res.json({ file: await readableContextFile(file, opener(sb, req)) });
+}));
+
+const repoAdmin = (req) => ['owner', 'admin'].includes(req.workspaceRole);
+contextRouter.get('/repo', knowledgeRoute(async (req, res, sb) => {
+  res.json({ repo: repoOut(await loadContextRepo(sb, req.workspaceId)), can_manage: repoAdmin(req) });
+}));
+contextRouter.post('/repo', knowledgeRoute(async (req, res, sb) => {
+  if (!repoAdmin(req)) invalid('Only a workspace owner or admin can connect the repo.', 403);
+  const { repo, token, branch, base_path } = req.body ?? {};
+  res.json(await connectContextRepo(sb, req.workspaceId, req.internalUserId, { repo, token, branch, base_path }, { afterChange: f => afterRepoChange(sb, req.workspaceId, f) }));
+}));
+contextRouter.post('/repo/sync', knowledgeRoute(async (req, res, sb) => {
+  const cfg = await loadContextRepo(sb, req.workspaceId);
+  if (!cfg) invalid('No repo connected.', 404);
+  const pulled = await pullContextRepo(sb, cfg, { via: 'manual', afterChange: f => afterRepoChange(sb, req.workspaceId, f) });
+  res.json({ pulled, repo: repoOut(await loadContextRepo(sb, req.workspaceId)) });
+}));
+contextRouter.delete('/repo', knowledgeRoute(async (req, res, sb) => {
+  if (!repoAdmin(req)) invalid('Only a workspace owner or admin can disconnect the repo.', 403);
+  await disconnectContextRepo(sb, req.workspaceId);
+  res.json({ ok: true });
 }));

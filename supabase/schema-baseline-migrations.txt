@@ -267,6 +267,7 @@
 2026_10_22_insight_pattern_interpretations.sql
 2026_10_26_context_about_file.sql
 2026_10_26_context_file_versions.sql
+2026_10_26_context_repo.sql
 2026_10_26_webhook_claude_destination.sql
 2026_10_27_claim_links.sql
 2026_10_27_claims_search_indexes.sql

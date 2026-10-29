@@ -1046,3 +1046,18 @@ async function runVaultSyncTickSafe() {
 }
 cron.schedule('*/10 * * * *', runVaultSyncTickSafe);
 console.log('[WORKER] Vault sync (personal) — every 10 minutes');
+
+// The company repo behind Knowledge (GET-1037): read connections with no webhook, or quiet for an
+// hour. Hourly at :06 (GET-1044): Sync now and the webhook cover anything sooner. Same api-owned +
+// WORKER_SECRET pattern as the ticks above.
+async function runContextRepoTick() {
+  const secret = process.env.WORKER_SECRET;
+  if (!secret) return;
+  const resp = await fetch(`${apiInternalBase()}/internal/context-repo/tick`, {
+    method: 'POST', headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
+  });
+  if (!resp.ok) throw new Error(`context repo tick failed: ${resp.status}`);
+  const r = await resp.json();
+  if (r.synced) console.log(`[CONTEXT_REPO] ${r.synced} repo(s) read`);
+}
+cron.schedule('6 * * * *', () => runContextRepoTick().catch(e => console.error('[CONTEXT_REPO]', e.message)));

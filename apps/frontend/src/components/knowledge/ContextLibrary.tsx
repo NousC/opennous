@@ -2,9 +2,9 @@
 // since 2026-10-29 (it was Cloud's, cloud/settings). Knowledge is saved once; on Cloud a file can be
 // tagged to RevBoxes, so one file serves several boxes and a box's jobs read only the files tagged to
 // it. With RevBoxes off the rail (GET-1043) the rows show only who can see a file (GET-1044).
-// Cloud adds its parts through the registry (cloud.knowledge): the company repo bar, the Intelligence
-// group, which holds the ICP file, and rebuilding ICP scoring. Without them the ICP file is listed
-// with the other files.
+// The company repo bar on top (GET-1037) is open source too. Cloud adds its parts through the registry
+// (cloud.knowledge): the Intelligence group, which holds the ICP file, and rebuilding ICP scoring.
+// Without them the ICP file is listed with the other files.
 // One file can be the workspace's ICP: ICP scoring builds its scorecard from it. Built from the
 // settings kit like General and Members; Settings.tsx wraps it in SectionShell. Below the library,
 // each box's own instruction blocks, as before (they are edited on the box).
@@ -27,6 +27,7 @@ import { SettingsGroup, fieldCls } from '@/components/settings/SettingsKit';
 import { ContextDocSheet, type DocMenuItem } from '@/components/knowledge/ContextDocSheet';
 import { ContextHistory } from '@/components/knowledge/ContextHistory';
 import { ContextRow } from '@/components/knowledge/ContextRow';
+import { ContextRepoBar } from '@/components/knowledge/ContextRepoBar';
 import { cloud } from '@/lib/cloud';
 import { when } from '@/lib/format';
 import { knowledgeKey, knowledgeRequest, CONTEXT_KIND_LABEL, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
@@ -71,7 +72,7 @@ export function ContextLibrary() {
   const uploader = useRef<HTMLInputElement>(null);
   const key = knowledgeKey(ws);
   const query = useQuery({ queryKey: key, enabled: !!ws && !!token, queryFn: () => knowledgeRequest<ContextLibraryData>(ws, token, '/library') });
-  const { RepoBar, Intelligence, rebuildIcp } = cloud.knowledge ?? {};
+  const { Intelligence, rebuildIcp } = cloud.knowledge ?? {};
   const data = query.data;
   const taggable = (data?.boxes ?? []).filter(b => b.access !== 'viewer');
 
@@ -139,7 +140,7 @@ export function ContextLibrary() {
   };
 
   return <>
-    {RepoBar && <RepoBar ws={ws} token={token} />}
+    <ContextRepoBar ws={ws} token={token} />
     {/* Intelligence first (GET-1044): the ICP and the files OpenNous keeps current. */}
     {Intelligence && <Intelligence ws={ws} token={token} onOpen={id => { setNote(null); setOpen(id); }}
       icp={icpFile ?? null} onAddIcp={data?.is_admin ? () => setDraft({ ...empty, title: 'ICP', icp: true }) : undefined} />}
