@@ -414,7 +414,6 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
   onConnect: (id: string) => void; onClose: () => void; onChange: () => void;
 }) {
   const navigate = useNavigate();
-  const { userData } = useAuth();
   const { p, load, token, workspaceId } = useBackfillPreview(paid ? 3_000 : 10_000);
   // The live line on the agent step polls the keys the way the Connect over MCP dialog does.
   const { data: keys, refetch: refetchKeys } = useWorkspaceKeys(open ? 5_000 : false);
@@ -503,16 +502,13 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
     ),
   };
 
-  const wsName = userData?.workspace?.name ?? "";
   return (
     <div className="flex h-full min-h-0 flex-col sm:flex-row">
       {/* The rail. On a phone it folds into a strip across the top. */}
       <aside className="flex flex-none flex-col border-b border-hairline bg-muted/50 px-3.5 pb-3 pt-4 sm:w-[260px] sm:border-b-0 sm:border-r sm:pb-[18px] sm:pt-[22px]">
         <div className="flex items-center gap-[9px] px-2">
-          <span aria-hidden className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-[7px] bg-[#FF5C00] text-[12px] font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_1px_2px_rgba(255,92,0,0.3)]">
-            {(wsName.trim().charAt(0) || "N").toUpperCase()}
-          </span>
-          <DialogTitle className="flex-1 text-[14px] font-semibold leading-none tracking-[-0.01em]">Set up Nous</DialogTitle>
+          <img src="/nous-logo.svg" alt="" aria-hidden className="h-6 w-6 flex-none object-contain" />
+          <DialogTitle className="flex-1 text-[14px] font-semibold leading-none tracking-[-0.01em]">Set up OpenNous</DialogTitle>
           {!locked && (
             <button type="button" onClick={onClose} aria-label="Close" className="inline-flex h-7 w-7 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-hover hover:text-foreground sm:hidden">
               <X className="h-[15px] w-[15px]" strokeWidth={1.7} />
