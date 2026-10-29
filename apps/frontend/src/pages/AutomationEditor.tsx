@@ -16,7 +16,7 @@
 import { trackProductEvent } from "@/lib/posthog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Check, ChevronLeft, ChevronRight, History, Layers, Loader2, PanelRightClose, PanelRightOpen, Play, Plus, Power, Search, Trash2, Undo2, X as XIcon, Zap } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, History, Layers, Loader2, MousePointerClick, PanelRightClose, PanelRightOpen, Play, Plus, Power, Search, Trash2, Undo2, X as XIcon, Zap } from "lucide-react";
 import { AutomationRunDetail } from "@/components/AutomationRunDetail";
 import { AccountLogo } from "@/components/pipeline/DealBits";
 import { usePlan } from "@/hooks/usePlan";
@@ -257,11 +257,13 @@ export default function AutomationEditor() {
   const [viewing, setViewing] = useState<{ version: number; publishedAt: string; by: string | null; live: boolean; flow: Flow } | null>(null);
   const [name, setName] = useState<{ value: string; touched: boolean }>({ value: "", touched: false });
   // The node you are on, in the URL: a reload, a shared link or the back button lands on the
-  // same step instead of the trigger. Step ids are stable across loads, so the address holds.
-  const sel = params.get("step") ?? "trigger";
-  const setSel = (sid: string) => setParams(p => {
+  // same step. Step ids are stable across loads, so the address holds. A saved workflow opens
+  // with nothing selected, the flow to read; a new one opens on its trigger, the first thing
+  // it needs. A click on the empty canvas lets go of the selection.
+  const sel: string | null = params.get("step") ?? (isNew ? "trigger" : null);
+  const setSel = (sid: string | null) => setParams(p => {
     const n = new URLSearchParams(p);
-    if (sid === "trigger") n.delete("step"); else n.set("step", sid);
+    if (sid) n.set("step", sid); else n.delete("step");
     return n;
   }, { replace: true });
   // The settings panel folds away for room on the canvas; picking a node opens it again.
@@ -402,7 +404,7 @@ export default function AutomationEditor() {
   const removeStep = (sid: string) => {
     if (!flow) return;
     edit({ ...flow, steps: flow.steps.filter(s => s.id !== sid) });
-    setSel("trigger");
+    setSel(null);
   };
   const setStep = (sid: string, patch: StepConfig) => {
     if (!flow) return;
@@ -808,7 +810,7 @@ export default function AutomationEditor() {
             ))}
           </div>
           ) : (
-          <div className="flex min-h-full flex-col items-center px-6 py-14">
+          <div className="flex min-h-full flex-col items-center px-6 py-14" onClick={e => { if (e.target === e.currentTarget) setSel(null); }}>
             <FlowCard
               trigger
               on={sel === "trigger"}
@@ -851,13 +853,19 @@ export default function AutomationEditor() {
           </button>
         ) : (
         <div className="w-[400px] flex-shrink-0 overflow-y-auto rounded-[14px] border border-border/70 bg-background px-5 py-5">
-          {sel === "trigger" || !selStep ? (
+          {sel === "trigger" ? (
             <TriggerPanel
               flow={flow}
               data={data}
               tools={tools}
               onChange={(k, config) => edit({ ...flow, trigger: { kind: k, config } })}
             />
+          ) : !selStep ? (
+            <div className="flex h-full flex-col items-center justify-center gap-1.5 px-6 text-center">
+              <MousePointerClick className="h-4 w-4 text-muted-foreground/60" strokeWidth={1.8} />
+              <p className="text-[13px] text-foreground">Nothing selected</p>
+              <p className="text-[12px] text-muted-foreground">Click the trigger or a step to set it up.</p>
+            </div>
           ) : (
             <PreviewContext.Provider value={preview}>
             <StepPanel

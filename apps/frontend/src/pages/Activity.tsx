@@ -12,7 +12,8 @@ import { freshAccessToken } from "@/lib/freshToken";
 import { ApiHomeStats } from "@/components/home/ApiHomeStats";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ApiTopBarFilter, useApiTopBar, useInApiShell } from "@/components/shell/ApiTopBar";
+import { useApiTopBar, useInApiShell } from "@/components/shell/ApiTopBar";
+import { ToolbarFilter } from "@/components/ui/toolbar-filter";
 import { cn } from "@/lib/utils";
 import { num } from "@/lib/format";
 import { toolLogo } from "@/lib/toolLogo";
@@ -176,9 +177,9 @@ export default function Activity(_props: { mine?: boolean } = {}) {
     <div className="flex h-full flex-col overflow-hidden">
       {inShell ? (
         <>
-          <ApiTopBarFilter active={activeCount} className="w-[290px]">{filterContent}</ApiTopBarFilter>
-          <div className="flex flex-shrink-0 items-center justify-end gap-2 px-5 pt-4 empty:hidden">
+          <div className="flex flex-shrink-0 items-center justify-end gap-2 px-5 pt-4">
             <BackfillProgressButton />
+            <ToolbarFilter active={activeCount} className="w-[290px]">{filterContent}</ToolbarFilter>
           </div>
         </>
       ) : (

@@ -1,31 +1,27 @@
 // The API plan's top bar (GET-621): one bar on every API-plan page.
 //
 //   left  — the page's icon and title, with its parent as a breadcrumb link when it has one
-//   right — Get started (until setup is done) · Filter | Connect agent (no refresh button)
+//   right — Get started (until setup is done) | Connect agent (no refresh button)
 //
 // The shell (StandardLayout) renders it for the API plan and wraps the page in the provider, so a
 // page only says what is its own:
 //
 //   useApiTopBar({ title: account.name, parent: { label: "Accounts", href: "/accounts" }, onRefresh: load, refreshing: loading });
-//   <ApiTopBarFilter active={n}>…the page's filter rows…</ApiTopBarFilter>
 //
 // Title, icon and parent default from the route, so most pages pass nothing but their reload.
-// A page with no filter still shows the Filter button, disabled, so the bar never shifts between
-// pages. A page with no reload of its own refreshes every query on screen.
+// A page's filter is its own: a ToolbarFilter in the page's toolbar, next to its search
+// (2026-10-28), never up here. A page with no reload of its own refreshes every query on screen.
 //
-// Outside the provider (every other plan) the hooks are no-ops and ApiTopBarFilter renders
-// nothing, so pages can call them unconditionally.
+// Outside the provider (every other plan) the hooks are no-ops, so pages can call them
+// unconditionally.
 
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { Link, matchPath, useLocation } from "react-router-dom";
 import {
-  Activity, BarChart3, Building2, ChevronDown, Filter, Home as HomeIcon, KeyRound, Plug,
+  Activity, BarChart3, Building2, ChevronDown, Home as HomeIcon, KeyRound, Plug,
   Pencil, SquareTerminal, Code2, Users2, Webhook, ArrowUpRight, Zap, Network, Radio, Lightbulb } from "lucide-react";
 import { InlineEditInput } from "@/components/ui/inline-edit-input";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -78,44 +74,10 @@ export function apiTopBarRoute(pathname: string): RouteMeta | null {
   return null;
 }
 
-const iconButton =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-ink-2 shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-45";
-
-/**
- * The page's filter, behind the bar's Filter button. `children` is the popover's content;
- * `active` is how many filters are on (shown on the button). Renders nothing outside the shell.
- */
-export function ApiTopBarFilter({ active = 0, children, className }: { active?: number; children: React.ReactNode; className?: string }) {
-  const ctx = React.useContext(ApiTopBarContext);
-  React.useEffect(() => {
-    if (!ctx) return;
-    ctx.setFilterCount((n) => n + 1);
-    return () => ctx.setFilterCount((n) => n - 1);
-  }, [ctx]);
-  if (!ctx?.filterSlot) return null;
-  return createPortal(
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          aria-label={active ? `Filter, ${active} on` : "Filter"}
-          className={cn(iconButton, active > 0 && "w-auto gap-1 px-2 text-foreground")}
-        >
-          <Filter className="h-3.5 w-3.5" strokeWidth={1.8} />
-          {active > 0 && <span className="text-[11px] font-medium tabular-nums">{active}</span>}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className={cn("w-60 p-0", className)}>{children}</PopoverContent>
-    </Popover>,
-    ctx.filterSlot,
-  );
-}
-
 /** Wraps the API-plan page area. Renders the bar itself when the path is an API-plan page. */
 export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
   const [slots, setSlots] = React.useState<Slots | null>(null);
   const [, setRefresh] = React.useState<(() => void) | null>(null);
-  const [filterSlot, setFilterSlot] = React.useState<HTMLElement | null>(null);
-  const [filterCount, setFilterCount] = React.useState(0);
   const [connect, setConnect] = React.useState<ConnectKind | null>(null);
   // Mounted from the first open on, so closing animates instead of vanishing.
   const [connectUsed, setConnectUsed] = React.useState(false);
@@ -124,8 +86,8 @@ export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
   const route = apiTopBarRoute(pathname);
   const barShown = !!route;
   const ctx = React.useMemo<Ctx>(
-    () => ({ setSlots, setRefresh, filterSlot, setFilterCount, openConnect: setConnect, barShown }),
-    [filterSlot, barShown],
+    () => ({ setSlots, setRefresh, openConnect: setConnect, barShown }),
+    [barShown],
   );
 
   return (
@@ -134,8 +96,6 @@ export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
         <ApiTopBar
           route={route}
           slots={slots}
-          hasFilter={filterCount > 0}
-          filterSlotRef={setFilterSlot}
           onConnect={setConnect}
         />
       )}
@@ -149,11 +109,9 @@ export function ApiTopBarProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ApiTopBar({ route, slots, hasFilter, filterSlotRef, onConnect }: {
+function ApiTopBar({ route, slots, onConnect }: {
   route: RouteMeta;
   slots: Slots | null;
-  hasFilter: boolean;
-  filterSlotRef: (el: HTMLElement | null) => void;
   onConnect: (kind: ConnectKind) => void;
 }) {
   const { pathname } = useLocation();
@@ -189,20 +147,6 @@ function ApiTopBar({ route, slots, hasFilter, filterSlotRef, onConnect }: {
       actions={
         <>
           <React.Suspense fallback={null}><GetStartedButton variant="segments" /></React.Suspense>
-          <span ref={filterSlotRef} className="contents" />
-          {!hasFilter && (
-            <Tooltip delayDuration={200}>
-              <TooltipTrigger asChild>
-                {/* A disabled button swallows hover, so the tooltip rides a wrapper. */}
-                <span tabIndex={0} className="inline-flex rounded-lg">
-                  <button disabled aria-label="Filter" className={iconButton}>
-                    <Filter className="h-3.5 w-3.5" strokeWidth={1.8} />
-                  </button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Nothing to filter on this page</TooltipContent>
-            </Tooltip>
-          )}
           <span aria-hidden className="mx-0.5 hidden h-[18px] w-px shrink-0 bg-border sm:block" />
           {/* API keys live in Settings under Account (GET-1030), not up here. */}
           <DropdownMenu>

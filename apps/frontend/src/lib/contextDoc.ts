@@ -26,6 +26,16 @@ const MARKDOWN_SIGNALS: RegExp[] = [
   /\[[^\]\n]+\]\([^)\s]+\)/,       // [link](url)
 ];
 
+/**
+ * The body without a leading YAML front matter block (`---` … `---`). It is metadata for the repo
+ * and the agents (title, kind, source); read as markdown it rendered as one bold run-on line.
+ */
+export function withoutFrontmatter(text: string | null | undefined): string {
+  const t = (text ?? '').replace(/\r\n?/g, '\n');
+  const m = /^\s*---\n[\s\S]*?\n---[ \t]*(\n|$)/.exec(t);
+  return m ? t.slice(m[0].length).replace(/^\s*\n/, '') : t;
+}
+
 /** How to render `text`: markdown when it carries markdown syntax, json for a JSON upload, else plain. */
 export function docFormat(text: string | null | undefined): DocFormat {
   const t = (text ?? '').trim();

@@ -25,8 +25,6 @@ export type Slots = {
 export type Ctx = {
   setSlots: (s: Slots | null) => void;
   setRefresh: (fn: (() => void) | null) => void;
-  filterSlot: HTMLElement | null;
-  setFilterCount: React.Dispatch<React.SetStateAction<number>>;
   /** Open one of the Connect agent dialogs (A3/A4) from anywhere inside the shell. */
   openConnect: (kind: ConnectKind) => void;
   /** Whether the bar is drawn on this path (an API-plan page) — pages drop their title only then. */

@@ -16,7 +16,8 @@ import { accountPath, dealPath as recordDealPath, recordNavState, uniquePaths } 
 import { money, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { LocationFilter } from "@/components/LocationFilter";
-import { ApiTopBarFilter, useInApiShell } from "@/components/shell/ApiTopBar";
+import { useInApiShell } from "@/components/shell/ApiTopBar";
+import { ToolbarFilter } from "@/components/ui/toolbar-filter";
 import { useResolvedAvatar } from "@/components/EntityAvatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlan } from "@/hooks/usePlan";
@@ -968,30 +969,12 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
   });
   const hasStrip = (view === "sales_pipeline" && (pipelineOptions.length > 1 || stageChips.length > 0)) || view === "customer_success";
 
-  // The API plan's shared top bar (GET-621) carries the title, and the location filter moves
-  // behind its Filter button.
+  // The API plan's shared top bar (GET-621) carries the title; the network and location filters
+  // sit behind the Filter button in this page's toolbar, next to the search.
   const inShell = useInApiShell();
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {inShell && !scopeId && (
-        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (showNetwork ? 0 : 1)} className="w-[290px]">
-          <FilterMenu groups={[
-            {
-              key: "network", label: "Network", icon: Network, defaultValue: "shown",
-              options: [{ value: "hidden", label: "Hidden" }, { value: "shown", label: "Shown" }],
-              selected: [showNetwork ? "shown" : "hidden"],
-              onChange: ([v]) => { setShowNetwork(v === "shown"); setPages(1); },
-            },
-            {
-              key: "location", label: "Location", icon: MapPin, defaultValue: "all",
-              options: countryOptions.length ? [{ value: "all", label: "All locations" }, ...countryOptions.map((o) => ({ value: o.country, label: o.country, count: o.accounts }))] : [],
-              selected: [appliedCountry ?? "all"],
-              onChange: ([v]) => chooseCountry(v),
-            },
-          ]} />
-        </ApiTopBarFilter>
-      )}
       <PageToolbar>
         {/* One view is not a choice: on the workspace plan this page is the account list alone,
             so the view tabs only appear when there is a second view to switch to. */}
@@ -1026,6 +1009,24 @@ export default function AccountsList({ onOpen, only, defaultView = "accounts" }:
             </button>
           )}
         </label>
+        {inShell && !scopeId && (
+          <ToolbarFilter active={(appliedCountry ? 1 : 0) + (showNetwork ? 0 : 1)} className="w-[290px]">
+            <FilterMenu groups={[
+              {
+                key: "network", label: "Network", icon: Network, defaultValue: "shown",
+                options: [{ value: "hidden", label: "Hidden" }, { value: "shown", label: "Shown" }],
+                selected: [showNetwork ? "shown" : "hidden"],
+                onChange: ([v]) => { setShowNetwork(v === "shown"); setPages(1); },
+              },
+              {
+                key: "location", label: "Location", icon: MapPin, defaultValue: "all",
+                options: countryOptions.length ? [{ value: "all", label: "All locations" }, ...countryOptions.map((o) => ({ value: o.country, label: o.country, count: o.accounts }))] : [],
+                selected: [appliedCountry ?? "all"],
+                onChange: ([v]) => chooseCountry(v),
+              },
+            ]} />
+          </ToolbarFilter>
+        )}
         {view === "accounts" && !scopeId && (
           <OwnerFilter people={ownerPeople} meId={meId} value={owners} onChange={setOwners}
             unassignedCount={ownerCounts.unassigned || undefined} />

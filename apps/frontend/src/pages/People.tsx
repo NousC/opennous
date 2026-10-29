@@ -11,7 +11,8 @@ import { ContactInfo, stageColor, ActivityIcon, DocIcon, mapContact } from "@/co
 import PersonDetailView from "@/components/PersonDetailView";
 import { EntityAvatar } from "@/components/EntityAvatar";
 import { LocationFilter } from "@/components/LocationFilter";
-import { ApiTopBarFilter, useInApiShell } from "@/components/shell/ApiTopBar";
+import { useInApiShell } from "@/components/shell/ApiTopBar";
+import { ToolbarFilter } from "@/components/ui/toolbar-filter";
 import { IcpScore, TierBars } from "@/components/account/TierBits";
 import type { TierTab } from "@/components/account/apiAccountModel";
 import { ViewTabs } from "@/components/ui/view-tabs";
@@ -726,23 +727,6 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
     <div className="flex h-full min-h-0 flex-col bg-card">
       {showImport && <PeopleImportModal workspaceId={workspaceId} token={token} onClose={()=>setShowImport(false)} onDone={()=>{ setShowImport(false); refetch(); }}/>}
 
-      {inApiShell && (
-        <ApiTopBarFilter active={(appliedCountry ? 1 : 0) + (ptype !== "all" ? 1 : 0)} className="w-[290px]">
-          <FilterMenu groups={[
-            {
-              key: "type", label: "Type", icon: Tag, defaultValue: "all",
-              options: PEOPLE_TYPES.map((o) => ({ value: o.value, label: o.label })),
-              selected: [ptype], onChange: ([v]) => setPtype(v as PeopleType),
-            },
-            {
-              key: "location", label: "Location", icon: MapPin, defaultValue: "all",
-              options: countryOptions.length ? locationRows.map((o) => ({ value: o.country, label: o.label, count: o.accounts })) : [],
-              selected: [appliedCountry ?? "all"], onChange: ([v]) => chooseCountry(v),
-            },
-          ]} />
-        </ApiTopBarFilter>
-      )}
-
       <div className="flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-hairline px-4 py-2.5">
         {leadingTab}
         {tiers && (
@@ -779,6 +763,22 @@ export default function People({ embedded = false, leadingTab = null, focusId = 
             </button>
           )}
         </label>
+        {inApiShell && (
+          <ToolbarFilter active={(appliedCountry ? 1 : 0) + (ptype !== "all" ? 1 : 0)} className="w-[290px]">
+            <FilterMenu groups={[
+              {
+                key: "type", label: "Type", icon: Tag, defaultValue: "all",
+                options: PEOPLE_TYPES.map((o) => ({ value: o.value, label: o.label })),
+                selected: [ptype], onChange: ([v]) => setPtype(v as PeopleType),
+              },
+              {
+                key: "location", label: "Location", icon: MapPin, defaultValue: "all",
+                options: countryOptions.length ? locationRows.map((o) => ({ value: o.country, label: o.label, count: o.accounts })) : [],
+                selected: [appliedCountry ?? "all"], onChange: ([v]) => chooseCountry(v),
+              },
+            ]} />
+          </ToolbarFilter>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">

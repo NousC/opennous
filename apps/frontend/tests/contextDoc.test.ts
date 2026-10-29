@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { docFormat, isEmptyDoc, plainParagraphs, prettyJson, withoutRepeatedTitle } from "../src/lib/contextDoc.ts";
+import { docFormat, isEmptyDoc, plainParagraphs, prettyJson, withoutFrontmatter, withoutRepeatedTitle } from "../src/lib/contextDoc.ts";
 
 test("docFormat: markdown when the text carries markdown syntax", () => {
   assert.equal(docFormat("## Report format\n\nLead with the number."), "markdown");
@@ -57,4 +57,13 @@ test("isEmptyDoc", () => {
   assert.equal(isEmptyDoc("  \n"), true);
   assert.equal(isEmptyDoc(null), true);
   assert.equal(isEmptyDoc("x"), false);
+});
+
+test("withoutFrontmatter: drops a leading YAML block, keeps everything else", () => {
+  const fm = '---\ntitle: "ICP Scoring File"\nkind: playbook\n---\n\n# OpenNous ICP\n\nBody';
+  assert.equal(withoutFrontmatter(fm), "# OpenNous ICP\n\nBody");
+  assert.equal(withoutFrontmatter("---\r\nkind: x\r\n---\r\nBody"), "Body");
+  assert.equal(withoutFrontmatter("# Title\n\n---\n\nAfter a rule"), "# Title\n\n---\n\nAfter a rule");
+  assert.equal(withoutFrontmatter("Plain text"), "Plain text");
+  assert.equal(withoutFrontmatter(null), "");
 });

@@ -11,14 +11,16 @@
 import { trackProductEvent } from "@/lib/posthog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { STRIP_FOLD, TableBox } from "@/components/reports/parts";
-import { ListCard, ListHeader, ListText, ListTile, listRowClass } from "@/components/ui/list";
+import { ListTile } from "@/components/ui/list";
 import { runColumns } from "@/components/automationRunColumns";
 import { useNavigate } from "react-router-dom";
 import {
-  Clock, Hand, Handshake, Info, Loader2, Lock, Mail, Plus, Radar, Sparkles, Webhook, Filter, Check, X,
+  CalendarDays, CircleDot, Clock, Hand, Handshake, Info, Loader2, Lock, Mail, Plus, Radar, Sparkles, Webhook, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { DataTable } from "@/components/ui/data-table";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { FilterMenu, type FilterGroup } from "@/components/ui/filter-menu";
+import { ToolbarFilter } from "@/components/ui/toolbar-filter";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageToolbar } from "@/components/ui/page-top-bar";
 import { SkeletonRows } from "@/components/ui/skeleton";
@@ -85,26 +87,6 @@ function TriggerTiny({ when, tools }: { when: string; tools: { slug: string; lab
   return Icon ? <Icon className="h-[12px] w-[12px] flex-shrink-0 text-muted-foreground" /> : null;
 }
 
-function Chain({ flow, tools }: { flow: Flow; tools: { slug: string; label: string }[] }) {
-  // The flow as one quiet line, the palette's context tone; no chip per step (round 2).
-  const chip = "inline-flex h-[18px] max-w-full items-center gap-[5px] whitespace-nowrap text-[11.5px] text-muted-foreground/80";
-  const arrow = <span aria-hidden className="px-0.5 text-[11px] text-muted-foreground/40">→</span>;
-  return (
-    <span className="flex min-w-0 flex-wrap items-center gap-1">
-      {/* The trigger's mark leads the row in its tile, so the line starts with words. */}
-      <span className={chip}>
-        <span className="truncate">{triggerPhrase(flow, tools.length === 1 ? tools[0].label : null)}</span>
-      </span>
-      {flow.steps.map((s) => (
-        <span key={s.id} className="inline-flex min-w-0 items-center gap-1">
-          {arrow}
-          <span className={chip}><Tiny step={s} /><span className="truncate">{stepTitle(s)}</span></span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
 /** A template's tools as a row of marks. A recorder or CRM shows what this workspace has
  *  connected when it has one, so the template reads as yours. */
 function TemplateTools({ tools, connected, byDefault = false }: { byDefault?: boolean; tools: TemplateTool[]; connected: { meeting: { slug: string; label: string }[]; crm: { slug: string; label: string }[] } }) {
@@ -132,26 +114,28 @@ function TemplateTools({ tools, connected, byDefault = false }: { byDefault?: bo
   );
 }
 
-// The history filter — Activity's popover, with the automation in place of the source.
+// The history filter's windows — Activity's, so the two logs filter alike.
 const WINDOWS: [string, number | null][] = [
   ["Last 7 days", 7], ["Last 30 days", 30], ["Last 60 days", 60], ["Last 90 days", 90], ["All time", null],
 ];
 
-function FilterHead({ label, hint }: { label: string; hint?: string }) {
-  return (
-    <div className="flex items-baseline gap-1.5 border-b border-border/60 px-3 pb-1.5 pt-2.5 first:pt-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/70">{label}</span>
-      {hint && <span className="text-[11px] text-muted-foreground/50">{hint}</span>}
-    </div>
-  );
-}
+/** A row of the list: one of yours, or one OpenNous runs for every workspace. */
+type WorkflowRow =
+  | { key: string; kind: "own"; a: Automation; flow: Flow; marks: { slug: string; label: string }[] }
+  | { key: string; kind: "default"; t: (typeof TEMPLATES)[number]; flow: Flow; shownFlow: Flow; marks: { slug: string; label: string }[] };
 
-function FilterOpt({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+/** The steps after the trigger as one quiet line, each led by its tool's mark. */
+function Steps({ flow }: { flow: Flow }) {
+  if (!flow.steps.length) return <span className="text-muted-foreground/60">—</span>;
   return (
-    <button onClick={onClick} className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[12.5px] text-foreground/85 transition-colors hover:bg-muted/40">
-      <span className="truncate">{children}</span>
-      {on && <Check className="h-3.5 w-3.5 flex-shrink-0 text-foreground" />}
-    </button>
+    <span className="flex min-w-0 items-center gap-1 overflow-hidden text-[12px] text-muted-foreground/80">
+      {flow.steps.map((st, i) => (
+        <span key={st.id} className="inline-flex min-w-0 shrink-0 items-center gap-1 whitespace-nowrap">
+          {i > 0 && <span aria-hidden className="px-0.5 text-[11px] text-muted-foreground/40">→</span>}
+          <Tiny step={st} /><span className="truncate">{stepTitle(st)}</span>
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -265,7 +249,6 @@ export function BuiltInAutomations({
   const [days, setDays] = useState<number | null>(30);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [statuses, setStatuses] = useState<Set<string>>(new Set());
-  const flip = (set: Set<string>, key: string) => { const n = new Set(set); if (n.has(key)) n.delete(key); else n.add(key); return n; };
   const activeCount = (days !== 30 ? 1 : 0) + picked.size + statuses.size;
   const pickedKey = [...picked].sort().join(",");
   const statusKey = [...statuses].sort().join(",");
@@ -321,8 +304,37 @@ export function BuiltInAutomations({
   const approvals = useApprovals();
   // One run, step by step (GET-721), opened from a row of Run history.
   const [openRun, setOpenRun] = useState<string | null>(null);
+  const historyFilter: FilterGroup[] = data ? [
+    {
+      key: "window", label: "Time", icon: CalendarDays, defaultValue: "30",
+      options: WINDOWS.map(([label, value]) => ({ value: value == null ? "all" : String(value), label })),
+      selected: [days == null ? "all" : String(days)],
+      onChange: ([v]) => setDays(v === "all" ? null : Number(v)),
+    },
+    {
+      key: "workflow", label: "Workflow", icon: Zap, multi: true,
+      options: data.automations.map(a => ({ value: a.id, label: a.name })),
+      selected: [...picked], onChange: (next) => setPicked(new Set(next)),
+    },
+    {
+      key: "status", label: "Status", icon: CircleDot, multi: true,
+      options: Object.entries(RUN_TEXT).map(([value, label]) => ({ value, label })),
+      selected: [...statuses], onChange: (next) => setStatuses(new Set(next)),
+    },
+  ] : [];
+  // The tabs, the filter and New sit on the right of the toolbar, where Accounts keeps its search
+  // and filters; the top bar above carries no filter of its own (2026-10-28).
   const toolbar = (
     <PageToolbar>
+      <span className="flex-1" />
+      {/* How many of the plan's automations are in use. Unlimited plans say nothing; the
+          defaults are ours and do not count. */}
+      {data?.limit != null && view === "automations" && (
+        <span title="Your workflows count toward your plan. The defaults don't."
+          className={cn("text-xs tabular-nums", data.used >= data.limit ? "text-warning" : "text-muted-foreground")}>
+          {data.used} of {data.limit} used
+        </span>
+      )}
       {onView && (
         <ViewTabs<"automations" | "history" | "approvals"> aria-label="Workflow views" value={view} onChange={onView}
           options={[
@@ -333,48 +345,10 @@ export function BuiltInAutomations({
             ...(apiPlan ? [{ value: "approvals" as const, label: "Approvals", count: approvals.items?.length || undefined }] : []),
           ]} />
       )}
-      <span className="flex-1" />
-      {/* How many of the plan's automations are in use. Unlimited plans say nothing; the
-          defaults are ours and do not count. */}
-      {data?.limit != null && view === "automations" && (
-        <span title="Your workflows count toward your plan. The defaults don't."
-          className={cn("text-xs tabular-nums", data.used >= data.limit ? "text-warning" : "text-muted-foreground")}>
-          {data.used} of {data.limit} used
-        </span>
-      )}
       {view === "history" && data && (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" title="Filter" className={cn(activeCount && "border-foreground/30")}>
-              <Filter className="!size-3.5" />Filter
-              {!!activeCount && <span className="tabular-nums text-muted-foreground">{activeCount}</span>}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="max-h-[70vh] w-60 overflow-y-auto p-0">
-            <FilterHead label="Window" />
-            {WINDOWS.map(([label, value]) => (
-              <FilterOpt key={label} on={days === value} onClick={() => setDays(value)}>{label}</FilterOpt>
-            ))}
-            {data.automations.length > 0 && (<>
-              <FilterHead label="Workflow" hint="any, unless you pick" />
-              {data.automations.map(a => (
-                <FilterOpt key={a.id} on={picked.has(a.id)} onClick={() => setPicked(p => flip(p, a.id))}>{a.name}</FilterOpt>
-              ))}
-            </>)}
-            <FilterHead label="Status" hint="any, unless you pick" />
-            {Object.entries(RUN_TEXT).map(([key, label]) => (
-              <FilterOpt key={key} on={statuses.has(key)} onClick={() => setStatuses(p => flip(p, key))}>{label}</FilterOpt>
-            ))}
-            {!!activeCount && (
-              <button
-                onClick={() => { setDays(30); setPicked(new Set()); setStatuses(new Set()); }}
-                className="flex w-full items-center gap-1.5 border-t border-hairline px-3 py-2 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <X className="h-3 w-3" /> Clear filters
-              </button>
-            )}
-          </PopoverContent>
-        </Popover>
+        <ToolbarFilter active={activeCount} className="w-[290px]">
+          <FilterMenu groups={historyFilter} onClearAll={() => { setDays(30); setPicked(new Set()); setStatuses(new Set()); }} />
+        </ToolbarFilter>
       )}
       {view === "automations" && (
         <Button size="sm" onClick={() => setAdding(true)} aria-expanded={adding}>
@@ -387,7 +361,7 @@ export function BuiltInAutomations({
   if (!data) return (
     <div className="text-[13px]">
       {toolbar}
-      <div className="px-6 pt-[22px]"><div className="overflow-hidden rounded-2xl border border-border/70 p-2"><SkeletonRows rows={4} /></div></div>
+      <div className="px-4 pt-3"><SkeletonRows rows={4} /></div>
     </div>
   );
 
@@ -423,6 +397,64 @@ export function BuiltInAutomations({
     return `${num(n)}${truncated && n ? "+" : ""} ${n === 1 ? "run" : "runs"}`;
   };
 
+  const ownRows: WorkflowRow[] = data.automations.map(a => ({
+    key: a.id, kind: "own", a, flow: flowFromRow(a), marks: marksFor(a.when, a.tools, tools),
+  }));
+  // The API plan runs no defaults. A ROW PER TOOL a default runs on: with Fellow and RingCentral
+  // both connected, the follow-up runs for each, so it is listed for each, never one row wearing
+  // two logos.
+  const defaultRows: WorkflowRow[] = apiPlan ? [] : TEMPLATES.filter(t => t.byDefault).flatMap(t => {
+    const flow = t.flow();
+    const kind = toolKindFor(flow.trigger.kind);
+    const on = kind ? tools[kind] : [];
+    const rows = on.length ? on.map(tool => ({ key: `${t.id}:${tool.slug}`, tool })) : [{ key: t.id, tool: null as Tool | null }];
+    return rows.map(({ key, tool }) => ({
+      key, kind: "default" as const, t, flow,
+      marks: tool ? [tool] : marksFor(flow.trigger.kind, [], tools),
+      shownFlow: tool ? { ...flow, trigger: { ...flow.trigger, config: { ...flow.trigger.config, tools: [tool.slug] } } } : flow,
+    }));
+  });
+  const off = (r: WorkflowRow) => r.kind === "own" && !r.a.enabled;
+  const workflowColumns: Column<WorkflowRow>[] = [
+    { key: "name", header: "Workflow", width: "30%", cell: r => (
+      <span className={cn("group/name flex min-w-0 items-center gap-2.5", off(r) && "opacity-60")}>
+        <ListTile><TriggerTiny when={r.flow.trigger.kind} tools={r.marks} /></ListTile>
+        <span className="truncate text-foreground">{r.kind === "own" ? r.a.name : r.t.name}</span>
+        {r.kind === "own" && r.a.draft && <span className="shrink-0 text-xs text-warning">Unpublished</span>}
+        {r.kind === "default" && <span title="Run by OpenNous, always on"><Lock className="h-3 w-3 shrink-0 text-muted-foreground/40" /></span>}
+        <span className="opacity-0 transition-opacity group-hover/name:opacity-100 focus-within:opacity-100">
+          {r.kind === "own"
+            ? <AboutAutomation flow={r.flow} tools={r.marks} />
+            : <AboutAutomation flow={r.shownFlow} does={r.t.does} today={r.t.today} byDefault tools={r.marks} />}
+        </span>
+      </span>
+    ) },
+    { key: "trigger", header: "Trigger", width: "24%", cell: r => (
+      <span className={cn("block truncate text-[12px] text-ink-2", off(r) && "opacity-60")}>
+        {triggerPhrase(r.flow, r.marks.length === 1 ? r.marks[0].label : null)}
+      </span>
+    ) },
+    { key: "steps", header: "Steps", cell: r => <span className={cn("block min-w-0", off(r) && "opacity-60")}><Steps flow={r.flow} /></span> },
+    { key: "last", header: "Last run", width: "130px", cell: r => r.kind === "own" ? lastRun(r.a)
+      : <span className="whitespace-nowrap text-xs text-ink-2">{r.t.today ? r.t.today.charAt(0).toUpperCase() + r.t.today.slice(1) : "On"}</span> },
+    { key: "runs", header: "Runs", align: "right", width: "84px", cell: r => r.kind === "own" ? (
+      // Straight to this workflow's runs.
+      <button type="button" onClick={e => { e.stopPropagation(); navigate(`/workflows/${r.a.id}?tab=runs`); }}
+        title="Runs in the last 30 days"
+        className="text-[12px] tabular-nums text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline">
+        {runCount(r.a)}
+      </button>
+    ) : <span className="text-muted-foreground/40">—</span> },
+    { key: "on", header: <span className="sr-only">On</span>, align: "right", width: "56px", cell: r => r.kind === "own" ? (
+      <span className="inline-flex" onClick={e => e.stopPropagation()}>
+        {busy === r.a.id
+          ? <span className="flex h-[18px] w-[30px] items-center justify-center"><Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /></span>
+          : <Switch checked={r.a.enabled} onCheckedChange={() => void toggle(r.a)} aria-label={`${r.a.name}: ${r.a.enabled ? "on" : "off"}`}
+              className="h-[18px] w-[30px] border-0 data-[state=unchecked]:bg-border [&>span]:size-3.5 [&>span]:translate-x-0.5 [&>span]:shadow-[0_1px_2px_rgba(0,0,0,.2)] [&>span]:data-[state=checked]:translate-x-[14px]" />}
+      </span>
+    ) : null },
+  ];
+
   return (
     <div className="text-[13px]">
       {toolbar}
@@ -449,7 +481,7 @@ export function BuiltInAutomations({
           </TableBox>
         </div>
       ) : (
-        <div className="flex flex-col gap-7 px-6 pb-10 pt-[22px]">
+        <div>
           {/* NEW: a dialog over the page: pick a template and the editor opens with its flow
               drawn, or start from scratch. */}
           <Dialog open={adding} onOpenChange={setAdding}>
@@ -481,98 +513,35 @@ export function BuiltInAutomations({
             </DialogContent>
           </Dialog>
 
-          {/* YOURS: what runs, a row each: the switch, the name, the flow as steps, how it last
-              went and how often it ran. The row opens the editor. */}
-          {/* Each list is the ⌘K palette's card (GET-658, round 2): the title inside, rows inset with
-              no lines between, each led by its trigger's tool in a 24px tile, the flow a quiet line. */}
-          {/* Yours, as plain rows on the page (GET-710): no card around them and no title, the name
-              and when it runs, nothing more. The steps are one click away in the editor. */}
-          <div aria-label="Your workflows">
-            {empty ? (
-              <EmptyState bordered={false} title="Nothing of your own yet."
+        </div>
+      )}
+      {view === "automations" && (
+        // One table, Accounts' (2026-10-28): yours first, then what OpenNous runs for every
+        // workspace, so the page is the whole answer to "what runs". A row of yours opens the
+        // editor; a default is locked, you can see what it does, not change it.
+        <div className="min-w-0">
+          {empty && defaultRows.length > 0 && (
+            <EmptyState bordered={false} className="mx-4 mt-4" title="Nothing of your own yet."
+              action={<Button size="sm" variant="outline" onClick={() => navigate("/workflows/new")}><Plus className="!size-3.5" />Start blank</Button>} />
+          )}
+          <DataTable<WorkflowRow>
+            aria-label="Workflows"
+            columns={workflowColumns}
+            {...(defaultRows.length ? {
+              groups: [
+                ...(ownRows.length ? [{ key: "own", label: "Yours", meta: num(ownRows.length), rows: ownRows }] : []),
+                { key: "default", label: "Default", meta: num(defaultRows.length), rows: defaultRows },
+              ],
+            } : { rows: ownRows })}
+            rowKey={r => r.key}
+            onRowClick={r => { if (r.kind === "own") navigate(`/workflows/${r.a.id}`); }}
+            keyboard
+            minWidth={880}
+            empty={
+              <EmptyState className="mx-4 mt-4" title="Nothing of your own yet."
                 action={<Button size="sm" variant="outline" onClick={() => navigate("/workflows/new")}><Plus className="!size-3.5" />Start blank</Button>} />
-            ) : (
-              <div>
-                {data.automations.map(a => {
-                  const flow = flowFromRow(a);
-                  const marks = marksFor(a.when, a.tools, tools);
-                  return (
-                    <div
-                      key={a.id}
-                      role="link"
-                      tabIndex={0}
-                      onClick={() => navigate(`/workflows/${a.id}`)}
-                      onKeyDown={e => { if (e.key === "Enter") navigate(`/workflows/${a.id}`); }}
-                      className="group flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2.5 transition-colors duration-fast hover:bg-hover focus-visible:bg-hover focus-visible:outline-none max-sm:flex-wrap max-sm:gap-x-3 max-sm:gap-y-2"
-                    >
-                      <ListTile className={cn(!a.enabled && "opacity-60")}><TriggerTiny when={flow.trigger.kind} tools={marks} /></ListTile>
-                      <span className="order-last flex shrink-0 max-sm:order-1" onClick={e => e.stopPropagation()}>
-                        {busy === a.id
-                          ? <span className="flex h-[18px] w-[30px] items-center justify-center"><Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /></span>
-                          : <Switch checked={a.enabled} onCheckedChange={() => void toggle(a)} aria-label={`${a.name}: ${a.enabled ? "on" : "off"}`}
-                              className="h-[18px] w-[30px] border-0 data-[state=unchecked]:bg-border [&>span]:size-3.5 [&>span]:translate-x-0.5 [&>span]:shadow-[0_1px_2px_rgba(0,0,0,.2)] [&>span]:data-[state=checked]:translate-x-[14px]" />}
-                      </span>
-                      <div className={cn("flex min-w-0 flex-1 flex-col gap-1 max-sm:basis-[calc(100%-90px)]", !a.enabled && "opacity-60")}>
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate">{a.name}</span>
-                          {a.draft && <span className="shrink-0 text-xs text-warning">Unpublished changes</span>}
-                          <span className="opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"><AboutAutomation flow={flow} tools={marks} /></span>
-                        </span>
-                        <span className="truncate text-[12px] text-muted-foreground/80">{triggerPhrase(flow, marks.length === 1 ? marks[0].label : null)}</span>
-                      </div>
-                      <span className="flex shrink-0 items-center gap-4 max-sm:order-2 max-sm:w-full max-sm:justify-between max-sm:pl-[36px]">
-                        {lastRun(a)}
-                        {/* Straight to this automation's runs. */}
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); navigate(`/workflows/${a.id}?tab=runs`); }}
-                          title="Runs in the last 30 days"
-                          className="w-[64px] text-right text-[12px] tabular-nums text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
-                        >
-                          {runCount(a)}
-                        </button>
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* ON BY DEFAULT: what OpenNous runs for every workspace, listed so the page is the whole
-              answer to "what runs". Locked: you can see what each does, not change it. */}
-          {!apiPlan && <ListCard aria-label="Default">
-            <ListHeader title="Default" />
-            <div>
-              {TEMPLATES.filter(t => t.byDefault).flatMap(t => {
-                const flow = t.flow();
-                // A ROW PER TOOL IT RUNS ON. With Fellow and RingCentral both connected, the follow-up
-                // runs for each, so it is listed for each, never one row wearing two logos.
-                const kind = toolKindFor(flow.trigger.kind);
-                const on = kind ? tools[kind] : [];
-                const rows = on.length ? on.map(tool => ({ key: `${t.id}:${tool.slug}`, tool })) : [{ key: t.id, tool: null as Tool | null }];
-                return rows.map(({ key, tool }) => {
-                  const marks = tool ? [tool] : marksFor(flow.trigger.kind, [], tools);
-                  const shownFlow = tool ? { ...flow, trigger: { ...flow.trigger, config: { ...flow.trigger.config, tools: [tool.slug] } } } : flow;
-                  return (
-                    <div key={key} className="group flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors duration-fast hover:bg-hover max-sm:flex-wrap">
-                      <ListTile><TriggerTiny when={flow.trigger.kind} tools={marks} /></ListTile>
-                      <div className="flex min-w-0 flex-1 flex-col gap-1 max-sm:basis-[calc(100%-46px)]">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate">{t.name}</span>
-                          <span title="Run by OpenNous, always on"><Lock className="h-3 w-3 shrink-0 text-muted-foreground/40" /></span>
-                          <span className="opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100"><AboutAutomation flow={shownFlow} does={t.does} today={t.today} byDefault tools={marks} /></span>
-                        </span>
-                        <Chain flow={flow} tools={marks} />
-                      </div>
-                      <span className="shrink-0 text-[12px] text-muted-foreground/70 max-sm:pl-[36px]">{t.today ? t.today.charAt(0).toUpperCase() + t.today.slice(1) : "On"}</span>
-                    </div>
-                  );
-                });
-              })}
-            </div>
-          </ListCard>}
-
+            }
+          />
         </div>
       )}
     </div>
