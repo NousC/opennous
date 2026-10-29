@@ -133,7 +133,7 @@ const LeftNav = ({ t, onToggleDark, onOpenWaitlist }: { t: Theme; onToggleDark: 
   return (
     <nav style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: "172px", display: "flex", flexDirection: "column", padding: "30px 38px", zIndex: 200, pointerEvents: "none" }}>
       <Link to="/" style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: "7px", textDecoration: "none" }}>
-        <img src="/nous-logo.svg" alt="Nous" style={{ height: "15px", filter: t.dark ? "brightness(0) invert(1) opacity(0.6)" : "brightness(0) saturate(0) opacity(0.65)" }} />
+        <img src="/nous-logo.svg" alt="OpenNous" style={{ height: "15px" }} />
         <span style={{ fontFamily: "Instrument Serif, Georgia, serif", fontSize: "16px", color: t.text, letterSpacing: "-0.02em" }}>nous</span>
       </Link>
 

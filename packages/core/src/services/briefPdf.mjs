@@ -14,26 +14,17 @@ import PDFDocument from 'pdfkit';
 const INK = '#1c1b19';
 const MUTED = '#6f6961';
 const RULE = '#e6e2d8';
-// The brand orange — the core of the OpenNous mark.
-const ACCENT = '#ff5c00';
 
 /**
- * The OpenNous mark, drawn rather than embedded: an orange core inside a ring of eight dots
- * that fade from dark to light. Same geometry as apps/frontend/public/nous-logo.svg (a
- * 120-unit box), so it is sharp at any zoom and needs no image file in the worker image.
+ * The OpenNous mark, drawn rather than embedded: four orange blocks. Same path as
+ * apps/frontend/public/nous-logo.svg (viewBox 143 96 1040 1040), so it is sharp at any zoom and needs
+ * no image file in the worker image.
  */
+const MARK_PATH = 'M236 272H481A46 46 0 0 1 527 318V542A46 46 0 0 1 481 588H236A46 46 0 0 1 190 542V318A46 46 0 0 1 236 272ZM621 120H1121A46 46 0 0 1 1167 166V646A46 46 0 0 1 1121 692H768A46 46 0 0 1 722 646V574A34 34 0 0 0 688 540H621A46 46 0 0 1 575 494V166A46 46 0 0 1 621 120ZM206 635H474A46 46 0 0 1 520 681V738A34 34 0 0 0 554 772H642A46 46 0 0 1 688 818V1066A46 46 0 0 1 642 1112H206A46 46 0 0 1 160 1066V681A46 46 0 0 1 206 635ZM774 740H1058A46 46 0 0 1 1104 786V1017A46 46 0 0 1 1058 1063H774A46 46 0 0 1 728 1017V786A46 46 0 0 1 774 740Z';
 function drawMark(pdf, x, y, size) {
-  const k = size / 120;
-  const at = (cx, cy) => [x + cx * k, y + cy * k];
   pdf.save();
-  pdf.circle(...at(60, 60), 40 * k).lineWidth(1.8 * k).strokeColor(RULE).stroke();
-  const dots = [
-    [60, 20, 6.4, '#514E46'], [88.28, 31.72, 5.9, '#656156'], [100, 60, 5.3, '#7B766B'],
-    [88.28, 88.28, 4.7, '#8F8A7E'], [60, 100, 4.1, '#A29D91'], [31.72, 88.28, 3.6, '#B4AFA3'],
-    [20, 60, 3.2, '#C3BEB2'], [31.72, 31.72, 2.9, '#CFCABE'],
-  ];
-  for (const [cx, cy, r, c] of dots) pdf.circle(...at(cx, cy), r * k).fillColor(c).fill();
-  pdf.circle(...at(60, 60), 13 * k).fillColor(ACCENT).fill();
+  pdf.translate(x, y).scale(size / 1040).translate(-143, -96);
+  pdf.path(MARK_PATH).fillColor('#F4512F').fill();
   pdf.restore();
 }
 

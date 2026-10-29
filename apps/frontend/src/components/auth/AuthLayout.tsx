@@ -39,12 +39,11 @@ const LEGAL = [
   { label: "Terms", href: "https://www.opennous.cloud/terms" },
 ];
 
-/** The dotted ring and the accent dot, the website's mark. */
-function Mark({ size = 22, ring = AUTH_V2.ink }: { size?: number; ring?: string }) {
+/** The four blocks, the OpenNous mark (the website's too). */
+function Mark({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 22 22" aria-hidden="true">
-      <circle cx="11" cy="11" r="9" fill="none" stroke={ring} strokeWidth="1.4" strokeDasharray="1.8 3" />
-      <circle cx="11" cy="11" r="3.2" fill={AUTH_V2.accent} />
+    <svg width={size} height={size} viewBox="143 96 1040 1040" aria-hidden="true">
+      <path fill="#F4512F" d="M236 272H481A46 46 0 0 1 527 318V542A46 46 0 0 1 481 588H236A46 46 0 0 1 190 542V318A46 46 0 0 1 236 272ZM621 120H1121A46 46 0 0 1 1167 166V646A46 46 0 0 1 1121 692H768A46 46 0 0 1 722 646V574A34 34 0 0 0 688 540H621A46 46 0 0 1 575 494V166A46 46 0 0 1 621 120ZM206 635H474A46 46 0 0 1 520 681V738A34 34 0 0 0 554 772H642A46 46 0 0 1 688 818V1066A46 46 0 0 1 642 1112H206A46 46 0 0 1 160 1066V681A46 46 0 0 1 206 635ZM774 740H1058A46 46 0 0 1 1104 786V1017A46 46 0 0 1 1058 1063H774A46 46 0 0 1 728 1017V786A46 46 0 0 1 774 740Z" />
     </svg>
   );
 }
