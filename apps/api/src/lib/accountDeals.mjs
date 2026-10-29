@@ -19,7 +19,7 @@ import {
   listAccountNotes, listActivities, computeDealHealth, loadHealthHistory, loadNextSteps,
   loadDealCandidates, getDealObservationIds, dealStageHops, accountStage, TERMINAL_STAGES,
   getRelationshipOwners, getWorkspaceMemberProfiles, accountOwnerIds,
-  readPrimaryPipelineRef, CLOSE_RECORD_PROPERTY,
+  readPrimaryPipelineRef, CLOSE_RECORD_PROPERTY, CLOSE_WHY_PROPERTY,
 } from '@nous/core';
 import { intelTopicsFor } from './intelTopics.mjs';
 import { viewerReadContext } from './messagePrivacy.mjs';
@@ -325,7 +325,8 @@ export async function getAccountDeal(supabase, req, workspaceId, company, dealId
     supabase.from('claims').select('property, value')
       .eq('workspace_id', workspaceId).eq('entity_id', dealId).is('invalid_at', null)
       // `deal.close_record`: why it closed, written once at close by the worker (GET-405).
-      .in('property', ['currency', 'opened_date', 'owner_name', 'pipeline', CLOSE_RECORD_PROPERTY]),
+      // `deal.close_why`: the same, read in a few labelled points (GET-1077).
+      .in('property', ['currency', 'opened_date', 'owner_name', 'pipeline', CLOSE_RECORD_PROPERTY, CLOSE_WHY_PROPERTY]),
     // The same reading the lists use, so a deal never names one pipeline in a list and another
     // on its own page. The claim is only the fallback for a deal with no observation to read.
     loadDealPipelines(supabase, workspaceId, [dealId]),
@@ -335,6 +336,8 @@ export async function getAccountDeal(supabase, req, workspaceId, company, dealId
   // The record is stored as the value itself (an object with `events`), not wrapped in {value}.
   const closeRow = (claimRows || []).find(r => r.property === CLOSE_RECORD_PROPERTY);
   const close_record = closeRow?.value && typeof closeRow.value === 'object' && Array.isArray(closeRow.value.events) ? closeRow.value : null;
+  const whyRow = (claimRows || []).find(r => r.property === CLOSE_WHY_PROPERTY);
+  const close_why = Array.isArray(whyRow?.value?.why) ? whyRow.value.why : null;
   const pl = pipelines.get(dealId);
 
   const deal = {
@@ -386,6 +389,7 @@ export async function getAccountDeal(supabase, req, workspaceId, company, dealId
     // Why it closed, as the dated path of evidence (GET-405). Null on an open deal or before the
     // daily pass has reached a closed one.
     close_record,
+    close_why,
   };
 }
 

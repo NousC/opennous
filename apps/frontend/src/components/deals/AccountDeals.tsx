@@ -39,9 +39,12 @@ export type DealDetail = {
   primary_pipeline_ref?: string | null;
   // Why it closed: the dated path of evidence, frozen at close (GET-405). Null while open.
   close_record?: CloseRecord | null;
+  // The same, read once in a few labelled points (GET-1077). Null until the analysis pass writes it.
+  close_why?: CloseWhy[] | null;
   /** "How to win this deal" as last written (GET-793); null until the page asks for one. */
   overview?: { text: string; at: string | null } | null;
 };
+export type CloseWhy = { label: string; text: string };
 export type CloseEvent = {
   kind: string; at: string; text: string; claim_id?: string; quote?: string | null;
   attribution: "deal" | "roster" | "crm" | "derived"; detail?: Record<string, unknown>;

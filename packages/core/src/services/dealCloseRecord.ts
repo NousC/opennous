@@ -222,6 +222,12 @@ export function buildCloseRecord(input: CloseRecordInput, now: Date = new Date()
 
 /** The claim property a deal's record is stored under. One per deal; a rebuild replaces it. */
 export const CLOSE_RECORD_PROPERTY = 'deal.close_record';
+/**
+ * Why a deal was won or lost in a few labelled points (GET-1077), written once by the Cloud's
+ * analysis pass beside the record above: { outcome, closed_at, why: [{ label, text }], written_at }.
+ * The record is the evidence; this is the read of it a person scans on the deal card.
+ */
+export const CLOSE_WHY_PROPERTY = 'deal.close_why';
 
 /**
  * Does an OPEN deal's evidence so far match the first steps of a path? The early warning: the
