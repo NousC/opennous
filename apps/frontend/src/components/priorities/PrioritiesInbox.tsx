@@ -199,7 +199,10 @@ const nameCell = (i: InboxItem) => (
     <span className="truncate text-foreground">{i.title}</span>
   </span>
 );
-const quiet = (text: ReactNode, i: InboxItem) => <span className={cn("block truncate text-[12.5px] text-ink-2", i.done && "opacity-60")}>{text || "—"}</span>;
+// A table cell sized by its column, not its text: with max-width 0 a cell takes its column's share
+// and a truncated line inside ends in "…" (the table lays columns out by content otherwise).
+const FIT = "max-w-0";
+const quiet = (text: ReactNode, i: InboxItem) => <span title={typeof text === "string" ? text : undefined} className={cn("block truncate text-[12.5px] text-ink-2", i.done && "opacity-60")}>{text || "—"}</span>;
 const dateCol: Column<InboxItem> = {
   key: "when", header: "When", align: "right", width: "130px",
   cell: (i) => <span className={cn("whitespace-nowrap text-[12px] tabular-nums", i.done ? "text-foreground/70" : "text-muted-foreground")}>{i.done ?? dateOf(i)}</span>,
@@ -211,11 +214,13 @@ const dateCol: Column<InboxItem> = {
  */
 function followUpColumns(markDone: (i: InboxItem) => void, marking: string | null): Column<InboxItem>[] {
   return [
-    { key: "follow", header: "Follow-up", cell: (i) => (
-      <span className={cn("block truncate text-foreground", i.done && "text-muted-foreground line-through decoration-muted-foreground/40")}>{followUpLine(i)}</span>
+    // A long line ends in "…" inside its share of the row (the whole line on hover, all of it in
+    // the sheet): the table fits the page instead of scrolling sideways. Same for every text column.
+    { key: "follow", header: "Follow-up", width: "44%", className: FIT, cell: (i) => (
+      <span title={followUpLine(i)} className={cn("block truncate text-foreground", i.done && "text-muted-foreground line-through decoration-muted-foreground/40")}>{followUpLine(i)}</span>
     ) },
-    { key: "name", header: "Account", width: "22%", cell: nameCell },
-    { key: "signal", header: "Signal", width: "18%", cell: (i) => quiet(signalOf(i), i) },
+    { key: "name", header: "Account", width: "22%", className: FIT, cell: nameCell },
+    { key: "signal", header: "Signal", width: "18%", className: FIT, cell: (i) => quiet(signalOf(i), i) },
     { key: "date", header: "Date", align: "right", width: "96px",
       cell: (i) => <span className="whitespace-nowrap text-[12px] tabular-nums text-muted-foreground">{i.at ? (isToday(i.at) ? time(i.at) : day(i.at)) : "—"}</span> },
     { key: "done", header: "Done", align: "right", width: "64px", cell: (i) => (
@@ -233,14 +238,14 @@ function followUpColumns(markDone: (i: InboxItem) => void, marking: string | nul
  *  followUpColumns, which carry the Done tick. */
 const COLUMNS: Record<InboxTab, Column<InboxItem>[]> = {
   meetings: [
-    { key: "name", header: "Account", width: "34%", cell: nameCell },
-    { key: "meeting", header: "Meeting", cell: (i) => quiet(i.meeting?.title, i) },
+    { key: "name", header: "Account", width: "34%", className: FIT, cell: nameCell },
+    { key: "meeting", header: "Meeting", className: FIT, cell: (i) => quiet(i.meeting?.title, i) },
     dateCol,
   ],
   act: [],
   workflows: [
-    { key: "name", header: "Workflow", width: "36%", cell: nameCell },
-    { key: "output", header: "Output", cell: (i) => quiet(i.outcome?.document_title, i) },
+    { key: "name", header: "Workflow", width: "36%", className: FIT, cell: nameCell },
+    { key: "output", header: "Output", className: FIT, cell: (i) => quiet(i.outcome?.document_title, i) },
     dateCol,
   ],
 };
