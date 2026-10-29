@@ -68,5 +68,19 @@ export function withoutRepeatedTitle(body: string, title: string): string {
   return body.slice(m[0].length).replace(/^\s*\n/, '');
 }
 
+/**
+ * The title to show and the body under it. A leading "# heading" that repeats the file's title is
+ * dropped (see withoutRepeatedTitle). One that names it more fully ("## OpenNous ICP" in a file
+ * called "ICP") becomes the title instead, so the sheet does not open on two titles in a row.
+ */
+export function docHeading(body: string, title: string): { title: string; body: string } {
+  const m = /^\s*#{1,2}\s+(.+?)\s*#*\s*(\n|$)/.exec(body);
+  const t = norm(title);
+  if (!m || !t) return { title, body };
+  const h = norm(m[1]);
+  if (h !== t && !(m[1].length <= 80 && ` ${h} `.includes(` ${t} `))) return { title, body };
+  return { title: h === t ? title : m[1].replace(/[*_`]/g, ''), body: body.slice(m[0].length).replace(/^\s*\n/, '') };
+}
+
 /** True when there is no text to show (only whitespace). */
 export const isEmptyDoc = (text: string | null | undefined) => !(text ?? '').trim();

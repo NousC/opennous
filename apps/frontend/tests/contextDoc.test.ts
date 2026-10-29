@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { docFormat, isEmptyDoc, plainParagraphs, prettyJson, withoutFrontmatter, withoutRepeatedTitle } from "../src/lib/contextDoc.ts";
+import { docFormat, isEmptyDoc, plainParagraphs, prettyJson, withoutFrontmatter, withoutRepeatedTitle, docHeading } from "../src/lib/contextDoc.ts";
 
 test("docFormat: markdown when the text carries markdown syntax", () => {
   assert.equal(docFormat("## Report format\n\nLead with the number."), "markdown");
@@ -66,4 +66,21 @@ test("withoutFrontmatter: drops a leading YAML block, keeps everything else", ()
   assert.equal(withoutFrontmatter("# Title\n\n---\n\nAfter a rule"), "# Title\n\n---\n\nAfter a rule");
   assert.equal(withoutFrontmatter("Plain text"), "Plain text");
   assert.equal(withoutFrontmatter(null), "");
+});
+
+test("docHeading: a first heading that names the file more fully becomes the title", () => {
+  assert.deepEqual(docHeading("## OpenNous ICP\n\nWho we sell to.", "ICP"), { title: "OpenNous ICP", body: "Who we sell to." });
+  assert.deepEqual(docHeading("# **Acme** pricing\nBody", "Pricing"), { title: "Acme pricing", body: "Body" });
+});
+
+test("docHeading: a repeated title is dropped and the file's own title kept", () => {
+  assert.deepEqual(docHeading("# Report format\n\nLead with the number.", "Report format"), { title: "Report format", body: "Lead with the number." });
+  assert.deepEqual(docHeading("## icp\nBody", "ICP.md"), { title: "ICP.md", body: "Body" });
+});
+
+test("docHeading: an unrelated or partial-word heading stays in the body", () => {
+  assert.deepEqual(docHeading("# Something else\n\nBody", "ICP"), { title: "ICP", body: "# Something else\n\nBody" });
+  assert.deepEqual(docHeading("# Topics to avoid\nBody", "Top"), { title: "Top", body: "# Topics to avoid\nBody" });
+  assert.deepEqual(docHeading("### OpenNous ICP\nBody", "ICP"), { title: "ICP", body: "### OpenNous ICP\nBody" });
+  assert.deepEqual(docHeading("Intro\n# OpenNous ICP", "ICP"), { title: "ICP", body: "Intro\n# OpenNous ICP" });
 });
