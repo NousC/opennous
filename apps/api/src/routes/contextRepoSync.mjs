@@ -1,10 +1,12 @@
 // Inbound for the company repo behind Knowledge (GET-1037): GitHub's push webhook, and the poll the
 // worker calls when a connection has no webhook (a token without the Webhooks permission) or went
-// quiet. Both read the repo into the workspace with pullContextRepo. Open source since 2026-10-29.
+// quiet. Both read the repo into the workspace with pullContextRepo. Also the Intelligence files'
+// hourly pass. Open source since 2026-10-29.
 import { Router } from 'express';
 import { getSupabaseClient } from '@nous/core';
 import { pullContextRepo, signatureOk, syncDueContextRepos } from '../lib/contextRepo.mjs';
 import { afterRepoChange } from './api/context.mjs';
+import { runLivingFiles } from '../lib/livingFiles.mjs';
 
 /** POST /api/context-repo/webhook/:token, mounted raw: the signature is checked over GitHub's bytes. */
 export async function contextRepoWebhookHandler(req, res) {
@@ -47,3 +49,9 @@ contextRepoInternalRouter.post('/tick', async (_req, res) => {
   }
 });
 
+
+// The living files' pass (GET-1039): hourly from the worker.
+contextRepoInternalRouter.post('/living-tick', async (_req, res) => {
+  try { res.json(await runLivingFiles(getSupabaseClient())); }
+  catch (err) { console.error('[POST /internal/context-repo/living-tick]', err); res.status(500).json({ error: 'internal_error' }); }
+});

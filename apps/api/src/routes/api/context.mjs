@@ -11,13 +11,16 @@
 //   POST   /repo                                connect it: { repo, token, branch?, base_path? } (owner/admin)
 //   POST   /repo/sync                           read it now
 //   DELETE /repo                                disconnect it (owner/admin); the files stay in both places
+//   GET    /living-files                        the Intelligence files (GET-1039), on or off
+//   POST   /living-files/:key                   turn one on or off: { enabled } (owner/admin)
+//   POST   /files/:fileId/icp-rebuild           rebuild ICP scoring from the ICP file (owner/admin)
 //
 // The About us file (GET-1036) is mirrored into the positioning foundation on every save, and with a
-// company repo connected (GET-1037, open source since 2026-10-29: lib/contextRepo.mjs) each save is
-// committed there. What a save does beyond that is Cloud's and plugs in through registerKnowledgeHooks:
-// marking a file ICP builds ICP scoring from it (GET-878) and the ICP file's text is mirrored into the
-// workspace ICP. Without them a file can still be the ICP file; scoring simply does not read it.
-// RevBox tags are the library's own seam (registerContextBoxes in @nous/core).
+// company repo connected (GET-1037, lib/contextRepo.mjs) each save is committed there. Marking a file
+// ICP builds ICP scoring from it and the ICP file's text is mirrored into the workspace ICP (GET-878,
+// lib/icpContextFile.mjs). All of it is open source since 2026-10-29. Where the learned scorer is not
+// turned on (an open-source build), the ICP file is kept and mirrored, and the answer says scoring
+// does not read it. RevBox tags are the library's own seam (registerContextBoxes in @nous/core).
 import { Router } from 'express';
 import {
   getSupabaseClient, getDocument, listContextLibrary, loadContextFile, createContextFile, updateContextFile,
@@ -26,17 +29,17 @@ import {
 import { viewerVisibleAccountSet } from '../../lib/visibility.mjs';
 import { mirrorAboutFile } from '../../lib/aboutContextFile.mjs';
 import { loadContextRepo, repoOut, connectContextRepo, disconnectContextRepo, pullContextRepo, pushContextFile } from '../../lib/contextRepo.mjs';
+import { markIcpFile, mirrorIcpFile } from '../../lib/icpContextFile.mjs';
+import { listLivingFiles, setLivingFile } from '../../lib/livingFiles.mjs';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const invalid = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 
-// ── Cloud's side of a save ───────────────────────────────────────────────────
+// ── ICP scoring from the ICP file (GET-878) ──────────────────────────────────
 //   markIcp(sb, ws, { confirm, admin, rebuild? }, write?) -> { result, icp }   mark (or rebuild) and score
 //   mirrorIcp(sb, ws) -> { status }                                          the ICP file's text, mirrored
-let HOOKS = {};
-export function registerKnowledgeHooks(hooks) { HOOKS = { ...HOOKS, ...hooks }; }
-const markIcp = (sb, ws, opts, write) => HOOKS.markIcp ? HOOKS.markIcp(sb, ws, opts, write) : write().then(result => ({ result }));
-const mirrorIcp = (sb, ws) => HOOKS.mirrorIcp ? HOOKS.mirrorIcp(sb, ws) : Promise.resolve({ status: 'not_available' });
+const markIcp = (sb, ws, opts, write) => markIcpFile(sb, ws, opts, write);
+const mirrorIcp = (sb, ws) => mirrorIcpFile(sb, ws);
 
 // ── The company repo (GET-1037) ──────────────────────────────────────────────
 // Each save is committed in the background: GitHub's latency never holds the save, and a failure is
@@ -155,7 +158,7 @@ contextRouter.patch('/files/:fileId', knowledgeRoute(async (req, res, sb) => {
   if (['title', 'body', 'kind', 'visibility'].some(k => k in body)) commit(sb, req, file.id, body.changelog || null);
   // The ICP file's text changed: the workspace ICP follows it, never a re-score. Unmarking leaves
   // the last text and the scorer setting as they are.
-  const foundation = file.kind === 'icp' && HOOKS.mirrorIcp ? (await mirrorIcp(sb, req.workspaceId)).status : null;
+  const foundation = file.kind === 'icp' ? (await mirrorIcp(sb, req.workspaceId)).status : null;
   res.json({ file: await readableContextFile(file, opener(sb, req)), ...(foundation ? { icp: { status: 'saved', foundation } } : {}) });
 }));
 contextRouter.delete('/files/:fileId', knowledgeRoute(async (req, res, sb) => {
@@ -195,4 +198,28 @@ contextRouter.delete('/repo', knowledgeRoute(async (req, res, sb) => {
   if (!repoAdmin(req)) invalid('Only a workspace owner or admin can disconnect the repo.', 403);
   await disconnectContextRepo(sb, req.workspaceId);
   res.json({ ok: true });
+}));
+
+// Intelligence (GET-1039, GET-1044): files OpenNous writes and keeps current. Owners/admins turn them on.
+contextRouter.get('/living-files', knowledgeRoute(async (req, res, sb) => {
+  res.json({ files: await listLivingFiles(sb, req.workspaceId), can_manage: repoAdmin(req) });
+}));
+contextRouter.post('/living-files/:key', (req, res, next) => {
+  // The key is a name, not an id, so it skips knowledgeRoute's id check.
+  if (!/^[a-z_]{2,40}$/.test(req.params.key)) return res.status(400).json({ error: 'Unknown intelligence file.' });
+  const key = req.params.key; req.params = {};
+  return knowledgeRoute(async (rq, rs, sb) => {
+    if (!repoAdmin(rq)) invalid('Only a workspace owner or admin can turn intelligence on or off.', 403);
+    rs.json({ file: await setLivingFile(sb, rq.workspaceId, rq.internalUserId, key, rq.body?.enabled !== false) });
+  })(req, res, next);
+});
+// "Rebuild scoring from this ICP": the explicit trigger that rebuilds the scorecard from the file.
+contextRouter.post('/files/:fileId/icp-rebuild', knowledgeRoute(async (req, res, sb) => {
+  const { file, role } = await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId);
+  await contextFileDocumentGate(file, opener(sb, req));
+  if (!admin(role)) invalid('Only a workspace owner or admin can rebuild ICP scoring.', 403);
+  if (file.kind !== 'icp') invalid('Mark this file as the ICP first.');
+  // On an 'external' workspace this never answers external_scorer: confirm, switch, rebuild (GET-878).
+  const { icp } = await markIcpFile(sb, req.workspaceId, { rebuild: true, confirm: req.body?.confirm_scorer_switch === true });
+  res.json({ icp });
 }));

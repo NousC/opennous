@@ -9,8 +9,8 @@
 let source = null;
 
 /**
- * `fn(sb, ws, opts)` → { text, used } | null. Set once by the Cloud layer
- * (packages/core/src/cloud/intelligence.mjs).
+ * `fn(sb, ws, opts)` → { text, used } | null. Set once by the Intelligence files' reader
+ * (packages/core/src/context/intelligence.mjs, open source since 2026-10-29).
  */
 export function registerIntelligenceSource(fn) { source = typeof fn === 'function' ? fn : null; }
 

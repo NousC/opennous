@@ -15,7 +15,7 @@
 //
 // The <!-- nous:icp start/end --> markers are where export_icp_model writes the
 // LEARNED half back in (which signals actually predict a win, from closed-won/lost
-// deals) — see cloud/lib/icpModel.mjs renderIcpBlock(). The human writes ABOVE the block;
+// deals) — see lib/icpModel.mjs renderIcpBlock(). The human writes ABOVE the block;
 // Nous owns everything inside it. So the file compounds: your definition on top,
 // what Nous learned underneath, one document.
 //

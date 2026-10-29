@@ -15,7 +15,7 @@
 //   - they get their own light check here instead: a verbatim quote, spoken by our side;
 //   - every buyer reader drops them (isOurSideClaim: listNotes, isIntelClaim, the insight engine,
 //     the brief, the facts search). Product decision (founder): no Insights, no buyer view, for now.
-//     Only the Intelligence files (objection playbook, win/loss — api/cloud/lib/livingFiles.mjs) read them.
+//     Only the Intelligence files (objection playbook, win/loss — api/src/lib/livingFiles.mjs) read them.
 //   - no event is emitted for them: saveNote emits none, and nothing here calls the event log.
 
 import { saveNote, normalizeOurSideCategory, OUR_SIDE, getWorkspaceTimezone, isoDateIn, resolveSaidAt } from '@nous/core';

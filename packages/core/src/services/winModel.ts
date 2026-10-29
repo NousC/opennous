@@ -23,8 +23,8 @@ import { STAGE_RANK } from '../pipeline.js';
 // clearly labelled basis='default', and a workspace's own closed deals replace them via
 // fitWinModel once there are enough to fit against — under an unfreeze schedule, so a model
 // with 12 wins cannot confidently learn noise. Fitting (fitWinModel, the training panel) is
-// Cloud-only, in src/cloud/winModelFit.ts (GET-754 slice 8); without it the forecast runs on
-// the defaults here.
+// in src/icp/winModelFit.ts (open source since 2026-10-29); until a fit is saved the forecast runs
+// on the defaults here.
 //
 // Pure — no DB, no clock. Data gathering lives in the worker fit job and in forecastRun.
 

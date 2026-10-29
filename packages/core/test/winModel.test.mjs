@@ -2,7 +2,7 @@
 //
 // The properties that make this safe to ship before any data exists: a deal with nothing
 // known is UNTOUCHED (neutral encodes to an exact no-op) and the hand-set defaults only nudge.
-// Fitting the model on closed deals is Cloud-only (GET-754 slice 8): test/cloud/winModelFit.test.mjs.
+// Fitting the model on closed deals: test/winModelFit.test.mjs.
 //
 // Run: pnpm --filter @nous/core build && node --test packages/core/test/winModel.test.mjs
 

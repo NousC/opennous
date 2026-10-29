@@ -268,12 +268,15 @@
 2026_10_26_context_about_file.sql
 2026_10_26_context_file_versions.sql
 2026_10_26_context_repo.sql
+2026_10_26_living_files.sql
 2026_10_26_webhook_claude_destination.sql
 2026_10_27_claim_links.sql
 2026_10_27_claims_search_indexes.sql
 2026_10_27_hybrid_claim_search.sql
+2026_10_27_living_files_doc.sql
 2026_10_27_market_entities.sql
 2026_10_28_engaged_accounts.sql
+2026_10_29_icp_backtests.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql

@@ -50,6 +50,8 @@ export {
 } from './db/insightInterpretation.mjs';
 // What the workspace has learned, for the next action (GET-1042); the Cloud layer registers the source.
 export { registerIntelligenceSource, intelligenceFor, intelligenceRefs } from './intelligenceContext.mjs';
+// The Intelligence files (GET-1042), open source since 2026-10-29. Importing this registers the source.
+export { readIntelligence, sectionsOf, pickSections, wordsOf, renderSection } from './context/intelligence.mjs';
 export { intelligenceRule, withoutIntelligenceRefs } from './intelligencePrompt.mjs';
 // Settings > Knowledge, the workspace context library (GET-875); open source since 2026-10-29.
 // The Cloud layer adds RevBox tags through registerContextBoxes.
@@ -122,6 +124,13 @@ export { AI_FIELD_DEFAULTS, buildFieldsPrompt, parseFieldsAnswer } from './servi
 export { EMAIL_DRAFT_SYSTEM, DEFAULT_SUBJECT, parseEmailDraft } from './services/emailDraftBrief.mjs';
 export * from './services/outcomes.js';
 export * from './services/icpScorer.js';
+// The learned ICP scorer's code (open source since 2026-10-29): the scorer, the nightly backtest that
+// checks it against closed deals, and the win-model fit. Staking and re-scoring are reached through
+// services/icpScorer.ts above, which Cloud turns on; their names are not exported twice here.
+export * from './icp/scorecard.js';
+export { writeLayerClaims, hasScoreableFeature, entitiesNeedingScore } from './icp/predictions.js';
+export * from './icp/icpBacktest.js';
+export * from './icp/winModelFit.js';
 export * from './services/pipelineFeatures.js';
 export * from './services/funnelTimeline.js';
 export * from './services/dealRollup.js';

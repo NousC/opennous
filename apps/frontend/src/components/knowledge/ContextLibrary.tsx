@@ -2,9 +2,10 @@
 // since 2026-10-29 (it was Cloud's, cloud/settings). Knowledge is saved once; on Cloud a file can be
 // tagged to RevBoxes, so one file serves several boxes and a box's jobs read only the files tagged to
 // it. With RevBoxes off the rail (GET-1043) the rows show only who can see a file (GET-1044).
-// The company repo bar on top (GET-1037) is open source too. Cloud adds its parts through the registry
-// (cloud.knowledge): the Intelligence group, which holds the ICP file, and rebuilding ICP scoring.
-// Without them the ICP file is listed with the other files.
+// The company repo bar on top (GET-1037) and the Intelligence group, which holds the ICP file
+// (GET-1039, GET-1044), are open source too (2026-10-29). Cloud adds through the registry
+// (cloud.knowledge) the pages a card opens in place (the ICP and Win/loss) and rebuilding ICP scoring,
+// which needs the learned scorer turned on.
 // One file can be the workspace's ICP: ICP scoring builds its scorecard from it. Built from the
 // settings kit like General and Members; Settings.tsx wraps it in SectionShell. Below the library,
 // each box's own instruction blocks, as before (they are edited on the box).
@@ -28,6 +29,7 @@ import { ContextDocSheet, type DocMenuItem } from '@/components/knowledge/Contex
 import { ContextHistory } from '@/components/knowledge/ContextHistory';
 import { ContextRow } from '@/components/knowledge/ContextRow';
 import { ContextRepoBar } from '@/components/knowledge/ContextRepoBar';
+import { LivingFilesGroup } from '@/components/knowledge/LivingFilesGroup';
 import { cloud } from '@/lib/cloud';
 import { when } from '@/lib/format';
 import { knowledgeKey, knowledgeRequest, CONTEXT_KIND_LABEL, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
@@ -72,7 +74,7 @@ export function ContextLibrary() {
   const uploader = useRef<HTMLInputElement>(null);
   const key = knowledgeKey(ws);
   const query = useQuery({ queryKey: key, enabled: !!ws && !!token, queryFn: () => knowledgeRequest<ContextLibraryData>(ws, token, '/library') });
-  const { Intelligence, rebuildIcp } = cloud.knowledge ?? {};
+  const { pages, learnedScoring } = cloud.knowledge ?? {};
   const data = query.data;
   const taggable = (data?.boxes ?? []).filter(b => b.access !== 'viewer');
 
@@ -116,9 +118,9 @@ export function ContextLibrary() {
   const edit = (f: LibraryFile) => setDraft({ id: f.id, title: f.title, body: f.body, kind: f.kind === 'icp' || f.kind === 'about' ? 'reference' : f.kind, icp: f.kind === 'icp', about: f.kind === 'about', shared: f.visibility === 'workspace', boxes: f.boxes.map(b => b.id), document: !!f.document_id });
 
   const openFile = data?.files.find(f => f.id === open);
-  // The ICP lives in Intelligence, not the library (GET-1044), where there is an Intelligence group.
+  // The ICP lives in Intelligence, not the library (GET-1044).
   const icpFile = data?.files.find(f => f.kind === 'icp');
-  const libraryFiles = (data?.files ?? []).filter(f => !Intelligence || f.kind !== 'icp');
+  const libraryFiles = (data?.files ?? []).filter(f => f.kind !== 'icp');
   const openBlock = openFile ? undefined : data?.boxes.flatMap(box => box.blocks.map(b => ({ box, b }))).find(x => x.b.id === open);
   // The file's actions, in its sheet's ⋯ menu (2026-10-28; was a row of buttons under the text).
   // "Sharing" is the full dialog (kind, sharing, tags, text); the sheet closes first so the two
@@ -127,7 +129,7 @@ export function ContextLibrary() {
     const admin = !!data?.is_admin;
     const items: DocMenuItem[] = [];
     // Rebuilding ICP scoring is Cloud's (the learned scorer); without it the ICP file is still the ICP.
-    if (admin && f.kind === 'icp' && rebuildIcp) items.push({ label: 'Rebuild ICP scoring', onSelect: () => void icpCall<IcpReply>(b => rebuildIcp(ws, token, f.id, b), undefined, { rebuilt: true }) });
+    if (admin && f.kind === 'icp' && learnedScoring) items.push({ label: 'Rebuild ICP scoring', onSelect: () => void icpCall<IcpReply>(requestTo(`/files/${f.id}/icp-rebuild`, 'POST'), undefined, { rebuilt: true }) });
     if (admin && f.kind === 'icp') items.push({ label: 'Unmark as ICP', onSelect: () => void call(`/files/${f.id}`, 'PATCH', { kind: 'reference' }) });
     if (admin && f.kind === 'about') items.push({ label: 'Unmark as About us', onSelect: () => void call(`/files/${f.id}`, 'PATCH', { kind: 'reference' }) });
     if (admin && !MARKED.has(f.kind)) items.push(
@@ -142,8 +144,8 @@ export function ContextLibrary() {
   return <>
     <ContextRepoBar ws={ws} token={token} />
     {/* Intelligence first (GET-1044): the ICP and the files OpenNous keeps current. */}
-    {Intelligence && <Intelligence ws={ws} token={token} onOpen={id => { setNote(null); setOpen(id); }}
-      icp={icpFile ?? null} onAddIcp={data?.is_admin ? () => setDraft({ ...empty, title: 'ICP', icp: true }) : undefined} />}
+    <LivingFilesGroup ws={ws} token={token} onOpen={id => { setNote(null); setOpen(id); }} pages={pages}
+      icp={icpFile ?? null} onAddIcp={data?.is_admin ? () => setDraft({ ...empty, title: 'ICP', icp: true }) : undefined} />
     {query.error && <SettingsGroup><p role="alert" className="px-2 py-2 text-[12.5px] text-risk">{query.error.message}</p></SettingsGroup>}
     {query.isLoading && <SettingsGroup><p className="px-2 py-2 text-[13px] text-muted-foreground/70">Loading…</p></SettingsGroup>}
     {data && <SettingsGroup title="Library" action={<div className="flex gap-1">

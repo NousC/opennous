@@ -1209,7 +1209,7 @@ workspaceStatusV2Router.post('/icp/import', async (req, res) => {
 // learned scoring model (signals + lift + calibration) rendered as the fenced
 // <!-- nous:icp --> block, plus the target file path Nous recorded at import.
 // The agent writes the block back into that file with its native editor.
-// The model is the learned scorer's (cloud/lib/icpModel.mjs, GET-754 slice 8). Without it there
+// The model is the learned scorer's (lib/icpModel.mjs, open source since 2026-10-29; Cloud turns it on, GET-754 slice 8). Without it there
 // is no learned model: GET /v2/icp reports has_model false, and this endpoint is Cloud-only.
 const NO_LEARNED_MODEL = Object.freeze({
   has_model: false, has_outcomes: false, target_path: null, block: null, block_start: null, block_end: null,

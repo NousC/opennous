@@ -7,9 +7,10 @@ import type { StakeResult } from '../db/predictions.js';
 // The learned ICP scorer's seam in core — GET-754 slice 8.
 //
 // A workspace's accounts are scored one of two ways (GET-586): by Nous's learned scorecard, or by
-// the workspace's own model, posted in through POST /v2/scores. The learned scorecard is Nous
-// Cloud's model and lives in src/cloud/ (the scorer, staking, re-scoring, signal discovery, the
-// win-model fit), which the open-source export drops. Everything public that used to call it
+// the workspace's own model, posted in through POST /v2/scores. The learned scorecard's code is open
+// source since 2026-10-29 (src/icp/: the scorer, staking, re-scoring, the backtest, the win-model
+// fit); Nous Cloud turns it on from src/cloud/ (with signal discovery), which the open-source export
+// drops. Everything public that used to call it
 // directly — ingest, enrichment, the claim engine, CRM hygiene — calls the functions below
 // instead. With the cloud folder present they are the learned scorer, unchanged. Without it there
 // is no Nous score to stake or refresh, so they do nothing, and the workspace is scored only by

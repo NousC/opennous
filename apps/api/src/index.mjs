@@ -131,6 +131,8 @@ import { evidenceRouter } from './routes/api/evidence.mjs';
 import { docsRouter } from './routes/api/docs.mjs';
 import { actionsRouter } from './routes/api/actions.mjs';
 import { contextRouter } from './routes/api/context.mjs';
+import { icpEvidenceRouter } from './routes/api/icpEvidence.mjs';
+import { intelligenceV2Router } from './routes/v2/intelligence.mjs';
 import { leadListsRouter } from './routes/api/leadLists.mjs';
 import { campaignMessagesRouter } from './routes/api/campaignMessages.mjs';
 import { triggersRouter } from './routes/api/triggers.mjs';
@@ -366,6 +368,8 @@ app.use('/v2/query',           verifyApiKey,     requireOpsBalance, logV2Op, que
 app.use('/v2/score',           verifyApiKey,     requireOpsBalance, logV2Op, scoreV2Router);
 app.use('/v2/scores',          verifyApiKey,     requireOpsBalance, logV2Op, scoresV2Router);
 app.use('/v2/attention',       verifyApiKey,     requireOpsBalance, logV2Op, attentionV2Router);
+// The Intelligence files, whole, for an agent (GET-1042): the MCP's read_intelligence. Key auth.
+app.use('/v2/intelligence',    verifyApiKey,     requireOpsBalance, logV2Op, intelligenceV2Router);
 // Reporting reads — reachable by API key (agents/MCP, unchanged) AND by a browser
 // session (the in-app reporting surfaces). verifyAuthEither routes key-shaped auth
 // through verifyApiKey and everything else through verifySupabaseAuth — the same
@@ -494,6 +498,8 @@ app.use('/api/actions',               actionsRouter);
 // Settings > Knowledge, the context library (GET-875; open source since 2026-10-29). It follows the
 // revboxes feature, as it did on Cloud (Workspace and up); self-host has it, like every feature.
 app.use('/api/context',               verifySupabaseAuth, requireFeature('revboxes'), contextRouter);
+// The ICP evidence instrument (what actually predicted a win, with the sample behind it). Owners/admins.
+app.use('/api/icp',                   icpEvidenceRouter);
 app.use('/api/lead-lists',            verifyAuthEither, requireFeature('leadLists'), leadListsRouter);
 app.use('/api/campaign-messages',     verifyAuthEither, requireFeature('leadLists'), campaignMessagesRouter);
 app.use('/api/triggers',              verifyAuthEither, triggersRouter);

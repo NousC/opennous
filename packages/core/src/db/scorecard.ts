@@ -4,7 +4,7 @@ import type { ScorecardSignal, ScorecardSignalRule, ScoreLayer } from '../types.
 
 // DB layer for the Scorecard — the weighted signal list that turns a lead into a 0–100
 // number — plus the ICP tiers. The scorer itself (scoreLead, scoreByLayer, the model
-// fingerprint) is the learned ICP model and lives in src/cloud/scorecard.ts (GET-754 slice 8).
+// fingerprint) is the learned ICP model and lives in src/icp/scorecard.ts (open source since 2026-10-29).
 // See docs/adaptive-lead-scoring.md.
 
 const SIGNAL_COLUMNS =

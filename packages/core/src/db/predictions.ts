@@ -13,7 +13,7 @@ import { pipelineFeatures } from '../services/pipelineFeatures.js';
 //
 // This file is the public half: the feature snapshot a prediction carries, which an external
 // score (db/externalScores.ts) stakes with too. Staking the learned scorer's own predictions is
-// Cloud-only, in src/cloud/predictions.ts (GET-754 slice 8).
+// src/icp/predictions.ts (open source since 2026-10-29), turned on by Cloud (services/icpScorer.ts).
 
 // Company-level features merged in from the entity's employer. Person-level
 // features are simply every other claim the entity carries.

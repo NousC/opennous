@@ -3,7 +3,8 @@
 // A workspace's accounts are scored by Nous's learned scorecard or by the workspace's own model,
 // posted to POST /v2/scores (GET-586). The learned half is Nous Cloud's: building the scorecard
 // from the ICP (cloud/lib/scorecardSeed.mjs), learning from closed deals, the learned-model export
-// (cloud/lib/icpModel.mjs), and the POST /v2/score verb (cloud/lib/scoreIdentifier.mjs). Public
+// (lib/icpModel.mjs, whose code is open source since 2026-10-29), and the POST /v2/score verb
+// (cloud/lib/scoreIdentifier.mjs). Public
 // routes that offer those reach them through learnedIcpModel(), which is null on an open-source
 // build; there they answer cloudOnlyIcp() or skip the step, and the workspace scores for itself.
 // Core's half (staking, re-scoring) has its own door: packages/core/src/services/icpScorer.ts.

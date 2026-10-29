@@ -1,0 +1,51 @@
+{
+  "_doc": "The ICP scoring model as dials. The scorer reads THIS, deterministically. score = base + best persona + firmographics + observed signals, clamped 0-100; a disqualifier caps at 25. Absent signals never subtract. Edit the weights/terms; every term is matched (case-insensitive substring) against the lead's job_title + headline + keywords + comment (+ structured location/size/type when known).",
+  "base": 40,
+  "disqualifier_cap": 25,
+  "tiers": { "tier_1": 85, "tier_2": 70, "tier_3": 50 },
+
+  "personas": [
+    { "id": "agency_founder", "weight": 35, "reason": "Agency founder", "description": "Founder or operator of a GTM, RevOps, or outbound-systems agency. Our sharpest fit.",
+      "role_any": ["founder", "co-founder", "cofounder", "owner", "ceo", "operator", "partner", "building"],
+      "domain_any": ["agency", "gtm", "go-to-market", "revops", "rev ops", "outbound", "lead gen", "lead generation", "demand gen", "cold email", "sales system"] },
+    { "id": "gtm_leader", "weight": 30, "reason": "GTM / RevOps leader", "description": "Head of Sales, Head of RevOps, or GTM lead inside a B2B SaaS company.",
+      "role_any": ["head of sales", "head of revops", "head of revenue", "vp sales", "vp of sales", "cro", "chief revenue", "gtm lead", "revenue leader", "director of sales"] },
+    { "id": "gtm_engineer", "weight": 28, "reason": "GTM engineer", "description": "Technical founder or GTM engineer wiring together sales systems and AI agents.",
+      "role_any": ["gtm engineer", "growth engineer", "founding engineer", "technical founder", "technical co-founder", "automation"],
+      "domain_any": ["gtm", "clay", "ai agent", "agents", "systems", "outbound", "workflow"] },
+    { "id": "revops_ic", "weight": 22, "reason": "In-house revenue operator", "description": "RevOps, Sales Ops, or an account manager running the revenue motion from inside.",
+      "role_any": ["revops", "rev ops", "revenue operations", "sales ops", "sales operations", "account manager", "account executive lead"] },
+    { "id": "adjacent_rev", "weight": 12, "reason": "Adjacent revenue role", "description": "AE, SDR leader, or growth marketer — counts when there's a real GTM signal.",
+      "role_any": ["ae", "account executive", "sdr", "bdr", "growth marketer", "growth lead", "sales development"] }
+  ],
+
+  "firmographics": {
+    "location": [
+      { "weight": 12, "any": ["united states", "usa", " us ", "u.s.", "america", "uk", "united kingdom", "ireland", "england", "germany", "france", "netherlands", "spain", "europe", "eu"] },
+      { "weight": 4, "any": ["canada", "australia", "new zealand", "singapore", "india", "dubai", "uae"] }
+    ],
+    "size": [
+      { "weight": 12, "min": 3, "max": 25 },
+      { "weight": 6, "min": 1, "max": 2 },
+      { "weight": 6, "min": 26, "max": 100 }
+    ],
+    "type": [
+      { "weight": 8, "any": ["b2b", "saas", "software", "agency", "consultancy", "services"] }
+    ]
+  },
+
+  "signals": [
+    { "weight": 12, "reason": "fragmented-stack / data pain", "any": ["fragmented", "manual crm", "tool sprawl", "disconnected tools", "data foundation", "single source of truth", "context is scattered", "stitching"] },
+    { "weight": 8, "reason": "building in public about GTM", "any": ["building in public", "gtm systems", "gtm engineering", "outbound at scale"] },
+    { "weight": 8, "reason": "stack change / adopting tooling", "any": ["clay", "hubspot", "smartlead", "instantly", "ai agent", "migrating", "switching to"] },
+    { "weight": 8, "reason": "hiring a revenue role", "any": ["hiring", "we're hiring", "we are hiring", "join our team", "now hiring"] },
+    { "weight": 6, "reason": "momentum", "any": ["raised", "funding", "series a", "series seed", "just launched", "growing fast"] },
+    { "weight": -10, "reason": "not in market", "any": ["love our current", "not looking", "happy with our stack", "no need for"] },
+    { "weight": -25, "reason": "job-seeker / student", "any": ["open to work", "#opentowork", "seeking opportunities", "aspiring", "student", "recent graduate", "looking for a role", "looking for my next"] }
+  ],
+
+  "disqualifiers": [
+    { "reason": "job-seeker or student", "any": ["open to work", "#opentowork", "student", "seeking a role", "seeking opportunities", "recent graduate", "intern "] },
+    { "reason": "non-B2B / consumer", "any": ["b2c", "consumer app", "life coach", "fitness coach", "influencer", "content creator", "real estate agent", "dropshipping"] }
+  ]
+}

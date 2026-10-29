@@ -2,7 +2,7 @@
 // the newest backtest on closed deals is the evidence of how well the score predicts revenue,
 // with contact coverage controlled for. Same design as the Win/loss page (GET-1075): one column,
 // four numbers, business headings, no helper text, closed deals as a table. The ICP file's learned
-// block says the same in the same words (apps/api/src/cloud/lib/icpModel.mjs).
+// block says the same in the same words (apps/api/src/lib/icpModel.mjs).
 import { Fragment, lazy, Suspense, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";

@@ -142,15 +142,15 @@ export interface CloudRegistry {
     groups?: ComponentType<NavGroupProps>[];
   };
   /**
-   * Settings > Knowledge's Cloud parts (2026-10-29: the library and the company repo bar are open
-   * source, components/knowledge): the Intelligence group with the ICP
-   * and the files OpenNous keeps current (GET-1039), and rebuilding ICP scoring from the ICP file
-   * (GET-878). Absent → the library alone, its ICP file listed with the other files.
+   * Settings > Knowledge's Cloud parts. The page itself is open source since 2026-10-29
+   * (components/knowledge: the library, the company repo bar, Intelligence with the ICP). Absent →
+   * every Intelligence card opens its file, and there is no "Rebuild ICP scoring".
    */
   knowledge?: {
-    Intelligence?: ComponentType<{ ws: string; token: string; onOpen: (fileId: string) => void; icp: { id: string; updated_at?: string | null } | null; onAddIcp?: () => void }>;
-    /** POST the ICP file's rebuild; resolves the API's reply, rejects with its status and code. */
-    rebuildIcp?: (ws: string, token: string, fileId: string, body?: Record<string, unknown>) => Promise<{ icp?: { status: string; signals?: number; message?: string; scorer_switched?: boolean } }>;
+    /** The Settings pages an Intelligence card opens in place (?page=…): Cloud has "icp" and "win-loss". */
+    pages?: readonly string[];
+    /** The learned ICP scorer is turned on, so the ICP file's menu offers "Rebuild ICP scoring" (GET-878). */
+    learnedScoring?: boolean;
   };
   settings?: {
     /** Section id → the whole section. "billing" is the workspace plans' Billing section. */

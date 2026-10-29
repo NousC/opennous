@@ -1061,3 +1061,16 @@ async function runContextRepoTick() {
   if (r.synced) console.log(`[CONTEXT_REPO] ${r.synced} repo(s) read`);
 }
 cron.schedule('6 * * * *', () => runContextRepoTick().catch(e => console.error('[CONTEXT_REPO]', e.message)));
+
+// Intelligence (GET-1039, GET-1044): win/loss and the objection playbook fold in what is new, hourly at :52.
+async function runLivingFilesTick() {
+  const secret = process.env.WORKER_SECRET;
+  if (!secret) return;
+  const resp = await fetch(`${apiInternalBase()}/internal/context-repo/living-tick`, {
+    method: 'POST', headers: { 'x-worker-secret': secret, 'content-type': 'application/json' },
+  });
+  if (!resp.ok) throw new Error(`living files tick failed: ${resp.status}`);
+  const r = await resp.json();
+  if (r.updated) console.log(`[LIVING_FILES] ${r.updated} file(s) updated`);
+}
+cron.schedule('52 * * * *', () => runLivingFilesTick().catch(e => console.error('[LIVING_FILES]', e.message)));

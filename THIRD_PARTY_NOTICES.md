@@ -11,6 +11,15 @@ listed here with that project's license. One section per project.
   full-text terms from `sql/postgresql.py`, token-budget selection from `fact_budget.py`, the
   shared-entity link score from `memories/pg/link_expansion.py`), GET-1056.
   `packages/core/src/db/marketEntities.ts` (the name matcher, from `entity_resolver.py`), GET-1049.
+  `apps/api/src/lib/livingDoc.mjs` (GET-1054): the document model for Intelligence files (markdown
+  split into sections and blocks with persistent `b` + sha1 ids, and rendered back), the eight edit
+  operations and how they are validated and applied, and the editing rules in the edit prompt, from
+  `reflect/structured_doc.py`, `delta_ops.py` and `prompts.py` (`STRUCTURED_DELTA_SYSTEM_PROMPT`).
+  `apps/api/src/lib/livingEvidence.mjs` (GET-1055): the freshness watermark (`memory_engine.py`
+  `compute_mental_model_is_stale`), the evidence trend over 30- and 90-day windows with its 1.5 / 0.5
+  density ratios (`reflect/observations.py` `compute_trend`), and the retraction rules in the
+  retraction prompt (`prompts.py` `STRUCTURED_RETRACTION_SYSTEM_PROMPT`). Both were Cloud-only until
+  2026-10-29.
 - License: MIT
 
 ```
