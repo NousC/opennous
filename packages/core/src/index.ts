@@ -51,6 +51,14 @@ export {
 // What the workspace has learned, for the next action (GET-1042); the Cloud layer registers the source.
 export { registerIntelligenceSource, intelligenceFor, intelligenceRefs } from './intelligenceContext.mjs';
 export { intelligenceRule, withoutIntelligenceRefs } from './intelligencePrompt.mjs';
+// Settings > Knowledge, the workspace context library (GET-875); open source since 2026-10-29.
+// The Cloud layer adds RevBox tags through registerContextBoxes.
+export {
+  CONTEXT_KINDS, MARKED_KINDS, CONTEXT_VISIBILITY, missingLibrary, contextFileVisible, contextFileEditable, validateContextFile,
+  registerContextBoxes, contextFileOut, listContextLibrary, loadContextFile, createContextFile, updateContextFile, deleteContextFile,
+  recordContextVersion, listContextVersions, restoreContextVersion, workspaceIcpContext, workspaceAboutContext,
+  ICP_LEARNED_START, ICP_LEARNED_END, withoutLearnedBlock, learnedBlockOf, withLearnedBlock, scorecardSeedText,
+} from './context/library.mjs';
 export * from './db/flags.js';
 export * from './db/features.js';
 export * from './db/canonicalAxes.js';

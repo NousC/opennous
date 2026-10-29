@@ -257,6 +257,7 @@
 2026_10_12_rules.sql
 2026_10_15_account_overview.sql
 2026_10_15_api_request_log_activity.sql
+2026_10_15_context_library.sql
 2026_10_16_event_log.sql
 2026_10_16_webhook_slack_destination.sql
 2026_10_19_product_users_stay_interested.sql
@@ -264,6 +265,8 @@
 2026_10_21_insight_patterns.sql
 2026_10_21_slack_dm_privacy.sql
 2026_10_22_insight_pattern_interpretations.sql
+2026_10_26_context_about_file.sql
+2026_10_26_context_file_versions.sql
 2026_10_26_webhook_claude_destination.sql
 2026_10_27_claim_links.sql
 2026_10_27_claims_search_indexes.sql

@@ -29,7 +29,7 @@ export interface SettingsNavInput {
   isOwner: boolean;
   /** A self-hosted install: its owner/admins get Instance setup (GET-837). */
   selfHosted?: boolean;
-  /** The plan's feature gate (usePlan's can), for rows the Workspace layer adds (GET-910). */
+  /** The plan's feature gate (usePlan's can): Knowledge, and rows the Workspace layer adds (GET-910). */
   can?: (feature: string) => boolean;
 }
 
@@ -71,7 +71,10 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
     { id: "repo",            label: "Repo",                  group: "Connections", show: false },
-    // Context & signals (GET-882) are the Workspace layer's rows (cloud/settings/navRows, GET-910).
+    // Knowledge, the context library (GET-875), is open source since 2026-10-29: it follows the
+    // revboxes feature, as it did as the Workspace layer's row. Signals stay that layer's
+    // (cloud/settings/navRows, GET-910).
+    { id: "context",         label: "Knowledge",             group: "Knowledge & signals", show: !!input.can?.("revboxes") },
     // Agent — the Workspace layer adds Memory and Skills ahead of Automations.
     { id: "sequences",       label: "Workflows",              group: "Agent", show: selfManagedAgent },
     // Workspace — admins only (GET-430). The Workspace layer's models, changes, spend and adoption

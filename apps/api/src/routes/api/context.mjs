@@ -1,0 +1,161 @@
+// Settings > Knowledge, the workspace context library (GET-875), mounted at /api/context. Open source
+// since 2026-10-29: these routes were the RevBoxes router's (Cloud, /api/revboxes/context-*).
+//
+//   GET    /library                             every file the viewer may see, newest first
+//   POST   /files                               add one: { title, body | document_id, kind?, visibility?, revbox_ids? }
+//   PATCH  /files/:fileId                       edit it; kind 'icp' or 'about' marks it
+//   DELETE /files/:fileId                       delete it (its versions stay)
+//   GET    /files/:fileId/versions              its versions (GET-1038), newest first
+//   POST   /files/:fileId/versions/:id/restore  put one back, as a new version
+//
+// The About us file (GET-1036) is mirrored into the positioning foundation on every save. What a save
+// does beyond the library is Cloud's and plugs in through registerKnowledgeHooks: marking a file ICP
+// builds ICP scoring from it (GET-878), the ICP file's text is mirrored into the workspace ICP, and with
+// a company repo connected (GET-1037) each save is committed there. Without them a file can still be
+// the ICP file; scoring simply does not read it. RevBox tags are the library's own seam
+// (registerContextBoxes in @nous/core).
+import { Router } from 'express';
+import {
+  getSupabaseClient, getDocument, listContextLibrary, loadContextFile, createContextFile, updateContextFile,
+  deleteContextFile, validateContextFile, listContextVersions, restoreContextVersion,
+} from '@nous/core';
+import { viewerVisibleAccountSet } from '../../lib/visibility.mjs';
+import { mirrorAboutFile } from '../../lib/aboutContextFile.mjs';
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const invalid = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
+
+// ── Cloud's side of a save ───────────────────────────────────────────────────
+//   markIcp(sb, ws, { confirm, admin, rebuild? }, write?) -> { result, icp }   mark (or rebuild) and score
+//   mirrorIcp(sb, ws) -> { status }                                          the ICP file's text, mirrored
+//   commit(sb, req, fileId, changelog)                                       the save, committed to the repo
+let HOOKS = {};
+export function registerKnowledgeHooks(hooks) { HOOKS = { ...HOOKS, ...hooks }; }
+const markIcp = (sb, ws, opts, write) => HOOKS.markIcp ? HOOKS.markIcp(sb, ws, opts, write) : write().then(result => ({ result }));
+const mirrorIcp = (sb, ws) => HOOKS.mirrorIcp ? HOOKS.mirrorIcp(sb, ws) : Promise.resolve({ status: 'not_available' });
+const commit = (sb, req, fileId, changelog) => { HOOKS.commit?.(sb, req, fileId, changelog); };
+
+/** The route wrapper: a signed-in member, valid ids, and the library's errors as JSON. */
+export function knowledgeRoute(fn) {
+  return async (req, res) => {
+    try {
+      if (!req.workspaceId || !req.internalUserId) return res.status(400).json({ error: 'Workspace and signed-in member are required.' });
+      if (Object.values(req.params).some(id => !uuid.test(id))) return res.status(400).json({ error: 'Invalid identifier.' });
+      const sb = getSupabaseClient();
+      // A member of the workspace first, before any document is read on their behalf.
+      const { data: member, error } = await sb.from('workspace_members').select('user_id').eq('workspace_id', req.workspaceId).eq('user_id', req.internalUserId).maybeSingle();
+      if (error) throw error;
+      if (!member) invalid('You are not a member of this workspace.', 403);
+      await fn(req, res, sb);
+    } catch (e) {
+      if (e.code === '42P01' || e.code === 'PGRST205' || /workspace_context_files.*schema cache/i.test(e.message ?? '')) return res.status(409).json({ error: 'The Knowledge database migration has not been applied.' });
+      if (!e.status) console.error('[knowledge]', e);
+      res.status(e.status ?? 500).json({ error: e.status ? e.message : 'Could not save or load the file.', ...(e.status && e.reply ? e.reply : {}) });
+    }
+  };
+}
+
+/** A document the viewer may read, or a 404: a linked file is shown only while that holds. */
+export async function accessibleContextDocument(sb, req, id) {
+  if (!uuid.test(id)) invalid('Invalid document identifier.');
+  const set = await viewerVisibleAccountSet(sb, req.workspaceId, req.internalUserId, { isAdmin: req.viewerScope === 'admin' });
+  const doc = (await getDocument(sb, req.workspaceId, id))?.document ?? null;
+  if (!doc || (doc.subject_entity_id && !set.unrestricted && !set.ids.has(doc.subject_entity_id))) invalid('Document not found.', 404);
+  return doc;
+}
+/**
+ * A library file that is a linked document is changed only by someone who can still read that
+ * document (GET-875): to them it is "not found", as in the list. `open(id)` throws a 404 for a
+ * document the viewer cannot read; any other error propagates.
+ */
+export async function contextFileDocumentGate(file, open) {
+  if (!file?.document_id) return;
+  try { await open(file.document_id); } catch (e) { if (e.status === 404) invalid('Context file not found.', 404); throw e; }
+}
+/** A saved library file as the response returns it: a linked document's title and text only while the
+ * viewer can read it, otherwise a neutral stand-in (never the raw row's document title). */
+export async function readableContextFile(file, open) {
+  if (!file?.document_id) return file;
+  try { const doc = await open(file.document_id); return { ...file, title: doc.title ?? file.title, body: doc.body_md ?? '' }; }
+  catch (e) { if (e.status !== 404) throw e; return { ...file, title: 'Linked document', body: '' }; }
+}
+/** Does this PATCH mark the file ICP (it was not)? Unmarking or editing never switches the scorer. */
+export const icpMarking = (body, before) => body?.kind === 'icp' && before?.kind !== 'icp';
+
+async function withDocumentBodies(sb, req, files) {
+  const out = [];
+  for (const f of files) {
+    if (!f.document_id) { out.push(f); continue; }
+    try { const doc = await accessibleContextDocument(sb, req, f.document_id); out.push({ ...f, title: doc.title ?? f.title, body: doc.body_md ?? '' }); } catch (e) { if (e.status !== 404) throw e; }
+  }
+  return out;
+}
+const opener = (sb, req) => id => accessibleContextDocument(sb, req, id);
+const admin = (role) => ['owner', 'admin'].includes(role);
+
+export const contextRouter = Router();
+
+contextRouter.get('/library', knowledgeRoute(async (req, res, sb) => {
+  const library = await listContextLibrary(sb, req.workspaceId, req.internalUserId);
+  const icp = library.files.find(f => f.kind === 'icp') ?? null;
+  const about = library.files.find(f => f.kind === 'about') ?? null;
+  res.json({ ...library, files: await withDocumentBodies(sb, req, library.files), icp_file_id: icp?.id ?? null, about_file_id: about?.id ?? null });
+}));
+contextRouter.post('/files', knowledgeRoute(async (req, res, sb) => {
+  const { confirm_scorer_switch: confirm, ...input } = req.body ?? {};
+  let body = input;
+  if (Array.isArray(body.revbox_ids) && body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
+  if (body.document_id) { const doc = await accessibleContextDocument(sb, req, body.document_id); body = { ...body, document_id: doc.id, title: body.title || doc.title, body: '' }; }
+  const create = () => createContextFile(sb, req.workspaceId, req.internalUserId, body);
+  if (body.kind !== 'icp') {
+    const file = await create();
+    // The About us file (GET-1036): what we sell, mirrored where the readers look for it.
+    if (file.kind === 'about') await mirrorAboutFile(sb, req.workspaceId);
+    commit(sb, req, file.id, input.changelog || 'Created');
+    return res.status(201).json({ file: await readableContextFile(file, opener(sb, req)) });
+  }
+  // Marked ICP on creation (GET-878): on an 'external' workspace this is confirmed first (409, nothing
+  // written), then Nous scores from the file. Otherwise the first scorecard if there is none.
+  const error = validateContextFile(body); if (error) invalid(error);
+  const { result: file, icp } = await markIcp(sb, req.workspaceId, { confirm: confirm === true, admin: !req.workspaceRole || admin(req.workspaceRole) }, create);
+  commit(sb, req, file.id, input.changelog || 'Created');
+  res.status(201).json({ file: await readableContextFile(file, opener(sb, req)), ...(icp ? { icp } : {}) });
+}));
+contextRouter.patch('/files/:fileId', knowledgeRoute(async (req, res, sb) => {
+  const { confirm_scorer_switch: confirm, ...body } = req.body ?? {};
+  if (Array.isArray(body.revbox_ids) && body.revbox_ids.some(id => typeof id !== 'string' || !uuid.test(id))) invalid('Choose valid RevBoxes.');
+  const before = await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId);
+  await contextFileDocumentGate(before.file, opener(sb, req));
+  const update = () => updateContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId, body);
+  if (icpMarking(body, before.file)) {
+    // Marked now (GET-878): confirmed first on an 'external' workspace, then Nous scores from it.
+    const error = validateContextFile(body, { partial: true }); if (error) invalid(error);
+    const { result: file, icp } = await markIcp(sb, req.workspaceId, { confirm: confirm === true, admin: admin(before.role) }, update);
+    commit(sb, req, file.id, body.changelog || 'Marked as ICP');
+    return res.json({ file: await readableContextFile(file, opener(sb, req)), ...(icp ? { icp } : {}) });
+  }
+  const file = await update();
+  if (file.kind === 'about') await mirrorAboutFile(sb, req.workspaceId);
+  if (['title', 'body', 'kind', 'visibility'].some(k => k in body)) commit(sb, req, file.id, body.changelog || null);
+  // The ICP file's text changed: the workspace ICP follows it, never a re-score. Unmarking leaves
+  // the last text and the scorer setting as they are.
+  const foundation = file.kind === 'icp' && HOOKS.mirrorIcp ? (await mirrorIcp(sb, req.workspaceId)).status : null;
+  res.json({ file: await readableContextFile(file, opener(sb, req)), ...(foundation ? { icp: { status: 'saved', foundation } } : {}) });
+}));
+contextRouter.delete('/files/:fileId', knowledgeRoute(async (req, res, sb) => {
+  await contextFileDocumentGate((await loadContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId)).file, opener(sb, req));
+  await deleteContextFile(sb, req.workspaceId, req.internalUserId, req.params.fileId);
+  res.json({ ok: true });
+}));
+// A file's versions (GET-1038): newest first, each with its author and change note.
+contextRouter.get('/files/:fileId/versions', knowledgeRoute(async (req, res, sb) => {
+  res.json({ versions: await listContextVersions(sb, req.workspaceId, req.internalUserId, req.params.fileId) });
+}));
+// Put a version back. The restore is a new version; the ICP and About us files' mirrors follow.
+contextRouter.post('/files/:fileId/versions/:versionId/restore', knowledgeRoute(async (req, res, sb) => {
+  const file = await restoreContextVersion(sb, req.workspaceId, req.internalUserId, req.params.fileId, req.params.versionId);
+  if (file.kind === 'icp') await mirrorIcp(sb, req.workspaceId);
+  if (file.kind === 'about') await mirrorAboutFile(sb, req.workspaceId);
+  commit(sb, req, file.id, 'Restored a version');
+  res.json({ file: await readableContextFile(file, opener(sb, req)) });
+}));

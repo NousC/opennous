@@ -9133,6 +9133,63 @@ CREATE TABLE public.workspace_composio_config (
 
 
 --
+-- Name: workspace_context_file_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workspace_context_file_versions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    title text NOT NULL,
+    kind text NOT NULL,
+    body text DEFAULT ''::text NOT NULL,
+    author_kind text NOT NULL,
+    author_user_id uuid,
+    author_name text,
+    changelog text,
+    git_sha text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workspace_context_file_versions_author_kind_check CHECK ((author_kind = ANY (ARRAY['person'::text, 'opennous'::text, 'repo'::text]))),
+    CONSTRAINT workspace_context_file_versions_changelog_check CHECK (((changelog IS NULL) OR (length(changelog) <= 200)))
+);
+
+
+--
+-- Name: workspace_context_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workspace_context_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    title text NOT NULL,
+    kind text DEFAULT 'reference'::text NOT NULL,
+    body text DEFAULT ''::text NOT NULL,
+    document_id uuid,
+    visibility text DEFAULT 'boxes'::text NOT NULL,
+    visibility_before_icp text,
+    created_by uuid NOT NULL,
+    updated_by uuid,
+    icp_marked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workspace_context_files_about_is_shared CHECK (((kind <> 'about'::text) OR (visibility = 'workspace'::text))),
+    CONSTRAINT workspace_context_files_body_check CHECK ((octet_length(body) <= 262144)),
+    CONSTRAINT workspace_context_files_icp_is_shared CHECK (((kind <> 'icp'::text) OR (visibility = 'workspace'::text))),
+    CONSTRAINT workspace_context_files_kind_check CHECK ((kind = ANY (ARRAY['reference'::text, 'instructions'::text, 'icp'::text, 'about'::text]))),
+    CONSTRAINT workspace_context_files_title_check CHECK (((length(title) >= 1) AND (length(title) <= 200))),
+    CONSTRAINT workspace_context_files_visibility_before_icp_check CHECK ((visibility_before_icp = ANY (ARRAY['boxes'::text, 'workspace'::text]))),
+    CONSTRAINT workspace_context_files_visibility_check CHECK ((visibility = ANY (ARRAY['boxes'::text, 'workspace'::text])))
+);
+
+
+--
+-- Name: TABLE workspace_context_files; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.workspace_context_files IS 'Workspace context library (GET-875): reference/instructions/ICP knowledge. kind=icp (one per workspace, always visibility=workspace) is the file ICP scoring reads. On Cloud, tagged to RevBoxes through revbox_context_links.';
+
+
+--
 -- Name: workspace_crm_owners; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11411,6 +11468,30 @@ ALTER TABLE ONLY public.workspace_composio_config
 
 
 --
+-- Name: workspace_context_file_versions workspace_context_file_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_file_versions
+    ADD CONSTRAINT workspace_context_file_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: workspace_context_files workspace_context_files_id_workspace_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_files
+    ADD CONSTRAINT workspace_context_files_id_workspace_id_key UNIQUE (id, workspace_id);
+
+
+--
+-- Name: workspace_context_files workspace_context_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_files
+    ADD CONSTRAINT workspace_context_files_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: workspace_crm_owners workspace_crm_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13668,6 +13749,34 @@ CREATE INDEX workflow_runs_ws_entity_idx ON public.workflow_runs USING btree (wo
 
 
 --
+-- Name: workspace_context_file_versions_file; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workspace_context_file_versions_file ON public.workspace_context_file_versions USING btree (workspace_id, file_id, created_at DESC);
+
+
+--
+-- Name: workspace_context_files_one_about; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workspace_context_files_one_about ON public.workspace_context_files USING btree (workspace_id) WHERE (kind = 'about'::text);
+
+
+--
+-- Name: workspace_context_files_one_icp; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX workspace_context_files_one_icp ON public.workspace_context_files USING btree (workspace_id) WHERE (kind = 'icp'::text);
+
+
+--
+-- Name: workspace_context_files_ws; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workspace_context_files_ws ON public.workspace_context_files USING btree (workspace_id, updated_at DESC);
+
+
+--
 -- Name: workspace_crm_owners_email_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15358,6 +15467,54 @@ ALTER TABLE ONLY public.workspace_composio_config
 
 
 --
+-- Name: workspace_context_file_versions workspace_context_file_versions_author_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_file_versions
+    ADD CONSTRAINT workspace_context_file_versions_author_user_id_fkey FOREIGN KEY (author_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: workspace_context_file_versions workspace_context_file_versions_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_file_versions
+    ADD CONSTRAINT workspace_context_file_versions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workspace_context_files workspace_context_files_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_files
+    ADD CONSTRAINT workspace_context_files_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: workspace_context_files workspace_context_files_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_files
+    ADD CONSTRAINT workspace_context_files_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workspace_context_files workspace_context_files_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_files
+    ADD CONSTRAINT workspace_context_files_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: workspace_context_files workspace_context_files_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workspace_context_files
+    ADD CONSTRAINT workspace_context_files_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: workspace_crm_owners workspace_crm_owners_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16814,6 +16971,18 @@ CREATE POLICY "workspace members can view linkedin connection" ON public.workspa
 --
 
 ALTER TABLE public.workspace_audit_snapshots ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: workspace_context_file_versions; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workspace_context_file_versions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: workspace_context_files; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.workspace_context_files ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: workspace_crm_owners; Type: ROW SECURITY; Schema: public; Owner: -
@@ -19204,6 +19373,22 @@ GRANT ALL ON TABLE public.workspace_audit_snapshots TO service_role;
 --
 
 GRANT ALL ON TABLE public.workspace_composio_config TO service_role;
+
+
+--
+-- Name: TABLE workspace_context_file_versions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.workspace_context_file_versions TO anon;
+GRANT ALL ON TABLE public.workspace_context_file_versions TO authenticated;
+GRANT ALL ON TABLE public.workspace_context_file_versions TO service_role;
+
+
+--
+-- Name: TABLE workspace_context_files; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.workspace_context_files TO service_role;
 
 
 --

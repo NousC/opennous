@@ -141,6 +141,18 @@ export interface CloudRegistry {
     /** Groups after the Views group on the workspace plans (GET-910). */
     groups?: ComponentType<NavGroupProps>[];
   };
+  /**
+   * Settings > Knowledge's Cloud parts (2026-10-29: the library itself is open source,
+   * components/knowledge): the company repo bar on top (GET-1037), the Intelligence group with the ICP
+   * and the files OpenNous keeps current (GET-1039), and rebuilding ICP scoring from the ICP file
+   * (GET-878). Absent → the library alone, its ICP file listed with the other files.
+   */
+  knowledge?: {
+    RepoBar?: ComponentType<{ ws: string; token: string }>;
+    Intelligence?: ComponentType<{ ws: string; token: string; onOpen: (fileId: string) => void; icp: { id: string; updated_at?: string | null } | null; onAddIcp?: () => void }>;
+    /** POST the ICP file's rebuild; resolves the API's reply, rejects with its status and code. */
+    rebuildIcp?: (ws: string, token: string, fileId: string, body?: Record<string, unknown>) => Promise<{ icp?: { status: string; signals?: number; message?: string; scorer_switched?: boolean } }>;
+  };
   settings?: {
     /** Section id → the whole section. "billing" is the workspace plans' Billing section. */
     sections?: Record<string, ComponentType<CloudSettingsSectionProps>>;

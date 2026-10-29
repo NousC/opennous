@@ -104,10 +104,19 @@ test("Custom plan keeps the Connections rows in the rail: Integrations (one row,
   assert.ok(!rail.includes("company-sources"), "Shared is a tab, not a row");
 });
 
-test("no Context or Signals rows of its own: they are the Workspace layer's (GET-910)", () => {
+test("no Signals row of its own: it is the Workspace layer's (GET-910)", () => {
   const nav = settingsNav({ tier: "custom", isWorkspaceAdmin: true, isOwner: false, can: () => true });
-  assert.ok(!ids(nav).includes("context") && !ids(nav).includes("signals"));
+  assert.ok(!ids(nav).includes("signals"));
   assert.equal(resolveSection("signals", nav), "profile");
+});
+
+test("Knowledge is the public rail's (2026-10-29), where the plan has the revboxes feature", () => {
+  const on = settingsNav({ tier: "custom", isWorkspaceAdmin: false, isOwner: false, can: (f) => f === "revboxes" });
+  const row = on.find((i) => i.id === "context")!;
+  assert.equal(row.label, "Knowledge");
+  assert.equal(row.group, "Knowledge & signals");
+  const off = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false, can: () => false });
+  assert.ok(!ids(off).includes("context"));
 });
 
 test("Agent activity (was API & MCP activity, GET-900): Workspace group, admins on both plans, not self-host; access-log lands there (GET-898)", () => {

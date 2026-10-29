@@ -129,6 +129,7 @@ import { backfillRouter } from './routes/api/backfillPreview.mjs';
 import { evidenceRouter } from './routes/api/evidence.mjs';
 import { docsRouter } from './routes/api/docs.mjs';
 import { actionsRouter } from './routes/api/actions.mjs';
+import { contextRouter } from './routes/api/context.mjs';
 import { leadListsRouter } from './routes/api/leadLists.mjs';
 import { campaignMessagesRouter } from './routes/api/campaignMessages.mjs';
 import { triggersRouter } from './routes/api/triggers.mjs';
@@ -485,6 +486,9 @@ app.use('/api/docs',                  verifySupabaseAuth, docsRouter);
 app.use('/api/activity-stats',        activityStatsRouter);
 app.use('/api/backfill',              backfillRouter);
 app.use('/api/actions',               actionsRouter);
+// Settings > Knowledge, the context library (GET-875; open source since 2026-10-29). It follows the
+// revboxes feature, as it did on Cloud (Workspace and up); self-host has it, like every feature.
+app.use('/api/context',               verifySupabaseAuth, requireFeature('revboxes'), contextRouter);
 app.use('/api/lead-lists',            verifyAuthEither, requireFeature('leadLists'), leadListsRouter);
 app.use('/api/campaign-messages',     verifyAuthEither, requireFeature('leadLists'), campaignMessagesRouter);
 app.use('/api/triggers',              verifyAuthEither, triggersRouter);
