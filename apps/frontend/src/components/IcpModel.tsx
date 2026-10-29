@@ -30,6 +30,15 @@ type Substrate = {
   top_signals: TopSig[];
   deal_patterns?: DealPatterns;
 };
+// How good the score is (GET-1069): actual conversion per tier from real won/lost only.
+type QTier = { tier: string; label: string; won: number; lost: number; rate: number | null };
+type Quality = {
+  graded: { won: number; lost: number };
+  left_out: { already_decided: number; no_opportunity: number };
+  tiers: QTier[];
+  verdict: { key: "learning" | "separates" | "weak" | "not_predictive"; text: string; ratio?: number | null };
+};
+type ScoreQuality = { has_model: boolean; quality: Quality | null; carriers: TopSig[] };
 type Acct = { id: string; name: string | null; company?: string | null; fit: number; intent: number; tier: string | null };
 
 const LAYER_TITLE: Record<Layer, string> = { fit: "Who's a fit", pain: "What's the pain", intent: "Signals of timing", ability: "Ability to buy" };
@@ -45,6 +54,7 @@ export default function IcpModel() {
   const workspaceId = userData?.workspace?.id ?? "";
 
   const [sub, setSub] = useState<Substrate | null>(null);
+  const [quality, setQuality] = useState<ScoreQuality | null>(null);
   const [sigs, setSigs] = useState<Sig[]>([]);
   const [accts, setAccts] = useState<Acct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +71,7 @@ export default function IcpModel() {
     setLoading(false);
     // Learning data is heavier — let it fill in without blocking the page.
     get("substrate").then((s) => s && setSub(s));
+    get("score-quality").then((q) => q && setQuality(q));
   };
   useEffect(() => { reload(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [token, workspaceId]);
 
@@ -135,6 +146,9 @@ export default function IcpModel() {
               <DealPattern kind="won" data={sub?.deal_patterns?.won} loading={!sub} />
               <DealPattern kind="lost" data={sub?.deal_patterns?.lost} loading={!sub} />
             </div>
+
+            {/* how good is the score: does a higher tier actually convert more? */}
+            <ScoreQualityPanel data={quality} />
           </div>
         )}
       </div>
@@ -550,6 +564,49 @@ function WhoCloses({ sub }: { sub: Substrate | null }) {
         </div>
       ))}
     </div>
+  );
+}
+
+// ── how good is the score (GET-1069) ─────────────────────────────────────────────
+// Actual conversion per tier, graded only on deals decided after we scored them.
+// Accounts that were already customers (or already lost) when scored are left out
+// and counted, so the numbers can't flatter the model.
+const QUALITY_VERDICT: Record<Quality["verdict"]["key"], { short: string; color: string }> = {
+  learning: { short: "Learning", color: "#6b7280" },
+  separates: { short: "Working", color: "#059669" },
+  weak: { short: "Weak", color: "#b45309" },
+  not_predictive: { short: "Off", color: "#dc2626" },
+};
+function ScoreQualityPanel({ data }: { data: ScoreQuality | null }) {
+  const q = data?.quality;
+  if (!data) return <Panel title="How good is this score"><div className="text-[12.5px] text-muted-foreground/45">Reading outcomes…</div></Panel>;
+  if (!q) return null;
+  const v = QUALITY_VERDICT[q.verdict.key];
+  const graded = q.graded.won + q.graded.lost;
+  const leftOut = q.left_out.already_decided;
+  return (
+    <Panel title="How good is this score" note={`${graded.toLocaleString()} graded${leftOut ? ` · ${leftOut.toLocaleString()} left out` : ""}`}>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-4">
+          <div>
+            <div className="text-[26px] font-semibold leading-none" style={{ color: v.color }}>{v.short}</div>
+            <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">{q.verdict.text}</p>
+          </div>
+          <div className="space-y-2.5">
+            {q.tiers.map((t) => (
+              <CompareBar key={t.tier} label={t.label} count={t.won + t.lost}
+                pct={t.rate != null ? Math.round(t.rate * 1000) / 10 : null}
+                color={t.tier === "tier_1" || t.tier === "tier_2" ? ACCENT : "#94a3b8"} />
+            ))}
+          </div>
+          {leftOut > 0 && <div className="text-[11.5px] tabular-nums text-muted-foreground/60">{leftOut.toLocaleString()} left out: already customers or already lost when scored</div>}
+        </div>
+        <div>
+          <div className="mb-2.5 text-[11px] font-semibold text-muted-foreground/55">What carries the score</div>
+          <WhoCloses sub={{ top_signals: data.carriers } as Substrate} />
+        </div>
+      </div>
+    </Panel>
   );
 }
 

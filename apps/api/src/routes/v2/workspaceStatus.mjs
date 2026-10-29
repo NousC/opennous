@@ -1213,7 +1213,7 @@ workspaceStatusV2Router.post('/icp/import', async (req, res) => {
 // is no learned model: GET /v2/icp reports has_model false, and this endpoint is Cloud-only.
 const NO_LEARNED_MODEL = Object.freeze({
   has_model: false, has_outcomes: false, target_path: null, block: null, block_start: null, block_end: null,
-  signals: [], calibration: null, model_version: null,
+  signals: [], calibration: null, quality: null, model_version: null,
 });
 
 /** The learned ICP model as GET /v2/workspace/icp/model serves it. Also read by GET /v2/icp. */
