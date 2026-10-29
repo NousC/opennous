@@ -281,6 +281,9 @@ flowchart TD
 | `won` | a revenue observation (`deal_won`, `payment_received`, `proposal_signed`) **or** reaching the `client` stage | a positive episode |
 | `lost` | an explicit `deal_lost` / `deal_disqualified`, **or** the account reached `interested`+ (a real opportunity) then stalled past its window | a negative episode |
 | `no_opportunity` | scored but never reached `interested` and went quiet | **excluded** from learning, noise, not a loss |
+| `already_decided` | the outcome was known before the prediction: `closed_won` when scored, or only the stage says won/lost and a deal had already closed before scoring | **excluded** from learning and calibration. It predicted nothing |
+
+**Graded only on what happens after the prediction (GET-1068).** The first dated win or loss after `predicted_at` decides, whether it's the person's own `deal_won` / `deal_lost` observation or a `deal_outcomes` row on their company (`works_at`) or a deal they're on (`stakeholder_of`). The stage claim is only the fallback when nothing dated exists. Before this, the current stage decided and won was checked before lost, so customers scored after they bought counted as wins (95% of graded wins in the largest workspace). Predictions graded under the old rule were re-graded once with `apps/worker/scripts/regradePredictions.mjs`; each changed row keeps `outcome_value.regraded`. That is the one logged exception to "a resolved prediction is never mutated" (DECISIONS 2026-10-29).
 
 A win or an explicit loss resolves **immediately**. Only the nightly backstop times an account out (`requireWindow`). The realised `outcome_value.score` is a weighted 0–1 blend, reply `0.25`, pipeline advance `0.35`, revenue `0.40` (`computeOutcomeScore`), and revenue is watched for 120 days because it lands slowly.
 

@@ -118,7 +118,7 @@ async function gatherAccounts(supabase, workspaceId, contactIds) {
   for (const p of preds || []) {
     const a = byId.get(p.entity_id); if (!a) continue;
     if (!scoreSeen.has(p.entity_id)) { const sc = Number(p.predicted_value?.score); if (Number.isFinite(sc)) a.score = sc; scoreSeen.add(p.entity_id); }
-    if (p.resolved_at && p.outcome_value?.disposition && !a.disposition) a.disposition = p.outcome_value.disposition; // won | lost
+    if (p.resolved_at && (p.outcome_value?.disposition === 'won' || p.outcome_value?.disposition === 'lost') && !a.disposition) a.disposition = p.outcome_value.disposition;
   }
 
   // INTEL — the extracted facts (note.* claims), with verbatim content + category.

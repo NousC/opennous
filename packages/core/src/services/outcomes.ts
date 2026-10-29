@@ -82,12 +82,25 @@ export interface PredictionRow {
   feature_snapshot?: Record<string, { value?: unknown }> | null;
 }
 
+// 'already_decided' (GET-1068): the account's outcome was known before we scored
+// it, so the prediction predicted nothing. Kept for the record, never learned from.
+export type Disposition = 'won' | 'lost' | 'no_opportunity' | 'already_decided';
+
 export interface ResolvedOutcome {
   id: string;
   workspace_id: string;
   entity_id: string;
-  disposition: 'won' | 'lost' | 'no_opportunity';
+  disposition: Disposition;
   score: number;
+}
+
+/** A dated win or loss that landed after the prediction. */
+export interface DecisiveEvent {
+  kind: 'won' | 'lost';
+  at: string;
+  source: 'observation' | 'deal';
+  observationId?: string | null;
+  revenue?: number | null;
 }
 
 interface DerivedSignals {
@@ -99,6 +112,42 @@ interface DerivedSignals {
   observationId: string | null;
   explicitLost: boolean;
   lostObservationId: string | null;
+  events: DecisiveEvent[];
+  decidedBefore: boolean;
+}
+
+/** Only real wins and losses train the model. No-opportunity and already-decided are noise. */
+export function isLearnableDisposition(d: unknown): boolean {
+  return d === 'won' || d === 'lost';
+}
+
+// The disposition rule (GET-1068). A prediction is graded only on what happened
+// AFTER it was made:
+//  - A customer when scored (closed_won) is already decided: a renewal is not a conversion.
+//  - Otherwise the FIRST dated win or loss after scoring decides, from the person's own
+//    events or a deal on their company or deal closing after the prediction.
+//  - With no dated event, the stage is the fallback, but never when a deal had already
+//    closed before scoring (decidedBefore) or the account was lost at scoring: then the
+//    stage just reflects the old deal.
+//  - Timeouts as before: qualified then quiet is lost, never qualified is no_opportunity.
+// Returns null while the prediction should stay open.
+export function decideDisposition({ pipelineFrom, pipelineTo, events, decidedBefore, timeOut }: {
+  pipelineFrom: string; pipelineTo: string; events: DecisiveEvent[]; decidedBefore: boolean; timeOut: boolean;
+}): Disposition | null {
+  const from = normalizeStage(pipelineFrom);
+  if (from === 'closed_won') return 'already_decided';
+
+  const first = [...events].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())[0];
+  if (first) return first.kind;
+
+  // Lost at scoring: a stage flip to won is not dated, so wait for a dated deal
+  // until the window ends.
+  const lostAtScoring = isTerminalStage(from);
+  if (normalizeStage(pipelineTo) === 'closed_won' && !lostAtScoring) return decidedBefore ? 'already_decided' : 'won';
+  if (!timeOut) return null;
+  if (decidedBefore || lostAtScoring) return 'already_decided';
+  const reachedRank = Math.max(stageRank(pipelineFrom), stageRank(pipelineTo));
+  return reachedRank >= QUALIFY_RANK ? 'lost' : 'no_opportunity';
 }
 
 // Weighted 0..1 outcome score. Pipeline contributes proportionally to how far up
@@ -157,6 +206,37 @@ async function deriveRevenue(supabase: SupabaseClient, entityId: string, since: 
   return { won: true, revenue: amount, observationId: won[0].id as string };
 }
 
+// Deals on the person, their company (works_at) or a deal they're on (stakeholder_of).
+// deal_outcomes lives on companies and deals, predictions on people, so without this
+// a deal closing never reached the people who were scored. Missing table → none.
+async function deriveDeals(supabase: SupabaseClient, p: PredictionRow, since: string) {
+  const { data: rels } = await supabase
+    .from('relationships')
+    .select('to_entity_id')
+    .eq('workspace_id', p.workspace_id)
+    .eq('from_entity_id', p.entity_id)
+    .in('type', ['works_at', 'stakeholder_of'])
+    .limit(50);
+  const ids = [p.entity_id, ...((rels || []).map(r => r.to_entity_id as string))];
+  const { data: deals, error } = await supabase
+    .from('deal_outcomes')
+    .select('outcome, closed_at, value_usd')
+    .eq('workspace_id', p.workspace_id)
+    .in('entity_id', ids)
+    .not('closed_at', 'is', null)
+    .limit(500);
+  if (error || !deals) return { events: [] as DecisiveEvent[], decidedBefore: false };
+  const t0 = new Date(since).getTime();
+  const events: DecisiveEvent[] = [];
+  let decidedBefore = false;
+  for (const d of deals) {
+    if (d.outcome !== 'won' && d.outcome !== 'lost') continue;
+    if (new Date(d.closed_at as string).getTime() <= t0) { decidedBefore = true; continue; }
+    events.push({ kind: d.outcome, at: d.closed_at as string, source: 'deal', revenue: Number(d.value_usd) || null });
+  }
+  return { events, decidedBefore };
+}
+
 // Derive every outcome signal for one prediction: reply (inside the resolution
 // window), pipeline movement (the stage claim vs the prediction's snapshot),
 // and revenue / explicit loss (any time after the prediction).
@@ -188,12 +268,27 @@ export async function deriveSignals(supabase: SupabaseClient, p: PredictionRow):
 
   const { data: lostObs } = await supabase
     .from('observations')
-    .select('id')
+    .select('id, observed_at')
     .eq('entity_id', p.entity_id)
     .in('property', LOST_PROPS)
     .gte('observed_at', since)
-    .order('observed_at', { ascending: false })
+    .order('observed_at', { ascending: true })
     .limit(1);
+
+  // The earliest win, for "first decisive event" (deriveRevenue keeps the latest amount).
+  const { data: firstWon } = await supabase
+    .from('observations')
+    .select('id, observed_at')
+    .eq('entity_id', p.entity_id)
+    .in('property', WON_PROPS)
+    .gte('observed_at', since)
+    .order('observed_at', { ascending: true })
+    .limit(1);
+
+  const deals = await deriveDeals(supabase, p, since);
+  const events: DecisiveEvent[] = [...deals.events];
+  if (firstWon?.[0]) events.push({ kind: 'won', at: firstWon[0].observed_at as string, source: 'observation', observationId: firstWon[0].id as string });
+  if (lostObs?.[0]) events.push({ kind: 'lost', at: lostObs[0].observed_at as string, source: 'observation', observationId: lostObs[0].id as string });
 
   // Closed-won: an explicit revenue observation, or reaching the `closed_won`
   // pipeline stage. Either fires immediately. Normalized on read — new writes say
@@ -209,6 +304,8 @@ export async function deriveSignals(supabase: SupabaseClient, p: PredictionRow):
     observationId: rev.observationId,
     explicitLost: (lostObs?.length ?? 0) > 0,
     lostObservationId: (lostObs?.[0]?.id as string) ?? null,
+    events,
+    decidedBefore: deals.decidedBefore,
   };
 }
 
@@ -227,37 +324,97 @@ async function resolveOnePrediction(
 
   const s = await deriveSignals(supabase, p);
 
-  // Definitive: a win or an explicit loss resolves immediately, always.
-  // Otherwise only the nightly backstop (requireWindow) closes it out once the
-  // window has elapsed — an event-driven call leaves it open to keep watching.
+  // Definitive events resolve immediately, always. Otherwise only the nightly
+  // backstop (requireWindow) closes it out once the window has elapsed — an
+  // event-driven call leaves it open to keep watching.
   const timeOut = opts.requireWindow && windowElapsed;
-  if (!s.won && !s.explicitLost && !timeOut) return null;
+  const disposition = decideDisposition({ ...s, timeOut });
+  if (!disposition) return null;
 
-  const reachedRank = Math.max(stageRank(s.pipelineFrom), stageRank(s.pipelineTo));
-  const qualified = reachedRank >= QUALIFY_RANK;
-  const disposition: ResolvedOutcome['disposition'] = s.won ? 'won'
-    : s.explicitLost ? 'lost'
-    : qualified ? 'lost'
-    : 'no_opportunity';
-
-  const score = computeOutcomeScore(s);
+  const rec = outcomeRecord(s, disposition);
   await supabase
     .from('predictions')
-    .update({
-      outcome_value: {
-        replied: s.replied,
-        pipeline_from: s.pipelineFrom,
-        pipeline_to: s.pipelineTo,
-        revenue: s.revenue,
-        disposition,
-        score,
-      },
-      outcome_observation_id: s.observationId ?? s.lostObservationId,
-      resolved_at: new Date().toISOString(),
-    })
+    .update({ ...rec, resolved_at: new Date().toISOString() })
     .eq('id', p.id);
 
-  return { id: p.id, workspace_id: p.workspace_id, entity_id: p.entity_id, disposition, score };
+  return { id: p.id, workspace_id: p.workspace_id, entity_id: p.entity_id, disposition, score: rec.outcome_value.score };
+}
+
+// What a resolved prediction stores. Shared by the resolver and the re-grade.
+function outcomeRecord(s: DerivedSignals, disposition: Disposition) {
+  const score = computeOutcomeScore({ ...s, won: disposition === 'won' });
+  const first = [...s.events].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())[0];
+  return {
+    outcome_value: {
+      replied: s.replied,
+      pipeline_from: s.pipelineFrom,
+      pipeline_to: s.pipelineTo,
+      revenue: disposition === 'won' ? (s.revenue ?? first?.revenue ?? null) : null,
+      disposition,
+      score,
+      ...(first ? { decided_by: first.source, decided_at: first.at } : {}),
+    } as Record<string, unknown> & { score: number },
+    outcome_observation_id: first?.observationId ?? (disposition === 'won' ? s.observationId : null),
+  };
+}
+
+export interface RegradeResult {
+  scanned: number;
+  changed: number;
+  /** "won→already_decided" → count */
+  transitions: Record<string, number>;
+  lastId: string | null;
+}
+
+/**
+ * One-off re-grade (GET-1068, DECISIONS 2026-10-29). Re-applies the disposition
+ * rule to predictions resolved under the old one, which graded already-decided
+ * accounts and never read deal_outcomes. A resolved prediction is otherwise never
+ * changed; this is the logged exception: each changed row keeps `regraded`
+ * { from, at, issue }. Imported closed deals (record_closed_deals) are known
+ * outcomes by design and are left alone. Dry run unless `write`. Pages by id.
+ */
+export async function regradeResolvedPredictions(
+  supabase: SupabaseClient,
+  opts: { workspaceId?: string; write?: boolean; batch?: number; afterId?: string | null } = {},
+): Promise<RegradeResult> {
+  let q = supabase
+    .from('predictions')
+    .select('id, workspace_id, entity_id, predicted_at, resolution_window_days, feature_snapshot, outcome_value')
+    .eq('kind', 'icp_fit')
+    .not('resolved_at', 'is', null)
+    .order('id', { ascending: true })
+    .limit(opts.batch ?? 200);
+  if (opts.workspaceId) q = q.eq('workspace_id', opts.workspaceId);
+  if (opts.afterId) q = q.gt('id', opts.afterId);
+  const { data, error } = await q;
+  if (error) throw error;
+
+  const out: RegradeResult = { scanned: 0, changed: 0, transitions: {}, lastId: null };
+  for (const p of (data || []) as (PredictionRow & { outcome_value?: Record<string, unknown> | null })[]) {
+    out.scanned++;
+    out.lastId = p.id;
+    const ov = p.outcome_value || {};
+    if (ov.imported || ov.regraded) continue;
+    const s = await deriveSignals(supabase, p);
+    // It was closed out once already, so re-grade it as closed: never back to open.
+    const disposition = decideDisposition({ ...s, timeOut: true }) as Disposition;
+    const from = (ov.disposition as string) ?? 'none';
+    if (disposition === from) continue;
+    out.changed++;
+    const k = `${from}→${disposition}`;
+    out.transitions[k] = (out.transitions[k] ?? 0) + 1;
+    if (!opts.write) continue;
+    const rec = outcomeRecord(s, disposition);
+    await supabase
+      .from('predictions')
+      .update({
+        ...rec,
+        outcome_value: { ...rec.outcome_value, regraded: { from, at: new Date().toISOString(), issue: 'GET-1068' } },
+      })
+      .eq('id', p.id);
+  }
+  return out;
 }
 
 /**
@@ -354,6 +511,8 @@ export async function resolveOpenPredictions(
   for (const p of resolvedRecent || []) {
     const ov = (p.outcome_value as Record<string, unknown>) || {};
     if (ov.revenue != null) continue;
+    // Late revenue on a customer we scored is a renewal, not this prediction's win.
+    if (ov.disposition === 'already_decided') continue;
 
     const rev = await deriveRevenue(supabase, p.entity_id as string, p.predicted_at as string);
     if (!rev.won) continue;
