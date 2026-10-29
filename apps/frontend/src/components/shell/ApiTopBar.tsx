@@ -19,7 +19,7 @@ import * as React from "react";
 import { Link, matchPath, useLocation } from "react-router-dom";
 import {
   Activity, BarChart3, Building2, ChevronDown, Home as HomeIcon, KeyRound, Plug,
-  Pencil, SquareTerminal, Code2, Users2, Webhook, ArrowUpRight, Zap, Network, Radio, Lightbulb } from "lucide-react";
+  Pencil, SquareTerminal, Code2, Users2, Webhook, ArrowUpRight, Zap, Network, Radio, Lightbulb, Inbox } from "lucide-react";
 import { InlineEditInput } from "@/components/ui/inline-edit-input";
 import { PageTopBar, type Crumb } from "@/components/ui/page-top-bar";
 import {
@@ -46,7 +46,7 @@ const INTEGRATIONS: Parent = { label: "Integrations", href: "/integrations" };
 const ROUTES: [pattern: string, meta: RouteMeta][] = [
   ["/",                { title: "Home",              icon: HomeIcon }],
   ["/activity",        { title: "Activity",          icon: Activity }],
-  ["/inbox", { title: "Inbox", icon: Activity }],
+  ["/inbox",           { title: "Inbox",             icon: Inbox }],
   ["/tasks", { title: "Inbox", icon: Activity }],
   ["/accounts",        { title: "Accounts",          icon: Building2 }],
   ["/accounts/:id",    { title: "Account",           icon: Building2, parent: { label: "Accounts", href: "/accounts" } }],

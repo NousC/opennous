@@ -17,13 +17,28 @@
 //
 // A group of more than three shows three and a "+ N more" row.
 
-export type InboxKind = "meeting" | "signal" | "approve";
+export type InboxKind = "meeting" | "signal" | "approve" | "outcome";
 
 export const GROUPS: { kind: InboxKind; label: string }[] = [
   { kind: "meeting", label: "After your meetings" },
   { kind: "signal", label: "From signals" },
   { kind: "approve", label: "Drafts to review" },
 ];
+
+// The Inbox page's tabs (2026-10-29), one list each:
+//   Post-meetings — the meeting wrap-ups.
+//   Follow-ups — what a signal or a workflow wants you to do: signal moves, drafts to review (a stale
+//     deal's re-engage, a play's email) and runs waiting on a review, one list, newest first.
+//   Results — what the workflows produced: each finished run, its brief, email or page read in
+//     place. Something to read, not to decide, so it stays out of the counts.
+export type InboxTab = "meetings" | "act" | "workflows";
+export const TABS: { tab: InboxTab; label: string }[] = [
+  { tab: "meetings", label: "Post-meetings" },
+  { tab: "act", label: "Follow-ups" },
+  { tab: "workflows", label: "Results" },
+];
+export const isInboxTab = (v: string | null | undefined): v is InboxTab => v === "meetings" || v === "act" || v === "workflows";
+export const tabOf = (i: InboxItem): InboxTab => (i.kind === "meeting" ? "meetings" : i.kind === "outcome" ? "workflows" : "act");
 
 /** The fields of a /api/home recommendation the inbox reads. */
 export type InboxRec = {
@@ -80,7 +95,12 @@ export type InboxRun = {
   /** "Email draft · 3 tasks". */
   what?: string | null;
 };
-export type InboxRead = { recommendations?: InboxRec[]; deal_changes?: InboxDeal[]; actions?: InboxAction[]; runs?: InboxRun[] };
+/** A finished workflow run (GET /api/workflows/runs?status=ok): the Results tab's rows. */
+export type InboxOutcome = {
+  id: string; routine_id: string | null; automation: string; status: string; started_at: string;
+  document_id: string | null; document_title: string | null;
+};
+export type InboxRead = { recommendations?: InboxRec[]; deal_changes?: InboxDeal[]; actions?: InboxAction[]; runs?: InboxRun[]; outcomes?: InboxOutcome[] };
 
 export type InboxItem = {
   key: string; kind: InboxKind;
@@ -98,7 +118,7 @@ export type InboxItem = {
   by?: string | null; why?: string | null;
   /** Decided already: what happened ("Sent", "Skipped", "Approved"). The row stays; the counts leave it out. */
   done?: string | null;
-  rec?: InboxRec; action?: InboxAction; run?: InboxRun;
+  rec?: InboxRec; action?: InboxAction; run?: InboxRun; outcome?: InboxOutcome;
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -180,6 +200,15 @@ function runItem(r: InboxRun): InboxItem {
   };
 }
 
+function outcomeItem(o: InboxOutcome): InboxItem {
+  return {
+    key: `out:${o.id}`, kind: "outcome", title: o.automation,
+    sub: o.document_title, domain: null, at: o.started_at,
+    href: o.document_id ? `/pages/${o.document_id}` : o.routine_id ? `/workflows/${o.routine_id}?tab=runs` : null,
+    by: o.automation, outcome: o,
+  };
+}
+
 const newestFirst = (x: InboxItem, y: InboxItem) => (Date.parse(y.at ?? "") || 0) - (Date.parse(x.at ?? "") || 0);
 
 export function buildItems(data: InboxRead | null | undefined, now: Date = new Date()): InboxItem[] {
@@ -189,7 +218,8 @@ export function buildItems(data: InboxRead | null | undefined, now: Date = new D
   // A snoozed signal waits until its time (GET-944).
   const awake = (a: InboxAction) => !(a.status === "pending" && a.origin?.snoozed_until && Date.parse(a.origin.snoozed_until) > now.getTime());
   const drafts = [...(data?.actions ?? []).filter((a) => a.status !== "failed" && awake(a)).map(actionItem), ...(data?.runs ?? []).map(runItem)].sort(newestFirst);
-  return [...meetings, ...drafts];
+  const outcomes = (data?.outcomes ?? []).filter((o) => o.status === "ok").map(outcomeItem).sort(newestFirst);
+  return [...meetings, ...drafts, ...outcomes];
 }
 
 /**
@@ -201,8 +231,9 @@ export function builtinOf(item: InboxItem): string | null {
   return item.action?.origin?.builtin ?? null;
 }
 
-/** What still needs you: the rows not yet decided. The count on the ⚑ and in each group. */
-export const openCount = (items: InboxItem[]) => items.filter((i) => !i.done).length;
+/** What still needs you: the rows not yet decided. The count on the ⚑ and in each group. A
+ *  workflow's outcome is there to read, so it never counts. */
+export const openCount = (items: InboxItem[]) => items.filter((i) => !i.done && i.kind !== "outcome").length;
 
 export type InboxGroup = { kind: InboxKind; label: string; count: number; shown: InboxItem[]; more: number };
 

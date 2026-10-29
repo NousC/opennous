@@ -18,7 +18,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useBookScope } from "@/hooks/useBookScope";
 import { freshAccessToken } from "@/lib/freshToken";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { buildItems, openCount, type InboxRead } from "@/components/priorities/inboxModel";
+import { buildItems, openCount, type InboxOutcome, type InboxRead } from "@/components/priorities/inboxModel";
 import { usePendingDrafts } from "@/components/priorities/drafts";
 import { automationsFetch } from "@/lib/automations";
 import { approvalWhat, type Approval } from "@/components/AutomationApprovals";
@@ -59,15 +59,29 @@ export function usePriorities({ open }: { open: boolean }) {
       return r.ok ? ((await r.json())?.approvals ?? []) : [];
     },
   });
+  // The Inbox page's Results tab (2026-10-29): what the workflows finished in the last 14 days.
+  // Read only while the page is open; the ⚑ count never includes them.
+  const outcomes = useQuery({
+    queryKey: ["inbox-outcomes", ws],
+    enabled: open && !!ws && !!session?.access_token,
+    staleTime: 60_000,
+    queryFn: async (): Promise<InboxOutcome[]> => {
+      const token = (await freshAccessToken()) ?? session?.access_token ?? "";
+      const r = await automationsFetch(`/runs?${new URLSearchParams({ workspaceId: ws, days: "14", status: "ok" })}`, token);
+      return r.ok ? ((await r.json())?.runs ?? []) : [];
+    },
+  });
   const chipFor = cloud.shell?.priorities?.useItemChip?.({ ws, token: session?.access_token ?? "", open }) ?? noChip;
   const data = useMemo<InboxRead | undefined>(() => (homeData ? {
     ...homeData, actions: drafts.data ?? [],
     runs: (runs.data ?? []).map(a => ({ ...a, what: approvalWhat(a) })),
-  } : undefined), [homeData, drafts.data, runs.data]);
+    outcomes: outcomes.data ?? [],
+  } : undefined), [homeData, drafts.data, runs.data, outcomes.data]);
   const count = useMemo(() => openCount(buildItems(data)), [data]);
   return {
     ws, token: session?.access_token, data, count, chipFor, refetchRuns: runs.refetch,
     loading: !!meetings && home.isLoading, failed: !!meetings && home.isError,
+    outcomesLoading: outcomes.isLoading,
   };
 }
 

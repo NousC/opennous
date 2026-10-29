@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, buildItems, groupItems, meetingWhen, openCount, signalLine, visibleItems, type InboxAction } from "../src/components/priorities/inboxModel.ts";
+import { GROUPS, TABS, buildItems, groupItems, isInboxTab, meetingWhen, openCount, signalLine, tabOf, visibleItems, type InboxAction, type InboxOutcome } from "../src/components/priorities/inboxModel.ts";
 
 const NOW = new Date("2026-10-02T15:30:00");
 const acct = (n: string) => ({ id: `id-${n}`, name: n, domain: `${n.toLowerCase()}.example` });
@@ -178,4 +178,46 @@ test("churn risk and expansion drafts sit under From signals; a stale deal draft
   const by = (id: string, builtin: string) => draft(id, { origin: { source: "rec", name: id, why: null, builtin } });
   const items = buildItems({ actions: [by("risk", "deal_risk"), by("exp", "expansion"), by("stale", "stale_deal")] }, NOW);
   assert.deepEqual(items.map((i) => [i.key, i.kind]).sort(), [["act:exp", "signal"], ["act:risk", "signal"], ["act:stale", "approve"]]);
+});
+
+// The Inbox page's tabs (2026-10-29).
+const outcome = (id: string, extra: Partial<InboxOutcome> = {}): InboxOutcome => ({
+  id, routine_id: "wf1", automation: "Weekly pipeline report", status: "ok", started_at: "2026-10-02T08:00:00",
+  document_id: null, document_title: null, ...extra,
+});
+
+test("tabs: Post-meetings, Follow-ups, Results", () => {
+  assert.deepEqual(TABS.map((t) => t.label), ["Post-meetings", "Follow-ups", "Results"]);
+  assert.equal(isInboxTab("act"), true);
+  assert.equal(isInboxTab("signals"), false);
+  assert.equal(isInboxTab(null), false);
+});
+
+test("tabs: signals, drafts and runs to review all land in Follow-ups", () => {
+  const signal = draft("s1", { origin: { source: "routine", name: "Deal signals", builtin: "deal_signals", why: null } });
+  const stale = draft("d1", { origin: { source: "routine", name: "Stale deal detection", why: null } });
+  const run = { run_id: "r1", requested_at: "2026-10-02T09:00:00", automation: { id: "a1", name: "Follow-up" }, account: null, why: null };
+  const items = buildItems({ ...data, actions: [signal, stale], runs: [run], outcomes: [outcome("o1")] }, NOW);
+  const by = (tab: string) => items.filter((i) => tabOf(i) === tab).map((i) => i.key);
+  assert.deepEqual(by("meetings"), ["fu:1", "fu:3"]);
+  assert.deepEqual(new Set(by("act")), new Set(["act:s1", "act:d1", "run:r1"]));
+  assert.deepEqual(by("workflows"), ["out:o1"]);
+});
+
+test("tabs: a workflow's outcome is there to read, so it never counts", () => {
+  const items = buildItems({ outcomes: [outcome("o1"), outcome("o2")] }, NOW);
+  assert.equal(items.length, 2);
+  assert.equal(openCount(items), 0);
+});
+
+test("tabs: only finished runs, newest first; a run that wrote a page opens it", () => {
+  const items = buildItems({ outcomes: [
+    outcome("old", { started_at: "2026-09-30T08:00:00" }),
+    outcome("new", { started_at: "2026-10-02T08:00:00", document_id: "doc9", document_title: "Pipeline, week 40" }),
+    outcome("bad", { status: "error" }),
+  ] }, NOW);
+  assert.deepEqual(items.map((i) => i.key), ["out:new", "out:old"]);
+  assert.equal(items[0].href, "/pages/doc9");
+  assert.equal(items[0].sub, "Pipeline, week 40");
+  assert.equal(items[1].href, "/workflows/wf1?tab=runs");
 });

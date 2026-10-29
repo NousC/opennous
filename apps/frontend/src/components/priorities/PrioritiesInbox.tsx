@@ -13,28 +13,34 @@
 //     approve and reject routes, so there is no second send path.
 // A decision keeps its row with the result until the panel closes; the counts leave it out.
 //
-// Keyboard: ↑ / ↓ move the selection, Enter opens the item's page, Esc closes the panel. On a phone
-// the panel is one pane: the list, and a tap opens the item with a back arrow.
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+// Since 2026-10-29 the Inbox page splits it into tabs (inboxModel TABS): Post-meetings, Follow-ups
+// (signals, drafts and runs to review together) and Results, what each finished run wrote
+// (OutcomePane). Each tab is a table like Accounts and Workflows, newest first; a row opens the
+// item in a sheet on the right, with everything the old reading pane had.
+//
+// Keyboard: j / k move through the rows and Enter opens one (DataTable); Esc closes the sheet.
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Boxes, Clock } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Boxes, Clock, Loader2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { day, time, when } from "@/lib/format";
 import { freshAccessToken } from "@/lib/freshToken";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { EntityAvatar } from "@/components/EntityAvatar";
-import { SkeletonRows } from "@/components/ui/skeleton";
-import { ListEmpty, ListGroup, ListMeta, listRowClass } from "@/components/ui/list";
+import { DataTable, type Column } from "@/components/ui/data-table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { FollowUpCard, followUpApi } from "@/components/home/FollowUps";
 import { ApprovalCard, type PendingAction } from "@/components/ApprovalCard";
 import { Row, type RecDetailFull } from "@/components/home/RecParts";
 import type { DealChange, FollowUp, RecDetail, Recommendation } from "@/components/home/types";
 import { ACTION_DECIDED, FOLLOW_UP_DECIDED, REC_DISMISSED } from "./events";
 import type { ItemChip } from "@/lib/cloud";
-import { buildItems, builtinOf, groupItems, meetingWhen, openCount, visibleItems, type InboxItem, type InboxKind, type InboxRead } from "./inboxModel";
+import { buildItems, builtinOf, meetingWhen, tabOf, type InboxItem, type InboxRead, type InboxTab } from "./inboxModel";
 import { draftsKey, markDraftDecided } from "./drafts";
 import { ApprovalPane as RunReviewPane, type Approval } from "@/components/AutomationApprovals";
+import { OutputView, type RunOutput } from "@/components/AutomationRunDetail";
+import { automationsFetch } from "@/lib/automations";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
@@ -53,13 +59,23 @@ const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toD
 const dateOf = (i: InboxItem) => {
   if (!i.at) return "";
   if (i.kind === "meeting") return when(i.at);
+  if (i.kind === "outcome") return isToday(i.at) ? time(i.at) : day(i.at);
   return isToday(i.at) ? `Drafted ${time(i.at)}` : day(i.at);
+};
+
+/** What an empty tab says. */
+const EMPTY: Record<InboxTab, string> = {
+  meetings: "No meetings waiting on a follow-up.",
+  act: "No follow-ups waiting. Signals and drafts land here.",
+  workflows: "No workflow results in the last 14 days.",
 };
 
 /** A follow-up card's decision, as its row shows it. */
 const FOLLOW_UP_DONE: Record<string, string> = { approved: "Approved", synced: "Synced", skipped: "Skipped" };
 
-export function PrioritiesInbox({ data, loading, failed, ws, token, onClose, focus = null, chipFor = null }: {
+export function PrioritiesInbox({ tab, data, loading, failed, ws, token, onClose, focus = null, chipFor = null }: {
+  /** The tab whose rows the list shows. */
+  tab: InboxTab;
   data: InboxRead | undefined; loading: boolean; failed: boolean; ws: string; token: string | undefined;
   onClose: () => void;
   /** Where the built-in job behind an item lives (GET-897), as a chip; none without it. */
@@ -69,57 +85,28 @@ export function PrioritiesInbox({ data, loading, failed, ws, token, onClose, foc
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const mobile = useIsMobile();
-  // A follow-up decided here keeps its row (and shows its receipt) until the panel closes, so the
-  // list does not jump under the pointer; the next open reads Home afresh.
+  // A follow-up decided here keeps its row (and shows its receipt) until the page closes, so the
+  // table does not jump under the pointer; the next open reads Home afresh.
   const [decided, setDecided] = useState<Record<string, FollowUp>>({});
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  // Automation reviews finished here keep their row, marked, until the panel closes (GET-737).
+  // Automation reviews finished here keep their row, marked, until the page closes (GET-737).
   const [runsDone, setRunsDone] = useState<Set<string>>(new Set());
-  const [expanded, setExpanded] = useState<Set<InboxKind>>(new Set());
+  // The row open in the sheet; a link's ?item= opens on it.
   const [selected, setSelected] = useState<string | null>(focus);
   useEffect(() => { if (focus) setSelected(focus); }, [focus]);
-  const [showDetail, setShowDetail] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const items = useMemo(() => buildItems(data).filter((i) => !dismissed.has(i.key)).map((i) => {
     if (i.run && runsDone.has(i.key)) return { ...i, done: "Done" };
     const fu = decided[i.key];
     return fu && fu.status && FOLLOW_UP_DONE[fu.status] ? { ...i, done: FOLLOW_UP_DONE[fu.status] } : i;
   }), [data, dismissed, decided, runsDone]);
-  const groups = useMemo(() => groupItems(items, expanded), [items, expanded]);
-  const visible = useMemo(() => visibleItems(groups), [groups]);
-  // The first item is selected on open, and again whenever the selected one leaves the list.
-  const current = items.find((i) => i.key === selected) ?? visible[0] ?? null;
+  // This tab's rows, newest first (buildItems sorts within each kind; Follow-ups mixes three).
+  const visible = useMemo(() => items.filter((i) => tabOf(i) === tab)
+    .sort((x, y) => (Date.parse(y.at ?? "") || 0) - (Date.parse(x.at ?? "") || 0)), [items, tab]);
+  const current = visible.find((i) => i.key === selected) ?? null;
 
   const go = useCallback((href: string | null) => { if (!href) return; onClose(); navigate(href); }, [navigate, onClose]);
-
-  // A clicked row is already in view; a row reached by the keyboard is brought into it.
-  const select = (key: string, reveal = false) => {
-    setSelected(key);
-    if (reveal) requestAnimationFrame(() => document.getElementById(rowId(key))?.scrollIntoView({ block: "nearest" }));
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const t = e.target as HTMLElement;
-    if (t.closest("input, textarea, select, [contenteditable='true']")) return;
-    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && visible.length && !(mobile && showDetail)) {
-      e.preventDefault();
-      const at = current ? visible.findIndex((i) => i.key === current.key) : -1;
-      const next = e.key === "ArrowDown" ? Math.min(visible.length - 1, at + 1) : Math.max(0, at - 1);
-      select(visible[next].key, true);
-      listRef.current?.focus({ preventScroll: true });
-    } else if (e.key === "Enter" && current && (t === listRef.current || t.getAttribute("role") === "option")) {
-      e.preventDefault();
-      if (mobile && !showDetail) setShowDetail(true);
-      else go(current.href);
-    }
-  };
-
-  // The list takes the keyboard as the panel opens (and once its rows arrive).
-  const hasRows = items.length > 0;
-  useEffect(() => { if (hasRows) listRef.current?.focus({ preventScroll: true }); }, [hasRows]);
-  // Anything decided here shows on Home and in the count from the next read, taken as the panel closes.
+  // Anything decided here shows on Home and in the count from the next read, taken as the page closes.
   const changed = useRef(false);
   useEffect(() => () => {
     if (!changed.current) return;
@@ -128,104 +115,94 @@ export function PrioritiesInbox({ data, loading, failed, ws, token, onClose, foc
     void queryClient.invalidateQueries({ queryKey: ["automation-approvals", ws] });
   }, [queryClient, ws]);
 
-  const count = openCount(items);
-  const list = (
-    <div className={cn("flex min-h-0 flex-col", mobile ? "h-full" : "w-[340px] flex-shrink-0 border-r border-border/50")}>
-      <div className="flex items-baseline gap-2 px-4 pb-2 pt-3">
-        <span className="text-[13.5px] font-medium tracking-[-0.01em]">Priorities</span>
-        {count > 0 && <span className="text-[12px] tabular-nums text-muted-foreground/60">{count}</span>}
-      </div>
-      {loading ? (
-        <div className="px-2"><SkeletonRows rows={4} /></div>
-      ) : failed ? (
-        <ListEmpty className="px-4">Couldn't load your priorities. Try again in a moment.</ListEmpty>
-      ) : !count ? (
-        <ListEmpty className="px-4">All caught up.</ListEmpty>
-      ) : (
-        <div ref={listRef} tabIndex={0} role="listbox" aria-label="Priorities"
-          aria-activedescendant={current ? rowId(current.key) : undefined}
-          className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 outline-none">
-          {groups.map((g) => (
-            <div key={g.kind} role="group" aria-label={g.label}>
-              <ListGroup className="pt-2 first:pt-1">
-                {g.label}{g.count > 0 && <span className="ml-1.5 tabular-nums text-muted-foreground/45">{g.count}</span>}
-              </ListGroup>
-              {g.shown.map((i) => (
-                <div key={i.key} id={rowId(i.key)} role="option" aria-selected={current?.key === i.key}
-                  onClick={() => { select(i.key); if (mobile) setShowDetail(true); listRef.current?.focus({ preventScroll: true }); }}
-                  onDoubleClick={() => go(i.href)}
-                  className={cn(listRowClass, "cursor-default", current?.key === i.key && "bg-hover")}>
-                  <AccountTile name={i.title} domain={i.domain} />
-                  <span className={cn("flex min-w-0 flex-1 flex-col", i.done && "opacity-60")}>
-                    <span className="truncate text-[13px] leading-[18px] text-foreground">{i.title}</span>
-                    {i.sub && <span className="truncate text-[11.5px] leading-4 text-muted-foreground/70">{i.sub}</span>}
-                  </span>
-                  <ListMeta className={cn("self-start pt-px", i.done && "text-foreground/70")}>{i.done ?? dateOf(i)}</ListMeta>
-                </div>
-              ))}
-              {g.more > 0 && (
-                <button type="button" tabIndex={-1} onClick={() => { setExpanded((s) => new Set(s).add(g.kind)); listRef.current?.focus({ preventScroll: true }); }}
-                  className="flex h-8 w-full items-center rounded-lg pl-[42px] text-left text-[12px] text-muted-foreground/70 transition-colors duration-fast hover:bg-hover hover:text-foreground">
-                  + {g.more} more
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-
-  const detail = current ? (
-    <ItemPane key={current.key} item={current} ws={ws} token={token} data={data} decided={decided[current.key]} chip={chipFor?.(builtinOf(current)) ?? null}
-      back={mobile ? () => setShowDetail(false) : undefined} go={go}
-      onDecided={(r, fu) => {
-        setDecided((d) => ({ ...d, [r.id]: fu }));
-        // Home, if it is open underneath, takes the same decision (it keeps its own read).
-        window.dispatchEvent(new CustomEvent(FOLLOW_UP_DECIDED, { detail: { id: r.id, followup: fu } }));
-      }}
-      onDismissed={(key) => {
-        // The next row takes the selection (the one above at the end), and the list the keyboard.
-        const at = visible.findIndex((i) => i.key === key);
-        const next = visible[at + 1] ?? visible[at - 1] ?? null;
-        setDismissed((s) => new Set(s).add(key));
-        setSelected(next?.key ?? null);
-        if (mobile) setShowDetail(false);
-        listRef.current?.focus({ preventScroll: true });
-      }}
-      onActionDecided={(id, status) => {
-        markDraftDecided(queryClient, ws, id, status);
-        window.dispatchEvent(new CustomEvent(ACTION_DECIDED, { detail: { id, status } }));
-        changed.current = true;
-      }}
-      onAfterChange={() => { changed.current = true; }}
-      onRunDone={(key) => setRunsDone((s) => new Set(s).add(key))} />
-  ) : (
-    <div className="flex h-full items-center justify-center px-6 text-[13px] text-muted-foreground/60">
-      {loading ? "" : "Nothing selected"}
-    </div>
-  );
-
   return (
-    <div className="flex h-full min-h-0" onKeyDown={onKeyDown}>
-      {mobile ? (showDetail && current ? <div className="min-w-0 flex-1 overflow-y-auto">{detail}</div> : <div className="min-w-0 flex-1">{list}</div>) : (
-        <>
-          {list}
-          {/* Keyed by the item, so a newly selected one opens at its top. */}
-          <div key={current?.key ?? "none"} className="min-w-0 flex-1 overflow-y-auto">{detail}</div>
-        </>
+    <div className="h-full min-h-0 overflow-y-auto">
+      {failed ? (
+        <EmptyState bordered={false} className="mx-4 mt-4" title="Couldn't load your inbox." body="Try again in a moment." />
+      ) : (
+        <DataTable<InboxItem> aria-label="Inbox" columns={COLUMNS[tab]} rows={visible} rowKey={(i) => i.key}
+          loading={loading} minWidth={720} keyboard activeKey={current?.key ?? null}
+          onRowClick={(i) => setSelected(i.key)}
+          empty={<EmptyState bordered={false} title={EMPTY[tab]} />} />
       )}
+
+      <Sheet open={!!current} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-y-auto p-0 outline-none sm:max-w-[720px]"
+          onOpenAutoFocus={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement | null)?.focus(); }}>
+          {current && <ItemPane key={current.key} item={current} ws={ws} token={token} data={data} decided={decided[current.key]} chip={chipFor?.(builtinOf(current)) ?? null}
+            go={go}
+            onDecided={(r, fu) => {
+              setDecided((d) => ({ ...d, [r.id]: fu }));
+              // Home, if it is open underneath, takes the same decision (it keeps its own read).
+              window.dispatchEvent(new CustomEvent(FOLLOW_UP_DECIDED, { detail: { id: r.id, followup: fu } }));
+            }}
+            onDismissed={(key) => {
+              // Skipped or snoozed: the row leaves the table and the sheet closes.
+              setDismissed((s) => new Set(s).add(key));
+              setSelected(null);
+            }}
+            onActionDecided={(id, status) => {
+              markDraftDecided(queryClient, ws, id, status);
+              window.dispatchEvent(new CustomEvent(ACTION_DECIDED, { detail: { id, status } }));
+              changed.current = true;
+            }}
+            onAfterChange={() => { changed.current = true; }}
+            onRunDone={(key) => setRunsDone((s) => new Set(s).add(key))} />}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-const rowId = (key: string) => `prio-${key.replace(/[^\w-]/g, "_")}`;
+// ── The tables ──────────────────────────────────────────────────────────────
+
+/** The account (or workflow) with its tile, the first column of every tab. */
+const nameCell = (i: InboxItem) => (
+  <span className={cn("flex min-w-0 items-center gap-2.5", i.done && "opacity-60")}>
+    {i.kind === "outcome" ? <WorkflowTile /> : <AccountTile name={i.title} domain={i.domain} />}
+    <span className="truncate text-foreground">{i.title}</span>
+  </span>
+);
+const quiet = (text: ReactNode, i: InboxItem) => <span className={cn("block truncate text-[12.5px] text-ink-2", i.done && "opacity-60")}>{text || "—"}</span>;
+const dateCol: Column<InboxItem> = {
+  key: "when", header: "When", align: "right", width: "130px",
+  cell: (i) => <span className={cn("whitespace-nowrap text-[12px] tabular-nums", i.done ? "text-foreground/70" : "text-muted-foreground")}>{i.done ?? dateOf(i)}</span>,
+};
+
+/** Each tab's columns: who it is about, what it is, where it came from, when. */
+const COLUMNS: Record<InboxTab, Column<InboxItem>[]> = {
+  meetings: [
+    { key: "name", header: "Account", width: "34%", cell: nameCell },
+    { key: "meeting", header: "Meeting", cell: (i) => quiet(i.meeting?.title, i) },
+    dateCol,
+  ],
+  act: [
+    { key: "name", header: "Account", width: "28%", cell: nameCell },
+    { key: "what", header: "What", cell: (i) => quiet(i.kind === "signal" ? i.sub : i.action?.subject ?? i.run?.what ?? i.sub, i) },
+    { key: "from", header: "From", width: "22%", cell: (i) => quiet(i.kind === "signal" ? i.action?.origin?.signal?.label ?? i.by : i.by, i) },
+    dateCol,
+  ],
+  workflows: [
+    { key: "name", header: "Workflow", width: "36%", cell: nameCell },
+    { key: "output", header: "Output", cell: (i) => quiet(i.outcome?.document_title, i) },
+    dateCol,
+  ],
+};
 
 /** The account's logo in the palette's 24px tile. */
 function AccountTile({ name, domain, size = "h-6 w-6" }: { name: string | null; domain: string | null; size?: string }) {
   return (
     <EntityAvatar kind="company" name={name} domain={domain}
       className={cn(size, "flex-shrink-0 rounded-md shadow-[inset_0_0_0_1px_hsl(var(--border)/0.6)]")} textClassName="text-[10px] font-medium" />
+  );
+}
+
+/** A workflow's mark in the same tile, for a row that is a run, not an account. */
+function WorkflowTile({ size = "h-6 w-6" }: { size?: string }) {
+  return (
+    <span className={cn(size, "flex flex-shrink-0 items-center justify-center rounded-md text-muted-foreground shadow-[inset_0_0_0_1px_hsl(var(--border)/0.6)]")}>
+      <Zap className="h-3 w-3" strokeWidth={1.75} />
+    </span>
   );
 }
 
@@ -246,25 +223,31 @@ type PaneProps = {
 function ItemPane(p: PaneProps) {
   const { item } = p;
   const m = item.meeting;
-  const openLabel = m ? "Open on Home" : "Open account";
+  const o = item.outcome;
+  const openLabel = m ? "Open on Home" : o ? (o.document_id ? "Open page" : "Open workflow") : "Open account";
   // A meeting: "Halcyon Retail · Security review", "After the call · Today 15:00". A draft: the
   // account, "Drafted by Stale deal detection · 14:42".
   const title = m && m.title ? `${item.title} · ${m.title}` : item.title;
-  const meta = item.run
+  const meta = o
+    ? [o.document_title, `Ran ${isToday(o.started_at) ? time(o.started_at) : day(o.started_at)}`].filter(Boolean).join(" · ")
+    : item.run
     ? [item.run.automation.name, item.why].filter(Boolean).join(" · ")
     : m
     ? [`After the ${m.kind.toLowerCase()}`, meetingWhen(m.at)].filter(Boolean).join(" · ")
     : [`Drafted by ${item.by ?? "OpenNous"}`, item.at ? (isToday(item.at) ? time(item.at) : day(item.at)) : null].filter(Boolean).join(" · ");
   return (
     <div className="flex min-h-full flex-col">
-      <div className="sticky top-0 z-10 flex items-center gap-2.5 border-b border-border/50 bg-popover px-4 py-3 sm:px-5">
+      {/* In the sheet: room on the right for its ✕. */}
+      <div className="sticky top-0 z-10 flex items-center gap-2.5 border-b border-border/50 bg-card py-3 pl-4 pr-12 sm:pl-5">
+        <SheetTitle className="sr-only">{title}</SheetTitle>
+        <SheetDescription className="sr-only">{meta}</SheetDescription>
         {p.back && (
           <button type="button" onClick={p.back} aria-label="Back to Priorities"
             className="-ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 hover:bg-hover hover:text-foreground">
             <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
           </button>
         )}
-        <AccountTile name={item.title} domain={item.domain} size="h-7 w-7" />
+        {o ? <WorkflowTile size="h-7 w-7" /> : <AccountTile name={item.title} domain={item.domain} size="h-7 w-7" />}
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13.5px] font-medium leading-tight text-foreground">{title}</p>
           <p className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground/70">
@@ -282,8 +265,51 @@ function ItemPane(p: PaneProps) {
         )}
       </div>
       <div className="px-4 py-4 sm:px-5">
-        {item.run ? <RunPane {...p} /> : item.kind === "signal" ? <SignalPane {...p} /> : item.action ? <ApprovalPane {...p} /> : <MeetingPane {...p} />}
+        {o ? <OutcomePane {...p} /> : item.run ? <RunPane {...p} /> : item.kind === "signal" ? <SignalPane {...p} /> : item.action ? <ApprovalPane {...p} /> : <MeetingPane {...p} />}
       </div>
+    </div>
+  );
+}
+
+type OutcomeStep = { step: number; name: string; status: string; detail: string | null; output: RunOutput | null };
+
+/** What a finished workflow run wrote (2026-10-29): each step's output (the brief, the email) in
+ *  order, read from the run itself; a run that wrote a page links to it in the header. */
+function OutcomePane({ item, ws, token }: PaneProps) {
+  const runId = item.outcome!.id;
+  const [steps, setSteps] = useState<OutcomeStep[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setSteps(null); setFailed(false);
+    automationsFetch(`/runs/${runId}?workspaceId=${ws}`, token ?? "", { signal: AbortSignal.timeout(20_000) })
+      .then(async (r) => {
+        const b = await r.json().catch(() => null);
+        if (!alive) return;
+        if (r.ok && Array.isArray(b?.steps)) setSteps(b.steps);
+        else setFailed(true);
+      })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, [runId, ws, token]);
+
+  if (failed) return <p className="text-[13px] text-muted-foreground">Couldn't open this run. Try again in a moment.</p>;
+  if (!steps) return <div className="flex h-24 items-center justify-center"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>;
+  const written = steps.filter((s) => s.output);
+  if (!written.length) return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-[13px] text-foreground">This run finished without writing anything to read here.</p>
+      {steps.length > 0 && <p className="text-[12.5px] text-muted-foreground">{steps.map((s) => s.detail ? `${s.name}: ${s.detail}` : s.name).join(" · ")}</p>}
+    </div>
+  );
+  return (
+    <div className="flex flex-col gap-5">
+      {written.map((s) => (
+        <section key={s.step}>
+          <p className="text-[11.5px] font-medium text-muted-foreground/70">{s.name}</p>
+          <OutputView output={s.output!} />
+        </section>
+      ))}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
   Zap,
   ArrowUpRight,
   UserRound,
+  Inbox,
 } from "lucide-react";
 import { usePref } from "@/hooks/usePref";
 import { usePlan } from "@/hooks/usePlan";
@@ -61,6 +62,9 @@ const ACCOUNTS_ITEM: NavItem = { title: "Accounts", url: "/accounts", icon: Buil
 const workNavItemsCustom: NavItem[] = [ACCOUNTS_ITEM];
 // The Graph is an icon in the top row on every plan, not a rail row.
 const GRAPH_ITEM: NavItem = { title: "Graph", url: "/graph", icon: Network };
+// The API plan's Inbox (2026-10-29): an icon in the top row between Home and the Graph, not a rail
+// row. Cloud keeps its Inbox row in the rail (cloud.nav.main).
+const INBOX_ITEM: NavItem = { title: "Inbox", url: "/inbox", icon: Inbox };
 // Events sits in the main rail on every plan, after Accounts (and Inbox and Tasks on Cloud).
 const EVENTS_ITEM: NavItem = { title: "Events", url: "/events", icon: Radio };
 
@@ -317,6 +321,7 @@ export function AppSidebar() {
           </NavLink>,
           "Home",
         )}
+        {api && topIcon(INBOX_ITEM.title, INBOX_ITEM.icon, () => navigate(INBOX_ITEM.url), isItemActive(INBOX_ITEM.url), false)}
         {topIcon(GRAPH_ITEM.title, GRAPH_ITEM.icon, () => navigate(GRAPH_ITEM.url), isItemActive(GRAPH_ITEM.url), false)}
       </div>
 
