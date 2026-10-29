@@ -358,7 +358,7 @@ The model doesn't learn in a vacuum. It starts from what you tell it. The **GTM 
 A Claude Code user already keeps an `icp.md` (or `positioning.md`, `pricing.md`) in their own repo. Rather than fork a second ICP in the web UI, Nous reads and writes *their* file:
 
 - **`sync_icp`** syncs the user's existing ICP/positioning files **into** the graph (file → graph), recording the source path. First sync usually builds the scoring model.
-- **`export_icp_model`** writes the *learned* model **back** into their file as a fenced `nous:icp` block (graph → file), so the model the loop discovered lives in their repo, next to the ICP they wrote.
+- **`export_icp_model`** writes the *learned* model **back** into their file as a fenced `nous:icp` block (graph → file), so the model the loop discovered lives in their repo, next to the ICP they wrote. The block reads trust first: **How good is this score** (graded won/lost, conversion per tier, the verdict, and one line telling an agent whether to route on the tier or treat it as a hint), then the win and loss drivers as a table (weight · lift · n), with the hard exclusions and their feature keys in between (GET-1070). An agent never scores from this block. It reads the score and tier from `get_account` / `score`, and uses the block to explain a score and judge exclusions.
 
 The `/playbook` page mirrors the synced ICP read-only. The graph is the runtime-agnostic source of truth. The Claude Code file is an optional mirror.
 
