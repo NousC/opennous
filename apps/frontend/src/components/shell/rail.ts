@@ -30,6 +30,7 @@ export const RAIL_TINT: Record<string, string> = {
   "/graph":        "text-[#C2417A]",
   "/insights":     "text-[#D98A1C]",
   "/gtm-insights": "text-[#D98A1C]",
+  "/win-loss":     "text-[#2E7D66]",
   "/workflows":    "text-[#E0662B]",
   "/activity":     "text-[#2C8FBF]",
   "/events":       "text-[#D64545]",
