@@ -346,6 +346,16 @@ This is also where the model is first **seeded** from your plain-English ICP. `s
 
 ---
 
+## 8a. The backtest, is the score any good?
+
+Forward grading (§6) only sees deals that close after a prediction, so a workspace with years of closed deals would wait months to learn whether its ICP predicts anything. The backtest (GET-1074, `packages/core/src/cloud/icpBacktest.ts`) answers it now: every won/lost deal in `deal_outcomes` is re-scored the way the live scorer would score its account today, by its best-fitting contact (person claims plus the company features they inherit, built like `buildEntityFeatures`), under the ICP rules only. Deals with nothing to score on are counted, never scored as a hollow 50.
+
+**Contact coverage is controlled for.** Won accounts carry more contacts in the CRM (in the largest workspace, a median of 7 against 3), so a best-of-contacts score gets more chances to match a title rule on a won deal. Every lift is also computed within contact-count strata (0–1, 2–3, 4–7, 8+, Mantel-Haenszel), and the accuracy verdict reads that controlled number: **Validated** at 1.5× or more, **Weak** above 1.1×, **Not validated** otherwise, **Insufficient data** under 20 deals or 5 wins. Per criterion the same gives the impact: Positive (≥1.2×), No impact, Negative (≤0.85×), Too few deals (<10), No data. A disqualifier that caps deals winning at 80% of the normal rate or more is flagged for review.
+
+The worker runs it nightly at 04:30 UTC and stores each run in `icp_backtests` (Cloud-only table); `apps/api/scripts/icpBacktest.mjs` runs it by hand (`--save` to store). The newest run feeds the ICP page (`GET /api/mind/icp-page`, `IcpDocument.tsx`) and the ICP file's learned block, which then read the same sections in the same words: Score accuracy, Win rate by tier, Scoring criteria, Disqualifiers, Data coverage, Recommendations.
+
+Honest limit: claims carry no date, so the backtest uses today's titles and firmographics as a stand-in for what was true when the deal was open. Fine for slow-moving facts, wrong for anything that changes because the deal was won.
+
 ## 9. The GTM Context, the system of record the model reads
 
 The model doesn't learn in a vacuum. It starts from what you tell it. The **GTM Context** page (`apps/frontend/src/pages/Intelligence.tsx`, route `/intelligence`, labelled "GTM Context") is the workspace's source of truth about *your* business: ICP, Market, Product, Pricing, Competitors, Positioning, GTM Motion, Notes. Each field is a `claim` carrying a subject slot, a confidence, and a source (`you` edited it, `site` drafted it, `Claude` wrote it back).
