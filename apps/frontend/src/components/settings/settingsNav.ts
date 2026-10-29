@@ -7,7 +7,7 @@
 // on Account. Only a caller that mounts <Settings forceSection=…> bypasses that. Flip `show` to
 // bring a section back.
 
-export type SettingsGroup = "Account" | "Connections" | "Context & signals" | "Agent" | "Workspace" | "Analytics" | "Agents" | "Data" | "Support";
+export type SettingsGroup = "Account" | "Connections" | "Knowledge & signals" | "Agent" | "Workspace" | "Analytics" | "Agents" | "Data" | "Support";
 
 export interface SettingsNavItem {
   /** The `?section=` id. */
@@ -33,7 +33,7 @@ export interface SettingsNavInput {
   can?: (feature: string) => boolean;
 }
 
-export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Context & signals", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
+export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Knowledge & signals", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
 
 type Row = SettingsNavItem & { show?: boolean };
 

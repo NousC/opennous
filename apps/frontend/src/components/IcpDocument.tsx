@@ -79,7 +79,8 @@ const money = (n: number | null | undefined) => {
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 const fileLink = (id: string | null | undefined) => (id ? `/settings?section=context&file=${id}` : "/settings?section=context");
 
-export default function IcpDocument() {
+// `embedded`: drawn inside Settings > Knowledge (GET-1076), which scrolls and pads the page itself.
+export default function IcpDocument({ embedded = false }: { embedded?: boolean } = {}) {
   const { session, userData } = useAuth();
   const ws = userData?.workspace?.id ?? "";
   const token = session?.access_token ?? "";
@@ -113,8 +114,8 @@ export default function IcpDocument() {
   const bt = data.backtest;
 
   return (
-    <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto max-w-[880px] px-4 pb-20 pt-6 sm:px-6">
+    <div className={embedded ? "" : "h-full overflow-y-auto bg-background"}>
+      <div className={embedded ? "pb-12" : "mx-auto max-w-[880px] px-4 pb-20 pt-6 sm:px-6"}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
           <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
             <span className="rounded-md bg-muted px-2 py-0.5 text-[11.5px]">Auto-updated</span>
