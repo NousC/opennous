@@ -15,7 +15,7 @@ import { ListTile } from "@/components/ui/list";
 import { runColumns } from "@/components/automationRunColumns";
 import { useNavigate } from "react-router-dom";
 import {
-  CalendarDays, CircleDot, Clock, Hand, Handshake, Info, Loader2, Lock, Mail, Plus, Radar, Sparkles, Webhook, Zap,
+  CalendarDays, CircleDot, Clock, Hand, Handshake, Info, Loader2, Lock, Plus, Radar, Webhook, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
@@ -39,34 +39,14 @@ import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { AiMark, ModelMark, StepMark, ToolLogo, TriggerMark } from "@/components/AutomationMarks";
 import { TEMPLATES, type TemplateTool } from "@/lib/templates";
-import { flowFromRow, sentence, stepTitle, triggerDef, triggerPhrase, type Flow, type Step } from "@/lib/flows";
+import { flowFromRow, sentence, stepTitle, triggerDef, type Flow, type Step } from "@/lib/flows";
 import {
-  MODEL_LABEL, MODEL_LOGO, automationsFetch, marksFor, toolKindFor,
+  automationsFetch, marksFor, toolKindFor,
   type Automation, type Payload, type Run, type Tool,
 } from "@/lib/automations";
 
 // History's columns and status words — Activity's table, so the two logs read alike.
 const RUN_TEXT: Record<string, string> = { ok: "Done", error: "Failed", running: "Running", awaiting_approval: "Needs approval", rejected: "Skipped" };
-
-// The flow as readable steps: the trigger in words, then each step's title, with each tool's own
-// mark in front: the recorder, your model (Claude, OpenAI, Gemini) or the agent, HubSpot, Gmail,
-// Slack. Control steps (only if, wait, approve) carry no mark.
-const TOOL_STEPS = new Set(["hubspot", "gmail", "slack"]);
-
-function Tiny({ step }: { step: Step }) {
-  if (step.type === "agent") {
-    const m = step.config.model;
-    return m && MODEL_LOGO[m]
-      ? <img src={MODEL_LOGO[m]} alt={MODEL_LABEL[m]} title={MODEL_LABEL[m]} className="h-[14px] w-[14px] flex-shrink-0" />
-      : <Sparkles className="h-[12px] w-[12px] flex-shrink-0 text-muted-foreground" />;
-  }
-  if (TOOL_STEPS.has(step.type)) {
-    return <ToolLogo tool={{ slug: step.type, label: step.type }} className="h-[14px] w-[14px] rounded-[4px]" textClassName="text-[7px] font-semibold" />;
-  }
-  if (step.type === "email") return <Mail className="h-[12px] w-[12px] flex-shrink-0 text-muted-foreground" />;
-  if (step.type === "webhook") return <Webhook className="h-[12px] w-[12px] flex-shrink-0 text-muted-foreground" />;
-  return null;
-}
 
 const SIGNALS = new Set(["health_changed", "champion_quiet", "committee_joined", "icp_tier_changed", "expansion_signal", "promise_overdue", "account_signal"]);
 
@@ -123,21 +103,6 @@ const WINDOWS: [string, number | null][] = [
 type WorkflowRow =
   | { key: string; kind: "own"; a: Automation; flow: Flow; marks: { slug: string; label: string }[] }
   | { key: string; kind: "default"; t: (typeof TEMPLATES)[number]; flow: Flow; shownFlow: Flow; marks: { slug: string; label: string }[] };
-
-/** The steps after the trigger as one quiet line, each led by its tool's mark. */
-function Steps({ flow }: { flow: Flow }) {
-  if (!flow.steps.length) return <span className="text-muted-foreground/60">—</span>;
-  return (
-    <span className="flex min-w-0 items-center gap-1 overflow-hidden text-[12px] text-muted-foreground/80">
-      {flow.steps.map((st, i) => (
-        <span key={st.id} className="inline-flex min-w-0 shrink-0 items-center gap-1 whitespace-nowrap">
-          {i > 0 && <span aria-hidden className="px-0.5 text-[11px] text-muted-foreground/40">→</span>}
-          <Tiny step={st} /><span className="truncate">{stepTitle(st)}</span>
-        </span>
-      ))}
-    </span>
-  );
-}
 
 /**
  * What an automation is, on hover over the ⓘ: one line of what it does, then the trigger and
@@ -416,7 +381,7 @@ export function BuiltInAutomations({
   });
   const off = (r: WorkflowRow) => r.kind === "own" && !r.a.enabled;
   const workflowColumns: Column<WorkflowRow>[] = [
-    { key: "name", header: "Workflow", width: "30%", cell: r => (
+    { key: "name", header: "Workflow", cell: r => (
       <span className={cn("group/name flex min-w-0 items-center gap-2.5", off(r) && "opacity-60")}>
         <ListTile><TriggerTiny when={r.flow.trigger.kind} tools={r.marks} /></ListTile>
         <span className="truncate text-foreground">{r.kind === "own" ? r.a.name : r.t.name}</span>
@@ -429,12 +394,6 @@ export function BuiltInAutomations({
         </span>
       </span>
     ) },
-    { key: "trigger", header: "Trigger", width: "24%", cell: r => (
-      <span className={cn("block truncate text-[12px] text-ink-2", off(r) && "opacity-60")}>
-        {triggerPhrase(r.flow, r.marks.length === 1 ? r.marks[0].label : null)}
-      </span>
-    ) },
-    { key: "steps", header: "Steps", cell: r => <span className={cn("block min-w-0", off(r) && "opacity-60")}><Steps flow={r.flow} /></span> },
     { key: "last", header: "Last run", width: "130px", cell: r => r.kind === "own" ? lastRun(r.a)
       : <span className="whitespace-nowrap text-xs text-ink-2">{r.t.today ? r.t.today.charAt(0).toUpperCase() + r.t.today.slice(1) : "On"}</span> },
     { key: "runs", header: "Runs", align: "right", width: "84px", cell: r => r.kind === "own" ? (

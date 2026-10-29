@@ -317,7 +317,7 @@ export function AppSidebar() {
           </NavLink>,
           "Home",
         )}
-        {topIcon(GRAPH_ITEM.title, GRAPH_ITEM.icon, () => navigate(GRAPH_ITEM.url), isItemActive(GRAPH_ITEM.url), false, RAIL_TINT[GRAPH_ITEM.url])}
+        {topIcon(GRAPH_ITEM.title, GRAPH_ITEM.icon, () => navigate(GRAPH_ITEM.url), isItemActive(GRAPH_ITEM.url), false)}
       </div>
 
       {/* Search — opens the ⌘K command palette (people, accounts, jump-to). */}
