@@ -138,13 +138,26 @@ export default function IcpDocument({ embedded = false }: { embedded?: boolean }
 
         <H2>ICP definition</H2>
         {data.file?.prose
-          ? <div className="text-[14px] text-foreground"><Prose text={data.file.prose} doc /></div>
+          ? <Definition prose={data.file.prose} />
           : <p className="text-[13px] text-muted-foreground">No ICP yet. <Link to={fileLink(null)} className="text-foreground underline underline-offset-2">Write one</Link></p>}
 
         {bt ? <Evidence bt={bt} /> : <p className="mt-11 text-[13px] text-muted-foreground/70">No closed deals analyzed yet</p>}
       </div>
     </div>
   );
+}
+
+// The ICP file's own words, shortened to a preview: the page is the evidence, the file is one click away.
+function Definition({ prose }: { prose: string }) {
+  const [all, setAll] = useState(false);
+  const long = prose.length > 900;
+  return <div>
+    <div className={cn("relative text-[14px] text-foreground", long && !all && "max-h-[260px] overflow-hidden")}>
+      <Prose text={prose} doc />
+      {long && !all && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-background to-transparent" />}
+    </div>
+    {long && <button type="button" onClick={() => setAll(v => !v)} className="mt-2 text-[12.5px] text-muted-foreground hover:text-foreground">{all ? "Show less" : "Show all"}</button>}
+  </div>;
 }
 
 const H2 = ({ children, id }: { children: React.ReactNode; id?: string }) =>
@@ -154,11 +167,13 @@ function Metrics({ bt }: { bt: Backtest }) {
   const cell = "py-3.5 pr-4 [&+&]:border-l [&+&]:border-border/60 [&+&]:pl-4";
   const a = bt.accuracy;
   const won = bt.coverage.won.scored, scored = won + bt.coverage.lost.scored;
+  const closed = bt.coverage.won.total + bt.coverage.lost.total;
   const total = bt.tiers.reduce((s, t) => s + t.won + t.lost, 0);
   return <>
     <div className="mt-7 grid grid-cols-2 border-y border-border/60 tabular-nums sm:grid-cols-4">
       <div className={cell}><div className="text-[12px] text-muted-foreground">Deals analyzed</div><div className="mt-0.5 text-[23px] font-medium">{num(scored)}</div>
-        {bt.period.from && <div className="text-[12px] text-muted-foreground/70">Since {bt.period.from.slice(0, 4)}</div>}</div>
+        {closed > scored ? <div className="text-[12px] text-muted-foreground/70">of {num(closed)} closed</div>
+          : bt.period.from && <div className="text-[12px] text-muted-foreground/70">Since {bt.period.from.slice(0, 4)}</div>}</div>
       <div className={cell}><div className="text-[12px] text-muted-foreground">Win rate</div><div className="mt-0.5 text-[23px] font-medium">{pct(a.win_rate)}</div>
         <div className="text-[12px] text-muted-foreground/70">{num(won)} won</div></div>
       <div className={cell}><div className="text-[12px] text-muted-foreground">ICP win rate</div><div className="mt-0.5 text-[23px] font-medium" style={{ color: WON }}>{pct(a.fit_rate)}</div>
@@ -181,7 +196,8 @@ function Evidence({ bt }: { bt: Backtest }) {
   const strata = bt.strata.filter(s => s.fit.rate != null || s.rest.rate != null);
   return <>
     <H2>Score accuracy</H2>
-    {strata.length > 0 && <Strata rows={strata} />}
+    {strata.length > 0 ? <Strata rows={strata} />
+      : <p className="text-[13px] text-muted-foreground">No closed deal has a job title or firmographics on file yet</p>}
     {a.raw_ratio != null && a.controlled_ratio != null && <div className="mt-6 rounded-xl bg-[#FF5C00]/[0.07] px-4 py-3.5 text-[14px] text-foreground">
       <span className="font-semibold">{finding(a.raw_ratio, a.controlled_ratio)}</span>
       {a.median_contacts.won != null && a.median_contacts.lost != null && <span> Won accounts: median {a.median_contacts.won} contacts vs {a.median_contacts.lost}.</span>}
