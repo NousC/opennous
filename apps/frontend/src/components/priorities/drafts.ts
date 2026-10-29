@@ -24,6 +24,30 @@ export function usePendingDrafts(ws: string, fallbackToken: string | undefined) 
   });
 }
 
+export const decidedKey = (ws: string) => ["decided-actions", ws] as const;
+
+/**
+ * The Inbox page's Follow-ups keep what was done (2026-10-29): your drafts sent or marked done in
+ * the last 14 days, so their row stays, ticked. The newest 50 of every status (the API's own
+ * limit), keeping only the decided ones; the pending ones come from usePendingDrafts.
+ */
+export function useDecidedDrafts(ws: string, fallbackToken: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: decidedKey(ws),
+    enabled: enabled && !!ws,
+    staleTime: 60_000,
+    queryFn: async (): Promise<InboxAction[]> => {
+      const token = (await freshAccessToken()) ?? fallbackToken ?? "";
+      const r = await fetch(`${apiUrl}/api/actions?workspaceId=${ws}&scope=mine&include=origin`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return [];
+      const b = await r.json();
+      const since = Date.now() - 14 * 86_400_000;
+      return (Array.isArray(b.actions) ? (b.actions as InboxAction[]) : [])
+        .filter((a) => (a.status === "sent" || a.status === "rejected") && (Date.parse(a.created_at ?? "") || 0) >= since);
+    },
+  });
+}
+
 /** A draft decided in the panel: its row stays with the result, and the counts leave it out. */
 export function markDraftDecided(queryClient: QueryClient, ws: string, id: string, status: "sent" | "rejected") {
   queryClient.setQueryData<InboxAction[]>(draftsKey(ws), (old) => old?.map((a) => (a.id === id ? { ...a, status } : a)));

@@ -9,7 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GROUPS, TABS, buildItems, groupItems, isInboxTab, meetingWhen, openCount, signalLine, tabOf, visibleItems, type InboxAction, type InboxOutcome } from "../src/components/priorities/inboxModel.ts";
+import { GROUPS, TABS, buildItems, followUpLine, groupItems, isInboxTab, meetingWhen, openCount, signalLine, signalOf, tabOf, visibleItems, type InboxAction, type InboxOutcome } from "../src/components/priorities/inboxModel.ts";
 
 const NOW = new Date("2026-10-02T15:30:00");
 const acct = (n: string) => ({ id: `id-${n}`, name: n, domain: `${n.toLowerCase()}.example` });
@@ -102,7 +102,7 @@ test("each group reads newest first", () => {
 
 test("a decided draft keeps its row with the result; the counts leave it out; a failed one is not listed", () => {
   const items = buildItems({ actions: [draft("a1", { status: "sent" }), draft("a2", { status: "rejected" }), draft("a3"), draft("a4", { status: "failed" })] }, NOW);
-  assert.deepEqual(items.map((i) => [i.key, i.done ?? null]), [["act:a1", "Sent"], ["act:a2", "Skipped"], ["act:a3", null]]);
+  assert.deepEqual(items.map((i) => [i.key, i.done ?? null]), [["act:a1", "Sent"], ["act:a2", "Done"], ["act:a3", null]]);
   assert.equal(openCount(items), 1);
   const [g] = groupItems(items, new Set());
   assert.equal(g.count, 1);
@@ -220,4 +220,30 @@ test("tabs: only finished runs, newest first; a run that wrote a page opens it",
   assert.equal(items[0].href, "/pages/doc9");
   assert.equal(items[0].sub, "Pipeline, week 40");
   assert.equal(items[1].href, "/workflows/wf1?tab=runs");
+});
+
+// Follow-ups' columns (2026-10-29).
+test("follow-ups: the first column says what to follow up on", () => {
+  const signal = draft("s1", { origin: { source: "routine", name: "Deal signals", builtin: "deal_signals", why: null,
+    signal: { kind: "objection", label: "Objection raised", said_at: null, text: "Dana asked for SOC 2", quote: null, speaker: null, research: null } } });
+  const stale = draft("d1", { subject: "Checking in", origin: { source: "routine", name: "Stale deal detection", why: "Deal sat in Proposal for 38 days" } });
+  const bare = draft("d2", { subject: "Next steps", rationale: null });
+  const run = { run_id: "r1", requested_at: null, automation: { id: "a1", name: "Deal signals" }, account: null, why: "Dominic is worried about data isolation", what: "Email draft" };
+  const quiet = { run_id: "r2", requested_at: null, automation: { id: "a1", name: "Follow-up" }, account: null, why: null, what: "Email draft · 3 tasks" };
+  const items = buildItems({ actions: [signal, stale, bare], runs: [run, quiet] }, NOW);
+  const line = (k: string) => followUpLine(items.find((i) => i.key === k)!);
+  assert.equal(line("act:s1"), "Objection raised: Dana asked for SOC 2");
+  assert.equal(line("act:d1"), "Deal sat in Proposal for 38 days");
+  assert.equal(line("act:d2"), "Next steps");
+  assert.equal(line("run:r1"), "Dominic is worried about data isolation");
+  assert.equal(line("run:r2"), "Email draft · 3 tasks");
+});
+
+test("follow-ups: the Signal column is the signal's kind, else the workflow", () => {
+  const signal = draft("s1", { origin: { source: "routine", name: "Deal signals", builtin: "deal_signals", why: null,
+    signal: { kind: "expansion_signal", label: "Expansion signal", said_at: null, text: null, quote: null, speaker: null, research: null } } });
+  const stale = draft("d1", { origin: { source: "routine", name: "Stale deal detection", why: null } });
+  const items = buildItems({ actions: [signal, stale] }, NOW);
+  assert.equal(signalOf(items.find((i) => i.key === "act:s1")!), "Expansion signal");
+  assert.equal(signalOf(items.find((i) => i.key === "act:d1")!), "Stale deal detection");
 });

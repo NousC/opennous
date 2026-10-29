@@ -19,7 +19,7 @@ import { useBookScope } from "@/hooks/useBookScope";
 import { freshAccessToken } from "@/lib/freshToken";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { buildItems, openCount, type InboxOutcome, type InboxRead } from "@/components/priorities/inboxModel";
-import { usePendingDrafts } from "@/components/priorities/drafts";
+import { useDecidedDrafts, usePendingDrafts } from "@/components/priorities/drafts";
 import { automationsFetch } from "@/lib/automations";
 import { approvalWhat, type Approval } from "@/components/AutomationApprovals";
 import { cloud, type ItemChip } from "@/lib/cloud";
@@ -49,6 +49,8 @@ export function usePriorities({ open }: { open: boolean }) {
   });
   const homeData: InboxRead | undefined = meetings ? home.data : NO_MEETINGS;
   const drafts = usePendingDrafts(ws, session?.access_token);
+  // On the page, Follow-ups also keep what was done lately (sent or marked done), ticked.
+  const decidedDrafts = useDecidedDrafts(ws, session?.access_token, open);
   const runs = useQuery({
     queryKey: ["automation-approvals", ws],
     enabled: !!ws && !!session?.access_token,
@@ -73,10 +75,11 @@ export function usePriorities({ open }: { open: boolean }) {
   });
   const chipFor = cloud.shell?.priorities?.useItemChip?.({ ws, token: session?.access_token ?? "", open }) ?? noChip;
   const data = useMemo<InboxRead | undefined>(() => (homeData ? {
-    ...homeData, actions: drafts.data ?? [],
+    ...homeData,
+    actions: [...(drafts.data ?? []), ...(decidedDrafts.data ?? []).filter(d => !(drafts.data ?? []).some(p => p.id === d.id))],
     runs: (runs.data ?? []).map(a => ({ ...a, what: approvalWhat(a) })),
     outcomes: outcomes.data ?? [],
-  } : undefined), [homeData, drafts.data, runs.data, outcomes.data]);
+  } : undefined), [homeData, drafts.data, decidedDrafts.data, runs.data, outcomes.data]);
   const count = useMemo(() => openCount(buildItems(data)), [data]);
   return {
     ws, token: session?.access_token, data, count, chipFor, refetchRuns: runs.refetch,

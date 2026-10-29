@@ -141,7 +141,23 @@ export const hrefOf = (r: InboxRec): string => `/?followup=${encodeURIComponent(
 /** A follow-up card still waiting on you (the worker's, with its wrap-up). */
 const isWaitingCard = (r: InboxRec) => r.kind === "follow_up_call" && !!r.followup && (r.followup.status ?? "ready") === "ready";
 
-const DONE: Partial<Record<InboxAction["status"], string>> = { sent: "Sent", rejected: "Skipped" };
+// A rejected draft was skipped or marked done (2026-10-29: the Follow-ups tick); both are done.
+const DONE: Partial<Record<InboxAction["status"], string>> = { sent: "Sent", rejected: "Done" };
+
+/**
+ * A Follow-ups row's first column (2026-10-29): what to follow up on, in words. The signal's line
+ * ("Objection raised: Dana asked for…"), else the reason the workflow gives, else the email's
+ * subject, else what the review holds ("Email draft · 3 tasks"). Pure.
+ */
+export function followUpLine(i: InboxItem): string {
+  if (i.kind === "signal") return i.sub ?? i.why ?? i.action?.subject ?? "Signal";
+  return i.why || i.action?.rationale || i.action?.subject || i.run?.what || i.sub || "Follow-up";
+}
+
+/** A Follow-ups row's Signal column: the signal's kind, else the workflow that raised it. Pure. */
+export function signalOf(i: InboxItem): string | null {
+  return i.action?.origin?.signal?.label ?? i.by ?? null;
+}
 
 function meetingItem(r: InboxRec, now: Date): InboxItem {
   const fu = r.followup!;

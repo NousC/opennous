@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Boxes, Clock, Loader2, Zap } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Boxes, Check, Clock, Loader2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { day, time, when } from "@/lib/format";
 import { freshAccessToken } from "@/lib/freshToken";
@@ -36,8 +36,10 @@ import { Row, type RecDetailFull } from "@/components/home/RecParts";
 import type { DealChange, FollowUp, RecDetail, Recommendation } from "@/components/home/types";
 import { ACTION_DECIDED, FOLLOW_UP_DECIDED, REC_DISMISSED } from "./events";
 import type { ItemChip } from "@/lib/cloud";
-import { buildItems, builtinOf, meetingWhen, tabOf, type InboxItem, type InboxRead, type InboxTab } from "./inboxModel";
-import { draftsKey, markDraftDecided } from "./drafts";
+import { buildItems, builtinOf, followUpLine, meetingWhen, signalOf, tabOf, type InboxItem, type InboxRead, type InboxTab } from "./inboxModel";
+import { decidedKey, draftsKey, markDraftDecided } from "./drafts";
+import { Checkbox } from "@/components/ui/checkbox";
+import { toast } from "sonner";
 import { ApprovalPane as RunReviewPane, type Approval } from "@/components/AutomationApprovals";
 import { OutputView, type RunOutput } from "@/components/AutomationRunDetail";
 import { automationsFetch } from "@/lib/automations";
@@ -112,15 +114,47 @@ export function PrioritiesInbox({ tab, data, loading, failed, ws, token, onClose
     if (!changed.current) return;
     void queryClient.invalidateQueries({ queryKey: ["home", ws] });
     void queryClient.invalidateQueries({ queryKey: draftsKey(ws) });
+    void queryClient.invalidateQueries({ queryKey: decidedKey(ws) });
     void queryClient.invalidateQueries({ queryKey: ["automation-approvals", ws] });
   }, [queryClient, ws]);
+
+  // DONE BY HAND (2026-10-29): a follow-up handled somewhere else is ticked here. Nothing is sent: a
+  // draft or signal is closed with the reject route and reason "done" (so the engine reads it as
+  // handled, not as noise), a run waiting on a review ends as skipped. A sent email is done by
+  // itself. There is no reopening: the API has no way back for either.
+  const [marking, setMarking] = useState<string | null>(null);
+  const markDone = useCallback(async (i: InboxItem) => {
+    if (i.done || marking) return;
+    setMarking(i.key);
+    try {
+      const t = (await freshAccessToken()) ?? token ?? "";
+      if (i.action) {
+        const r = await fetch(`${apiUrl}/api/actions/${i.action.id}/reject`, {
+          method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ reason: "done" }),
+        });
+        if (!r.ok) throw new Error(String(r.status));
+        markDraftDecided(queryClient, ws, i.action.id, "rejected");
+        window.dispatchEvent(new CustomEvent(ACTION_DECIDED, { detail: { id: i.action.id, status: "rejected" } }));
+      } else if (i.run) {
+        const r = await automationsFetch(`/approvals/${i.run.run_id}/reject?workspaceId=${ws}`, t, { method: "POST", body: "{}" });
+        if (!r.ok) throw new Error(String(r.status));
+        setRunsDone((s) => new Set(s).add(i.key));
+      }
+      changed.current = true;
+    } catch {
+      toast.error("Couldn't mark it done. Try again in a moment.");
+    } finally {
+      setMarking(null);
+    }
+  }, [marking, token, queryClient, ws]);
+  const columns = useMemo(() => (tab === "act" ? followUpColumns(markDone, marking) : COLUMNS[tab]), [tab, markDone, marking]);
 
   return (
     <div className="h-full min-h-0 overflow-y-auto">
       {failed ? (
         <EmptyState bordered={false} className="mx-4 mt-4" title="Couldn't load your inbox." body="Try again in a moment." />
       ) : (
-        <DataTable<InboxItem> aria-label="Inbox" columns={COLUMNS[tab]} rows={visible} rowKey={(i) => i.key}
+        <DataTable<InboxItem> aria-label="Inbox" columns={columns} rows={visible} rowKey={(i) => i.key}
           loading={loading} minWidth={720} keyboard activeKey={current?.key ?? null}
           onRowClick={(i) => setSelected(i.key)}
           empty={<EmptyState bordered={false} title={EMPTY[tab]} />} />
@@ -131,6 +165,8 @@ export function PrioritiesInbox({ tab, data, loading, failed, ws, token, onClose
           onOpenAutoFocus={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement | null)?.focus(); }}>
           {current && <ItemPane key={current.key} item={current} ws={ws} token={token} data={data} decided={decided[current.key]} chip={chipFor?.(builtinOf(current)) ?? null}
             go={go}
+            onMarkDone={tabOf(current) === "act" && !current.done ? () => void markDone(current) : undefined}
+            marking={marking === current.key}
             onDecided={(r, fu) => {
               setDecided((d) => ({ ...d, [r.id]: fu }));
               // Home, if it is open underneath, takes the same decision (it keeps its own read).
@@ -169,19 +205,39 @@ const dateCol: Column<InboxItem> = {
   cell: (i) => <span className={cn("whitespace-nowrap text-[12px] tabular-nums", i.done ? "text-foreground/70" : "text-muted-foreground")}>{i.done ?? dateOf(i)}</span>,
 };
 
-/** Each tab's columns: who it is about, what it is, where it came from, when. */
+/**
+ * Follow-ups (2026-10-29): what to follow up on first, then the account, the signal or workflow
+ * that raised it, the date, and Done: ticked by itself once the email is sent, or by you.
+ */
+function followUpColumns(markDone: (i: InboxItem) => void, marking: string | null): Column<InboxItem>[] {
+  return [
+    { key: "follow", header: "Follow-up", cell: (i) => (
+      <span className={cn("block truncate text-foreground", i.done && "text-muted-foreground line-through decoration-muted-foreground/40")}>{followUpLine(i)}</span>
+    ) },
+    { key: "name", header: "Account", width: "22%", cell: nameCell },
+    { key: "signal", header: "Signal", width: "18%", cell: (i) => quiet(signalOf(i), i) },
+    { key: "date", header: "Date", align: "right", width: "96px",
+      cell: (i) => <span className="whitespace-nowrap text-[12px] tabular-nums text-muted-foreground">{i.at ? (isToday(i.at) ? time(i.at) : day(i.at)) : "—"}</span> },
+    { key: "done", header: "Done", align: "right", width: "64px", cell: (i) => (
+      <span className="inline-flex" onClick={(e) => e.stopPropagation()} title={i.done ? (i.done === "Sent" ? "Done: the email was sent" : `Done: ${i.done.toLowerCase()}`) : "Mark done"}>
+        {marking === i.key
+          ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          : <Checkbox checked={!!i.done} disabled={!!i.done} onCheckedChange={() => markDone(i)}
+              aria-label={i.done ? `${followUpLine(i)}: done` : `Mark done: ${followUpLine(i)}`} className="disabled:cursor-default disabled:opacity-100" />}
+      </span>
+    ) },
+  ];
+}
+
+/** Each tab's columns: who it is about, what it is, where it came from, when. Follow-ups' are
+ *  followUpColumns, which carry the Done tick. */
 const COLUMNS: Record<InboxTab, Column<InboxItem>[]> = {
   meetings: [
     { key: "name", header: "Account", width: "34%", cell: nameCell },
     { key: "meeting", header: "Meeting", cell: (i) => quiet(i.meeting?.title, i) },
     dateCol,
   ],
-  act: [
-    { key: "name", header: "Account", width: "28%", cell: nameCell },
-    { key: "what", header: "What", cell: (i) => quiet(i.kind === "signal" ? i.sub : i.action?.subject ?? i.run?.what ?? i.sub, i) },
-    { key: "from", header: "From", width: "22%", cell: (i) => quiet(i.kind === "signal" ? i.action?.origin?.signal?.label ?? i.by : i.by, i) },
-    dateCol,
-  ],
+  act: [],
   workflows: [
     { key: "name", header: "Workflow", width: "36%", cell: nameCell },
     { key: "output", header: "Output", cell: (i) => quiet(i.outcome?.document_title, i) },
@@ -213,6 +269,8 @@ type PaneProps = {
   /** Where the built-in that made this item lives (GET-897), as a small link. */
   chip?: ItemChip | null;
   back?: () => void; go: (href: string | null) => void;
+  /** A follow-up still open: "Mark done" in the header (the table's tick). */
+  onMarkDone?: () => void; marking?: boolean;
   onDecided: (r: Recommendation, fu: FollowUp) => void;
   onDismissed: (key: string) => void;
   onActionDecided: (id: string, status: "sent" | "rejected") => void;
@@ -257,6 +315,15 @@ function ItemPane(p: PaneProps) {
               <Boxes className="h-2.5 w-2.5" strokeWidth={2} aria-hidden />{p.chip.name}</button>}
           </p>
         </div>
+        {p.onMarkDone && (
+          <button type="button" onClick={p.onMarkDone} disabled={p.marking} title="Handled somewhere else: close it without sending"
+            className="inline-flex h-7 flex-shrink-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-muted-foreground/80 transition-colors duration-fast hover:bg-hover hover:text-foreground disabled:opacity-50">
+            {p.marking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" strokeWidth={1.75} />}Mark done
+          </button>
+        )}
+        {!p.onMarkDone && item.done && tabOf(item) === "act" && (
+          <span className="inline-flex h-7 flex-shrink-0 items-center gap-1.5 px-2 text-[12px] text-muted-foreground"><Check className="h-3.5 w-3.5" strokeWidth={1.75} />{item.done}</span>
+        )}
         {item.href && (
           <button type="button" onClick={() => p.go(item.href)}
             className="inline-flex h-7 flex-shrink-0 items-center gap-1 rounded-lg px-2 text-[12px] text-muted-foreground/80 transition-colors duration-fast hover:bg-hover hover:text-foreground">
