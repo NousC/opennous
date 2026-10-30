@@ -77,7 +77,7 @@ const money = (n: number | null | undefined) => {
   return `$${Math.round(n)}`;
 };
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: new Date(iso).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
-const fileLink = (id: string | null | undefined) => (id ? `/settings?section=context&file=${id}` : "/settings?section=context");
+const fileLink = (id: string | null | undefined) => (id ? `/knowledge?file=${id}` : "/knowledge");
 
 // `embedded`: drawn inside Settings > Knowledge (GET-1076), which scrolls and pads the page itself.
 export default function IcpDocument({ embedded = false }: { embedded?: boolean } = {}) {

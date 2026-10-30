@@ -13,9 +13,12 @@ import {
   ArrowUpRight,
   UserRound,
   Inbox,
+  Brain,
 } from "lucide-react";
 import { usePref } from "@/hooks/usePref";
 import { usePlan } from "@/hooks/usePlan";
+import { spaceOf, type SpaceId } from "@/components/shell/spaces";
+import { KnowledgeTree } from "@/components/knowledge/KnowledgeTree";
 import { BackfillPill } from "@/components/BackfillPill";
 import { InviteMemberButton } from "@/components/InviteMemberButton";
 import { isApiTier, planTier } from "@/config/plans";
@@ -29,7 +32,12 @@ import { useCredits } from "@/hooks/useCredits";
 import { cloud, type CloudNavItem } from "@/lib/cloud";
 import { RAIL_STROKE, RAIL_TINT, railActive, railGroupLabel, railIcon, railIconActive, railIdle, railLabel, railLabelActive, railRow } from "@/components/shell/rail";
 
-// The sidebar reads top to bottom as one idea: ASK → SPACES → SURFACES.
+// Three spaces, not one long rail (GET-1082): the top row's Home, Inbox and Context Graph are each
+// their own sidebar, and the URL says which one shows (shell/spaces.ts). Home is the book (Accounts,
+// Rev Plays, Events, the Views), Inbox is what you owe (Inbox, Tasks), Context Graph is what we know
+// (the graph, Insights, and the Intelligence tree with the repo).
+//
+// Before that, the sidebar read top to bottom as one idea: ASK → SPACES → SURFACES.
 //   ASK    — Home (the agent front door), Accounts, People. Chat is NOT a nav item:
 //            you start a conversation from the composer on Home, and the ones you've
 //            already had are listed under RECENTS below Spaces. Two doors to the same
@@ -61,11 +69,13 @@ type NavItem = { title: string; url: string; icon: React.ElementType; end?: bool
 const ACCOUNTS_ITEM: NavItem = { title: "Accounts", url: "/accounts", icon: Building2, children: [{ title: "Contacts", url: "/contacts", icon: UserRound }] };
 const workNavItemsCustom: NavItem[] = [ACCOUNTS_ITEM];
 // The Graph is an icon in the top row on every plan, not a rail row.
-const GRAPH_ITEM: NavItem = { title: "Graph", url: "/graph", icon: Network };
-// The API plan's Inbox (2026-10-29): an icon in the top row between Home and the Graph, not a rail
-// row. Cloud keeps its Inbox row in the rail (cloud.nav.main).
+const GRAPH_ITEM: NavItem = { title: "Context", url: "/graph", icon: Network };
+// The API plan's Inbox (2026-10-29); Cloud's Inbox and Tasks are cloud.nav.main.
 const INBOX_ITEM: NavItem = { title: "Inbox", url: "/inbox", icon: Inbox };
-// Events sits in the main rail on every plan, after Accounts (and Inbox and Tasks on Cloud).
+// Collapsed, the Intelligence tree is this one icon.
+const KNOWLEDGE_ITEM: NavItem = { title: "Files", url: "/knowledge", icon: Brain };
+// Events sits in the Home space on every plan, after Rev Plays: what happened, as events an engineer
+// can pull or subscribe to (GET-939).
 const EVENTS_ITEM: NavItem = { title: "Events", url: "/events", icon: Radio };
 
 type ViewItem = NavItem & { swatch: string; match: (path: string, view: string | null) => boolean };
@@ -91,8 +101,6 @@ const AUTOMATIONS_ITEM: NavItem = { title: "Rev Plays", url: "/rev-plays", icon:
 // doing the work for you, which is the Workspace plan (GET-908).
 const workNavItemsApi: NavItem[] = [
   ACCOUNTS_ITEM,
-  // What happened, as events an engineer can pull or subscribe to (GET-939).
-  EVENTS_ITEM,
 ];
 // Integrations (Personal, Shared) and Webhooks are in Settings now, on every plan (GET-1043).
 
@@ -117,15 +125,20 @@ export function AppSidebar() {
   // where it runs in the app.
   const tier = planTier(plan);
   const showRecents = tier === "custom";
-  // One rail on every plan (sidebar redesign, Oct 2026): Accounts, then (Cloud) Inbox and Tasks,
-  // then Events, Workflows and Insights. The two Insights are different pages: the API plan's is
-  // GTM insights (/gtm-insights, cloud.nav.api), Cloud's its own (/insights, cloud.nav.workspace).
-  // No Workspace group and no Activity or Events in the foot any more.
-  const mainItems = api
-    ? [...workNavItemsApi, ...automationsRow, ...(cloud.nav?.api ?? [])]
-    : [...workNavItemsCustom, ...cloudRows(cloud.nav?.main, tier), EVENTS_ITEM, ...automationsRow, ...cloudRows(cloud.nav?.workspace, tier)];
+  // Each space's rows (GET-1082). The two Insights are different pages: the API plan's is GTM
+  // insights (/gtm-insights, cloud.nav.api), Cloud's its own (/insights, cloud.nav.workspace).
+  const inboxItems = api ? [INBOX_ITEM] : cloudRows(cloud.nav?.main, tier);
+  const spaceItems: Record<SpaceId, NavItem[]> = {
+    home: [...(api ? workNavItemsApi : workNavItemsCustom), ...automationsRow, EVENTS_ITEM],
+    inbox: inboxItems,
+    graph: [GRAPH_ITEM, ...(api ? cloud.nav?.api ?? [] : cloudRows(cloud.nav?.workspace, tier))],
+  };
+  const space = spaceOf(location.pathname);
+  const mainItems = spaceItems[space];
+  const homeSpace = space === "home";
+  const showKnowledge = space === "graph" && can("knowledge");
   const viewNavItems = cloudRows(cloud.nav?.views, tier).filter((v): v is ViewItem => !!v.swatch && !!v.match);
-  const showViews = !api && viewNavItems.length > 0;
+  const showViews = homeSpace && !api && viewNavItems.length > 0;
   const viewParam = new URLSearchParams(location.search).get("view");
 
   // Group folds stick per workspace (usePref, GET-595).
@@ -250,24 +263,27 @@ export function AppSidebar() {
   const userName = userData?.user?.name || userData?.user?.email?.split("@")[0] || "Account";
   const userEmail = userData?.user?.email || "";
 
-  // The top row's square icon buttons (Graph, Invite), each with its name on hover. A disabled
-  // one stays hoverable (aria-disabled, not disabled) so its tooltip can say why.
-  const topIcon = (label: string, Icon: React.ElementType, onClick: () => void, active = false, disabled = false, tint?: string) => (
-    <Tooltip key={label} delayDuration={200}>
-      <TooltipTrigger asChild>
-        <button
-          onClick={disabled ? undefined : onClick}
-          aria-label={label}
-          aria-disabled={disabled || undefined}
-          className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-colors duration-fast ${disabled ? `${iconIdle} cursor-default opacity-50` : active ? `${activeBg} text-foreground` : `${iconIdle} ${idleBg} hover:text-foreground`}`}
-        >
-          <Icon className={`h-[15px] w-[15px] ${tint ?? ""}`} strokeWidth={RAIL_STROKE} />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side={collapsed ? "right" : "bottom"} sideOffset={6}>{disabled ? `${label}: admins only` : label}</TooltipContent>
-    </Tooltip>
-  );
-  const homeActive = isItemActive("/", true);
+  // The top row's tabs (GET-1082): the open space wears its name, the other two are icons with
+  // their name on hover. A tab opens its space on the space's first page.
+  const spaceTab = (id: SpaceId, label: string, Icon: React.ElementType, url: string) => {
+    const open = space === id;
+    return (
+      <Tooltip key={id} delayDuration={200}>
+        <TooltipTrigger asChild>
+          <button
+            onClick={() => navigate(url)}
+            aria-label={label}
+            aria-current={open ? "true" : undefined}
+            className={`flex h-8 flex-shrink-0 items-center rounded-lg transition-colors duration-fast ${open && !collapsed ? "gap-2 px-2.5" : "w-8 justify-center"} ${open ? activeBg : `${idleBg} hover:text-foreground`}`}
+          >
+            <Icon className={`h-[15px] w-[15px] flex-shrink-0 ${open ? iconActive : iconIdle}`} strokeWidth={RAIL_STROKE} />
+            {open && !collapsed && <span className={`whitespace-nowrap text-[13px] leading-tight ${labelActive}`}>{label}</span>}
+          </button>
+        </TooltipTrigger>
+        {(collapsed || !open) && <TooltipContent side={collapsed ? "right" : "bottom"} sideOffset={6}>{label}</TooltipContent>}
+      </Tooltip>
+    );
+  };
 
 
   return (
@@ -307,22 +323,11 @@ export function AppSidebar() {
       {/* A hairline between the workspace and the top row. */}
       <div className="mx-2.5 mt-1.5 border-t border-border/60" />
 
-      {/* TOP ROW — Home, then the Graph and Invite teammates as icons. Collapsed, a column. */}
+      {/* TOP ROW — the three spaces. Collapsed, a column. */}
       <div className={`flex items-center gap-0.5 px-2.5 pt-1.5 ${collapsed ? "flex-col" : ""}`}>
-        {withTip(
-          <NavLink
-            to="/"
-            end
-            className={`flex h-8 flex-shrink-0 items-center rounded-lg transition-colors duration-fast ${collapsed ? "w-8 justify-center" : "gap-2 px-2.5"} ${homeActive ? activeBg : idleBg}`}
-            activeClassName=""
-          >
-            <HomeIcon className={`h-[15px] w-[15px] flex-shrink-0 ${homeActive ? iconActive : iconIdle}`} strokeWidth={RAIL_STROKE} />
-            {!collapsed && <span className={`text-[13px] leading-tight ${homeActive ? labelActive : labelIdle}`}>Home</span>}
-          </NavLink>,
-          "Home",
-        )}
-        {api && topIcon(INBOX_ITEM.title, INBOX_ITEM.icon, () => navigate(INBOX_ITEM.url), isItemActive(INBOX_ITEM.url), false)}
-        {topIcon(GRAPH_ITEM.title, GRAPH_ITEM.icon, () => navigate(GRAPH_ITEM.url), isItemActive(GRAPH_ITEM.url), false)}
+        {spaceTab("home", "Home", HomeIcon, "/")}
+        {inboxItems.length > 0 && spaceTab("inbox", INBOX_ITEM.title, INBOX_ITEM.icon, INBOX_ITEM.url)}
+        {spaceTab("graph", GRAPH_ITEM.title, GRAPH_ITEM.icon, GRAPH_ITEM.url)}
       </div>
 
       {/* Search — opens the ⌘K command palette (people, accounts, jump-to). */}
@@ -350,10 +355,15 @@ export function AppSidebar() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2.5 pb-2">
-        {/* MAIN — the work and the read on the business. */}
+        {/* MAIN — the open space's rows. */}
         <nav aria-label="Main" className="pt-1">
           <ul className="flex flex-col gap-px">{mainItems.map((i) => renderOpenItem(i))}</ul>
         </nav>
+
+        {/* INTELLIGENCE — the Context Graph space's tree, with the repo on top. */}
+        {showKnowledge && (collapsed
+          ? <ul className="mt-px flex flex-col gap-px">{renderOpenItem(KNOWLEDGE_ITEM)}</ul>
+          : <KnowledgeTree />)}
 
         {/* VIEWS — Pipeline, Handoff, Customers: the lists you live in. */}
         {showViews && sectionLabel("Views", { open: viewsOpen || collapsed, toggle: () => setViewsOpen((o) => !o) })}
@@ -372,7 +382,7 @@ export function AppSidebar() {
         )}
 
         {/* The Workspace layer's groups after the views (cloud.nav.groups); the API plan has none. */}
-        {!api && cloud.nav?.groups?.map((Group, i) => (
+        {homeSpace && !api && cloud.nav?.groups?.map((Group, i) => (
           <Group key={i} tier={tier} collapsed={collapsed} sectionLabel={sectionLabel} withTip={withTip}
             renderItem={(item) => renderOpenItem(item)} />
         ))}

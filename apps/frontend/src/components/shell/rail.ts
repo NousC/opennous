@@ -28,6 +28,7 @@ export const RAIL_TINT: Record<string, string> = {
   "/inbox":        "text-[#7C5CD6]",
   "/tasks":        "text-[#1F9D74]",
   "/graph":        "text-[#C2417A]",
+  "/knowledge":    "text-[#C2417A]",
   "/insights":     "text-[#D98A1C]",
   "/gtm-insights": "text-[#D98A1C]",
   "/win-loss":     "text-[#2E7D66]",

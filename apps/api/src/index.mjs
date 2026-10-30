@@ -495,9 +495,8 @@ app.use('/api/docs',                  verifySupabaseAuth, docsRouter);
 app.use('/api/activity-stats',        activityStatsRouter);
 app.use('/api/backfill',              backfillRouter);
 app.use('/api/actions',               actionsRouter);
-// Settings > Knowledge, the context library (GET-875; open source since 2026-10-29). It follows the
-// revboxes feature, as it did on Cloud (Workspace and up); self-host has it, like every feature.
-app.use('/api/context',               verifySupabaseAuth, requireFeature('revboxes'), contextRouter);
+// Knowledge, the context library (GET-875; open source since 2026-10-29), on every plan (GET-1082).
+app.use('/api/context',               verifySupabaseAuth, requireFeature('knowledge'), contextRouter);
 // The ICP evidence instrument (what actually predicted a win, with the sample behind it). Owners/admins.
 app.use('/api/icp',                   icpEvidenceRouter);
 app.use('/api/lead-lists',            verifyAuthEither, requireFeature('leadLists'), leadListsRouter);

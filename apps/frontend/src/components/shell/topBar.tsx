@@ -62,7 +62,8 @@ const SECTIONS: { prefix: string; icon: typeof HomeIcon; label: string }[] = [
   { prefix: "/win-loss", icon: Trophy, label: "Win/loss" },
   { prefix: "/rev-plays", icon: Zap, label: "Rev Plays" },
   { prefix: "/activity", icon: Activity, label: "Activity" },
-  { prefix: "/graph", icon: Network, label: "Graph" },
+  { prefix: "/graph", icon: Network, label: "Context" },
+  { prefix: "/knowledge", icon: Brain, label: "Context" },
   { prefix: "/brain", icon: Brain, label: "Brain" },
   { prefix: "/integrations", icon: Plug, label: "Integrations" },
   // The pages both plans share (GET-660): the API plan's bar names them the same way.

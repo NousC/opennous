@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { SettingsGroup, fieldCls } from '@/components/settings/SettingsKit';
 import { knowledgeKey, knowledgeRequest } from '@/lib/knowledge';
 
-type ContextRepo = {
+export type ContextRepo = {
   repo: string; branch: string; base_path: string; auto_sync: boolean; webhook: boolean;
   sync_status: string; last_error: string | null; last_synced_at: string | null; last_synced_via: string | null; connected_at: string;
 };

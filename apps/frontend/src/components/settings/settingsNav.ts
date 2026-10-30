@@ -7,7 +7,7 @@
 // on Account. Only a caller that mounts <Settings forceSection=…> bypasses that. Flip `show` to
 // bring a section back.
 
-export type SettingsGroup = "Account" | "Connections" | "Knowledge & signals" | "Agent" | "Workspace" | "Analytics" | "Agents" | "Data" | "Support";
+export type SettingsGroup = "Account" | "Connections" | "Signals" | "Agent" | "Workspace" | "Analytics" | "Agents" | "Data" | "Support";
 
 export interface SettingsNavItem {
   /** The `?section=` id. */
@@ -33,7 +33,7 @@ export interface SettingsNavInput {
   can?: (feature: string) => boolean;
 }
 
-export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Knowledge & signals", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
+export const GROUP_ORDER: SettingsGroup[] = ["Account", "Connections", "Signals", "Agent", "Workspace", "Analytics", "Agents", "Data", "Support"];
 
 type Row = SettingsNavItem & { show?: boolean };
 
@@ -71,10 +71,8 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
     { id: "repo",            label: "Repo",                  group: "Connections", show: false },
-    // Knowledge, the context library (GET-875), is open source since 2026-10-29: it follows the
-    // revboxes feature, as it did as the Workspace layer's row. Signals stay that layer's
-    // (cloud/settings/navRows, GET-910).
-    { id: "context",         label: "Knowledge",             group: "Knowledge & signals", show: !!input.can?.("revboxes") },
+    // Knowledge left Settings (GET-1082): it is the Context sidebar's, at /knowledge, and old
+    // ?section=context links go there. Signals stay the Workspace layer's (cloud/settings/navRows, GET-910).
     // Agent — the Workspace layer adds Memory and Skills ahead of Automations.
     { id: "sequences",       label: "Workflows",              group: "Agent", show: selfManagedAgent },
     // Workspace — admins only (GET-430). The Workspace layer's models, changes, spend and adoption

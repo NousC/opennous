@@ -69,6 +69,8 @@ export interface PlanFeatures {
    *  workspace may keep is the plan's `automationLimit`; this is only whether the surface
    *  exists at all, and it exists everywhere. */
   automations: boolean;
+  /** Knowledge, the Context sidebar's files (GET-1082). */
+  knowledge: boolean;
   revboxes: boolean;
 
   // ── The team layer. Headless only. The surfaces that run on OUR Sonnet bill —
@@ -131,6 +133,8 @@ const GRAPH = {
   // Sonnet bill is the only thing the team layer was ever drawing, and these do not touch it.
   tasks: true,
   automations: true,
+  // Knowledge, on every plan (GET-1082): it followed the revboxes feature before.
+  knowledge: true,
   revboxes: false,
 } as const;
 

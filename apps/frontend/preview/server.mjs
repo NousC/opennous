@@ -839,15 +839,45 @@ const personalFiles = [
   { id: "pf_seed_4", folder: "inbox", subfolder: null, name: "Proposed: re-engage cooled accounts.md", content: "Agent proposal awaiting approval.", source: "agent", status: "inbox_pending", updated_at: new Date(Date.now() - 1800e3).toISOString() },
 ];
 
+const ago = (d) => new Date(Date.now() - d * 864e5).toISOString();
+const WIN_LOSS = {
+  days: 90,
+  file: { id: null, enabled: true, updated_at: ago(1), last_run_at: ago(1), last_error: null },
+  latest: { text: "+1 point under Why we win, +1 point under Why we lose", at: ago(1) },
+  metrics: { closed: 42, won: 14, lost: 28, won_value: 612000, lost_value: 940000, win_rate: 33, win_rate_change: 6 },
+  trend: [["2026-05", 6, 17], ["2026-06", 7, 29], ["2026-07", 5, 20], ["2026-08", 8, 38], ["2026-09", 9, 33], ["2026-10", 7, 43]].map(([month, closed, win_rate]) => ({ month, closed, win_rate })),
+  win_drivers: [
+    { id: "w1", side: "won", label: "RevOps owner named early", detail: "A named RevOps owner by the second call.", controllable: true, count: 9, trend: null, quote: null, deal_ids: [] },
+    { id: "w2", side: "won", label: "Already on HubSpot", detail: "No CRM migration in the deal.", controllable: false, count: 6, trend: null, quote: null, deal_ids: [] },
+  ],
+  loss_drivers: [
+    { id: "l1", side: "lost", label: "Price at scale", detail: "Per-seat cost above 50 seats.", controllable: true, count: 11, trend: null, quote: null, deal_ids: [] },
+    { id: "l2", side: "lost", label: "Never a fit", detail: "Under 50 employees, no CRM.", controllable: false, count: 8, trend: null, quote: null, deal_ids: [] },
+  ],
+  rep_check: null,
+  competitors: [{ name: "Brightlist", deals: 9, won: 3, lost: 6, win_rate: 33 }],
+  sales_cycle: [{ label: "Median days", won_days: 34, lost_days: 61 }],
+  deals: [],
+};
+const ICP_PAGE = {
+  file: { id: "preview-icp", title: "ICP", updated_at: ago(2), prose: "## Who we sell to\n\nB2B SaaS and logistics companies, 100-1,000 employees, a RevOps owner, already on HubSpot.\n\n## Never a fit\n\nUnder 50 employees, no CRM, agencies." },
+  latest: { text: "+2 win signals from closed deals", at: ago(2) },
+  backtest: null,
+};
+routes.push(
+  ["GET", /^\/api\/mind\/icp-page$/, () => ICP_PAGE],
+);
+
 const server = http.createServer(async (req, res) => {
   // CORS — the app is on :8080 and calls :3000 directly (VITE_API_URL).
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-nous-client");
+  res.setHeader("Access-Control-Allow-Headers", "authorization, content-type, x-nous-client, x-preview-user");
   if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
 
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
+  if (path === "/api/revboxes/win-loss") return json(res, WIN_LOSS);
   if (cloudPreview?.handle && (await cloudPreview.handle(req, res, url, json))) return;
   if (slackBlocksPreview && (await slackBlocksPreview(req, res, url))) return;
 

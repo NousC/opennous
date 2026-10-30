@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, useParams, useLocation, useNavigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 // Old docs URL (/docs/:id) → /pages/:id, keeping the id and the section anchor.
 function RedirectToPage() {
@@ -149,6 +149,7 @@ const Workflows       = lazyWithErrorBoundary(() => import("@/pages/Workflows"))
 const AutomationEditor = lazyWithErrorBoundary(() => import("@/pages/AutomationEditor"));
 const DocPage         = lazyWithErrorBoundary(() => import("@/pages/DocPage"));
 const EventsPage = lazyWithErrorBoundary(() => import("@/pages/Events"));
+const KnowledgePage = lazyWithErrorBoundary(() => import("@/pages/Knowledge"));
 const ApiKeys         = lazyWithErrorBoundary(() => import("@/pages/ApiKeys"));
 const KeyDetail       = lazyWithErrorBoundary(() => import("@/pages/KeyDetail"));
 const People          = lazyWithErrorBoundary(() => import("@/pages/People"));
@@ -164,6 +165,17 @@ const NotFound        = lazyWithErrorBoundary(() => import("@/pages/NotFound"));
 const EmptyWorkspace        = lazyWithErrorBoundary(() => import("@/pages/EmptyWorkspace"));
 
 /** An old standalone page's address → its Settings section, query and hash kept (GET-1043). */
+/** Settings, except an old ?section=context link: Knowledge is the Context sidebar's now (GET-1082). */
+function SettingsRoute() {
+  const [params] = useSearchParams();
+  if (params.get("section") === "context") {
+    const rest = new URLSearchParams(params);
+    rest.delete("section");
+    return <Navigate to={`/knowledge${rest.size ? `?${rest}` : ""}`} replace />;
+  }
+  return <Suspense fallback={<MinimalLoader />}><Settings /></Suspense>;
+}
+
 function ToSettingsSection({ section }: { section: string }) {
   const { search, hash } = useLocation();
   const rest = search.replace(/^\?/, "");
@@ -295,7 +307,7 @@ export function AppRoutes() {
       {/* Settings — the Attio-style full-screen takeover. Renders its own sidebar
           and replaces the app shell, so it lives OUT here with /graph rather than
           inside StandardLayout. The active section is driven by ?section=… */}
-      <Route path="/settings" element={<Suspense fallback={<MinimalLoader />}><Settings /></Suspense>} />
+      <Route path="/settings" element={<SettingsRoute />} />
 
       {/* Standalone note + report pages — opened in a new tab, clean full-page markdown. */}
       <Route path="/note/:id" element={<Suspense fallback={<MinimalLoader />}><Note /></Suspense>} />
@@ -352,6 +364,8 @@ export function AppRoutes() {
             <Route path="/webhooks"   element={<ToSettingsSection section="webhooks" />} />
             {/* Every event as it happens, Stripe-style (GET-939). */}
             <Route path="/events"     element={<Suspense fallback={<MinimalLoader />}><EventsPage /></Suspense>} />
+            {/* What the Context Graph sidebar's Intelligence tree opens (GET-1082). */}
+            <Route path="/knowledge"  element={<RequiresFeature feature="knowledge"><Suspense fallback={<MinimalLoader />}><KnowledgePage /></Suspense></RequiresFeature>} />
             {/* Triggers are headless (2026-07-14): the engine and MCP tools stay live, but
                 there's no page. Old links redirect so nothing 404s. */}
             <Route path="/triggers"   element={<Navigate to="/accounts" replace />} />

@@ -95,17 +95,39 @@ export function ContextDocSheet({ doc, onClose, canEdit = false, busy = false, o
   </Sheet>;
 }
 
-function DocView({ doc, canEdit, busy, onSave, actions, menu, about, note, history, onDirty }: {
-  doc: ContextDoc; canEdit: boolean; busy: boolean;
+type DocProps = Parameters<typeof ContextDocSheet>[0];
+
+/** The same file as the app's page (/knowledge, GET-1082): full width and left-aligned, no sheet. The
+ *  top bar's breadcrumb names it, so nothing closes it: you leave by the breadcrumb or the sidebar. */
+export function ContextDocPage({ doc, canEdit = false, busy = false, onSave, actions, menu, about, note, history }: DocProps) {
+  if (!doc) return null;
+  return <div className="flex h-full min-h-0 flex-col bg-background">
+    <DocView key={doc.id} page doc={doc} canEdit={canEdit && !!onSave && !doc.linkedDocument} busy={busy} onSave={onSave}
+      actions={actions} menu={menu} about={about} note={note} history={history} onDirty={() => {}} />
+  </div>;
+}
+
+function DocView({ page = false, doc, canEdit, busy, onSave, actions, menu, about, note, history, onDirty }: {
+  page?: boolean; doc: ContextDoc; canEdit: boolean; busy: boolean;
   onSave?: (next: { title: string; body: string }) => Promise<boolean>;
   actions?: ReactNode; menu?: DocMenuItem[]; about?: ReactNode; note?: { text: string; error?: boolean } | null;
   history?: ReactNode; onDirty: (d: boolean) => void;
 }) {
-  const [draft, setDraft] = useState<{ title: string; body: string } | null>(null);
+  // On the page there is no sheet to ask before closing, and the sidebar is one click away, so an
+  // unsaved edit is kept and comes back when the file is opened again.
+  const draftKey = page ? `nous.doc.draft.${doc.id}` : null;
+  const [draft, setDraft] = useState<{ title: string; body: string } | null>(() => {
+    try { const raw = draftKey && sessionStorage.getItem(draftKey); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
   const [tab, setTab] = useState<'write' | 'preview'>('write');
   const [view, setView] = useState<'doc' | 'history'>('doc');
   const editing = !!draft;
-  const set = (next: { title: string; body: string } | null) => { setDraft(next); onDirty(!!next && (next.title !== doc.title || next.body !== doc.body)); };
+  const set = (next: { title: string; body: string } | null) => {
+    setDraft(next);
+    const dirty = !!next && (next.title !== doc.title || next.body !== doc.body);
+    onDirty(dirty);
+    try { if (draftKey) { if (dirty) sessionStorage.setItem(draftKey, JSON.stringify(next)); else sessionStorage.removeItem(draftKey); } } catch { /* not kept */ }
+  };
   async function save() {
     if (!draft || !onSave) return;
     if (await onSave({ title: draft.title.trim(), body: draft.body })) set(null);
@@ -120,10 +142,12 @@ function DocView({ doc, canEdit, busy, onSave, actions, menu, about, note, histo
   const safe = items.filter(m => !m.danger);
   const danger = items.filter(m => m.danger);
   const shown = docHeading(withoutFrontmatter(doc.body), doc.title).title;
+  // The sheet's title is Radix's, which only exists inside the sheet.
+  const Title = page ? 'h1' : SheetTitle;
 
   return <>
     {/* THE BAR — what the file is on the left, the verbs on the right; the sheet's ✕ sits after them. */}
-    <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border/60 pl-5 pr-12 sm:pl-6">
+    <header className={cn('flex h-12 shrink-0 items-center gap-1 border-b border-border/60', page ? 'px-6' : 'pl-5 pr-12 sm:pl-6')}>
       {view === 'history' && !editing ? (
         <button type="button" onClick={() => setView('doc')} className="-ml-1.5 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] text-ink-2 transition-colors hover:bg-hover hover:text-foreground">
           <ArrowLeft className="h-3.5 w-3.5" />{shown}
@@ -173,12 +197,12 @@ function DocView({ doc, canEdit, busy, onSave, actions, menu, about, note, histo
     {note && <p role={note.error ? 'alert' : 'status'} className={cn('shrink-0 border-b border-border/60 px-5 py-2 text-[12px]', note.error ? 'bg-risk/5 text-risk' : 'bg-muted/40 text-ink-2')}>{note.text}</p>}
 
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className={cn('mx-auto w-full max-w-[640px] px-6 pb-20 sm:px-10', editing ? 'flex min-h-full flex-col pt-8' : 'pt-12')}>
+      <div className={cn('w-full pb-20', page ? 'px-6' : 'mx-auto max-w-[640px] px-6 sm:px-10', editing ? 'flex min-h-full flex-col pt-8' : page ? 'pt-8' : 'pt-12')}>
         {editing
           ? <input aria-label="Context title" autoFocus className="w-full bg-transparent text-[24px] font-semibold leading-tight tracking-[-0.015em] text-foreground outline-none placeholder:text-muted-foreground/50" value={draft.title} maxLength={200} placeholder="Untitled" onChange={e => set({ ...draft, title: e.target.value })} />
-          : <SheetTitle className="break-words text-[24px] font-semibold leading-tight tracking-[-0.015em] [text-wrap:balance]">{view === 'history' ? 'History' : shown}</SheetTitle>}
-        {editing && <SheetTitle className="sr-only">{doc.title}</SheetTitle>}
-        <SheetDescription className="sr-only">{kindLabel(doc.kind)} context{meta ? `. ${meta}` : ''}</SheetDescription>
+          : <Title className="break-words text-[24px] font-semibold leading-tight tracking-[-0.015em] [text-wrap:balance]">{view === 'history' ? 'History' : shown}</Title>}
+        {editing && <Title className="sr-only">{doc.title}</Title>}
+        {!page && <SheetDescription className="sr-only">{kindLabel(doc.kind)} context{meta ? `. ${meta}` : ''}</SheetDescription>}
         {!editing && view === 'doc' && (!!doc.tags?.length || !!doc.hiddenBoxes) && <p className="mt-2 text-[12.5px] text-muted-foreground">
           {[...(doc.tags ?? []).map(t => t.name), doc.hiddenBoxes ? `${doc.hiddenBoxes} private RevBox${doc.hiddenBoxes === 1 ? '' : 'es'}` : null].filter(Boolean).join(' · ')}
         </p>}

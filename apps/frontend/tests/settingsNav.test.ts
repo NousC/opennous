@@ -110,13 +110,11 @@ test("no Signals row of its own: it is the Workspace layer's (GET-910)", () => {
   assert.equal(resolveSection("signals", nav), "profile");
 });
 
-test("Knowledge is the public rail's (2026-10-29), where the plan has the revboxes feature", () => {
-  const on = settingsNav({ tier: "custom", isWorkspaceAdmin: false, isOwner: false, can: (f) => f === "revboxes" });
-  const row = on.find((i) => i.id === "context")!;
-  assert.equal(row.label, "Knowledge");
-  assert.equal(row.group, "Knowledge & signals");
-  const off = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false, can: () => false });
-  assert.ok(!ids(off).includes("context"));
+test("Knowledge is out of Settings on every plan (GET-1082)", () => {
+  for (const tier of ["api", "custom"]) {
+    const nav = settingsNav({ tier, isWorkspaceAdmin: true, isOwner: false, can: () => true } as never);
+    assert.ok(!ids(nav).includes("context"), tier);
+  }
 });
 
 test("Agent activity (was API & MCP activity, GET-900): Workspace group, admins on both plans, not self-host; access-log lands there (GET-898)", () => {

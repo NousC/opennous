@@ -227,6 +227,8 @@ const GRAPH = {
   // an automation is a trigger plus a template. Keep in step with GRAPH_ON in plans.ts.
   tasks: true,
   automations: true,
+  // Knowledge, on every plan (GET-1082): it followed the revboxes feature before.
+  knowledge: true,
   revboxes: false,
 };
 

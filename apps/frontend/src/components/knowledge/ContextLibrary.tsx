@@ -1,4 +1,4 @@
-// Settings > Knowledge (GET-875; "Context" until GET-1076): the workspace context library, open source
+// Knowledge, at /knowledge since GET-1082 (GET-875, a Settings section until then; "Context" until GET-1076): the workspace context library, open source
 // since 2026-10-29 (it was Cloud's, cloud/settings). Knowledge is saved once; on Cloud a file can be
 // tagged to RevBoxes, so one file serves several boxes and a box's jobs read only the files tagged to
 // it. With RevBoxes off the rail (GET-1043) the rows show only who can see a file (GET-1044).
@@ -19,20 +19,20 @@
 import { useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpRight, Plus, Upload } from 'lucide-react';
+import { ArrowUpRight, Plus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { SettingsGroup, fieldCls } from '@/components/settings/SettingsKit';
-import { ContextDocSheet, type DocMenuItem } from '@/components/knowledge/ContextDocSheet';
+import { fieldCls } from '@/components/settings/SettingsKit';
+import { ContextDocPage, type DocMenuItem } from '@/components/knowledge/ContextDocSheet';
 import { ContextHistory } from '@/components/knowledge/ContextHistory';
-import { ContextRow } from '@/components/knowledge/ContextRow';
-import { ContextRepoBar } from '@/components/knowledge/ContextRepoBar';
-import { LivingFilesGroup } from '@/components/knowledge/LivingFilesGroup';
+import { KnowledgeExplorer, type ExplorerFolder } from '@/components/knowledge/KnowledgeExplorer';
+import { useTopBarCrumbs } from '@/components/shell/topBar';
+import type { LivingFile } from '@/components/knowledge/LivingFilesGroup';
 import { cloud } from '@/lib/cloud';
 import { when } from '@/lib/format';
-import { knowledgeKey, knowledgeRequest, CONTEXT_KIND_LABEL, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
+import { KNOWLEDGE_PATH, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, CONTEXT_KIND_LABEL, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
 
 type Draft = { id: string | null; title: string; body: string; kind: 'reference' | 'instructions'; icp: boolean; about: boolean; shared: boolean; boxes: string[]; document: boolean };
 const empty: Draft = { id: null, title: '', body: '', kind: 'reference', icp: false, about: false, shared: false, boxes: [], document: false };
@@ -65,8 +65,10 @@ export function ContextLibrary() {
   const ws = userData?.workspace?.id ?? '';
   const token = session?.access_token ?? '';
   const cache = useQueryClient();
-  const [params] = useSearchParams();
-  const [open, setOpen] = useState<string | null>(() => params.get('file'));
+  // The open file is the URL's (?file=), so the sidebar's tree can open one from outside (GET-1082).
+  const [params, setParams] = useSearchParams();
+  const open = params.get('file');
+  const setOpen = (id: string | null) => setParams(p => { const n = new URLSearchParams(p); if (id) n.set('file', id); else n.delete('file'); return n; });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
@@ -75,6 +77,7 @@ export function ContextLibrary() {
   const key = knowledgeKey(ws);
   const query = useQuery({ queryKey: key, enabled: !!ws && !!token, queryFn: () => knowledgeRequest<ContextLibraryData>(ws, token, '/library') });
   const { pages, learnedScoring } = cloud.knowledge ?? {};
+  const living = useQuery({ queryKey: ['living-files', ws], enabled: !!ws && !!token, queryFn: () => knowledgeRequest<{ files: LivingFile[]; can_manage: boolean }>(ws, token, '/living-files') });
   const data = query.data;
   const taggable = (data?.boxes ?? []).filter(b => b.access !== 'viewer');
 
@@ -141,33 +144,28 @@ export function ContextLibrary() {
     return items;
   };
 
+  const Doc = ContextDocPage;
+  const kept = living.data?.files ?? [];
+  const inPlaybooks = !!openFile && (openFile.kind === 'icp' || kept.some(f => f.file_id === openFile.id));
+  useTopBarCrumbs(openFile
+    ? [{ label: inPlaybooks ? 'Playbooks' : 'Library', href: KNOWLEDGE_PATH }, { label: openFile.title }]
+    : openBlock ? [{ label: `${openBlock.box.name} instructions`, href: KNOWLEDGE_PATH }, { label: openBlock.b.title }] : [{ label: 'Context' }]);
+  const folders: ExplorerFolder[] = [
+    {
+      name: 'Playbooks', rows: playbookRows(data?.files ?? [], kept, pages ?? []),
+      ...(!icpFile && !pages?.includes('icp') && data?.is_admin ? { action: <Button size="sm" variant="ghost" onClick={() => setDraft({ ...empty, title: 'ICP', icp: true })}><Plus /></Button> } : {}),
+    },
+    { name: 'Library', rows: libraryRows(data?.files ?? [], kept) },
+    ...(data?.boxes.filter(b => b.blocks.length).map(box => ({ name: `${box.name} instructions`, rows: box.blocks.map(b => ({ key: b.id, title: b.title, href: `${KNOWLEDGE_PATH}?file=${b.id}`, type: box.shared ? 'Instructions' : 'Instructions · Private' })) })) ?? []),
+  ];
+
   return <>
-    <ContextRepoBar ws={ws} token={token} />
-    {/* Intelligence first (GET-1044): the ICP and the files OpenNous keeps current. */}
-    <LivingFilesGroup ws={ws} token={token} onOpen={id => { setNote(null); setOpen(id); }} pages={pages}
-      icp={icpFile ?? null} onAddIcp={data?.is_admin ? () => setDraft({ ...empty, title: 'ICP', icp: true }) : undefined} />
-    {query.error && <SettingsGroup><p role="alert" className="px-2 py-2 text-[12.5px] text-risk">{query.error.message}</p></SettingsGroup>}
-    {query.isLoading && <SettingsGroup><p className="px-2 py-2 text-[13px] text-muted-foreground/70">Loading…</p></SettingsGroup>}
-    {data && <SettingsGroup title="Library" action={<div className="flex gap-1">
-      <Button size="sm" variant="ghost" onClick={() => uploader.current?.click()}><Upload />Upload</Button>
-      <Button size="sm" variant="outline" onClick={() => setDraft({ ...empty })}><Plus />New file</Button>
-      <input ref={uploader} type="file" hidden accept=".md,.markdown,.txt,.csv,.json,text/*,application/json" onChange={e => { void upload(e.target.files?.[0]); e.target.value = ''; }} />
-    </div>}>
-      {note && !openFile && <p role={note.error ? 'alert' : 'status'} className={cn('px-2 py-1.5 text-[12px]', note.error ? 'text-risk' : 'text-muted-foreground')}>{note.text}</p>}
-      {libraryFiles.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground">No files yet. Write one or upload a markdown file.</p>}
-      {/* A row is the title, then its kind (unless plain reference), Private (when it is) and the
-          date, quietly on the right (2026-10-29; was an icon, a pill and a second line).
-          RevBoxes are off the rail (GET-1043): a file shows who can see it, not its box tags (GET-1044). */}
-      {libraryFiles.map(f => <ContextRow key={f.id} title={f.title} onOpen={() => { setNote(null); setOpen(f.id); }}
-        meta={[f.kind !== 'reference' && CONTEXT_KIND_LABEL[f.kind], f.visibility !== 'workspace' && 'Private', f.document_id && 'Linked', f.updated_at && when(f.updated_at)]} />)}
-    </SettingsGroup>}
+    <input ref={uploader} type="file" hidden accept=".md,.markdown,.txt,.csv,.json,text/*,application/json" onChange={e => { void upload(e.target.files?.[0]); e.target.value = ''; }} />
+    {!openFile && !openBlock && !(open && query.isLoading) && <KnowledgeExplorer ws={ws} token={token} folders={folders} manage={!!living.data?.can_manage}
+      note={query.error ? { text: query.error.message, error: true } : !openFile ? note : null}
+      onNew={() => setDraft({ ...empty })} onUpload={() => uploader.current?.click()} />}
 
-    {data?.boxes.filter(b => b.blocks.length).map(box => <SettingsGroup key={box.id} title={`${box.name} instructions`}
-      action={<Button asChild size="sm" variant="ghost"><Link to={`/revboxes/${box.id}`}>Open RevBox<ArrowUpRight /></Link></Button>}>
-      {box.blocks.map(b => <ContextRow key={b.id} title={b.title} meta={[!box.shared && 'Private']} onOpen={() => setOpen(b.id)} />)}
-    </SettingsGroup>)}
-
-    {openFile ? <ContextDocSheet
+    {openFile ? <Doc
       doc={{ id: openFile.id, title: openFile.title, body: openFile.body, kind: openFile.kind, linkedDocument: !!openFile.document_id, tags: openFile.boxes, hiddenBoxes: openFile.hidden_boxes, visibility: openFile.visibility, updatedAt: openFile.updated_at }}
       onClose={() => setOpen(null)} busy={busy}
       // The ICP and About us files are admin-only to edit, even for their creator (the API enforces it too).
@@ -183,7 +181,7 @@ export function ContextLibrary() {
         {openFile.kind === 'about' && <p>This is the workspace About us: who you are and what you have. Nous reads it to tell a feature request from something you already offer, a competitor from a tool in their stack, and to write insights about your company.</p>}
         {openFile.document_id && <p>This file is a linked document. Edit its text in the document itself.</p>}
       </div>}
-    /> : <ContextDocSheet
+    /> : <Doc
       doc={openBlock ? { id: openBlock.b.id, title: openBlock.b.title, body: openBlock.b.body, kind: 'block', source: openBlock.box.name } : null}
       onClose={() => setOpen(null)}
       actions={openBlock && <Button asChild size="sm" variant="outline"><Link to={`/revboxes/${openBlock.box.id}`}>Open RevBox<ArrowUpRight /></Link></Button>}

@@ -22,6 +22,35 @@ export type ContextVersion = {
   id: string; file_id: string; title: string; kind: string; body: string;
   author_kind: "person" | "opennous" | "repo"; author: string; changelog: string | null; git_sha: string | null; created_at: string;
 };
+/** A file as the sidebar's tree and the explorer list it (GET-1082). `living` is a file OpenNous keeps; `off`, one switched off. */
+export type KnowledgeRow = { key: string; title: string; href: string; type: string; updated?: string | null; off?: boolean; living?: boolean; error?: string | null };
+type LivingRow = { key: string; title: string; enabled: boolean; file_id: string | null; last_run_at?: string | null; last_error?: string | null };
+export const KNOWLEDGE_PATH = "/knowledge";
+/** The Playbooks folder: the ICP, then the files OpenNous keeps. `pages` are the ones that open as a page (Cloud). */
+export function playbookRows(files: LibraryFile[], living: LivingRow[], pages: readonly string[]): KnowledgeRow[] {
+  const icp = files.find((f) => f.kind === "icp");
+  const icpHref = pages.includes("icp") ? `${KNOWLEDGE_PATH}?page=icp` : icp ? `${KNOWLEDGE_PATH}?file=${icp.id}` : null;
+  return [
+    ...(icpHref ? [{ key: "icp", title: "ICP", href: icpHref, type: "ICP", updated: icp?.updated_at }] : []),
+    ...living.map((f) => ({
+      key: f.key, title: f.title, type: "Auto-updated", living: true, off: !f.enabled, updated: f.enabled ? f.last_run_at : null, error: f.last_error,
+      // A file that is off has nothing to open yet.
+      href: !f.enabled || !f.file_id ? KNOWLEDGE_PATH : f.key === "win_loss" && pages.includes("win-loss") ? `${KNOWLEDGE_PATH}?page=win-loss` : `${KNOWLEDGE_PATH}?file=${f.file_id}`,
+    })),
+  ];
+}
+/** The Library folder: every file that is not already in Playbooks. */
+export function libraryRows(files: LibraryFile[], living: LivingRow[]): KnowledgeRow[] {
+  const kept = new Set(living.map((f) => f.file_id));
+  return files.filter((f) => f.kind !== "icp" && !kept.has(f.id)).map((f) => ({
+    key: f.id, title: f.title, href: `${KNOWLEDGE_PATH}?file=${f.id}`, updated: f.updated_at,
+    type: [CONTEXT_KIND_LABEL[f.kind], f.visibility !== "workspace" && "Private"].filter(Boolean).join(" · "),
+  }));
+}
+/** Which folders are folded: one pref, so the tree and the explorer fold together. */
+export const FOLDED_PREF = "sidebar.knowledge.folded";
+export const isFolded = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+
 export const CONTEXT_KIND_LABEL: Record<ContextKind, string> = { reference: "Reference", instructions: "Instructions", icp: "ICP", about: "About us" };
 
 /** The library's query key, shared with every page that changes a file (the RevBox page too). */

@@ -22,7 +22,6 @@ import ApiKeys from "@/pages/ApiKeys";
 import KeyDetail from "@/pages/KeyDetail";
 import Integrations from "@/pages/Integrations";
 import Webhooks from "@/pages/Webhooks";
-import { ContextLibrary } from "@/components/knowledge/ContextLibrary";
 import { AutomationsPanel } from "@/components/AutomationsPanel";
 import { RepositoriesPane } from "@/components/settings/RepoPane";
 import MarketFocus from "@/pages/MarketFocus";
@@ -1419,9 +1418,6 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
             </SectionShell>
           )}
           {section === "webhooks"     && <SectionShell><Webhooks embedded /></SectionShell>}
-          {/* Knowledge, the context library (GET-875, open source since 2026-10-29). Cloud draws its own
-              section here (the ICP and Win/loss pages around the same library). */}
-          {section === "context" && !CloudSection && <SectionShell title="Knowledge"><ContextLibrary /></SectionShell>}
           {/* Full width, like the other connection pages (GET-668). */}
           {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}
           {section === "activity-log" && <SectionShell title="Agent activity" wide><ApiActivity /></SectionShell>}

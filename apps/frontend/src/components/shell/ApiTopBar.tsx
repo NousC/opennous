@@ -63,7 +63,7 @@ const ROUTES: [pattern: string, meta: RouteMeta][] = [
   ["/keys/:id",        { title: "Key",               icon: KeyRound,  parent: { label: "API keys", href: "/settings?section=api-keys" } }],
   ["/rev-plays",     { title: "Rev Plays",         icon: Zap }],
   ["/rev-plays/:id", { title: "Rev Play",          icon: Zap,       parent: { label: "Rev Plays", href: "/rev-plays" } }],
-  ["/graph",           { title: "Graph",             icon: Network }],
+  ["/graph",           { title: "Context",           icon: Network }],
   ["/usage",           { title: "Usage and billing", icon: BarChart3 }],
   ["/billing",         { title: "Usage and billing", icon: BarChart3 }],
 ];
