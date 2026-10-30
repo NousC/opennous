@@ -123,20 +123,20 @@ function HomeRoute() {
   return <CloudHome />;
 }
 
-/** /automations[/:id][?…] → the same place under /workflows (GET-1043). */
+/** /automations and /workflows[/:id][?…] → the same place under /rev-plays (GET-1043). */
 function LegacyAutomationsRedirect() {
   const { id } = useParams();
   const location = useLocation();
-  return <Navigate to={`/workflows${id ? `/${id}` : ""}${location.search}${location.hash}`} replace />;
+  return <Navigate to={`/rev-plays${id ? `/${id}` : ""}${location.search}${location.hash}`} replace />;
 }
 
 // Chat is the in-app conversational agent — Custom plan only. On Core the agent lives in
-// the operator's own coding tool, so /chat redirects to Workflows.
+// the operator's own coding tool, so /chat redirects to Rev Plays.
 function ChatRoute() {
   const { plan, loading } = usePlan();
   const location = useLocation();
   if (loading) return <MinimalLoader />;
-  if (isCorePlan(plan)) return <Navigate to="/workflows" replace />;
+  if (isCorePlan(plan)) return <Navigate to="/rev-plays" replace />;
   // Kept only so old links and open tabs still work. The query string carries over, so
   // /chat?thread=abc lands on /?thread=abc rather than dropping someone into an empty page.
   return <Navigate to={`/${location.search}`} replace />;
@@ -334,12 +334,15 @@ export function AppRoutes() {
             {/* Skills stays hidden (2026-07-31); the engine is live for the agent and the
                 page redirects so old links don't 404. */}
             <Route path="/skills"     element={<Navigate to="/accounts" replace />} />
-            {/* Workflows — trigger, steps, destination (called Automations until GET-1041/1043).
-                /automations was their address; it keeps resolving, id and query string included,
-                so links in email, Slack and open tabs land on the same page. */}
-            <Route path="/workflows" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><Workflows /></Suspense></RequiresFeature>} />
+            {/* Rev Plays — trigger, steps, destination (called Automations until GET-1041/1043, then
+                Workflows until 2026-10-29). /automations and /workflows were their addresses; both keep
+                resolving, id and query string included, so links in email, Slack and open tabs land on
+                the same page. */}
+            <Route path="/rev-plays" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><Workflows /></Suspense></RequiresFeature>} />
             {/* One workflow, drawn as its flow (GET-523). "new" is the unsaved one. */}
-            <Route path="/workflows/:id" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><AutomationEditor /></Suspense></RequiresFeature>} />
+            <Route path="/rev-plays/:id" element={<RequiresFeature feature="automations"><Suspense fallback={<MinimalLoader />}><AutomationEditor /></Suspense></RequiresFeature>} />
+            <Route path="/workflows"       element={<LegacyAutomationsRedirect />} />
+            <Route path="/workflows/:id"   element={<LegacyAutomationsRedirect />} />
             <Route path="/automations"     element={<LegacyAutomationsRedirect />} />
             <Route path="/automations/:id" element={<LegacyAutomationsRedirect />} />
             <Route path="/keys"       element={<KeysRoute />} />

@@ -443,7 +443,7 @@ export default function AutomationEditor() {
       if (!res.ok) { setError(out.message ?? out.error ?? "Could not save that."); return null; }
       setSaved(out);
       if (version.current === sent) setDirty(false);
-      if (!saved) navigate(`/workflows/${out.id}`, { replace: true });
+      if (!saved) navigate(`/rev-plays/${out.id}`, { replace: true });
       return out;
     } finally { setBusy(null); }
   };
@@ -539,7 +539,7 @@ export default function AutomationEditor() {
   const { plan } = usePlan();
   // With a run, straight to that run's review (GET-739).
   const openApprovals = (runId: string | null = null) => (isApiTier(plan)
-    ? navigate(`/workflows?view=approvals${runId ? `&run=${encodeURIComponent(runId)}` : ""}`)
+    ? navigate(`/rev-plays?view=approvals${runId ? `&run=${encodeURIComponent(runId)}` : ""}`)
     : window.dispatchEvent(new CustomEvent(OPEN_PRIORITIES, { detail: { runId } })));
 
   const startTest = async (triggerId: string | null = null) => {
@@ -585,7 +585,7 @@ export default function AutomationEditor() {
     setBusy("delete");
     try {
       await automationsFetch(`/${saved.id}?workspaceId=${workspaceId}`, token, { method: "DELETE" });
-      navigate("/workflows");
+      navigate("/rev-plays");
     } finally { setBusy(null); }
   };
 
@@ -593,7 +593,7 @@ export default function AutomationEditor() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-[13px] text-muted-foreground">
         That workflow is gone.
-        <button onClick={() => navigate("/workflows")} className="text-foreground underline-offset-2 hover:underline">Back to workflows</button>
+        <button onClick={() => navigate("/rev-plays")} className="text-foreground underline-offset-2 hover:underline">Back to Rev Plays</button>
       </div>
     );
   }

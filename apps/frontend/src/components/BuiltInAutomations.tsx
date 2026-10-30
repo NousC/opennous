@@ -2,7 +2,7 @@
 //
 // Each row draws its own flow before it says anything: the tool it runs on, the agent, where it
 // goes. You read what an automation does from its marks and its name; the sentence and every
-// setting are one click away in the editor, which is a page of its own (/workflows/:id)
+// setting are one click away in the editor, which is a page of its own (/rev-plays/:id)
 // because a flow needs the height a dialog does not have.
 //
 // New opens the jobs as templates, plus a blank one. Picking one lands you in the editor with
@@ -295,15 +295,15 @@ export function BuiltInAutomations({
       {/* How many of the plan's automations are in use. Unlimited plans say nothing; the
           defaults are ours and do not count. */}
       {data?.limit != null && view === "automations" && (
-        <span title="Your workflows count toward your plan. The defaults don't."
+        <span title="Your Rev Plays count toward your plan. The defaults don't."
           className={cn("text-xs tabular-nums", data.used >= data.limit ? "text-warning" : "text-muted-foreground")}>
           {data.used} of {data.limit} used
         </span>
       )}
       {onView && (
-        <ViewTabs<"automations" | "history" | "approvals"> aria-label="Workflow views" value={view} onChange={onView}
+        <ViewTabs<"automations" | "history" | "approvals"> aria-label="Rev Play views" value={view} onChange={onView}
           options={[
-            { value: "automations", label: "Workflows", count: data ? data.automations.length : undefined },
+            { value: "automations", label: "Rev Plays", count: data ? data.automations.length : undefined },
             { value: "history", label: "Run history" },
             // What waits on you (GET-713), counted so it is seen before it is opened. The API plan's
             // only; on the Workspace plan the same reviews are in Priorities (GET-737).
@@ -398,7 +398,7 @@ export function BuiltInAutomations({
       : <span className="whitespace-nowrap text-xs text-ink-2">{r.t.today ? r.t.today.charAt(0).toUpperCase() + r.t.today.slice(1) : "On"}</span> },
     { key: "runs", header: "Runs", align: "right", width: "84px", cell: r => r.kind === "own" ? (
       // Straight to this workflow's runs.
-      <button type="button" onClick={e => { e.stopPropagation(); navigate(`/workflows/${r.a.id}?tab=runs`); }}
+      <button type="button" onClick={e => { e.stopPropagation(); navigate(`/rev-plays/${r.a.id}?tab=runs`); }}
         title="Runs in the last 30 days"
         className="text-[12px] tabular-nums text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline">
         {runCount(r.a)}
@@ -451,7 +451,7 @@ export function BuiltInAutomations({
               </DialogHeader>
               <div className="grid max-h-[65vh] grid-cols-1 gap-2 overflow-y-auto p-5 sm:grid-cols-2 lg:grid-cols-3">
                 <button
-                  onClick={() => navigate("/workflows/new")}
+                  onClick={() => navigate("/rev-plays/new")}
                   className="flex min-h-[112px] flex-col items-start justify-between rounded-xl border border-dashed border-border px-3.5 py-3 text-left transition-colors hover:border-foreground/40"
                 >
                   <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground"><Plus className="h-3.5 w-3.5" /> Start from scratch</span>
@@ -460,7 +460,7 @@ export function BuiltInAutomations({
                 {TEMPLATES.filter(t => !t.byDefault).map(t => (
                   <button
                     key={t.id}
-                    onClick={() => navigate(`/workflows/new?template=${t.id}`)}
+                    onClick={() => navigate(`/rev-plays/new?template=${t.id}`)}
                     className="flex flex-col gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3 text-left shadow-card transition-colors hover:border-foreground/25"
                   >
                     <span className="text-[13px] font-medium text-foreground">{t.name}</span>
@@ -481,10 +481,10 @@ export function BuiltInAutomations({
         <div className="min-w-0">
           {empty && defaultRows.length > 0 && (
             <EmptyState bordered={false} className="mx-4 mt-4" title="Nothing of your own yet."
-              action={<Button size="sm" variant="outline" onClick={() => navigate("/workflows/new")}><Plus className="!size-3.5" />Start blank</Button>} />
+              action={<Button size="sm" variant="outline" onClick={() => navigate("/rev-plays/new")}><Plus className="!size-3.5" />Start blank</Button>} />
           )}
           <DataTable<WorkflowRow>
-            aria-label="Workflows"
+            aria-label="Rev Plays"
             columns={workflowColumns}
             {...(defaultRows.length ? {
               groups: [
@@ -493,12 +493,12 @@ export function BuiltInAutomations({
               ],
             } : { rows: ownRows })}
             rowKey={r => r.key}
-            onRowClick={r => { if (r.kind === "own") navigate(`/workflows/${r.a.id}`); }}
+            onRowClick={r => { if (r.kind === "own") navigate(`/rev-plays/${r.a.id}`); }}
             keyboard
             minWidth={880}
             empty={
               <EmptyState className="mx-4 mt-4" title="Nothing of your own yet."
-                action={<Button size="sm" variant="outline" onClick={() => navigate("/workflows/new")}><Plus className="!size-3.5" />Start blank</Button>} />
+                action={<Button size="sm" variant="outline" onClick={() => navigate("/rev-plays/new")}><Plus className="!size-3.5" />Start blank</Button>} />
             }
           />
         </div>

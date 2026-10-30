@@ -220,7 +220,7 @@ function outcomeItem(o: InboxOutcome): InboxItem {
   return {
     key: `out:${o.id}`, kind: "outcome", title: o.automation,
     sub: o.document_title, domain: null, at: o.started_at,
-    href: o.document_id ? `/pages/${o.document_id}` : o.routine_id ? `/workflows/${o.routine_id}?tab=runs` : null,
+    href: o.document_id ? `/pages/${o.document_id}` : o.routine_id ? `/rev-plays/${o.routine_id}?tab=runs` : null,
     by: o.automation, outcome: o,
   };
 }

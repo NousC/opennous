@@ -60,7 +60,7 @@ const SECTIONS: { prefix: string; icon: typeof HomeIcon; label: string }[] = [
   { prefix: "/coaching", icon: GraduationCap, label: "Coaching" },
   { prefix: "/insights", icon: Lightbulb, label: "Insights" },
   { prefix: "/win-loss", icon: Trophy, label: "Win/loss" },
-  { prefix: "/workflows", icon: Zap, label: "Workflows" },
+  { prefix: "/rev-plays", icon: Zap, label: "Rev Plays" },
   { prefix: "/activity", icon: Activity, label: "Activity" },
   { prefix: "/graph", icon: Network, label: "Graph" },
   { prefix: "/brain", icon: Brain, label: "Brain" },

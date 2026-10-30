@@ -78,7 +78,7 @@ function cloudRows(items: CloudNavItem[] | undefined, tier: string): CloudNavIte
 // Automations are back in the rail on every plan that has them, right under Insights (GTM insights
 // on the API plan). GET-864 had taken the row out when RevBoxes arrived; RevBox jobs stay out of the
 // Automations list (GET-868), so the two never show the same thing.
-const AUTOMATIONS_ITEM: NavItem = { title: "Workflows", url: "/workflows", icon: Zap };
+const AUTOMATIONS_ITEM: NavItem = { title: "Rev Plays", url: "/rev-plays", icon: Zap };
 // Core (plugin) plan — the agent lives in the operator's own coding tool, so there is no
 // in-app chat. Sources moved into Settings with every other plan's (GET-426): connecting one
 // is something you do at the start and then twice a year, which is a setting, not a rail row.

@@ -37,7 +37,7 @@ const NAV_ITEMS = [
   { id: "customers",   label: "Customers",   sublabel: "Who is paying, who is at risk", icon: HeartHandshake, path: "/customers",   workspace: true },
   { id: "reports",     label: "Reports",     sublabel: "How the work is going",         icon: BarChart3,      path: "/reporting",   workspace: true },
   { id: "insights",    label: "Insights",    sublabel: "What buyers are telling you",   icon: Lightbulb,      path: "/insights",    workspace: true },
-  { id: "automations", label: "Workflows", sublabel: "What runs on its own",          icon: Zap,            path: "/workflows", workspace: true },
+  { id: "automations", label: "Rev Plays", sublabel: "What runs on its own",          icon: Zap,            path: "/rev-plays", workspace: true },
   { id: "settings",    label: "Settings",    sublabel: "Workspace and billing",         icon: SettingsIcon,   path: "/settings" },
 ];
 

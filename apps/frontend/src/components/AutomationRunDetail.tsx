@@ -106,7 +106,7 @@ export function AutomationRunDetail({ runId, onClose, onOpenApprovals }: { runId
                     {s.detail && <p className={cn("mt-0.5 text-[12.5px]", s.status === "failed" ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>{s.detail}</p>}
                     {s.output && <OutputView output={s.output} />}
                     {s.status === "failed" && s.id && (
-                      <button onClick={() => navigate(`/workflows/${run.automation.id}?step=${s.id}`)}
+                      <button onClick={() => navigate(`/rev-plays/${run.automation.id}?step=${s.id}`)}
                         className="mt-1.5 text-[12px] text-foreground underline-offset-2 hover:underline">Open this step in the editor</button>
                     )}
                     {s.status === "waiting" && onOpenApprovals && (

@@ -219,7 +219,7 @@ test("tabs: only finished runs, newest first; a run that wrote a page opens it",
   assert.deepEqual(items.map((i) => i.key), ["out:new", "out:old"]);
   assert.equal(items[0].href, "/pages/doc9");
   assert.equal(items[0].sub, "Pipeline, week 40");
-  assert.equal(items[1].href, "/workflows/wf1?tab=runs");
+  assert.equal(items[1].href, "/rev-plays/wf1?tab=runs");
 });
 
 // Follow-ups' columns (2026-10-29).
