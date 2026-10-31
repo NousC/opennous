@@ -758,6 +758,7 @@ const RECORDERS: Record<string, { name: string; logo: string }> = {
   fireflies: { name: 'Fireflies', logo: 'fireflies.svg' },
   granola: { name: 'Granola', logo: 'granola.svg' },
   fathom: { name: 'Fathom', logo: 'fathom.svg' },
+  recall: { name: 'OpenNous', logo: 'nous.svg' },
   fellow: { name: 'Fellow', logo: 'fellow.png' },
   ringcentral: { name: 'RingCentral', logo: 'ringcentral.svg' },
 };

@@ -26,6 +26,7 @@ export const RAIL_TINT: Record<string, string> = {
   "/accounts":     "text-[#4F6BD8]",
   "/contacts":     "text-[#3E9C9C]",
   "/inbox":        "text-[#7C5CD6]",
+  "/meetings":     "text-[#2C8FBF]",
   "/tasks":        "text-[#1F9D74]",
   "/graph":        "text-[#C2417A]",
   "/knowledge":    "text-[#C2417A]",

@@ -55,7 +55,7 @@ function dueOf(task: { due_at: string | null }, item?: Item) {
 }
 const GROUP_ORDER: Entry["group"][] = ["tasks", "email", "other", "call"];
 
-const NOTETAKER: Record<string, string> = { granola: "Granola", fathom: "Fathom", fireflies: "Fireflies", fellow: "Fellow", otter: "Otter", zoom: "Zoom" };
+const NOTETAKER: Record<string, string> = { granola: "Granola", fathom: "Fathom", recall: "OpenNous", fireflies: "Fireflies", fellow: "Fellow", otter: "Otter", zoom: "Zoom" };
 const emailMark = (type: string): Mark => (type === "email" ? "smtp" : "gmail");
 
 function entriesOf(a: Approval): Entry[] {

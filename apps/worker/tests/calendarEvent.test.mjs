@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeCalendarEvent, externalAttendees, meetingKind, isNonHumanEmail, emailDomainOf, likeEscape, calendarListArgs,
+  normalizeCalendarEvent, meetingLink, externalAttendees, meetingKind, isNonHumanEmail, emailDomainOf, likeEscape, calendarListArgs,
 } from '../src/utils/calendarEvent.mjs';
 
 const HARBORLINE = {
@@ -118,4 +118,35 @@ test('helpers', () => {
   assert.equal(emailDomainOf('Rowan@Harborline.example'), 'harborline.example');
   assert.equal(emailDomainOf('nope'), null);
   assert.equal(likeEscape('gcal_a%b_'), 'gcal\\_a\\%b\\_');
+});
+
+// ── The join link (GET-1094) ──────────────────────────────────────────────────
+
+test('meetingLink: Meet from hangoutLink', () => {
+  assert.equal(meetingLink({ hangoutLink: 'https://meet.google.com/abc-defg-hij' }), 'https://meet.google.com/abc-defg-hij');
+});
+
+test('meetingLink: Zoom from conferenceData, the video entry point only', () => {
+  assert.equal(meetingLink({ conferenceData: { entryPoints: [
+    { entryPointType: 'phone', uri: 'tel:+1555' },
+    { entryPointType: 'video', uri: 'https://acme.zoom.us/j/123?pwd=x' },
+  ] } }), 'https://acme.zoom.us/j/123?pwd=x');
+});
+
+test('meetingLink: Zoom in the location, Teams in the description', () => {
+  assert.equal(meetingLink({ location: 'https://us02web.zoom.us/j/8812345?pwd=abc' }), 'https://us02web.zoom.us/j/8812345?pwd=abc');
+  assert.equal(
+    meetingLink({ description: '<a href="https://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0?context=y&amp;z=1">Join</a>' }),
+    'https://teams.microsoft.com/l/meetup-join/19%3ameeting_x/0?context=y&z=1',
+  );
+});
+
+test('meetingLink: none, and a link that is not a call', () => {
+  assert.equal(meetingLink({ location: 'Cafe on Main', description: 'See https://example.com/agenda' }), null);
+  assert.equal(meetingLink({}), null);
+});
+
+test('normalizeCalendarEvent keeps the link', () => {
+  assert.equal(normalizeCalendarEvent({ ...HARBORLINE, hangoutLink: 'https://meet.google.com/abc-defg-hij' }).meetingUrl, 'https://meet.google.com/abc-defg-hij');
+  assert.equal(normalizeCalendarEvent(HARBORLINE).meetingUrl, null);
 });

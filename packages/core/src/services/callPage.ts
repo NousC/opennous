@@ -15,6 +15,7 @@ const SOURCE_LABEL: Record<string, string> = {
   granola: 'Granola',
   fireflies: 'Fireflies',
   fathom: 'Fathom',
+  recall: 'OpenNous',
   fellow: 'Fellow',
   ringcentral: 'RingCentral',
 };

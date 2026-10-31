@@ -41,7 +41,7 @@ export function SourceDockHost({ children }: { children: ReactNode }) {
 export const useOpenSource = () => useContext(DockContext);
 
 const SYSTEM: Record<string, string> = {
-  fireflies: "Fireflies", fellow: "Fellow", fathom: "Fathom", granola: "Granola", gong: "Gong", zoom: "Zoom",
+  fireflies: "Fireflies", fellow: "Fellow", fathom: "Fathom", recall: "OpenNous", granola: "Granola", gong: "Gong", zoom: "Zoom",
   gmail: "Gmail", outlook: "Outlook", hubspot: "HubSpot", linkedin: "LinkedIn", slack: "Slack", agent: "Nous",
 };
 

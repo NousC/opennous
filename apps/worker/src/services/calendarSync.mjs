@@ -31,6 +31,7 @@
 
 import { getSupabaseClient, getInternalIdentities, getInternalEntityIds, isFreeEmailDomain } from '@nous/core';
 import { logActivity } from '../utils/activity.mjs';
+import { calendarHooks } from '../lib/calendarHooks.mjs';
 import { resolveContact } from '../utils/resolveContact.mjs';
 import { googleClientFor, hasGoogleTransport, noClientError, nativeConnections } from '../utils/googleClient.mjs';
 import {
@@ -294,6 +295,10 @@ export async function syncCalendarConnection(supabase, conn, { lookbackDays = LO
     totals.created += r.created;
     for (const [k, v] of Object.entries(r.skipped)) totals.skipped[k] = (totals.skipped[k] || 0) + v;
   }
+
+  // A hook that fails must not read as a calendar that stopped syncing.
+  await calendarHooks.afterScan(supabase, conn, items, ctx)
+    .catch((e) => console.warn(`[CALENDAR] connection=${conn.id} after-scan failed:`, e.message));
 
   // The heartbeat the nightly `connection_not_syncing` invariant reads. Stamped on a
   // successful LIST, whether or not anything was new — a quiet week is not a broken sync.

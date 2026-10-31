@@ -4,7 +4,7 @@
 export type SpaceId = "home" | "inbox" | "graph";
 
 const PREFIXES: Record<Exclude<SpaceId, "home">, string[]> = {
-  inbox: ["/inbox", "/tasks"],
+  inbox: ["/inbox", "/meetings", "/tasks"],
   graph: ["/graph", "/insights", "/gtm-insights", "/knowledge"],
 };
 

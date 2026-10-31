@@ -172,6 +172,7 @@ const SOURCE_TOOLS = {
   granola: { name: 'Granola', how: 'Granola MCP: get_meeting_transcript (or get_meetings) with this meeting id' },
   fireflies: { name: 'Fireflies', how: 'Fireflies MCP: fireflies_get_transcript with this transcript id' },
   fathom: { name: 'Fathom', how: 'Fathom API: the call with this id' },
+  recall: { name: 'OpenNous', how: 'OpenNous: the meeting_notes document with this source_ref' },
   fellow: { name: 'Fellow', how: 'Fellow: the note with this id' },
   ringcentral: { name: 'RingCentral', how: 'RingCentral: the recording with this id' },
   gmail: { name: 'Gmail', how: 'Gmail: the thread or message with this id' },

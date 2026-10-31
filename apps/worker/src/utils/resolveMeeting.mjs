@@ -376,7 +376,7 @@ export async function resolveMeetingContacts(supabase, workspaceId, meeting) {
 // meeting, and HubSpot writes them for CRM meetings; neither carries a transcript. Counting
 // them threw away the Granola recording of "Harborline x OpenNous" because the calendar had
 // already marked the meeting held — no timeline, no notes, no extraction, no score.
-export const NOTE_TAKER_SOURCES = new Set(['fireflies', 'fathom', 'granola', 'fellow']);
+export const NOTE_TAKER_SOURCES = new Set(['fireflies', 'fathom', 'granola', 'fellow', 'recall']);
 
 export async function sameMeetingAlreadyLogged(supabase, workspaceId, { contactIds, occurredAt, externalIdPrefix, windowHours = 3 }) {
   if (!Array.isArray(contactIds) || contactIds.length === 0 || !occurredAt) return false;

@@ -472,7 +472,7 @@ async function gatherAccount(supabase, workspaceId, entityId) {
     // four meetings and four lines of "recent activity". The engagement is the ref without
     // its trailing contact id.
     const engagementOf = (ref) => String(ref ?? '').replace(/_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '');
-    const TRANSCRIPT = new Set(['fellow', 'fireflies', 'granola', 'fathom', 'cal_com', 'google_calendar']);
+    const TRANSCRIPT = new Set(['fellow', 'fireflies', 'granola', 'fathom', 'recall', 'cal_com', 'google_calendar']);
     // A meeting that was cancelled, rescheduled or not attended did not happen. HubSpot keeps
     // the booking either way; the outcome says which.
     const NOT_HELD = new Set(['CANCELED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED']);
@@ -2455,7 +2455,7 @@ export async function getAutomationRun(supabase, workspaceId, runId) {
   };
 }
 
-const MEETING_SOURCES = ['granola', 'fathom', 'fireflies', 'fellow', 'ringcentral', 'gong', 'zoom', 'otter', 'avoma', 'tldv'];
+const MEETING_SOURCES = ['granola', 'fathom', 'recall', 'fireflies', 'fellow', 'ringcentral', 'gong', 'zoom', 'otter', 'avoma', 'tldv'];
 
 /**
  * The latest real trigger for a test (GET-724): the newest call from the recorders the trigger

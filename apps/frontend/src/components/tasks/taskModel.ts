@@ -218,7 +218,7 @@ export const SOURCE_DOMAIN: Record<string, string> = {
   linkedin: "linkedin.com", slack: "slack.com",
 };
 export const SOURCE_LABEL: Record<string, string> = {
-  fellow: "Fellow", fireflies: "Fireflies", granola: "Granola", fathom: "Fathom",
+  fellow: "Fellow", fireflies: "Fireflies", granola: "Granola", fathom: "Fathom", recall: "OpenNous",
   gmail: "Gmail", email: "Email", instantly: "Instantly", meeting: "Meeting",
   // Made in Nous (Phase 3.7): typed on Tasks, or from an Insights topic.
   manual: "Added by hand", insight: "Insights", close_loop: "Insights",
@@ -292,7 +292,7 @@ export function dueTone(t: Pick<TaskRecord, "due_at">, now = new Date()): "late"
  * "Added · 2 Oct" for one typed here, "Insights · …" for one made from a topic.
  */
 export type SourceKind = "call" | "email" | "manual" | "insight" | "followup" | "other";
-const CALL_SYSTEMS = new Set(["meeting", "fellow", "fireflies", "granola", "fathom", "otter", "zoom"]);
+const CALL_SYSTEMS = new Set(["meeting", "fellow", "fireflies", "granola", "fathom", "recall", "otter", "zoom"]);
 const EMAIL_SYSTEMS = new Set(["email", "gmail", "gmail_oauth", "instantly"]);
 export function sourceInfo(t: TaskRecord, now = new Date()): { kind: SourceKind; text: string } {
   const system = sourceSystem(t);

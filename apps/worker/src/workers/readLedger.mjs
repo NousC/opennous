@@ -17,7 +17,7 @@ import { getSupabaseClient, recordObservation } from '@nous/core';
 const PAGE = 1000;
 const FIRST_LOOKBACK_DAYS = 60;   // a workspace's first sweep reaches back this far
 const MEETING_CREDITS = 3;        // 30 minutes, the measured median, at one credit per ten
-const MEETING = new Set(['fellow', 'fireflies', 'granola', 'fathom', 'otter', 'zoom', 'gong', 'chorus', 'meet']);
+const MEETING = new Set(['fellow', 'fireflies', 'granola', 'fathom', 'recall', 'otter', 'zoom', 'gong', 'chorus', 'meet']);
 const CALL = new Set(['ringcentral', 'justcall', 'aircall', 'dialpad', 'openphone']);
 
 /** What reading this conversation costs, or null when it is not a billable conversation. */
@@ -72,6 +72,7 @@ export async function meetingMinutes(supabase, workspaceId, sourceRef) {
     .eq('workspace_id', workspaceId).eq('property', 'interaction.meeting_held').eq('source', system);
   if (system === 'fellow') q = q.eq('raw->>note_id', id);
   else if (system === 'hubspot') q = q.like('external_id', `${id}_%`);
+  else if (system === 'recall') q = q.like('external_id', `recall_${id}_%`);
   else return null;
   const { data } = await q.limit(1);
   const row = data?.[0];

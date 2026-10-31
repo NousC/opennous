@@ -28,7 +28,7 @@ export interface TrustTier { rank: number; tier: string; sources: string[]; }
 // it; used to break ties (Task 2), NOT to gate (the gate is independence-only).
 export const SOURCE_TRUST_LADDER: TrustTier[] = [
   { rank: 1, tier: 'human_asserted', sources: ['user', 'manual'] },
-  { rank: 2, tier: 'first_party',    sources: ['gmail', 'smtp', 'fathom', 'fireflies', 'signal_extraction', 'linkedin'] },
+  { rank: 2, tier: 'first_party',    sources: ['gmail', 'smtp', 'fathom', 'fireflies', 'recall', 'signal_extraction', 'linkedin'] },
   { rank: 3, tier: 'crm',            sources: ['hubspot', 'pipedrive', 'attio', 'salesforce'] },
   { rank: 4, tier: 'enrichment',     sources: ['apollo', 'prospeo'] },
   { rank: 5, tier: 'inferred',       sources: ['agent', 'mind', 'inferred'] },

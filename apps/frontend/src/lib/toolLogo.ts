@@ -4,7 +4,7 @@
 
 const PNG = new Set(["fellow", "linkedin", "smartlead", "emailbison", "heyreach", "leadmagic", "rb2b", "aiark"]);
 const KNOWN = new Set([
-  "fellow", "fireflies", "fathom", "granola", "gmail", "google-calendar", "hubspot", "salesforce", "pipedrive",
+  "fellow", "fireflies", "fathom", "granola", "recall", "gmail", "google-calendar", "hubspot", "salesforce", "pipedrive",
   "attio", "close", "instantly", "smartlead", "emailbison", "lemlist", "heyreach", "linkedin", "slack", "stripe",
   "calendly", "cal_com", "notion", "apollo", "leadmagic", "rb2b", "ringcentral", "posthog",
 ]);

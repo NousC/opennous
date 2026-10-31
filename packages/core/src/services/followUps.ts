@@ -145,6 +145,7 @@ const RECORDER_ROWS: Record<string, { prefix: string; rawId: string | null }> = 
   granola: { prefix: 'granola_', rawId: 'note_id' },
   fireflies: { prefix: 'ff_', rawId: 'meeting_id' },
   fathom: { prefix: 'fathom_', rawId: null },
+  recall: { prefix: 'recall_', rawId: 'meeting_id' },
 };
 
 const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));

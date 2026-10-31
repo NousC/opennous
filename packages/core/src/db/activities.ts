@@ -458,7 +458,7 @@ const MEETING_PROPS = new Set([
 // google_calendar poller is a mirror, so it loses ties. Unknown sources sit in
 // the middle so a real connector still beats the mirror.
 const MEETING_SOURCE_RANK: Record<string, number> = {
-  calendly: 0, cal_com: 0, calcom: 0, instantly: 1, fathom: 2, fireflies: 2,
+  calendly: 0, cal_com: 0, calcom: 0, instantly: 1, fathom: 2, fireflies: 2, recall: 2,
   google_calendar: 9, gcal: 9,
 };
 const sourceRank = (s?: string | null) => MEETING_SOURCE_RANK[s ?? ''] ?? 5;

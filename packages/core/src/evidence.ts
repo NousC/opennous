@@ -20,7 +20,7 @@
 /** The connected system a record came from, named the way a person would say it. */
 const SYSTEM_LABELS: Record<string, string> = {
   gmail: 'Gmail', google_calendar: 'Calendar', calendar: 'Calendar',
-  fireflies: 'Fireflies', fathom: 'Fathom', granola: 'Granola', fellow: 'Fellow', ringcentral: 'RingCentral',
+  fireflies: 'Fireflies', fathom: 'Fathom', recall: 'OpenNous', granola: 'Granola', fellow: 'Fellow', ringcentral: 'RingCentral',
   linkedin: 'LinkedIn', slack: 'Slack',
   hubspot: 'HubSpot', salesforce: 'Salesforce', apollo: 'Apollo', close: 'Close',
   instantly: 'Instantly', smartlead: 'Smartlead', heyreach: 'HeyReach', lemlist: 'Lemlist',

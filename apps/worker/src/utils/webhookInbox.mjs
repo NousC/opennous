@@ -72,6 +72,24 @@ export async function enqueueForRetry(supabase, { workspaceId, source, req, err 
   }
 }
 
+// Store a delivery BEFORE answering it, for a source whose work runs after the 2xx (Recall). The
+// row stays pending until markProcessed, so a process that dies mid-work is picked up by the retry
+// worker at `retryAfterMs`. Throws when it can't store, so the caller answers 5xx and the sender
+// delivers again.
+export async function holdDelivery(supabase, { workspaceId, source, req, retryAfterMs }) {
+  const { data, error } = await supabase.from('webhook_inbox').insert({
+    workspace_id: workspaceId,
+    source,
+    payload: req.body,
+    headers: captureHeaders(req.headers),
+    status: 'pending',
+    attempts: 0,
+    next_attempt_at: new Date(Date.now() + retryAfterMs).toISOString(),
+  }).select('id').single();
+  if (error) throw new Error(error.message);
+  return data.id;
+}
+
 // Mark a previously-enqueued row as processed (called from the retry worker).
 export async function markProcessed(supabase, id) {
   await supabase.from('webhook_inbox').update({

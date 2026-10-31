@@ -52,6 +52,22 @@ export const likeEscape = (s) => String(s).replace(/[\\%_]/g, '\\$&');
  * Tolerates the flattened shapes Composio has used elsewhere; returns null for anything
  * without an id and a start.
  */
+// A Zoom, Meet or Teams join link in free text: invites from Zoom's and Outlook's schedulers carry
+// the link in the location or the description, not in conferenceData.
+const MEETING_LINK_RE = /https:\/\/(?:[a-z0-9-]+\.)?(?:zoom\.us\/(?:j|my|w)\/|teams\.microsoft\.com\/(?:l\/meetup-join|meet)\/|teams\.live\.com\/meet\/|meet\.google\.com\/[a-z]{3}-)[^\s"'<>)\]]+/i;
+
+/** The event's join link, or null (GET-1094). What the invite says is the call comes first. */
+export function meetingLink(raw) {
+  if (typeof raw?.hangoutLink === 'string' && raw.hangoutLink) return raw.hangoutLink;
+  const video = (raw?.conferenceData?.entryPoints ?? []).find(p => p?.entryPointType === 'video' && p?.uri);
+  if (video) return video.uri;
+  for (const text of [raw?.location, raw?.description]) {
+    const m = typeof text === 'string' ? MEETING_LINK_RE.exec(text.replace(/&amp;/g, '&')) : null;
+    if (m) return m[0];
+  }
+  return null;
+}
+
 export function normalizeCalendarEvent(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const id = raw.id || raw.event_id || raw.eventId || null;
@@ -95,6 +111,7 @@ export function normalizeCalendarEvent(raw) {
     attendees,
     organizerEmail,
     selfEmail,
+    meetingUrl: meetingLink(raw),
   };
 }
 
