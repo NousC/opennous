@@ -3,7 +3,7 @@ import {
   triggerEventForActivity, enqueueOutboundEvent,
   buildPersonSnapshot, buildInteractionPayload,
 } from './triggers.js';
-import type { ReadContext } from './readContext.js';
+import { ownerScoped, NO_CONTENT_VIEWER, type ReadContext } from './readContext.js';
 import { isPrivateMessageType, applyMessagePrivacyToActivities, loadMessageViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
 import { recordObservation, deriveSourceRef, hashRaw } from './observations.js';
 import { EVIDENCE_SNAPSHOT_TYPES } from '../services/engagement.mjs';
@@ -371,8 +371,9 @@ export async function listActivities(
     rows = applyMessagePrivacyToActivities(rows, TEAM_VIEWER) as ActivityRow[];
   } else if (ctx && ctx.viewerUserId) {
     const viewerUserId = ctx.viewerUserId;
-    if (ctx.viewerScope === 'member') {
-      rows = rows.filter(r => isPrivateMessageType(r.activity_type) || r.owner_user_id == null || r.owner_user_id === viewerUserId);
+    if (ownerScoped(ctx)) {
+      const noContent = viewerUserId === NO_CONTENT_VIEWER;
+      rows = rows.filter(r => isPrivateMessageType(r.activity_type) || (!noContent && (r.owner_user_id == null || r.owner_user_id === viewerUserId)));
     }
     const viewer = await loadMessageViewer(supabase, ctx.workspaceId || opts.workspaceId || '', viewerUserId);
     rows = applyMessagePrivacyToActivities(rows, viewer) as ActivityRow[];

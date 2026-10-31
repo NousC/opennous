@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { embed } from '../embed.js';
-import { rawVisible, type ReadContext } from './readContext.js';
+import { ownerScoped, rawVisible, type ReadContext } from './readContext.js';
 import { derivedViewerForContext, filterDerivedForViewer } from '../privacy/messagePrivacy.mjs';
 import { noteFreshness, noteDecaysAt, resolveSaidAt, pairReplacements, DEAL_POSITION_CATEGORIES, type Replacement } from './claimTime.js';
 import type { Freshness } from './claims.js';
@@ -207,7 +207,7 @@ export async function listNotes(
   // Member scope: drop other reps' raw documents. A document is a note WITH a
   // doc_type; its owner is stamped in metadata.owner_user_id. Facts (no doc_type)
   // are the shared extracted intel and stay visible.
-  if (ctx && ctx.viewerScope === 'member') {
+  if (ownerScoped(ctx)) {
     notes = notes.filter(n =>
       !n.metadata?.doc_type || rawVisible(n.metadata.owner_user_id as string | null | undefined, ctx),
     );

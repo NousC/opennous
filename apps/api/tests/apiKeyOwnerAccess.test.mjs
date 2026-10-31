@@ -117,7 +117,7 @@ test('a shared workspace key (no owner) is not tied to a person and keeps admin 
   const out = await call(createVerifyApiKey(() => sb));
   assert.equal(out.status, 'next');
   assert.equal(out.req.viewerScope, 'admin');
-  assert.equal(out.req.memberUserId, null);
+  assert.equal(out.req.noContent, true); // reads no raw content (GET-248)
 });
 
 test('revokeMemberKeys revokes the person\'s live keys and OAuth tokens in the given workspaces only', async () => {

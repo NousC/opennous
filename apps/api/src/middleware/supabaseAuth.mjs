@@ -3,6 +3,7 @@ import { setUser } from 'useleak';
 import { isSelfHosted } from '../lib/plans.mjs';
 import { getAuthProvider, identityColumn, canBindEmailIdentity, findUserByAuthId } from '../lib/authProvider/index.mjs';
 import { noteActive } from '../lib/productEvents.mjs';
+import { claimedWorkspaces, refuseAmbiguousWorkspace } from '../lib/requestWorkspace.mjs';
 
 // useleak cost-tracking tags each request with the end user's email + name.
 // That PII must never leave a self-hosted box, so identify() is a no-op there.
@@ -48,7 +49,8 @@ export async function verifyAuth(req, res, next) {
 
   if (!token) return res.status(401).json({ error: 'auth_required' });
 
-  const workspaceId = req.query.workspaceId || req.query.workspace_id || req.body?.workspaceId || req.body?.workspace_id;
+  if (refuseAmbiguousWorkspace(req, res)) return;
+  const [workspaceId] = claimedWorkspaces(req);
 
   // Verify FIRST, then look in the cache by WHO the token says they are (GET-315).
   //

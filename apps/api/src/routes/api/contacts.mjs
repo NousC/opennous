@@ -1,3 +1,4 @@
+import { isWorkspaceMember } from '../../lib/authz.mjs';
 import { viewerReadContext } from '../../lib/messagePrivacy.mjs';
 import { Router } from 'express';
 import { productUsersAmong, personProductUsage, PERSON_USAGE_PROPERTIES } from '../../lib/productUsage.mjs';
@@ -342,10 +343,10 @@ contactsApiRouter.get('/enrich-progress/:jobId', verifySupabaseAuth, async (req,
     const supabase = getSupabaseClient();
     const { data } = await supabase
       .from('contact_enrichment_jobs')
-      .select('state, done, status')
+      .select('workspace_id, state, done, status')
       .eq('job_id', req.params.jobId)
       .maybeSingle();
-    if (data) {
+    if (data && await isWorkspaceMember(supabase, data.workspace_id, req.internalUserId)) {
       return res.json({
         found: true,
         contacts: data.state?.contacts || [],
@@ -1628,7 +1629,9 @@ contactsApiRouter.post('/:id/enrich', verifySupabaseAuth, requireEnrichmentQuota
     const { id } = req.params;
     if (!UUID.test(id)) return res.status(400).json({ error: 'invalid_id' });
     const { data: contact } = await supabase.from('contacts').select('*').eq('id', id).single();
-    if (!contact) return res.status(404).json({ error: 'contact_not_found' });
+    if (!contact || !(await isWorkspaceMember(supabase, contact.workspace_id, req.internalUserId))) {
+      return res.status(404).json({ error: 'contact_not_found' });
+    }
     // Need at least one usable identity key: email, LinkedIn URL, or name+domain.
     const hasUsableKey = Boolean(
       contact.email || contact.linkedin_url ||

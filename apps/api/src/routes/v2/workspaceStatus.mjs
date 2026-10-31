@@ -744,7 +744,7 @@ export async function listWorkspaceMembers(req, res) {
   try {
     const supabase = getSupabaseClient();
     const isAdmin = req.viewerScope === 'admin';
-    const meId = req.memberUserId ?? null;
+    const meId = req.noContent ? null : req.memberUserId ?? null;
     const { data } = await supabase
       .from('workspace_members')
       .select('role, user_id, users:user_id(id, name, email, profile_picture_url)')
@@ -782,7 +782,7 @@ workspaceStatusV2Router.get('/whoami', async (req, res) => {
     const supabase = getSupabaseClient();
     const answer = await resolveWhoami(supabase, {
       workspaceId:  req.workspaceId,
-      memberUserId: req.memberUserId ?? null,
+      memberUserId: req.noContent ? null : req.memberUserId ?? null,
       scope:        req.viewerScope || 'admin',
       capability:   req.keyCapability || 'read_write',
     });

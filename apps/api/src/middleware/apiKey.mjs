@@ -1,6 +1,7 @@
 import crypto from 'crypto';
-import { getSupabaseClient } from '@nous/core';
+import { getSupabaseClient, NO_CONTENT_VIEWER } from '@nous/core';
 import { trackApiKeyRequest } from '../lib/apiRequestLog.mjs';
+import { refuseForeignWorkspace } from '../lib/requestWorkspace.mjs';
 
 // The only WRITE-side v2 endpoints a read-only key may still call — they read/compute
 // but never mutate the graph, and the MCP invokes them over POST. Everything else that
@@ -101,6 +102,10 @@ async function verify(getClient, req, res, next) {
     viewerScope = keyRow.scope === 'admin' && roleIsAdmin ? 'admin' : 'member';
   }
 
+  // The workspace is the key's (GET-247). Handlers that still read one from the request can only
+  // ever see this one.
+  if (refuseForeignWorkspace(req, res, keyRow.workspace_id)) return;
+
   // Capability: a read-only key can read/compute context but cannot record, modify, or
   // send. Fail-closed — anything not an explicit read is blocked. read_write and legacy
   // (null) keys are unrestricted, so existing keys are unaffected.
@@ -122,13 +127,17 @@ async function verify(getClient, req, res, next) {
   // with an undefined user).
   req.isApiKeyAuth = true;
   req.apiKeyWorkspaceId = keyRow.workspace_id;
-  // Per-member privacy (PRIVACY_MODEL.md): a member key acts AS that member, so
-  // raw content is scoped to them; an admin/workspace key (no owner_user_id) sees
-  // all raw. This is the ONLY point the agent gets a viewer identity, since the
-  // MCP session otherwise carries only a workspace. Legacy keys (null owner) keep
-  // full access, so nothing breaks on deploy. The scope of an owned key is the
-  // owner's live one, worked out above.
-  req.memberUserId = keyRow.owner_user_id ?? null;
+  // Per-member privacy (PRIVACY_MODEL.md): a member key acts AS that member, so raw content is
+  // scoped to them. This is the ONLY point the agent gets a viewer identity, since the MCP session
+  // otherwise carries only a workspace. The scope of an owned key is the owner's live one, worked
+  // out above.
+  //
+  // A workspace key (no owner) has no person to act as, so it reads no raw content: no message, no
+  // transcript, no raw payload (GET-248). Naming NO_CONTENT_VIEWER on reads makes every reader
+  // apply that without knowing about it. On a write the id stays null, because it lands in
+  // columns that reference users and that id is not a row there.
+  req.noContent = !keyRow.owner_user_id;
+  req.memberUserId = keyRow.owner_user_id ?? (readOnlyKeyMayCall(req) ? NO_CONTENT_VIEWER : null);
   req.viewerScope  = viewerScope;
   // Normalize client identifier: mcp, sdk (sdk-node → sdk), or api
   const rawClient = (req.headers['x-nous-client'] || '').toLowerCase();

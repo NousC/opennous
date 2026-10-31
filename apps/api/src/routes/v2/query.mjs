@@ -91,7 +91,7 @@ async function runReporting(supabase, workspaceId, req, { reporting, role }) {
 // Ported from apps/frontend/src/pages/Focus.tsx + /api/tasks — keep the three in sync. The reads
 // are lib/worklist.mjs, shared with the daily digest email.
 async function runWorklist(supabase, workspaceId, req) {
-  const me = req.memberUserId ?? null;
+  const me = req.noContent ? null : req.memberUserId ?? null;
   const w = scopeWorklist(await loadWorklist(supabase, workspaceId), me);
   return {
     attention: 'mine',

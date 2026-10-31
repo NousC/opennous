@@ -55,7 +55,7 @@ export function ruleView(r) {
 // (a member key, or a signed-in member of the workspace asked for). internalUserId alone is a
 // signed-in user with no workspace resolved, and would write a rule into none.
 const needPerson = (req, res) => {
-  const user = req.workspaceId ? req.memberUserId ?? null : null;
+  const user = req.workspaceId && !req.noContent ? req.memberUserId ?? null : null;
   if (!user) res.status(400).json({ error: 'member_required', message: 'Rules are personal: use a member API key or a signed-in member of the workspace.' });
   return user;
 };

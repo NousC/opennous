@@ -8,7 +8,9 @@ export const signalsRouter = Router();
 export const publicSignalsRouter = Router();
 
 function signalToken(workspaceId) {
-  const secret = process.env.SIGNAL_HMAC_SECRET || 'nous-signals';
+  // Never a default: a token anyone can compute from a workspace id protects nothing (GET-247).
+  const secret = process.env.SIGNAL_HMAC_SECRET || process.env.ENCRYPTION_KEY;
+  if (!secret) throw new Error('SIGNAL_HMAC_SECRET or ENCRYPTION_KEY is required for signal tokens');
   return createHmac('sha256', secret).update(workspaceId).digest('hex').slice(0, 32);
 }
 

@@ -5,6 +5,10 @@
 
 export type ViewerScope = 'admin' | 'member';
 
+/** Who a workspace key reads as (GET-248). Not a person and not a row in users: a viewer on
+ *  nothing, so it may read no message, transcript or raw payload, whatever its scope. */
+export const NO_CONTENT_VIEWER = '00000000-0000-0000-0000-000000000001';
+
 export interface ReadContext {
   /** The workspace being read. */
   workspaceId: string;
@@ -36,12 +40,13 @@ export function teamReadContext(workspaceId: string): ReadContext {
 export function readContextFromReq(req: {
   workspaceId?: string;
   memberUserId?: string | null;
+  noContent?: boolean;
   viewerScope?: string;
   openVisibility?: boolean;
 }): ReadContext {
   return {
     workspaceId: req.workspaceId ?? '',
-    viewerUserId: req.memberUserId ?? null,
+    viewerUserId: req.noContent ? NO_CONTENT_VIEWER : req.memberUserId ?? null,
     viewerScope: req.viewerScope === 'admin' ? 'admin' : 'member',
     openVisibility: req.openVisibility !== false,
   };
@@ -52,6 +57,12 @@ export function readContextFromReq(req: {
  *  privacy boundary and must see everything to do their job. */
 export function systemReadContext(workspaceId: string): ReadContext {
   return { workspaceId, viewerUserId: null, viewerScope: 'admin' };
+}
+
+/** Should this reader's raw rows be cut down by owner? Every member, and a workspace key, whose
+ *  admin scope is for config and accounts and says nothing about raw content (GET-248). */
+export function ownerScoped(ctx?: ReadContext): boolean {
+  return !!ctx && (ctx.viewerScope === 'member' || ctx.viewerUserId === NO_CONTENT_VIEWER);
 }
 
 /**
@@ -68,6 +79,7 @@ export function systemReadContext(workspaceId: string): ReadContext {
  * NOT as a leak of a specific member's data (there's no member to leak to).
  */
 export function rawVisible(ownerUserId: string | null | undefined, ctx?: ReadContext): boolean {
+  if (ctx?.viewerUserId === NO_CONTENT_VIEWER) return false;
   if (!ctx || ctx.viewerScope === 'admin' || ctx.openVisibility) return true;
   if (ownerUserId == null) return true;
   return ownerUserId === ctx.viewerUserId;

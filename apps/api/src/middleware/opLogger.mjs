@@ -322,7 +322,7 @@ export function logV2Op(req, res, next) {
         // logged-in user. Both already land on req.memberUserId — we just never
         // wrote it down, which is why "who on my team is actually using this"
         // was unanswerable. Null for workspace-scoped keys with no owner.
-        user_id: req.memberUserId ?? null,
+        user_id: req.noContent ? null : req.memberUserId ?? null,
         source,
         event_type,
         // What the op was FOR. For agent traffic the verb is the intent — an

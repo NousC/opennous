@@ -13,7 +13,7 @@ export const approvalsV2Router = Router();
 
 // An owned routine's runs (GET-868, lib/routineAccess.mjs) only for a key whose member may see it;
 // deciding one needs what its surface allows. Ordinary automations' approvals are unchanged.
-const keyUser = (req) => req.memberUserId ?? req.internalUserId ?? null;
+const keyUser = (req) => (req.noContent ? null : req.memberUserId ?? req.internalUserId ?? null);
 approvalsV2Router.param('runId', routineRunGuard(keyUser));
 
 approvalsV2Router.get('/', async (req, res) => {

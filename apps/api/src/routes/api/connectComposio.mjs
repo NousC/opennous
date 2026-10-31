@@ -34,7 +34,7 @@ connectComposioRouter.use(verifyAuthEither);
  *    single-operator dogfood box still connects instead of 400ing.
  */
 async function resolveActingMember(supabase, req) {
-  if (req.memberUserId) return req.memberUserId;
+  if (req.memberUserId && !req.noContent) return req.memberUserId;
   if (req.internalUserId) return req.internalUserId;
   if (!req.workspaceId) return null;
   const { data: owner } = await supabase

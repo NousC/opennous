@@ -2,7 +2,7 @@
 // (privacy/messagePrivacy.mjs) and in visible_observations_v2; this only builds the viewer from
 // a request so no route can forget to name who is reading.
 
-import { readContextFromReq, loadMessageViewer } from '@nous/core';
+import { readContextFromReq, loadMessageViewer, NO_CONTENT_VIEWER } from '@nous/core';
 
 /**
  * A ReadContext that always names the signed-in person when there is one. `memberUserId` is set
@@ -14,12 +14,12 @@ export function viewerReadContext(req, workspaceId) {
   return {
     ...ctx,
     workspaceId: workspaceId || ctx.workspaceId,
-    viewerUserId: req.memberUserId ?? req.internalUserId ?? null,
+    viewerUserId: req.noContent ? NO_CONTENT_VIEWER : req.memberUserId ?? req.internalUserId ?? null,
   };
 }
 
 /** The message viewer for a request, or null for an unauthenticated/system caller. */
 export function requestMessageViewer(supabase, req, workspaceId) {
-  const userId = req.memberUserId ?? req.internalUserId ?? null;
+  const userId = req.noContent ? NO_CONTENT_VIEWER : req.memberUserId ?? req.internalUserId ?? null;
   return userId ? loadMessageViewer(supabase, workspaceId || req.workspaceId, userId) : Promise.resolve(null);
 }

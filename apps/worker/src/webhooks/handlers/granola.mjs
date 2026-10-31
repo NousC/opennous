@@ -16,7 +16,6 @@
 // plans nothing is registered and the poller (pollers/granola.mjs) is the ingest path,
 // re-using reprocessGranola below.
 
-import { createHmac } from 'crypto';
 import { getSupabaseClient, saveDocument, resolveCallHost, attributeRelationship, isEntityInternal } from '@nous/core';
 import { logActivity } from '../../utils/activity.mjs';
 import { extractMeetingSignals } from '../../signals/index.mjs';
@@ -28,6 +27,7 @@ import { enqueueForRetry } from '../../utils/webhookInbox.mjs';
 import { recordUnresolved, markUnresolvedResolved } from '../../utils/unresolvedIngest.mjs';
 import { logSysEvent } from '../../utils/systemLog.mjs';
 import { decrypt } from '../../utils/encryption.mjs';
+import { verifyStandardWebhook, UNREADABLE_KEY } from '../standardWebhook.mjs';
 
 const GRANOLA_BASE = 'https://public-api.granola.ai/v1';
 
@@ -35,7 +35,7 @@ const GRANOLA_BASE = 'https://public-api.granola.ai/v1';
 // several Granola connections. We load them all: any one whose key can see the note
 // is the one we fetch with, and any one whose signing secret validates the delivery
 // is the one that signed it. Returns { apiKey, signingKey, ownerUserId }[].
-async function getGranolaConnections(supabase, workspaceId) {
+async function getGranolaConnections(supabase, workspaceId, { withoutApiKey = false } = {}) {
   const { data: provider } = await supabase
     .from('workflow_providers').select('id').eq('name', 'granola').maybeSingle();
   if (!provider?.id) return [];
@@ -47,25 +47,9 @@ async function getGranolaConnections(supabase, workspaceId) {
   return (data || []).map(c => {
     let apiKey = null, signingKey = null;
     try { apiKey = decrypt(c.encrypted_credentials?.api_key) || null; } catch { /* skip */ }
-    try { signingKey = c.encrypted_credentials?.webhook_signing_key ? decrypt(c.encrypted_credentials.webhook_signing_key) : null; } catch { /* skip */ }
+    try { signingKey = c.encrypted_credentials?.webhook_signing_key ? decrypt(c.encrypted_credentials.webhook_signing_key) : null; } catch { signingKey = UNREADABLE_KEY; }
     return { apiKey, signingKey, ownerUserId: c.owner_user_id || null };
-  }).filter(c => c.apiKey);
-}
-
-// Standard Webhooks signature — byte-for-byte the same scheme Fathom uses.
-function verifyGranolaSignature(secret, rawBody, webhookId, webhookTimestamp, signatureHeader) {
-  if (!secret || !signatureHeader || !webhookId || !webhookTimestamp) return true; // skip if not configured
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - parseInt(webhookTimestamp, 10)) > 300) return false;          // 5-min replay window
-
-  const signedContent = `${webhookId}.${webhookTimestamp}.${rawBody}`;
-  const secretKey = secret.startsWith('whsec_') ? secret.slice(6) : secret;
-  const secretBytes = Buffer.from(secretKey, 'base64');
-  const expected = createHmac('sha256', secretBytes).update(signedContent).digest('base64');
-
-  // Header is space-separated `v1,<sig>` pairs.
-  const signatures = signatureHeader.split(' ').map(s => s.split(',').slice(1).join(','));
-  return signatures.some(sig => sig === expected);
+  }).filter(c => withoutApiKey || c.apiKey);
 }
 
 // Fetch a single note (with transcript inline). Returns the note object, null when the
@@ -461,12 +445,12 @@ export async function handleGranola(req, res, workspaceId) {
   // Signature verification (live deliveries only — retries trust the stored row).
   // Any connected rep's signing secret may have signed this delivery; env secret is a
   // self-host fallback. No secret anywhere → skip, like the Fathom manual path.
-  const conns = await getGranolaConnections(supabase, workspaceId);
+  const conns = await getGranolaConnections(supabase, workspaceId, { withoutApiKey: true });
   const secrets = conns.map(c => c.signingKey).filter(Boolean);
   if (process.env.GRANOLA_WEBHOOK_SECRET) secrets.push(process.env.GRANOLA_WEBHOOK_SECRET);
   if (secrets.length) {
     const rawBody = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
-    const valid = secrets.some(s => verifyGranolaSignature(
+    const valid = secrets.some(s => verifyStandardWebhook(
       s, rawBody,
       req.headers['webhook-id'],
       req.headers['webhook-timestamp'],

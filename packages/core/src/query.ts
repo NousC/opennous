@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { searchObservations } from './db/search.js';
 import { hybridSearchClaims } from './db/hybridSearch.js';
-import { rawVisible, type ReadContext } from './db/readContext.js';
+import { NO_CONTENT_VIEWER, ownerScoped, rawVisible, type ReadContext } from './db/readContext.js';
 import { loadMessageViewer, redactObservationRowsForViewer, filterDerivedForViewer } from './privacy/messagePrivacy.mjs';
 import { getInternalEntityIds } from './db/teamMembers.js';
 import { getPersonalEntityIds, getProductUserEntityIds } from './db/relationship.js';
@@ -318,7 +318,7 @@ export async function runQuery(
     // owner_user_id — so we must re-fetch owners by id and scope in memory rather
     // than trust a missing field (a missing owner would read as shared = a leak).
     // The structured path filters at the DB (see fetchScopeObservations).
-    if (ctx && ctx.viewerScope === 'member') {
+    if (ownerScoped(ctx)) {
       const ids = semantic.map(o => o.id);
       const { data: owners } = await supabase
         .from('observations').select('id, owner_user_id').in('id', ids);
@@ -343,6 +343,8 @@ export async function runQuery(
     rows = await redactObservationRowsForViewer(supabase, workspaceId, rows, viewer);
     // …and an action item read out of one follows it (GET-253).
     rows = await filterDerivedForViewer(supabase, workspaceId, rows, viewer);
+    // A workspace key is told that a conversation happened and nothing else (GET-248).
+    if (ctx.viewerUserId === NO_CONTENT_VIEWER) rows = rows.filter((r) => (r as { redacted?: boolean }).redacted);
   }
 
   // ── 2. Apply `without` (set difference on entity_id) ─────────────────────

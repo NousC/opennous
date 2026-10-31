@@ -2,7 +2,6 @@
 // Payload: calendar_invitees[], title, default_summary, recording_start_time, url
 // Update-only — never creates new contacts from meeting invitees.
 
-import { createHmac } from 'crypto';
 import { getSupabaseClient, saveDocument, resolveMeetingOwner, attributeRelationship, isEntityInternal } from '@nous/core';
 import { logActivity } from '../../utils/activity.mjs';
 import { extractMeetingSignals } from '../../signals/index.mjs';
@@ -13,6 +12,7 @@ import { writeEvidenceFile, normalizeMeeting } from '../../lib/evidence/index.mj
 import { enqueueForRetry } from '../../utils/webhookInbox.mjs';
 import { logSysEvent } from '../../utils/systemLog.mjs';
 import { decrypt } from '../../utils/encryption.mjs';
+import { verifyStandardWebhook, UNREADABLE_KEY } from '../standardWebhook.mjs';
 
 // When Fathom is connected through the app, we register the webhook via their API and they
 // hand back a per-connection signing secret, stored (encrypted) on the connection. That is
@@ -28,23 +28,7 @@ async function loadFathomSigningKey(supabase, workspaceId) {
   const encryptedKey = conn?.encrypted_credentials?.webhook_signing_key;
   if (!encryptedKey) return null;
   try { return decrypt(encryptedKey); }
-  catch { return null; }
-}
-
-function verifyFathomSignature(secret, rawBody, webhookId, webhookTimestamp, signatureHeader) {
-  if (!secret || !signatureHeader || !webhookId || !webhookTimestamp) return true; // skip if not configured
-  const now = Math.floor(Date.now() / 1000);
-  if (Math.abs(now - parseInt(webhookTimestamp, 10)) > 300) return false;
-
-  const signedContent = `${webhookId}.${webhookTimestamp}.${rawBody}`;
-  const secretKey = secret.startsWith('whsec_') ? secret.slice(6) : secret;
-  const secretBytes = Buffer.from(secretKey, 'base64');
-  const expected = createHmac('sha256', secretBytes).update(signedContent).digest('base64');
-
-  const signatures = signatureHeader.split(' ').map(s => s.split(',').slice(1).join(','));
-  return signatures.some(sig => {
-    try { return sig === expected; } catch { return false; }
-  });
+  catch { return UNREADABLE_KEY; }
 }
 
 export async function reprocessFathom(supabase, workspaceId, payload, { onceOnly = false } = {}) {
@@ -297,7 +281,7 @@ export async function handleFathom(req, res, workspaceId) {
   const secret = (await loadFathomSigningKey(supabase, workspaceId)) || process.env.FATHOM_WEBHOOK_SECRET;
   if (secret) {
     const rawBody = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
-    const valid = verifyFathomSignature(
+    const valid = verifyStandardWebhook(
       secret, rawBody,
       req.headers['webhook-id'],
       req.headers['webhook-timestamp'],

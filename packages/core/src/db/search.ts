@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { embed } from '../embed.js';
-import { rawVisible, type ReadContext } from './readContext.js';
+import { ownerScoped, rawVisible, type ReadContext } from './readContext.js';
 import { loadMessageViewer, redactObservationRowsForViewer, isPrivateMessageType, derivedViewerForContext, filterDerivedForViewer } from '../privacy/messagePrivacy.mjs';
 
 // Semantic search over the substrate. Step 2 of the Context API pipeline
@@ -107,7 +107,7 @@ export async function searchObservations(
   // viewer is allowed to read — otherwise a cross-account semantic search would
   // surface another rep's private message bodies. Mirrors the runQuery path.
   let out = hits;
-  if (ctx && ctx.viewerScope === 'member' && out.length) {
+  if (ownerScoped(ctx) && out.length) {
     const ids = out.map(h => h.id);
     const { data: owners } = await supabase
       .from('observations')

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { rawVisible, type ReadContext } from './readContext.js';
-import { isPrivateMessageType, canReadMessage, loadMessageViewer, filterDerivedForViewer } from '../privacy/messagePrivacy.mjs';
+import { rawVisible, NO_CONTENT_VIEWER, type ReadContext } from './readContext.js';
+import { isPrivateMessageType, canReadMessage, loadMessageViewer, filterDerivedForViewer, redactObservationForViewer } from '../privacy/messagePrivacy.mjs';
 import type { ProjectableObservation } from '../services/canonicalProjection.js';
 
 // Observations are the immutable, append-only spine — the system of record.
@@ -324,6 +324,13 @@ export async function getObservationsByIds(
   return (data as Observation[]) ?? [];
 }
 
+
+/** An observation as a workspace key may see it: that it exists, not what it held (GET-248). */
+function withoutPayload(o: Observation, viewer: unknown): Observation {
+  const row = redactObservationForViewer(o, viewer) as Observation & { redacted?: boolean };
+  return row.redacted ? row : ({ ...row, value: {}, raw: null } as unknown as Observation);
+}
+
 /** Observations for an entity, newest first — the account timeline.
  *  With a member-scoped ReadContext, raw rows owned by another rep are excluded
  *  at the DB level (never fetched). Admin/legacy/system ctx sees all. Passing no
@@ -344,19 +351,25 @@ export async function getObservations(
   // (RLS is bypassed), so this in-function predicate — not RLS — is the guarantee. The same rule
   // lives in privacy/messagePrivacy.mjs for readers that cannot go through the function.
   if (ctx && ctx.viewerUserId) {
+    const noContent = ctx.viewerUserId === NO_CONTENT_VIEWER;
     const viewer = await loadMessageViewer(supabase, workspaceId, ctx.viewerUserId);
     const { data, error } = await supabase.rpc('visible_observations_v2', {
       p_workspace_id: workspaceId,
       p_entity_id: entityId,
       p_viewer_user_id: ctx.viewerUserId,
       p_viewer_emails: [...(viewer?.emails ?? [])],
-      p_viewer_is_admin: ctx.viewerScope === 'admin',
+      p_viewer_is_admin: ctx.viewerScope === 'admin' && !noContent,
       p_property: opts.property ?? null,
       p_kind: opts.kind ?? null,
       p_as_of: opts.asOf ?? null,
       p_limit: opts.limit ?? 200,
     });
     if (error) throw new Error(`failed to load observations (guarded): ${error.message}`);
+    // The function trusts a row with no owner; a workspace key gets no payload from any row (GET-248).
+    if (noContent) {
+      const rows = await filterDerivedForViewer(supabase, workspaceId, (data as Observation[]) ?? [], viewer);
+      return (rows as Observation[]).map((o) => withoutPayload(o, viewer));
+    }
     // An action item read out of an email the viewer isn't on is dropped, like its claim (GET-253).
     return (await filterDerivedForViewer(supabase, workspaceId, (data as Observation[]) ?? [], viewer)) as Observation[];
   }

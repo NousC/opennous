@@ -15,11 +15,13 @@
 //      (raw.mailbox_owner_ids — how a bcc is honoured, since a bcc leaves no header);
 //   4. one of the viewer's own addresses is a participant — from, to or cc.
 // Everyone else sees that it happened — who, when, which way — and nothing it said. Role does
-// not matter: a founder does not read a co-founder's 1:1 with a prospect. The same predicate is
+// not matter: a founder does not read a co-founder's 1:1 with a prospect. A workspace key reads as
+// NO_CONTENT_VIEWER, on no message at all, company tooling's included (GET-248). The same predicate is
 // enforced in SQL by visible_observations_v2 (migration 2026_09_14_message_privacy.sql); change
 // one, change both.
 
 import { getInternalIdentities } from '../db/teamMembers.js';
+import { NO_CONTENT_VIEWER } from '../db/readContext.js';
 
 /** Interaction types whose content is private to its participants. */
 export const PRIVATE_MESSAGE_TYPES = new Set([
@@ -58,6 +60,7 @@ export function messageParticipants(raw) {
  */
 export function canReadMessage(row, viewer) {
   if (!viewer || !viewer.userId) return true;                       // 1. system
+  if (viewer.userId === NO_CONTENT_VIEWER) return false;            //    a workspace key
   const owner = row?.owner_user_id ?? null;
   if (owner == null) return true;                                   // 2. company tooling
   if (owner === viewer.userId) return true;                         // 3. own account
@@ -116,6 +119,7 @@ function redactedRaw(raw) {
  */
 export function canReadMeetingRaw(meta, viewer, { open = false } = {}) {
   if (!viewer || !viewer.userId) return true;                       // a system job
+  if (viewer.userId === NO_CONTENT_VIEWER) return false;            // a workspace key, whatever its scope
   if (viewer.isAdmin) return true;
   const m = meta && typeof meta === 'object' ? meta : {};
   if (m.owner_user_id && m.owner_user_id === viewer.userId) return true;
