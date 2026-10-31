@@ -143,7 +143,7 @@ test('HubSpot with nothing connected stops the run and says why; nothing after i
   const r = await runSteps(auto([
     { id: 'h', type: 'hubspot', config: { action: 'note', body: 'x' } },
     { id: 's', type: 'slack', config: { channel: '#sales', text: 'hi' } },
-  ]), doc, { stage: 'call_ended', ctx: ctxOf(fakeDb()) });
+  ]), doc, { stage: 'call_ended', ctx: ctxOf(fakeDb()) }, { decisions: { 0: { approve: true } } });
   assert.equal(r.reason, 'hubspot_not_connected');
   assert.equal(posted, 0);
 });
@@ -194,7 +194,7 @@ test('a failed step is named in words: which step, what it was, and why', async 
   const r = await runSteps(auto([
     { id: 'a', type: 'agent', config: {} },
     { id: 'h', type: 'hubspot', config: { action: 'note' } },
-  ]), doc, { stage: 'call_ended', ctx: ctxOf(fakeDb()) });
+  ]), doc, { stage: 'call_ended', ctx: ctxOf(fakeDb()) }, { decisions: { 1: { approve: true } } });
   assert.equal(r.failed, true);
   assert.equal(r.message, "Step 2 · HubSpot · Add a note: HubSpot isn't connected");
 });
@@ -215,9 +215,32 @@ test('a call\'s next steps fill {{call.next_step}} and {{call.next_steps}}, ours
 
 test('HubSpot tasks from a call with no next steps writes nothing and is not a failure', async () => {
   const r = await runSteps(auto([{ id: 'h', type: 'hubspot', config: { action: 'task' } }]), doc,
-    { stage: 'call_ended', ctx: ctxOf(fakeDb(), { call: { title: 'x', nextSteps: [] } }) });
+    { stage: 'call_ended', ctx: ctxOf(fakeDb(), { call: { title: 'x', nextSteps: [] } }) },
+    { decisions: { 0: { approve: true } } });
   assert.equal(r.failed, undefined);
   assert.equal(r.delivered, 'hubspot_task:no_next_steps');
+});
+
+test('a write to HubSpot waits for a person, with no switch to turn that off', async () => {
+  for (const action of ['note', 'task', 'update_deal']) {
+    const r = await runSteps(auto([{ id: 'h', type: 'hubspot', config: { action, body: 'x' } }]), doc,
+      { stage: 'call_ended', ctx: ctxOf(fakeDb()) });
+    assert.equal(r.paused, true, action);
+  }
+});
+
+test('a decision can only reach what the reviewer was shown', async () => {
+  const { shownDecisions } = await import('../dist/services/automationRun.mjs');
+  const run = { step_index: 0, state: { bundle: [{ index: 0 }, { index: 1 }] } };
+  assert.deepEqual(Object.keys(shownDecisions(run, { 0: { approve: true }, 1: { approve: false }, 7: { approve: true } })), ['0', '1']);
+  assert.deepEqual(Object.keys(shownDecisions({ step_index: 3, state: {} }, { 3: { approve: true }, 4: { approve: true } })), ['3']);
+  assert.equal(shownDecisions(run, null), null);
+});
+
+test('reading HubSpot does not wait', async () => {
+  const r = await runSteps(auto([{ id: 'h', type: 'hubspot', config: { action: 'read' } }]), doc,
+    { stage: 'call_ended', ctx: ctxOf(fakeDb()) });
+  assert.notEqual(r.paused, true);
 });
 
 test('an email from an SMTP mailbox always waits for approval, then sends from that mailbox', async () => {
@@ -243,7 +266,7 @@ test('a run logs each step in words: what it wrote, what it did, where it failed
     { id: 'a', type: 'agent', config: {} },
     { id: 's', type: 'slack', config: { channel: '#sales', text: 'hi' } },
     { id: 'h', type: 'hubspot', config: { action: 'note', body: 'x' } },
-  ]), { ...doc, id: 'doc-1' }, { stage: 'call_ended', ctx: ctxOf(fakeDb()) });
+  ]), { ...doc, id: 'doc-1' }, { stage: 'call_ended', ctx: ctxOf(fakeDb()) }, { decisions: { 2: { approve: true } } });
   assert.deepEqual(r.log.map(x => [x.step, x.name, x.status]), [[1, 'Agent · Write-up', 'ok'], [2, 'Slack', 'ok'], [3, 'HubSpot · Add a note', 'failed']]);
   assert.equal(r.log[0].document_id, 'doc-1');
   assert.equal(r.log[1].detail, 'Posted to #sales');

@@ -1368,15 +1368,15 @@ export function StepPanel(props: PanelProps & { onRemove: () => void; index: num
         )}
         {["hubspot", "gmail", "email", "slack", "webhook"].includes(step.type) && !(step.type === "hubspot" && step.config.action === "read") && (
           // Human in the loop, per step (GET-713): on, the run waits in Approvals with exactly
-          // what this step would do; off, it runs straight away.
+          // what this step would do; off, it runs straight away. A write to HubSpot always waits (GET-1062).
           <label className="flex cursor-pointer items-start justify-between gap-3 border-t border-border/60 pt-4">
             <span>
               <span className="block text-[13px] font-medium text-foreground">Require approval</span>
               <span className="mt-0.5 block text-[11.5px] leading-snug text-muted-foreground">
-                {step.config.approval ? "Waits in Approvals until you approve it." : "Runs straight away."}
+                {step.type === "hubspot" || step.config.approval ? "Waits in Approvals until you approve it." : "Runs straight away."}
               </span>
             </span>
-            <Switch checked={!!step.config.approval} onCheckedChange={v => props.set({ approval: v })} aria-label="Require approval" />
+            <Switch checked={step.type === "hubspot" || !!step.config.approval} disabled={step.type === "hubspot"} onCheckedChange={v => props.set({ approval: v })} aria-label="Require approval" />
           </label>
         )}
       </div>

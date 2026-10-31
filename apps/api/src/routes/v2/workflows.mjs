@@ -28,6 +28,7 @@ import {
 } from '../api/automations.mjs';
 import { isMissingFlowColumn } from '../../lib/flows.mjs';
 import { isOwnedRoutine, ownerColumnMissing, onlyOrdinaryRoutines } from '../../lib/routineAccess.mjs';
+import { stampRunStarter } from '../../lib/approvalGuard.mjs';
 
 // Run-now on an agent workflow runs the in-app agent, which is Cloud's (cloud/lib/routineRunner.mjs).
 // Cloud registers the runner at boot (GET-754); without it run-now answers 403 cloud_only_feature,
@@ -460,7 +461,7 @@ workflowsV2Router.post('/:id/run', allowQueryParams([]), wrap('POST /v2/workflow
 
   if (DEAL_TRIGGERS.has(row.trigger_kind)) {
     const since = new Date(Date.now() - 90 * 24 * 3600_000).toISOString();
-    const out = await runAutomationsForWorkspace(supabase, req.workspaceId, since, { onlyAutomation: row.id, max: 1 });
+    const out = await runAutomationsForWorkspace(supabase, req.workspaceId, since, { onlyAutomation: row.id, max: 1, startedByKey: req.apiKeyId ?? null });
     if (!out?.document) {
       return res.json({ run_id: null, status: 'nothing_to_run_on', detail: 'No account has hit this trigger in the last 90 days, so there is nothing to run it on yet.' });
     }
@@ -502,7 +503,9 @@ workflowsV2Router.post('/:id/run', allowQueryParams([]), wrap('POST /v2/workflow
     return res.status(500).json({ error: 'run_failed', run_id: data?.id ?? null });
   }
   if (out?.skipped === 'out_of_credits') return res.status(402).json({ error: 'out_of_credits', run_id: await runIdFor(dedupeKey), status: 'skipped' });
-  return res.json({ run_id: await runIdFor(dedupeKey), status: out?.status ?? 'ok', ...(out?.thread_id ? { thread_id: out.thread_id } : {}) });
+  const runId = await runIdFor(dedupeKey);
+  await stampRunStarter(supabase, req, runId);
+  return res.json({ run_id: runId, status: out?.status ?? 'ok', ...(out?.thread_id ? { thread_id: out.thread_id } : {}) });
 }));
 
 // GET /v2/workflows/:id/runs?status=&days=&limit=&offset= → { runs, stats, limit, offset, has_more }

@@ -1938,9 +1938,10 @@ async function runSteps(automation, firstDoc, { stage = null, at = null, ctx = n
   };
   const followCfg = steps.find(x => draftsItself(x, steps))?.config ?? {};
   // Draft follow-up's own draft ALWAYS waits for a person (GET-739): an email to a customer is
-  // reviewed before it exists in their Gmail, with no switch to turn that off.
+  // reviewed before it exists in their Gmail, with no switch to turn that off. So does a write to
+  // the CRM (GET-1062), however the step was saved, whether by the editor, the API or an agent.
   const needsOk = (st, idx, gatedHere) => isActionStep(st) && !isRead(st) && (gatedHere || st?.config?.approval === true
-    || st?.type === '__followup_draft' || sendFromOf(st)?.kind === 'smtp') && !resume?.decisions?.[idx];
+    || st?.type === 'hubspot' || st?.type === '__followup_draft' || sendFromOf(st)?.kind === 'smtp') && !resume?.decisions?.[idx];
   // ONE REVIEW, NOT ONE AT A TIME (GET-724): the waiting step and every approvable step after it up to
   // the next AI step (whose words would change) are previewed together, each decided on its own.
   const bundleFrom = async (i) => {
@@ -2352,12 +2353,23 @@ async function closeSlackCard(supabase, workspaceId, card, userId, what) {
  * rejected. Claimed atomically, so two people pressing at once run it once.
  * @returns { ok, status, delivered?, message?, error? }
  */
+/** The decisions that land on what this pause showed. Null when none were sent. Pure. */
+export function shownDecisions(run, decisions) {
+  if (!decisions) return null;
+  const st = run.state ?? {};
+  const shown = (st.bundle?.length ? st.bundle : [{ index: run.step_index ?? 0 }]).map(b => String(b.index));
+  return Object.fromEntries(Object.entries(decisions).filter(([i]) => shown.includes(i)));
+}
+
 export async function decideAutomationRun(supabase, workspaceId, runId, { approve, userId = null, decisions = null, via = 'app', pause = null } = {}) {
   const { data: run } = await supabase.from('agent_routine_runs').select('*')
     .eq('workspace_id', workspaceId).eq('id', runId).maybeSingle();
   if (!run) return { ok: false, error: 'not_found' };
   if (run.status !== 'awaiting_approval') return { ok: false, error: 'not_waiting', status: run.status };
   const st = run.state ?? {};
+  // Only what the reviewer was shown can be decided (GET-1062): an index past this review would
+  // approve a later write nobody has seen.
+  const allowed = shownDecisions(run, decisions);
   // From a Slack card (pre-ship finding 3, GET-858): only the card of THIS pause decides it. Its token
   // (pause index + nonce, from the button) must be the one the run kept when the card was posted.
   const fromSlack = via === 'slack';
@@ -2391,7 +2403,7 @@ export async function decideAutomationRun(supabase, workspaceId, runId, { approv
       { stage: res.stage ?? null, at: res.at ?? null, ctx: { ...(res.ctx ?? {}), supabase, workspaceId, runId } },
       { startAt: run.step_index ?? 0, inputs: normalizeInputs(res.inputs, run.step_index),
         // Each item of the review decided on its own (GET-724); a plain approve approves them all.
-        decisions: decisions ?? Object.fromEntries((st.bundle?.length ? st.bundle : [{ index: run.step_index ?? 0 }]).map(b => [b.index, { approve: true }])) });
+        decisions: allowed ?? Object.fromEntries((st.bundle?.length ? st.bundle : [{ index: run.step_index ?? 0 }]).map(b => [b.index, { approve: true }])) });
     const row = runOutcome(out);
     // The steps before the pause keep their lines; the one approved and those after it add theirs.
     const before = (Array.isArray(run.step_log) ? run.step_log : []).filter(x => x?.status !== 'waiting');
@@ -2672,7 +2684,8 @@ function runWriter(supabase, runId) {
   return (patch) => (queue = queue.then(() => supabase.from('agent_routine_runs').update(patch).eq('id', runId)).then(() => null, () => null));
 }
 
-export async function startTestRun(supabase, workspaceId, automationId, { pick = null, holdSends = false } = {}) {
+export async function startTestRun(supabase, workspaceId, automationId, { pick = null, holdSends = false, startedByKey = null } = {}) {
+  const starter = startedByKey ? { started_by_key: startedByKey } : {};
   await loadAutomationExtension();   // flowRunsSteps reads it (GET-910)
   // holdSends (GET-873): a test that sends nothing out (runSteps' hold); the run is marked `held`.
   const mark = holdSends ? { test: true, held: true } : { test: true };
@@ -2687,7 +2700,7 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
     if (!ch) return { ok: false, error: 'no_trigger', message: r.ok ? 'That field has not changed in HubSpot in the last 7 days.' : (REASON_TEXT[r.reason] ?? r.reason) };
     const trig = { kind: 'hubspot_field_changed', label: changeText(cfg, ch), at: ch.at, source: 'hubspot' };
     const { data: run, error } = await supabase.from('agent_routine_runs').insert({
-      workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running', state: { ...mark, trigger: trig },
+      workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running', ...starter, state: { ...mark, trigger: trig },
     }).select('id').single();
     if (error) return { ok: false, error: 'run_not_created', message: error.message };
     const save = runWriter(supabase, run.id);
@@ -2709,7 +2722,7 @@ export async function startTestRun(supabase, workspaceId, automationId, { pick =
     return { ok: false, error: 'no_trigger', message: wants.length ? `Nothing to test with yet: no ${wants.join(', or ')}.` : 'Testing on a live trigger works for calls, account signals and closed deals.' };
   }
   const { data: run, error } = await supabase.from('agent_routine_runs').insert({
-    workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running',
+    workspace_id: workspaceId, routine_id: a.id, dedupe_key: `test:${a.id}:${Date.now()}`, status: 'running', ...starter,
     state: { ...mark, trigger: { kind: trigger.kind, label: trigger.label, at: trigger.at, source: trigger.source ?? null } },
   }).select('id').single();
   if (error) return { ok: false, error: 'run_not_created', message: error.message };
@@ -2935,7 +2948,7 @@ async function deliverLegacy(automation, doc, { stage = null, at = null, ctx = n
 }
 
 /** One workspace's automations against one day of stage changes. */
-export async function runAutomationsForWorkspace(supabase, workspaceId, since, { onlyAccount = null, onlyAutomation = null, max = null, maxPerJob = null } = {}) {
+export async function runAutomationsForWorkspace(supabase, workspaceId, since, { onlyAccount = null, onlyAutomation = null, max = null, maxPerJob = null, startedByKey = null } = {}) {
   const { data: routines } = await supabase
     .from('agent_routines')
     .select('*')
@@ -3075,7 +3088,7 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
       ranThisPass.add(dedupe);
 
       const { data: run } = await supabase.from('agent_routine_runs').insert({
-        workspace_id: workspaceId, routine_id: a.id, dedupe_key: dedupe, status: 'running',
+        workspace_id: workspaceId, routine_id: a.id, dedupe_key: dedupe, status: 'running', ...(startedByKey ? { started_by_key: startedByKey } : {}),
       }).select('id').single();
 
       try {

@@ -1,6 +1,7 @@
 // The approvals inbox over the API (GET-713). An automation step that requires approval pauses its
-// run; these list what is waiting and decide it, so an API-plan workspace's own agent or tool can be
-// the human in the loop. The automation.approval_requested webhook says when something new waits.
+// run; these list what is waiting and decide it. A person's own agent can decide for them, but a
+// workspace key can't approve and neither can the key that started the run (GET-1062).
+// The automation.approval_requested webhook says when something new waits.
 //
 // GET  /v2/approvals                       → { approvals: [{ run_id, automation, account, step, rows, … }] }
 // POST /v2/approvals/:runId/approve        → runs that step and the rest of the automation
@@ -8,6 +9,7 @@
 import { Router } from 'express';
 import { getSupabaseClient, listAutomationApprovals, decideAutomationRun } from '@nous/core';
 import { routineAccess, canSeeRoutineRuns, routineRunGuard } from '../../lib/routineAccess.mjs';
+import { decidedBy, refuseApproval } from '../../lib/approvalGuard.mjs';
 
 export const approvalsV2Router = Router();
 
@@ -38,8 +40,9 @@ for (const decision of ['approve', 'reject']) {
       const decisions = decision === 'approve' && req.body?.decisions && typeof req.body.decisions === 'object' ? req.body.decisions : null;
       // A key cannot pick a mailbox (GET-745): an email goes from the automation's own sender.
       for (const d of Object.values(decisions ?? {})) if (d?.email && typeof d.email === 'object') delete d.email.from;
+      if (decision === 'approve' && await refuseApproval(getSupabaseClient(), req, res, req.params.runId)) return;
       const out = await decideAutomationRun(getSupabaseClient(), req.workspaceId, req.params.runId,
-        { approve: decision === 'approve', userId: req.internalUserId ?? null, decisions });
+        { approve: decision === 'approve', userId: decidedBy(req), decisions });
       if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 409).json(out);
       return res.json(out);
     } catch (err) {

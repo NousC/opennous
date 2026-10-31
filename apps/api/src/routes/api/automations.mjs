@@ -17,6 +17,7 @@ import { listMailboxes, chosenMailbox } from '../../lib/automationMailboxes.mjs'
 import { resolveTeamAndPlan } from '../../lib/access.mjs';
 import { loadModelKey, listModels, callOwnModel, OWN_MODEL_PROVIDERS } from '../../lib/ownModel.mjs';
 import { FLOW_TRIGGERS, FLOW_TRIGGER_KEYS, checkFlow, scheduleColumns, destinationColumns, isMissingFlowColumn } from '../../lib/flows.mjs';
+import { decidedBy, refuseApproval } from '../../lib/approvalGuard.mjs';
 
 // The built-in automations (GET-80) — the OpenNous-shipped side of the automation layer (GET-73),
 // as opposed to the user's own custom Sequences (routines). Per SEAT: each member's calls fire into
@@ -894,8 +895,9 @@ for (const decision of ['approve', 'reject']) {
     try {
       const decisions = decision === 'approve' && req.body?.decisions && typeof req.body.decisions === 'object' ? req.body.decisions : null;
       if (!(await ownMailboxesOnly(req, decisions))) return res.status(403).json({ error: 'mailbox_not_yours', message: 'You can only send from your own mailbox.' });
+      if (decision === 'approve' && await refuseApproval(getSupabaseClient(), req, res, req.params.runId)) return;
       const out = await decideAutomationRun(getSupabaseClient(), req.workspaceId, req.params.runId,
-        { approve: decision === 'approve', userId: req.internalUserId ?? null, decisions });
+        { approve: decision === 'approve', userId: decidedBy(req), decisions });
       if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 409).json(out);
       return res.json(out);
     } catch (err) {
@@ -1037,7 +1039,7 @@ automationsRouter.get('/:id/test-triggers', async (req, res) => {
 automationsRouter.post('/:id/test-run', async (req, res) => {
   try {
     // A chosen trigger (GET-735), one of GET /:id/test-triggers; else the newest.
-    const out = await startTestRun(getSupabaseClient(), req.workspaceId, req.params.id, { pick: req.body?.trigger_id ?? null });
+    const out = await startTestRun(getSupabaseClient(), req.workspaceId, req.params.id, { pick: req.body?.trigger_id ?? null, startedByKey: req.apiKeyId ?? null });
     if (!out.ok) return res.status(out.error === 'not_found' ? 404 : 409).json(out);
     return res.json(out);
   } catch (err) {
@@ -1050,6 +1052,8 @@ automationsRouter.post('/:id/test-run', async (req, res) => {
 // edited it, from the mailbox the draft is in; the draft it replaces is removed (GET-731).
 automationsRouter.post('/runs/:runId/send-email', async (req, res) => {
   try {
+    // Sending is the approval: it delivers the step and closes the run.
+    if (await refuseApproval(getSupabaseClient(), req, res, req.params.runId)) return;
     const b = req.body ?? {};
     // From (GET-745): only one of the sender's own mailboxes.
     const picked = await chosenMailbox(getSupabaseClient(), req.workspaceId, req.internalUserId, b.from ?? null);
@@ -1072,7 +1076,7 @@ automationsRouter.post('/:id/test', async (req, res) => {
     // see the output, not to respect a schedule.
     const since = new Date(Date.now() - 90 * 24 * 3600_000).toISOString();
     const out = await runAutomationsForWorkspace(supabase, req.workspaceId, since, {
-      onlyAutomation: req.params.id, max: 1,
+      onlyAutomation: req.params.id, max: 1, startedByKey: req.apiKeyId ?? null,
     });
     if (!out?.document) {
       return res.json({ ran: false, reason: 'nothing_to_run_on', message: 'No account has hit this trigger in the last 90 days, so there is nothing to write about yet.' });
