@@ -13,6 +13,7 @@ import { enqueueForRetry } from '../../utils/webhookInbox.mjs';
 import { logSysEvent } from '../../utils/systemLog.mjs';
 import { decrypt } from '../../utils/encryption.mjs';
 import { verifyStandardWebhook, UNREADABLE_KEY } from '../standardWebhook.mjs';
+import { inboundAllowed } from '../inboundGate.mjs';
 
 // When Fathom is connected through the app, we register the webhook via their API and they
 // hand back a per-connection signing secret, stored (encrypted) on the connection. That is
@@ -288,6 +289,8 @@ export async function handleFathom(req, res, workspaceId) {
       req.headers['webhook-signature'],
     );
     if (!valid) return res.status(401).json({ error: 'invalid_signature' });
+  } else if (!inboundAllowed(req, 'fathom', workspaceId)) {
+    return res.status(401).json({ error: 'invalid_signature' });
   }
 
   try {

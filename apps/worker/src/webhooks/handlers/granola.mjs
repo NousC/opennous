@@ -28,6 +28,7 @@ import { recordUnresolved, markUnresolvedResolved } from '../../utils/unresolved
 import { logSysEvent } from '../../utils/systemLog.mjs';
 import { decrypt } from '../../utils/encryption.mjs';
 import { verifyStandardWebhook, UNREADABLE_KEY } from '../standardWebhook.mjs';
+import { inboundAllowed } from '../inboundGate.mjs';
 
 const GRANOLA_BASE = 'https://public-api.granola.ai/v1';
 
@@ -444,7 +445,7 @@ export async function handleGranola(req, res, workspaceId) {
 
   // Signature verification (live deliveries only — retries trust the stored row).
   // Any connected rep's signing secret may have signed this delivery; env secret is a
-  // self-host fallback. No secret anywhere → skip, like the Fathom manual path.
+  // self-host fallback. No secret anywhere → the URL's token, like the Fathom manual path.
   const conns = await getGranolaConnections(supabase, workspaceId, { withoutApiKey: true });
   const secrets = conns.map(c => c.signingKey).filter(Boolean);
   if (process.env.GRANOLA_WEBHOOK_SECRET) secrets.push(process.env.GRANOLA_WEBHOOK_SECRET);
@@ -457,6 +458,8 @@ export async function handleGranola(req, res, workspaceId) {
       req.headers['webhook-signature'],
     ));
     if (!valid) return res.status(401).json({ error: 'invalid_signature' });
+  } else if (!inboundAllowed(req, 'granola', workspaceId)) {
+    return res.status(401).json({ error: 'invalid_signature' });
   }
 
   try {

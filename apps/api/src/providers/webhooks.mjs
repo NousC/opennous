@@ -33,7 +33,7 @@
 
 import crypto from 'crypto';
 import { publicApiBase } from '../lib/publicApiBase.mjs';
-import { posthogSettings, posthogRequest, posthogDestination } from '@nous/core';
+import { posthogSettings, posthogRequest, posthogDestination, TOKENED_PROVIDERS, inboundToken } from '@nous/core';
 import { assertPublicUrl } from '../lib/ssrf.mjs';
 
 export function workerBaseUrl() {
@@ -46,7 +46,8 @@ export function workerBaseUrl() {
 /** Where a given provider's events land, as the provider must call it: the PUBLIC address (GET-666).
  *  The worker serves /inbound/* behind Caddy. */
 export function inboundUrl(provider, workspaceId) {
-  return `${publicApiBase()}/inbound/${provider}/${workspaceId}`;
+  const url = `${publicApiBase()}/inbound/${provider}/${workspaceId}`;
+  return TOKENED_PROVIDERS.has(provider) ? `${url}?token=${inboundToken(provider, workspaceId)}` : url;
 }
 
 const CAL_COM_API_VERSION = '2026-05-01';
@@ -172,8 +173,7 @@ async function unsubscribeCalCom(pat, creds) {
 // made, because a half-subscribed account delivers a confusing subset of the timeline
 // and looks like a bug in us rather than a failed setup.
 //
-// No signing secret in their API, so the worker leans on the workspace-scoped URL plus
-// the optional HEYREACH_WEBHOOK_SECRET shared secret.
+// No signing secret in their API, so the URL carries the inbound token (GET-1088).
 const HEYREACH_EVENTS = [
   { type: 'CONNECTION_REQUEST_SENT', name: 'Nous · CR Sent' },
   { type: 'MESSAGE_SENT',            name: 'Nous · Msg Sent' },
@@ -302,11 +302,7 @@ async function unsubscribeLemlist(apiKey, creds) {
 // The key must carry a webhooks scope. A narrow key connects fine and then 403s here,
 // which we surface as a note rather than swallow — see webhookNote in the catalogue.
 //
-// NOTE ON AUTH: we register the plain workspace-scoped URL with no shared secret,
-// because Instantly cannot produce the HMAC our worker's verifyHmac expects. The worker
-// only enforces that when INSTANTLY_WEBHOOK_SECRET is set, which it is not — set it and
-// inbound Instantly events start 401ing. Instantly does support custom `headers` on the
-// subscription, so a static-header check is the way to lock this down later.
+// Auth: Instantly can't sign, so the URL carries the inbound token (GET-1088).
 async function subscribeInstantly(apiKey, workspaceId) {
   try {
     const res = await fetch('https://api.instantly.ai/api/v2/webhooks', {

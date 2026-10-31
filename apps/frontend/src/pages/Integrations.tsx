@@ -842,7 +842,7 @@ export default function Integrations({ embedded = false, connectProvider, chrome
         <div className="text-[13px] text-foreground/90">
           Connect your Stripe so payments auto-convert accounts to <span className="font-medium">Client</span>. In your Stripe dashboard, add a webhook pointing at this URL:
         </div>
-        <WebhookManualPanel displayName="Stripe" intro={null} url={`${apiUrl}/inbound/stripe/${workspaceId}`} settingsUrl="https://dashboard.stripe.com/webhooks/create" />
+        <WebhookManualPanel displayName="Stripe" intro={null} url={webhookUrls.stripe} settingsUrl="https://dashboard.stripe.com/webhooks/create" />
         <div className="text-[12px] text-muted-foreground/80">
           Select events <code className="text-foreground">payment_intent.succeeded</code> and <code className="text-foreground">invoice.paid</code>. When a customer pays, the matching account and everyone at their company flip to Client, out of the funnel onto the client health axis.
         </div>

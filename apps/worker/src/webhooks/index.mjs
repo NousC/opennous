@@ -22,6 +22,7 @@ import { handleAiArk } from './handlers/aiark.mjs';
 import { handleComposio } from './handlers/composio.mjs';
 import { handlePostHog } from './handlers/posthog.mjs';
 import { enqueueForRetry } from '../utils/webhookInbox.mjs';
+import { inboundAllowed, inboundTrusted, untrustedFirefliesBody } from './inboundGate.mjs';
 
 // Ops metering note: each webhook handler writes its own workspace_system_log
 // row (the live op log), and workspace_system_log.billable_ops defaults to 1 —
@@ -53,8 +54,9 @@ export function verifyHmac(req, secret) {
   } catch { return false; }
 }
 
-// All inbound routes accept /:workspaceId so the worker can handle any workspace
-// without needing API key auth (HMAC on sensitive sources instead).
+// All inbound routes accept /:workspaceId so the worker can handle any workspace without needing
+// API key auth. A self-hoster's *_WEBHOOK_SECRET still wins where set; otherwise the URL's token
+// is the proof (inboundGate.mjs).
 
 // Cloud's inbound sources (LinkedIn via Unipile, GET-754) mount here: ahead of every public
 // source below and of the catch-all at the end, which would otherwise answer them first.
@@ -63,10 +65,12 @@ export const cloudWebhookRouter = Router();
 webhookRouter.use(cloudWebhookRouter);
 
 webhookRouter.post('/fireflies/:workspaceId', (req, res) => {
+  const workspaceId = req.params.workspaceId;
   const secret = process.env.FIREFLIES_WEBHOOK_SECRET;
-  if (secret && !verifyHmac(req, secret)) {
+  if (secret ? !verifyHmac(req, secret) : !inboundAllowed(req, 'fireflies', workspaceId)) {
     return res.status(401).json({ error: 'invalid_signature' });
   }
+  if (!secret && !inboundTrusted(req, 'fireflies', workspaceId)) req.body = untrustedFirefliesBody(req.body);
   handleFireflies(req, res, req.params.workspaceId).catch(err => {
     console.error('[WEBHOOK/fireflies]', err);
     res.status(500).json({ error: 'internal_error' });
@@ -109,7 +113,7 @@ webhookRouter.post(['/fellow/:workspaceId', '/fellow'], (req, res) => {
 
 webhookRouter.post('/rb2b/:workspaceId', (req, res) => {
   const secret = process.env.RB2B_WEBHOOK_SECRET;
-  if (secret && !verifyHmac(req, secret)) {
+  if (secret ? !verifyHmac(req, secret) : !inboundAllowed(req, 'rb2b', req.params.workspaceId)) {
     return res.status(401).json({ error: 'invalid_signature' });
   }
   handleRB2B(req, res, req.params.workspaceId).catch(err => {
@@ -122,16 +126,19 @@ webhookRouter.post(['/instantly/:workspaceId', '/instantly'], (req, res) => {
   const workspaceId = req.params.workspaceId || req.query.workspace_id;
   if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
   const secret = process.env.INSTANTLY_WEBHOOK_SECRET;
-  if (secret && !verifyHmac(req, secret)) return res.status(401).json({ error: 'invalid_signature' });
+  if (secret ? !verifyHmac(req, secret) : !inboundAllowed(req, 'instantly', workspaceId)) {
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
   handleInstantly(req, res, workspaceId).catch(err => {
     console.error('[WEBHOOK/instantly]', err);
     res.status(500).json({ error: 'internal_error' });
   });
 });
 
-// Shared-secret query-param check used by providers that don't sign payloads.
-function checkQuerySecret(req, envSecret) {
-  if (!envSecret) return true;
+// Shared-secret query-param check used by providers that don't sign payloads, or the URL's token
+// when no shared secret is set.
+function checkQuerySecret(req, envSecret, provider, workspaceId) {
+  if (!envSecret) return inboundAllowed(req, provider, workspaceId);
   const querySecret = (req.query.secret || '').toString();
   try {
     return querySecret.length === envSecret.length &&
@@ -146,7 +153,7 @@ function checkQuerySecret(req, envSecret) {
 webhookRouter.post(['/emailbison/:workspaceId', '/emailbison'], (req, res) => {
   const workspaceId = req.params.workspaceId || req.query.workspace_id;
   if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
-  if (!checkQuerySecret(req, process.env.EMAILBISON_WEBHOOK_SECRET)) {
+  if (!checkQuerySecret(req, process.env.EMAILBISON_WEBHOOK_SECRET, 'emailbison', workspaceId)) {
     return res.status(401).json({ error: 'invalid_secret' });
   }
   handleEmailBison(req, res, workspaceId).catch(async err => {
@@ -161,7 +168,7 @@ webhookRouter.post(['/emailbison/:workspaceId', '/emailbison'], (req, res) => {
 webhookRouter.post(['/heyreach/:workspaceId', '/heyreach'], (req, res) => {
   const workspaceId = req.params.workspaceId || req.query.workspace_id;
   if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
-  if (!checkQuerySecret(req, process.env.HEYREACH_WEBHOOK_SECRET)) {
+  if (!checkQuerySecret(req, process.env.HEYREACH_WEBHOOK_SECRET, 'heyreach', workspaceId)) {
     return res.status(401).json({ error: 'invalid_secret' });
   }
   handleHeyReach(req, res, workspaceId).catch(async err => {
@@ -176,7 +183,7 @@ webhookRouter.post(['/heyreach/:workspaceId', '/heyreach'], (req, res) => {
 webhookRouter.post(['/smartlead/:workspaceId', '/smartlead'], (req, res) => {
   const workspaceId = req.params.workspaceId || req.query.workspace_id;
   if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
-  if (!checkQuerySecret(req, process.env.SMARTLEAD_WEBHOOK_SECRET)) {
+  if (!checkQuerySecret(req, process.env.SMARTLEAD_WEBHOOK_SECRET, 'smartlead', workspaceId)) {
     return res.status(401).json({ error: 'invalid_secret' });
   }
   handleSmartlead(req, res, workspaceId).catch(async err => {
@@ -227,7 +234,9 @@ webhookRouter.post(['/stripe/:workspaceId', '/stripe'], (req, res) => {
   const workspaceId = req.params.workspaceId || req.query.workspace_id;
   if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
   const secret = process.env.STRIPE_INBOUND_WEBHOOK_SECRET;
-  if (secret && !verifyHmac(req, secret)) return res.status(401).json({ error: 'invalid_signature' });
+  if (secret ? !verifyHmac(req, secret) : !inboundAllowed(req, 'stripe', workspaceId)) {
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
   handleStripe(req, res, workspaceId).catch(err => {
     console.error('[WEBHOOK/stripe]', err);
     res.status(500).json({ error: 'internal_error' });
@@ -241,7 +250,7 @@ webhookRouter.post(['/aiark/:workspaceId/:leadListId', '/aiark/:workspaceId', '/
   const workspaceId = req.params.workspaceId || req.query.workspace_id;
   const leadListId = req.params.leadListId || req.query.lead_list_id || null;
   if (!workspaceId) return res.status(400).json({ error: 'workspace_id_required' });
-  if (!checkQuerySecret(req, process.env.AIARK_WEBHOOK_SECRET)) {
+  if (!checkQuerySecret(req, process.env.AIARK_WEBHOOK_SECRET, 'aiark', workspaceId)) {
     return res.status(401).json({ error: 'invalid_secret' });
   }
   handleAiArk(req, res, workspaceId, leadListId).catch(async err => {

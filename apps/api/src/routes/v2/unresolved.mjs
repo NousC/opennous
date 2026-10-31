@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
-import { getSupabaseClient, resolveFocus, upsertIdentifier } from '@nous/core';
+import { getSupabaseClient, resolveFocus, upsertIdentifier, inboundToken } from '@nous/core';
 import { workerBaseUrl } from '../../providers/webhooks.mjs';
 
 // /v2/unresolved — the agent-facing queue of inbound events that were received but couldn't be
@@ -120,7 +120,7 @@ async function reingest(source, workspaceId, externalId, entityId) {
   const headers = { 'Content-Type': 'application/json' };
   const secret = process.env.FIREFLIES_WEBHOOK_SECRET;
   if (secret) headers['x-nous-signature'] = `sha256=${crypto.createHmac('sha256', secret).update(JSON.stringify(body)).digest('hex')}`;
-  const wres = await fetch(`${workerBaseUrl()}/inbound/fireflies/${workspaceId}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  const wres = await fetch(`${workerBaseUrl()}/inbound/fireflies/${workspaceId}?token=${inboundToken('fireflies', workspaceId)}`, { method: 'POST', headers, body: JSON.stringify(body) });
   return await wres.json().catch(() => ({}));
 }
 

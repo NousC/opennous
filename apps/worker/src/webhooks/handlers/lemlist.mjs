@@ -30,6 +30,7 @@ import { logActivity } from '../../utils/activity.mjs';
 import { resolveContact } from '../../utils/resolveContact.mjs';
 import { enqueueForRetry } from '../../utils/webhookInbox.mjs';
 import { logSysEvent } from '../../utils/systemLog.mjs';
+import { inboundAllowed } from '../inboundGate.mjs';
 
 const EVENT_TYPE_MAP = {
   // Email
@@ -220,9 +221,8 @@ export async function handleLemlist(req, res, workspaceId) {
   const supabase = getSupabaseClient();
 
   // Per-workspace secret check, with LEMLIST_WEBHOOK_SECRET env fallback.
-  // If neither is configured (fresh self-host, no auto-register run), accept
-  // the webhook unverified — same default we use for the other paste-required
-  // providers when their env var is unset.
+  // If neither is configured (fresh self-host, no auto-register run), the URL's
+  // token, like the other paste-required providers.
   const stored   = await loadLemlistSecret(supabase, workspaceId);
   const envSec   = process.env.LEMLIST_WEBHOOK_SECRET || null;
   const expected = stored || envSec;
@@ -232,6 +232,8 @@ export async function handleLemlist(req, res, workspaceId) {
       console.warn(`[LEMLIST_WEBHOOK] secret mismatch — workspace=${workspaceId}`);
       return res.status(401).json({ error: 'invalid_secret' });
     }
+  } else if (!inboundAllowed(req, 'lemlist', workspaceId)) {
+    return res.status(401).json({ error: 'invalid_secret' });
   }
 
   try {

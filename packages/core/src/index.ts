@@ -167,6 +167,8 @@ export { violatesPronounRule, PRONOUN_RULE_REASON } from './text/pronounGuard.js
 export { isTitleOnlyFact, TITLE_ONLY_REASON } from './text/titleOnlyGuard.js';
 export { isAutoNotification, AUTO_NOTIFICATION_REASON } from './text/autoNotification.js';
 export { notACommitment } from './text/notACommitment.js';
+// Who may post to an inbound webhook (GET-1088).
+export { TOKENED_PROVIDERS, inboundToken, inboundTokenValid } from './webhooks/inboundToken.mjs';
 // Message privacy by participant (GET-244): who may read an email's or LinkedIn message's content.
 export {
   PRIVATE_MESSAGE_TYPES, isPrivateMessageType, messageParticipants, canReadMessage, messageDirection,

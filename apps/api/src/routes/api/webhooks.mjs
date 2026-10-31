@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient } from '@nous/core';
+import { getSupabaseClient, TOKENED_PROVIDERS, inboundToken } from '@nous/core';
 import { WEBHOOK_EVENT_TYPES } from '../../lib/webhookStatus.mjs';
 import { publicApiBase } from '../../lib/publicApiBase.mjs';
 
@@ -18,12 +18,20 @@ const WEBHOOK_PATHS = {
   lemlist:    (b, w) => `${b}/inbound/lemlist/${w}`,
   fireflies:  (b, w) => `${b}/inbound/fireflies/${w}`,
   fathom:     (b, w) => `${b}/inbound/fathom/${w}`,
+  stripe:     (b, w) => `${b}/inbound/stripe/${w}`,
   calendly:   (b, w) => `${b}/inbound/calendly/${w}`,
   cal_com:    (b, w) => `${b}/inbound/cal_com/${w}`,
   granola:    (b, w) => `${b}/inbound/granola/${w}`,
   posthog:    (b, w) => `${b}/inbound/posthog/${w}`,
 };
 const WEBHOOK_SOURCES = Object.keys(WEBHOOK_PATHS);
+
+// The URL a person pastes carries the same token as one we register ourselves (GET-1088).
+function pasteUrl(source, base, workspaceId) {
+  const url = WEBHOOK_PATHS[source](base, workspaceId);
+  if (!workspaceId || !TOKENED_PROVIDERS.has(source)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}token=${inboundToken(source, workspaceId)}`;
+}
 // PostHog's destination carries the connection's secret, which only connecting creates (GET-751):
 // it is shown here once connected and can never be added by hand.
 const CONNECT_ONLY = new Set(['posthog']);
@@ -113,7 +121,7 @@ webhooksRouter.get('/urls', async (req, res) => {
   // The URL a tool must call: the public address, never the internal Docker host (GET-666).
   const b = publicApiBase();
 
-  const baseUrls = WEBHOOK_SOURCES.map(source => ({ source, url: WEBHOOK_PATHS[source](b, workspaceId) }));
+  const baseUrls = WEBHOOK_SOURCES.map(source => ({ source, url: pasteUrl(source, b, workspaceId) }));
 
   // No workspace → no telemetry to enrich with. Return the raw URLs (all inactive) so a
   // caller that only needs the source→URL map (the Integrations page) still works.
