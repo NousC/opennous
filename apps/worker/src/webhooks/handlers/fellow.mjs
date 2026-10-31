@@ -905,6 +905,7 @@ export async function reprocessFellow(supabase, workspaceId, body) {
         meta:     {
           source_ref: sourceRef, note_id: noteId, url: url || null,
           owner_user_id: meetingOwnerUserId ?? null, host_email: hostEmail,
+          ...(call.durationMinutes ? { duration_minutes: call.durationMinutes } : {}),
           // Who was in the room, so one record does not lose what N records carried.
           participant_entity_ids: [...externals.map(e => e.contactId), ...internals],
           // Everyone on the call by address (GET-459): what decides whether it was internal.
