@@ -79,6 +79,26 @@ async function verify(getClient, req, res, next) {
     return res.status(401).json({ error: 'api_key_expired', detail: 'This API key has expired. Create or rotate a key to get a fresh one.' });
   }
 
+  // Access follows the person (GET-1058). A key with an owner acts AS that person, so it works
+  // only while they are still a member of the key's workspace, and it never sees more than their
+  // role allows today: a removed member's key is refused, a demoted admin's key drops to member
+  // scope from its next call, and a promotion does not widen an old member key (the key's own
+  // scope is the ceiling). Read on every request, like revocation, so a change takes effect at once.
+  let viewerScope = 'admin';
+  if (keyRow.owner_user_id) {
+    const { data: member } = await supabase
+      .from('workspace_members')
+      .select('role')
+      .eq('workspace_id', keyRow.workspace_id)
+      .eq('user_id', keyRow.owner_user_id)
+      .maybeSingle();
+    if (!member) {
+      return res.status(401).json({ error: 'key_owner_not_member', detail: 'The person this key belongs to is no longer a member of this workspace.' });
+    }
+    const roleIsAdmin = member.role === 'owner' || member.role === 'admin';
+    viewerScope = keyRow.scope === 'admin' && roleIsAdmin ? 'admin' : 'member';
+  }
+
   // Capability: a read-only key can read/compute context but cannot record, modify, or
   // send. Fail-closed — anything not an explicit read is blocked. read_write and legacy
   // (null) keys are unrestricted, so existing keys are unaffected.
@@ -102,9 +122,10 @@ async function verify(getClient, req, res, next) {
   // raw content is scoped to them; an admin/workspace key (no owner_user_id) sees
   // all raw. This is the ONLY point the agent gets a viewer identity, since the
   // MCP session otherwise carries only a workspace. Legacy keys (null owner) keep
-  // full access, so nothing breaks on deploy.
+  // full access, so nothing breaks on deploy. The scope of an owned key is the
+  // owner's live one, worked out above.
   req.memberUserId = keyRow.owner_user_id ?? null;
-  req.viewerScope  = keyRow.owner_user_id ? (keyRow.scope || 'member') : 'admin';
+  req.viewerScope  = viewerScope;
   // Normalize client identifier: mcp, sdk (sdk-node → sdk), or api
   const rawClient = (req.headers['x-nous-client'] || '').toLowerCase();
   req.clientType = rawClient === 'mcp' ? 'mcp' : rawClient.startsWith('sdk') ? 'sdk' : 'api';

@@ -26,7 +26,12 @@ const REDIRECT = 'https://grok.com/oauth/callback';
 const DEFAULTS = { oauth_authorization_requests: { status: 'pending' } };
 
 function memorySupabase() {
-  const tables = { oauth_clients: [], oauth_authorization_requests: [], oauth_tokens: [], api_keys: [] };
+  // USER is the member fakeSession signs in as; the key middleware checks the key's owner is
+  // still a member of its workspace (GET-1058).
+  const tables = {
+    oauth_clients: [], oauth_authorization_requests: [], oauth_tokens: [], api_keys: [],
+    workspace_members: [{ workspace_id: WS, user_id: USER, role: 'member' }],
+  };
   const matches = (row, filters) => filters.every(([op, c, v]) =>
     op === 'eq' ? row[c] === v : op === 'is' ? (row[c] ?? null) === v : true);
   return {

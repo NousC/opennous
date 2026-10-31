@@ -276,6 +276,7 @@
 2026_10_27_living_files_doc.sql
 2026_10_27_market_entities.sql
 2026_10_28_engaged_accounts.sql
+2026_10_28_revoke_keys_on_user_delete.sql
 2026_10_29_icp_backtests.sql
 agent_actions.sql
 backfill_credit_control.sql

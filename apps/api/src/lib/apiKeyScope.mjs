@@ -31,3 +31,32 @@ export function apiKeyScopeFor(req, opts = {}) {
   const scope = isAdmin ? 'admin' : 'member';
   return { owner_user_id: ownerUserId, scope };
 }
+
+// Revoke a person's live API keys, and the OAuth tokens minted on them, when they lose access
+// (GET-1058): removed from a team or workspace, or deleted by a platform admin. Pass workspaceIds
+// to limit it to the workspaces they left; omit it to revoke everywhere. Returns the revoked key
+// ids. Best-effort: the key middleware already refuses a key whose owner is no longer a member, so
+// a failure here leaves a dead row behind, never a working key. It logs and returns [] instead of
+// failing the removal.
+export async function revokeMemberKeys(supabase, userId, { workspaceIds } = {}) {
+  if (!userId) return [];
+  if (Array.isArray(workspaceIds) && !workspaceIds.length) return [];
+  try {
+    const now = new Date().toISOString();
+    let q = supabase.from('api_keys').update({ revoked_at: now })
+      .eq('owner_user_id', userId).is('revoked_at', null);
+    if (workspaceIds) q = q.in('workspace_id', workspaceIds);
+    const { data: keys, error } = await q.select('id');
+    if (error) throw error;
+    const ids = (keys || []).map((k) => k.id);
+    if (ids.length) {
+      const { error: tokErr } = await supabase.from('oauth_tokens').update({ revoked_at: now })
+        .in('api_key_id', ids).is('revoked_at', null);
+      if (tokErr) throw tokErr;
+    }
+    return ids;
+  } catch (err) {
+    console.error('[api-keys] revokeMemberKeys failed', { userId, error: err?.message || String(err) });
+    return [];
+  }
+}

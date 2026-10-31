@@ -6,6 +6,7 @@
 import crypto from 'crypto';
 import { getSupabaseClient } from '@nous/core';
 import { getPlanFromSubscription, effectiveMemberLimit, hasFeature, isSelfHosted, isApiTier } from './plans.mjs';
+import { revokeMemberKeys } from './apiKeyScope.mjs';
 
 export const ADMIN_TEAM_ROLES = ['founder', 'owner', 'admin'];
 
@@ -164,11 +165,16 @@ export async function createTeamInvitation(supabase, {
   };
 }
 
-/** Take a user off a team and out of every workspace the team owns. No checks — callers guard. */
+/**
+ * Take a user off a team and out of every workspace the team owns, and revoke their API keys and
+ * OAuth grants there (GET-1058). No checks — callers guard.
+ */
 export async function removeTeamMember(supabase, teamId, userId) {
   await supabase.from('team_members').delete().eq('team_id', teamId).eq('user_id', userId);
   const { data: workspaces } = await supabase.from('workspaces').select('id').eq('team_id', teamId);
   if (workspaces?.length) {
-    await supabase.from('workspace_members').delete().in('workspace_id', workspaces.map(w => w.id)).eq('user_id', userId);
+    const workspaceIds = workspaces.map(w => w.id);
+    await supabase.from('workspace_members').delete().in('workspace_id', workspaceIds).eq('user_id', userId);
+    await revokeMemberKeys(supabase, userId, { workspaceIds });
   }
 }

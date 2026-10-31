@@ -10,6 +10,7 @@ import { getCountryFromRequest } from '../../lib/geo.mjs';
 import { sanitizeModelPolicy } from '../../lib/model.mjs';
 import { accountCountries } from '../../lib/listRows.mjs';
 import { recordConnectionRemovals, connectionsOfWorkspaces } from '../../lib/audit.mjs';
+import { revokeMemberKeys } from '../../lib/apiKeyScope.mjs';
 
 export const workspacesRouter = Router();
 
@@ -708,6 +709,8 @@ workspacesRouter.delete('/:workspaceId/members/:userId', verifySupabaseAuth, asy
     if (wm?.role === 'owner') return res.status(400).json({ error: 'cannot_revoke_owner_access' });
 
     await supabase.from('workspace_members').delete().eq('workspace_id', workspaceId).eq('user_id', userId);
+    // Their keys and OAuth grants in this workspace stop too (GET-1058).
+    await revokeMemberKeys(supabase, userId, { workspaceIds: [workspaceId] });
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: 'internal_error', ...(process.env.NODE_ENV !== 'production' && { detail: String(err.message) }) });

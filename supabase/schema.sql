@@ -3363,6 +3363,25 @@ CREATE FUNCTION public.reject_mutation() RETURNS trigger
 
 
 --
+-- Name: revoke_api_keys_of_deleted_user(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.revoke_api_keys_of_deleted_user() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  UPDATE public.oauth_tokens t SET revoked_at = now()
+    FROM public.api_keys k
+   WHERE t.api_key_id = k.id AND k.owner_user_id = OLD.id AND t.revoked_at IS NULL;
+  UPDATE public.api_keys SET revoked_at = now()
+   WHERE owner_user_id = OLD.id AND revoked_at IS NULL;
+  RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: run_invariants(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14202,6 +14221,13 @@ CREATE TRIGGER on_user_signup AFTER INSERT ON public.users FOR EACH ROW EXECUTE 
 
 
 --
+-- Name: users revoke_api_keys_of_deleted_user; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER revoke_api_keys_of_deleted_user BEFORE DELETE ON public.users FOR EACH ROW EXECUTE FUNCTION public.revoke_api_keys_of_deleted_user();
+
+
+--
 -- Name: slack_channel_map scm_touch; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17965,6 +17991,14 @@ GRANT ALL ON FUNCTION public.refresh_team_account_usage(t uuid) TO service_role;
 
 REVOKE ALL ON FUNCTION public.reject_mutation() FROM PUBLIC;
 GRANT ALL ON FUNCTION public.reject_mutation() TO service_role;
+
+
+--
+-- Name: FUNCTION revoke_api_keys_of_deleted_user(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.revoke_api_keys_of_deleted_user() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.revoke_api_keys_of_deleted_user() TO service_role;
 
 
 --
