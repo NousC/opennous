@@ -85,6 +85,7 @@ async function verify(getClient, req, res, next) {
   // scope from its next call, and a promotion does not widen an old member key (the key's own
   // scope is the ceiling). Read on every request, like revocation, so a change takes effect at once.
   let viewerScope = 'admin';
+  let ownerRole = null;
   if (keyRow.owner_user_id) {
     const { data: member } = await supabase
       .from('workspace_members')
@@ -95,6 +96,7 @@ async function verify(getClient, req, res, next) {
     if (!member) {
       return res.status(401).json({ error: 'key_owner_not_member', detail: 'The person this key belongs to is no longer a member of this workspace.' });
     }
+    ownerRole = member.role;
     const roleIsAdmin = member.role === 'owner' || member.role === 'admin';
     viewerScope = keyRow.scope === 'admin' && roleIsAdmin ? 'admin' : 'member';
   }
@@ -102,7 +104,9 @@ async function verify(getClient, req, res, next) {
   // Capability: a read-only key can read/compute context but cannot record, modify, or
   // send. Fail-closed — anything not an explicit read is blocked. read_write and legacy
   // (null) keys are unrestricted, so existing keys are unaffected.
-  const capability = keyRow.capability || 'read_write';
+  // A viewer can only view (GET-1059): their key is read-only whatever it was minted as, read
+  // from their live role so a key minted before they became a viewer is capped too.
+  const capability = ownerRole === 'viewer' ? 'read_only' : (keyRow.capability || 'read_write');
   if (capability === 'read_only' && !readOnlyKeyMayCall(req)) {
     return res.status(403).json({ error: 'read_only_key', detail: 'This API key is read-only — it can read context but cannot record, modify, connect, or send. Use a read/write key for write operations.' });
   }

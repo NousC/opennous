@@ -19,6 +19,7 @@ import {
   writePrimaryPipelineRef,
 } from '@nous/core';
 import { writeIcp } from '../../lib/icp.mjs';
+import { requireAdminKey } from '../../lib/v2Query.mjs';
 import { learnedIcpModel, cloudOnlyIcp } from '../../lib/icpScorer.mjs';
 import { markWorkspaceActivated } from '../../lib/onboardingState.mjs';
 import { hasLiveWebhook } from '../../lib/webhookStatus.mjs';
@@ -537,7 +538,9 @@ workspaceStatusV2Router.get('/status', async (req, res) => {
 // Agent-driven onboarding: write the workspace's basic identity. Mirrors what
 // the app's onboarding wizard used to collect (step-1 + business-type), but the
 // agent does it for the user.
-workspaceStatusV2Router.post('/onboarding', async (req, res) => {
+// Workspace configuration is the team's: the writes below take an admin-scoped key, so a member's
+// own connector can't rewrite the team's ICP, scoring, stages, integrations or CRM policy (GET-1059).
+workspaceStatusV2Router.post('/onboarding', requireAdminKey, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const workspaceId = req.workspaceId;
@@ -607,7 +610,7 @@ workspaceStatusV2Router.post('/onboarding', async (req, res) => {
 // foundation — the agent syncs the context from the user's files with sync_icp, then
 // calls this to turn it into a weighted scoring model. Pass force:true to rebuild over
 // an existing model. Shares its implementation with the human web route.
-workspaceStatusV2Router.post('/scoring-model', requireFeature('icpScoring'), async (req, res) => {
+workspaceStatusV2Router.post('/scoring-model', requireAdminKey, requireFeature('icpScoring'), async (req, res) => {
   try {
     const learned = await learnedIcpModel();
     if (!learned) return cloudOnlyIcp(res);
@@ -661,7 +664,7 @@ workspaceStatusV2Router.get('/stages', async (req, res) => {
 });
 
 // PUT /v2/workspace/stages — replace the whole stage vocabulary. Body: { stages: [...] }.
-workspaceStatusV2Router.put('/stages', async (req, res) => {
+workspaceStatusV2Router.put('/stages', requireAdminKey, async (req, res) => {
   try {
     const stages = Array.isArray(req.body?.stages) ? req.body.stages : null;
     if (!stages) return res.status(400).json({ error: 'stages_required' });
@@ -796,7 +799,7 @@ workspaceStatusV2Router.get('/whoami', async (req, res) => {
   }
 });
 
-workspaceStatusV2Router.post('/integrations', async (req, res) => {
+workspaceStatusV2Router.post('/integrations', requireAdminKey, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const { provider, credentials, name } = req.body || {};
@@ -848,7 +851,7 @@ workspaceStatusV2Router.post('/integrations', async (req, res) => {
 // step). Cloud-only Pro+ feature, gated like the web route.
 const CREATE_TRIGGERS = ['any_reply_or_meeting', 'positive_reply_or_meeting', 'meeting_only', 'interested_stage'];
 const HYGIENE_CADENCES = ['weekly', 'monthly'];
-workspaceStatusV2Router.post('/crm-sync', requireFeature('crmSync'), async (req, res) => {
+workspaceStatusV2Router.post('/crm-sync', requireAdminKey, requireFeature('crmSync'), async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const workspaceId = req.workspaceId;
@@ -1021,7 +1024,7 @@ workspaceStatusV2Router.get('/crm-hygiene', requireFeature('crmSync'), async (re
 // ── POST /v2/workspace/crm-hygiene/:id ───────────────────────────────────────
 // Approve or dismiss a hygiene proposal (records the decision; applying to the
 // CRM stays the /api path's job for now).
-workspaceStatusV2Router.post('/crm-hygiene/:id', requireFeature('crmSync'), async (req, res) => {
+workspaceStatusV2Router.post('/crm-hygiene/:id', requireAdminKey, requireFeature('crmSync'), async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const workspaceId = req.workspaceId;
@@ -1105,7 +1108,7 @@ workspaceStatusV2Router.post('/closed-deals', recordClosedDeals);
 // NOT gated on icpScoring: importing the ICP prose is the finish line of onboarding and
 // must work everywhere, including self-host. Only the LEARNED scoring model below is the
 // Cloud feature — on self-host we still record the ICP, we just skip the model.
-workspaceStatusV2Router.post('/icp/import', async (req, res) => {
+workspaceStatusV2Router.post('/icp/import', requireAdminKey, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const sections = Array.isArray(req.body?.sections) ? req.body.sections : [];

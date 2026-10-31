@@ -16,7 +16,7 @@ import {
 } from '@nous/core';
 import { readFoundations, writeFoundation } from './foundations.mjs';
 import { readIcpModel, recordClosedDeals } from './workspaceStatus.mjs';
-import { allowQueryParams } from '../../lib/v2Query.mjs';
+import { allowQueryParams, requireAdminKey } from '../../lib/v2Query.mjs';
 
 export const icpV2Router = Router();
 
@@ -56,7 +56,8 @@ icpV2Router.get('/', allowQueryParams([]), async (req, res) => {
 });
 
 // PUT /v2/icp { body_md, file_path? } — { icp, model: { status, ... } }
-icpV2Router.put('/', allowQueryParams([]), async (req, res) => {
+// The ICP is the team's: setting it takes an admin-scoped key (GET-1059).
+icpV2Router.put('/', allowQueryParams([]), requireAdminKey, async (req, res) => {
   try {
     const out = await writeFoundation(getSupabaseClient(), req.workspaceId, 'icp', req.body || {});
     if (out.error) return res.status(400).json({ error: out.error });
@@ -90,7 +91,7 @@ icpV2Router.get('/scorer', allowQueryParams([]), async (req, res) => {
   }
 });
 
-icpV2Router.put('/scorer', allowQueryParams([]), async (req, res) => {
+icpV2Router.put('/scorer', allowQueryParams([]), requireAdminKey, async (req, res) => {
   try {
     const scorer = req.body?.scorer;
     if (scorer !== 'nous' && scorer !== 'external' && scorer !== null) {
@@ -127,7 +128,7 @@ icpV2Router.get('/tiers', allowQueryParams([]), async (req, res) => {
   }
 });
 
-icpV2Router.put('/tiers', allowQueryParams([]), async (req, res) => {
+icpV2Router.put('/tiers', allowQueryParams([]), requireAdminKey, async (req, res) => {
   try {
     const body = req.body;
     const reset = body === null || body?.reset === true;
