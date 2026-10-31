@@ -32,6 +32,23 @@ export function apiKeyScopeFor(req, opts = {}) {
   return { owner_user_id: ownerUserId, scope };
 }
 
+/** How long a new key lives unless someone chooses otherwise (GET-1061). */
+export const DEFAULT_KEY_DAYS = 90;
+/** The longest a key can be asked to last. Longer than this is what no expiry is for. */
+export const MAX_KEY_DAYS = 365;
+
+/** When a key made in Settings expires. 0 asks for no expiry, which only an admin can choose. */
+export function keyExpiry(body, { isAdmin, now = Date.now() }) {
+  const asked = Number(body?.expires_in_days);
+  if (body?.expires_in_days === 0 && isAdmin) return null;
+  const days = body?.expires_in_days != null && Number.isFinite(asked) && asked > 0
+    ? Math.min(asked, MAX_KEY_DAYS) : DEFAULT_KEY_DAYS;
+  return new Date(now + days * 86_400_000).toISOString();
+}
+
+/** What a grant may do. Read/write unless the person chose read-only on the consent screen. */
+export const grantCapability = (body) => (body?.capability === 'read_only' ? 'read_only' : 'read_write');
+
 // Revoke a person's live API keys, and the OAuth tokens minted on them, when they lose access
 // (GET-1058): removed from a team or workspace, or deleted by a platform admin. Pass workspaceIds
 // to limit it to the workspaces they left; omit it to revoke everywhere. Returns the revoked key

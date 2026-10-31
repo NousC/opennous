@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { getSupabaseClient, recogniseTeamMembers } from '@nous/core';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam } from '../../lib/auth.mjs';
-import { apiKeyScopeFor } from '../../lib/apiKeyScope.mjs';
+import { apiKeyScopeFor, grantCapability } from '../../lib/apiKeyScope.mjs';
 import { auditFromReq } from '../../lib/audit.mjs';
 import { invalidateAuthCache } from '../../lib/auth.mjs';
 import { identityColumn, canClaimByEmailMatch, emailConfirmedWithoutRoundTrip, authProviderName } from '../../lib/authProvider/index.mjs';
@@ -155,6 +155,7 @@ cliAuthRouter.post('/approve', verifySupabaseAuth, async (req, res) => {
       .from('api_keys').insert({
         workspace_id: workspaceId, name, key_hash: keyHash,
         created_by_user_id: req.internalUserId ?? null,
+        capability: grantCapability(req.body),
         ...apiKeyScopeFor(req),
       })
       .select('id').single();
@@ -273,6 +274,7 @@ async function approveJoin(req, res, supabase, row) {
   const { data: keyRow, error: keyErr } = await supabase.from('api_keys').insert({
     workspace_id: primaryWs, name, key_hash: keyHash,
     created_by_user_id: user.id, owner_user_id: user.id, scope: 'member',
+    capability: grantCapability(req.body),
   }).select('id').single();
   if (keyErr) throw keyErr;
 

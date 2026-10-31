@@ -26,6 +26,7 @@ import { z } from "zod";
 import { get, post, put, patch, del, runWithToolCall } from "./client.js";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { WRITE_ONLY_TOOLS, toolHints } from "./toolHints.js";
 
 // The Workspace layer's (Cloud) additions to the plugin surface, when this checkout carries them:
 // the GTM brain (GET-839). The open-source edition has no src/cloud/ and serves without them.
@@ -406,7 +407,7 @@ const CLOSED_DEAL = z.union([
   }),
 ]);
 
-export function createServer() {
+export function createServer({ hideWrites = false } = {}) {
   const server = new McpServer({
     // What an MCP host shows the server as. "OpenNous", like the product and the plugin.
     name: "opennous",
@@ -2075,13 +2076,14 @@ export function createServer() {
   };
   cloudMcp?.register?.({ tool, z, ...helpers });
   for (const name of PLUGIN_TOOLS) {
-    if (!pending.has(name)) continue;
+    if (!pending.has(name) || (hideWrites && WRITE_ONLY_TOOLS.has(name))) continue;
     const args = [...pending.get(name)];
     const handler = args[args.length - 1];
     if (typeof handler === "function") {
       args[args.length - 1] = (...callArgs) =>
         runWithToolCall({ tool: name, agent: agentName() }, () => handler(...callArgs));
     }
+    args.splice(args.length - 1, 0, toolHints(name));
     _tool(name, ...args);
   }
 

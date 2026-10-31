@@ -27,6 +27,7 @@ export default function OAuthConsent() {
   const [client, setClient] = useState<{ display_name: string; verified: boolean; redirect_host: string } | null>(null);
   const [state, setState] = useState<"idle" | "busy" | "leaving" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [readOnly, setReadOnly] = useState(false);
 
   const appName = client?.display_name || "This app";
 
@@ -53,7 +54,7 @@ export default function OAuthConsent() {
       const r = await fetch(`${API_URL}/api/mcp-oauth/requests/${encodeURIComponent(requestId)}/${decision}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ workspace_id: workspaceId }),
+        body: JSON.stringify({ workspace_id: workspaceId, ...(readOnly ? { capability: "read_only" } : {}) }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.redirect_to) throw new Error("Couldn't finish. Start the connection again from the app.");
@@ -114,11 +115,17 @@ export default function OAuthConsent() {
                 <Eye className="mt-[1px] h-4 w-4 flex-shrink-0 text-[#96601f]" strokeWidth={1.75} />
                 <span>Read your accounts, people, deals and calls</span>
               </li>
-              <li className="flex items-start gap-2.5 text-[12.5px] text-[#3A352D]">
-                <PenLine className="mt-[1px] h-4 w-4 flex-shrink-0 text-[#96601f]" strokeWidth={1.75} />
-                <span>Record what it learns</span>
-              </li>
+              {!readOnly && (
+                <li className="flex items-start gap-2.5 text-[12.5px] text-[#3A352D]">
+                  <PenLine className="mt-[1px] h-4 w-4 flex-shrink-0 text-[#96601f]" strokeWidth={1.75} />
+                  <span>Record what it learns</span>
+                </li>
+              )}
             </ul>
+            <label className="mt-3 flex items-center justify-center gap-2 text-[12.5px] text-[#3A352D]">
+              <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} className="accent-[#E0912B]" />
+              Read only
+            </label>
             <p className="mt-3 text-[11.5px] text-[#6B655B]/80">
               It sees only what you can see. Revoke it any time in Settings.
             </p>

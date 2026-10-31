@@ -302,6 +302,9 @@ export function logV2Op(req, res, next) {
   res.on('finish', () => {
     const workspaceId = req.workspaceId;
     if (!workspaceId) return; // unauthenticated call (verifyApiKey rejected) — skip
+    // The MCP server asking what this key may do, to shape tools/list. We make that call, not the
+    // customer's agent, so it isn't an op (GET-1061).
+    if (req.method === 'GET' && req.baseUrl + req.path === '/v2/workspace/whoami' && req.query?.capability_check) return;
 
     const duration_ms = Date.now() - start;
     const source = detectSource(req);

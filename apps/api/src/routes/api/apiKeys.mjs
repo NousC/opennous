@@ -2,9 +2,11 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { getSupabaseClient, isUUID } from '@nous/core';
-import { apiKeyScopeFor } from '../../lib/apiKeyScope.mjs';
+import { apiKeyScopeFor, grantCapability, keyExpiry } from '../../lib/apiKeyScope.mjs';
 import { auditFromReq } from '../../lib/audit.mjs';
 import { canSeeKey } from '../../lib/apiKeyUsage.mjs';
+
+const KEY_ADMIN_ROLES = ['owner', 'admin', 'founder'];
 
 export const apiKeysRouter = Router();
 
@@ -42,7 +44,7 @@ export const withCanManage = (req, rows) => (rows ?? []).map((k) => ({ ...k, can
 export async function keyForChange(supabase, req, id) {
   const { data, error } = await supabase
     .from('api_keys')
-    .select('id, name, scope, owner_user_id, created_by_user_id, capability')
+    .select('id, name, scope, owner_user_id, created_by_user_id, capability, expires_at')
     .eq('id', id)
     .eq('workspace_id', req.workspaceId)
     .is('revoked_at', null)
@@ -264,12 +266,9 @@ apiKeysRouter.post('/', async (req, res) => {
     const baseName = name.trim();
 
     // Capability: read_only (can read/compute context, can't record/modify/send) or the
-    // default read_write. Optional expiry in days → a short-lived key for an untrusted agent.
-    const capability = req.body?.capability === 'read_only' ? 'read_only' : 'read_write';
-    const expiresInDays = Number(req.body?.expires_in_days);
-    const expiresAt = Number.isFinite(expiresInDays) && expiresInDays > 0
-      ? new Date(Date.now() + expiresInDays * 86_400_000).toISOString()
-      : null;
+    // default read_write. Expiry in days, 90 unless asked (GET-1061).
+    const capability = grantCapability(req.body);
+    const expiresAt = keyExpiry(req.body, { isAdmin: KEY_ADMIN_ROLES.includes(req.workspaceRole) });
 
     // The key acts AS the member who minted it: a regular member gets a
     // member-scoped key (their agent sees only their own raw + shared), an
@@ -337,10 +336,10 @@ apiKeysRouter.post('/:id/rotate', async (req, res) => {
 
     const rawKey = `pk_${crypto.randomBytes(24).toString('hex')}`;
     const hashedKey = crypto.createHash('sha256').update(rawKey).digest('hex');
-    const expiresInDays = Number(req.body?.expires_in_days);
-    const expiresAt = Number.isFinite(expiresInDays) && expiresInDays > 0
-      ? new Date(Date.now() + expiresInDays * 86_400_000).toISOString()
-      : null;
+    // A key that never expires stays that way only if an admin rotates it (GET-1061).
+    const isAdmin = KEY_ADMIN_ROLES.includes(req.workspaceRole);
+    const expiresAt = !old.expires_at && isAdmin && req.body?.expires_in_days == null
+      ? null : keyExpiry(req.body, { isAdmin });
 
     // Revoke the old key first to free its active name, then mint the replacement.
     await supabase.from('api_keys')

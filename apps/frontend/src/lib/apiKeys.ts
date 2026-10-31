@@ -49,7 +49,7 @@ export const ACCESS_OPTIONS: { value: Capability; label: string }[] = [
   { value: "read_only", label: "Read-only" },
 ];
 
-/** Expiry choices on create; 0 is "never". The API takes expires_in_days. */
+/** Expiry choices on create; 0 is "never", which the API allows admins only. */
 export const EXPIRY_OPTIONS: { days: number; label: string }[] = [
   { days: 0, label: "No expiry" },
   { days: 7, label: "7 days" },

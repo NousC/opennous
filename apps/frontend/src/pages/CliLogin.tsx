@@ -31,6 +31,7 @@ export default function CliLogin() {
   const returnTo = `${location.pathname}${location.search}`;
 
   const [state, setState] = useState<"idle" | "approving" | "done" | "error">("idle");
+  const [readOnly, setReadOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(3);
   const [provisionTimedOut, setProvisionTimedOut] = useState(false);
@@ -77,7 +78,7 @@ export default function CliLogin() {
       const r = await fetch(`${API_URL}/api/cli/auth/approve`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ user_code: code, workspace_id: workspaceId }),
+        body: JSON.stringify({ user_code: code, workspace_id: workspaceId, ...(readOnly ? { capability: "read_only" } : {}) }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -198,6 +199,12 @@ export default function CliLogin() {
                   <span>Sign you in from your terminal — no key to copy</span>
                 </li>
               </ul>
+              {!joinOnly && (
+                <label className="mt-3 flex items-center gap-2 text-[12.5px] text-[#3A352D]">
+                  <input type="checkbox" checked={readOnly} onChange={(e) => setReadOnly(e.target.checked)} className="accent-[#E0912B]" />
+                  Read only
+                </label>
+              )}
             </div>
 
             {error && <p className="mt-4 text-[12.5px] text-[#96601f]">{error}</p>}

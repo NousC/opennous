@@ -448,7 +448,7 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
     try {
       const r = await fetch(`${apiUrl}/api/workspace/api-keys`, {
         method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Get started", workspace_id: workspaceId, capability: "read_write" }),
+        body: JSON.stringify({ name: "Get started", workspace_id: workspaceId, capability: "read_write", expires_in_days: 365 }),
       });
       const d = await r.json().catch(() => ({}));
       if (!d.key) throw new Error(d.error || "Couldn't create a key.");

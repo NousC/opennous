@@ -26,7 +26,8 @@
 
 import http from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { runWithApiKey } from "./client.js";
+import { runWithApiKey, get } from "./client.js";
+import { keyIsReadOnly, wantsToolList } from "./toolHints.js";
 import { createServer, SERVER_VERSION } from "./server.js";
 import {
   PROTECTED_RESOURCE_PATHS, protectedResourceMetadata, wwwAuthenticate, isOAuthToken, checkOAuthToken,
@@ -136,7 +137,9 @@ const httpServer = http.createServer(async (req, res) => {
   const agent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined;
   await runWithApiKey(apiKey, async () => {
     // One surface: the 6-primitive revenue plugin. createServer() exposes only those.
-    const server = createServer();
+    // A read-only grant isn't offered tools the API would refuse (GET-1061).
+    const hideWrites = wantsToolList(body) && await keyIsReadOnly(() => get("/v2/workspace/whoami", { capability_check: 1 }));
+    const server = createServer({ hideWrites });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
       transport.close();

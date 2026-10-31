@@ -27,6 +27,8 @@ import {
 } from "@/lib/apiKeys";
 import { day, when } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import { isWorkspaceAdmin } from "@/lib/roles";
 
 const field =
   "h-[30px] rounded-lg border border-border bg-card px-2.5 text-[12.5px] text-foreground shadow-none outline-none placeholder:text-muted-foreground focus:border-foreground focus:shadow-[0_0_0_3px_rgba(20,20,18,0.06)] focus:ring-0 focus:ring-offset-0";
@@ -52,7 +54,9 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
   const [name, setName] = React.useState("");
   const [needName, setNeedName] = React.useState(false);
   const [capability, setCapability] = React.useState<Capability>("read_write");
-  const [expiry, setExpiry] = React.useState(0);
+  const [expiry, setExpiry] = React.useState(90);
+  const { userData } = useAuth();
+  const canSkipExpiry = isWorkspaceAdmin(userData as Parameters<typeof isWorkspaceAdmin>[0]);
   const [creating, setCreating] = React.useState(false);
   // The row just created or rotated (highlighted), and whether its secret reached the clipboard.
   const [fresh, setFresh] = React.useState<{ id: string; copied: boolean } | null>(null);
@@ -96,7 +100,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
     if (creating || !api.ready) return;
     setCreating(true);
     try {
-      const created = await api.create({ name: n, capability, ...(expiry > 0 ? { expires_in_days: expiry } : {}) });
+      const created = await api.create({ name: n, capability, expires_in_days: expiry });
       // You minted it, so you may rotate and revoke it.
       const row = { ...rowOf(created), can_manage: true };
       setKeys((ks) => [row, ...ks.filter((k) => k.id !== row.id)]);
@@ -192,7 +196,7 @@ export default function ApiKeys({ embedded = false }: { embedded?: boolean } = {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {EXPIRY_OPTIONS.map((o) => <SelectItem key={o.days} value={String(o.days)} className="text-[12.5px]">{o.label}</SelectItem>)}
+            {EXPIRY_OPTIONS.filter((o) => o.days > 0 || canSkipExpiry).map((o) => <SelectItem key={o.days} value={String(o.days)} className="text-[12.5px]">{o.label}</SelectItem>)}
           </SelectContent>
         </Select>
         <Button type="submit" disabled={creating || !api.ready}>Create key</Button>

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import { getSupabaseClient } from '@nous/core';
 import { verifySupabaseAuth } from '../middleware/supabaseAuth.mjs';
-import { apiKeyScopeFor } from '../lib/apiKeyScope.mjs';
+import { apiKeyScopeFor, grantCapability } from '../lib/apiKeyScope.mjs';
 import { auditFromReq } from '../lib/audit.mjs';
 import {
   ACCESS_TOKEN_PREFIX, REFRESH_TOKEN_PREFIX, ACCESS_TTL_S, REFRESH_TTL_S, CODE_TTL_MS, REQUEST_TTL_MS, SCOPE,
@@ -284,6 +284,7 @@ export function createOAuthRouters({ getClient = getSupabaseClient, requireSessi
         key_hash: sha256(crypto.randomBytes(32)),
         created_by_user_id: req.internalUserId ?? null,
         oauth_client_id: r.row.client_id,
+        capability: grantCapability(req.body),
         ...apiKeyScopeFor(req),
       }).select('id, name').single();
       if (keyErr) throw keyErr;

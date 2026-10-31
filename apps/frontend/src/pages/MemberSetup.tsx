@@ -116,7 +116,7 @@ export default function MemberSetup() {
       const res = await fetch(`${apiUrl}/api/workspace/api-keys`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ name: keyName, workspace_id: workspaceId }),
+        body: JSON.stringify({ name: keyName, workspace_id: workspaceId, expires_in_days: 365 }),
       });
       const data = await res.json();
       if (data.key) setRevealed(data.key);
