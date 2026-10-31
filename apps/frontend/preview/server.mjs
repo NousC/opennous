@@ -362,7 +362,7 @@ const routes = [
   ["GET", /^\/api\/automations$/, () => ({ plan: "Custom", limit: null, used: PREVIEW_AUTOMATIONS.length, automations: PREVIEW_AUTOMATIONS, catalogue: [], destinations: [], triggers: [] })],
   ["GET", /^\/api\/automations\/runs$/, (_m, q) => previewAutomationRuns(q)],
   // GET-713: one step waiting on a person, so the Approvals tab has something to show.
-  ["GET", /^\/api\/automations\/approvals$/, () => ({ approvals: [{
+  ["GET", /^\/api\/workflows\/approvals$/, () => ({ approvals: [{
     run_id: "run-ap-1", requested_at: new Date(Date.now() - 12 * 60000).toISOString(),
     automation: { id: "au-follow-up", name: "Follow-up after every call", trigger: "call_ended" },
     account: { id: "c4", name: "Atlas Health", domain: "atlashealth.example" },
@@ -866,6 +866,8 @@ const ICP_PAGE = {
 };
 routes.push(
   ["GET", /^\/api\/mind\/icp-page$/, () => ICP_PAGE],
+  // One run waiting on a decision, so Inbox → Results has one to show (GET-1084).
+  ["GET", /^\/api\/workflows\/approvals$/, () => ({ approvals: [{ run_id: "run-preview", requested_at: ago(0.1), automation: { id: "a1", name: "Follow-up after calls" }, account: { id: "c1", name: "Meridian Analytics", domain: "meridiananalytics.example" }, why: null, items: [{ index: 0, step: "Draft follow-up", type: "gmail_draft", rows: [], email: { from: null, to: "ops@meridiananalytics.example", subject: "Next steps", body: "Thanks for the time today." } }], status: "awaiting_approval" }] })],
 );
 
 const server = http.createServer(async (req, res) => {

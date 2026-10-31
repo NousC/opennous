@@ -19,9 +19,6 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Check, ChevronLeft, ChevronRight, History, Layers, Loader2, MousePointerClick, PanelRightClose, PanelRightOpen, Play, Plus, Power, Search, Trash2, Undo2, X as XIcon, Zap } from "lucide-react";
 import { AutomationRunDetail } from "@/components/AutomationRunDetail";
 import { AccountLogo } from "@/components/pipeline/DealBits";
-import { usePlan } from "@/hooks/usePlan";
-import { isApiTier } from "@/config/plans";
-import { OPEN_PRIORITIES } from "@/components/shell/PrioritiesButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -535,12 +532,8 @@ export default function AutomationEditor() {
     } finally { setBusy(null); }
   };
 
-  // Where a review waits (GET-737): the Approvals tab on the API plan, Priorities on the Workspace plan.
-  const { plan } = usePlan();
-  // With a run, straight to that run's review (GET-739).
-  const openApprovals = (runId: string | null = null) => (isApiTier(plan)
-    ? navigate(`/rev-plays?view=approvals${runId ? `&run=${encodeURIComponent(runId)}` : ""}`)
-    : window.dispatchEvent(new CustomEvent(OPEN_PRIORITIES, { detail: { runId } })));
+  // Where a review waits: the Inbox's Results (GET-1084). With a run, straight to it (GET-739).
+  const openApprovals = (runId: string | null = null) => navigate(runId ? `/inbox?item=${encodeURIComponent(`run:${runId}`)}` : "/inbox?tab=workflows");
 
   const startTest = async (triggerId: string | null = null) => {
     if (!saved) return;

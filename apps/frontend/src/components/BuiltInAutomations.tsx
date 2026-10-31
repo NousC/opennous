@@ -30,10 +30,8 @@ import { num, when as whenAgo } from "@/lib/format";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/contexts/AuthContext";
-import { AutomationApprovals, useApprovals } from "@/components/AutomationApprovals";
 import { AutomationRunDetail } from "@/components/AutomationRunDetail";
 import { usePlan } from "@/hooks/usePlan";
-import { OPEN_PRIORITIES } from "@/components/shell/PrioritiesButton";
 import { isApiTier } from "@/config/plans";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
@@ -171,8 +169,8 @@ function AboutAutomation({ flow, does, today, byDefault = false, tools }: {
 export function BuiltInAutomations({
   view = "automations", onView,
 }: {
-  view?: "automations" | "history" | "approvals";
-  onView?: (v: "automations" | "history" | "approvals") => void;
+  view?: "automations" | "history";
+  onView?: (v: "automations" | "history") => void;
 } = {}) {
   const navigate = useNavigate();
   const { session, userData } = useAuth();
@@ -266,7 +264,6 @@ export function BuiltInAutomations({
 
 
   const enabledCount = data?.automations.filter((a) => a.enabled).length ?? 0;
-  const approvals = useApprovals();
   // One run, step by step (GET-721), opened from a row of Run history.
   const [openRun, setOpenRun] = useState<string | null>(null);
   const historyFilter: FilterGroup[] = data ? [
@@ -301,13 +298,12 @@ export function BuiltInAutomations({
         </span>
       )}
       {onView && (
-        <ViewTabs<"automations" | "history" | "approvals"> aria-label="Rev Play views" value={view} onChange={onView}
+        <ViewTabs<"automations" | "history"> aria-label="Rev Play views" value={view} onChange={onView}
           options={[
             { value: "automations", label: "Rev Plays", count: data ? data.automations.length : undefined },
             { value: "history", label: "Run history" },
             // What waits on you (GET-713), counted so it is seen before it is opened. The API plan's
             // only; on the Workspace plan the same reviews are in Priorities (GET-737).
-            ...(apiPlan ? [{ value: "approvals" as const, label: "Approvals", count: approvals.items?.length || undefined }] : []),
           ]} />
       )}
       {view === "history" && data && (
@@ -419,10 +415,8 @@ export function BuiltInAutomations({
       {toolbar}
       {error && <p className="px-6 pt-4 text-[12.5px] text-foreground">{error}</p>}
 
-      <AutomationRunDetail runId={openRun} onClose={() => setOpenRun(null)} onOpenApprovals={onView ? () => (apiPlan ? onView("approvals") : window.dispatchEvent(new CustomEvent(OPEN_PRIORITIES))) : undefined} />
-      {view === "approvals" && apiPlan ? (
-        <AutomationApprovals state={approvals} />
-      ) : view === "history" ? (
+      <AutomationRunDetail runId={openRun} onClose={() => setOpenRun(null)} onOpenApprovals={() => navigate("/inbox?tab=workflows")} />
+      {view === "history" ? (
         <div className="flex flex-col gap-4 px-6 pb-10 pt-[22px]">
           {/* Counted by the API over the window, not from the rows below. */}
           <StatStrip className={STRIP_FOLD} stats={[

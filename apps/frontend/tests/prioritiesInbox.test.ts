@@ -193,15 +193,15 @@ test("tabs: Post-meetings, Follow-ups, Results", () => {
   assert.equal(isInboxTab(null), false);
 });
 
-test("tabs: signals, drafts and runs to review all land in Follow-ups", () => {
+test("tabs: signals and drafts land in Follow-ups, runs to review in Results (GET-1084)", () => {
   const signal = draft("s1", { origin: { source: "routine", name: "Deal signals", builtin: "deal_signals", why: null } });
   const stale = draft("d1", { origin: { source: "routine", name: "Stale deal detection", why: null } });
   const run = { run_id: "r1", requested_at: "2026-10-02T09:00:00", automation: { id: "a1", name: "Follow-up" }, account: null, why: null };
   const items = buildItems({ ...data, actions: [signal, stale], runs: [run], outcomes: [outcome("o1")] }, NOW);
   const by = (tab: string) => items.filter((i) => tabOf(i) === tab).map((i) => i.key);
   assert.deepEqual(by("meetings"), ["fu:1", "fu:3"]);
-  assert.deepEqual(new Set(by("act")), new Set(["act:s1", "act:d1", "run:r1"]));
-  assert.deepEqual(by("workflows"), ["out:o1"]);
+  assert.deepEqual(new Set(by("act")), new Set(["act:s1", "act:d1"]));
+  assert.deepEqual(new Set(by("workflows")), new Set(["run:r1", "out:o1"]));
 });
 
 test("tabs: a workflow's outcome is there to read, so it never counts", () => {

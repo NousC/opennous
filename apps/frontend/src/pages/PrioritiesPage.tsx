@@ -5,7 +5,7 @@
 //
 // Laid out like Workflows (2026-10-29): the page's toolbar with its tabs on the right, then the two
 // panes edge to edge (it was a card inside the shell's card). The tabs, `?tab=`:
-//   Post-meetings · Follow-ups (signals, drafts to review, runs to review) · Results (what the workflows wrote).
+//   Post-meetings · Follow-ups (signals, drafts to review) · Results (runs to review, what the workflows wrote).
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PrioritiesInbox } from "@/components/priorities/PrioritiesInbox";
@@ -15,7 +15,7 @@ import { PageToolbar } from "@/components/ui/page-top-bar";
 import { ViewTabs } from "@/components/ui/view-tabs";
 
 /** The tab an `?item=` key lives in: a meeting's id, act:/run: a draft or review, out: a run. */
-const tabOfKey = (key: string): InboxTab => (key.startsWith("out:") ? "workflows" : key.startsWith("act:") || key.startsWith("run:") ? "act" : "meetings");
+const tabOfKey = (key: string): InboxTab => (key.startsWith("out:") || key.startsWith("run:") ? "workflows" : key.startsWith("act:") ? "act" : "meetings");
 
 export default function PrioritiesPage() {
   const [params, setParams] = useSearchParams();
@@ -24,12 +24,13 @@ export default function PrioritiesPage() {
   const counts = useMemo(() => ({
     meetings: openCount(items.filter((i) => tabOf(i) === "meetings")),
     act: openCount(items.filter((i) => tabOf(i) === "act")),
+    workflows: openCount(items.filter((i) => tabOf(i) === "workflows")),
   }), [items]);
   const focus = params.get("item");
   const asked = params.get("tab");
   // Asked for, or the tab the linked item is in; otherwise the first with something waiting.
   const tab: InboxTab = isInboxTab(asked) ? asked : focus ? tabOfKey(focus)
-    : counts.meetings ? "meetings" : counts.act ? "act" : "meetings";
+    : counts.meetings ? "meetings" : counts.act ? "act" : counts.workflows ? "workflows" : "meetings";
   const onTab = (next: InboxTab) => setParams((p) => { const q = new URLSearchParams(p); q.set("tab", next); q.delete("item"); return q; }, { replace: true });
 
   return (
@@ -37,7 +38,7 @@ export default function PrioritiesPage() {
       <PageToolbar>
         <span className="flex-1" />
         <ViewTabs<InboxTab> aria-label="Inbox views" value={tab} onChange={onTab}
-          options={TABS.map(({ tab: value, label }) => ({ value, label, count: value === "workflows" ? undefined : counts[value] || undefined }))} />
+          options={TABS.map(({ tab: value, label }) => ({ value, label, count: counts[value] || undefined }))} />
       </PageToolbar>
       <div className="min-h-0 flex-1">
         <PrioritiesInbox key={tab} tab={tab} data={data} ws={ws} token={token} chipFor={chipFor} onClose={() => {}}

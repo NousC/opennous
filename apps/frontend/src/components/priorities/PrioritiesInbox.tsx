@@ -14,8 +14,8 @@
 // A decision keeps its row with the result until the panel closes; the counts leave it out.
 //
 // Since 2026-10-29 the Inbox page splits it into tabs (inboxModel TABS): Post-meetings, Follow-ups
-// (signals, drafts and runs to review together) and Results, what each finished run wrote
-// (OutcomePane). Each tab is a table like Accounts and Workflows, newest first; a row opens the
+// (signals and drafts to review) and Results, runs waiting on a decision then what each finished run
+// wrote (OutcomePane). Each tab is a table like Accounts and Workflows, newest first; a row opens the
 // item in a sheet on the right, with everything the old reading pane had.
 //
 // Keyboard: j / k move through the rows and Enter opens one (DataTable); Esc closes the sheet.
@@ -104,7 +104,7 @@ export function PrioritiesInbox({ tab, data, loading, failed, ws, token, onClose
   }), [data, dismissed, decided, runsDone]);
   // This tab's rows, newest first (buildItems sorts within each kind; Follow-ups mixes three).
   const visible = useMemo(() => items.filter((i) => tabOf(i) === tab)
-    .sort((x, y) => (Date.parse(y.at ?? "") || 0) - (Date.parse(x.at ?? "") || 0)), [items, tab]);
+    .sort((x, y) => Number(!!y.run) - Number(!!x.run) || (Date.parse(y.at ?? "") || 0) - (Date.parse(x.at ?? "") || 0)), [items, tab]);
   const current = visible.find((i) => i.key === selected) ?? null;
 
   const go = useCallback((href: string | null) => { if (!href) return; onClose(); navigate(href); }, [navigate, onClose]);
@@ -245,7 +245,7 @@ const COLUMNS: Record<InboxTab, Column<InboxItem>[]> = {
   act: [],
   workflows: [
     { key: "name", header: "Workflow", width: "36%", className: FIT, cell: nameCell },
-    { key: "output", header: "Output", className: FIT, cell: (i) => quiet(i.outcome?.document_title, i) },
+    { key: "output", header: "Output", className: FIT, cell: (i) => quiet(i.run ? "Needs approval" : i.outcome?.document_title, i) },
     dateCol,
   ],
 };

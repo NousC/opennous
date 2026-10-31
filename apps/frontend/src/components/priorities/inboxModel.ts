@@ -38,7 +38,8 @@ export const TABS: { tab: InboxTab; label: string }[] = [
   { tab: "workflows", label: "Results" },
 ];
 export const isInboxTab = (v: string | null | undefined): v is InboxTab => v === "meetings" || v === "act" || v === "workflows";
-export const tabOf = (i: InboxItem): InboxTab => (i.kind === "meeting" ? "meetings" : i.kind === "outcome" ? "workflows" : "act");
+// A run waiting on a decision sits with what the plays wrote: Results (GET-1084).
+export const tabOf = (i: InboxItem): InboxTab => (i.kind === "meeting" ? "meetings" : i.kind === "outcome" || i.run ? "workflows" : "act");
 
 /** The fields of a /api/home recommendation the inbox reads. */
 export type InboxRec = {
