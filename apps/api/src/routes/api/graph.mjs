@@ -7,6 +7,7 @@ import { contextGraph, neighbourhood } from '../../lib/contextGraph.mjs';
 import { hasListRows, personStagesForAccounts, dealValueByCompany } from '../../lib/listRows.mjs';
 import { impliedDealName } from '../../lib/accountDeals.mjs';
 import { listWorkspaceDeals } from '../../lib/workspaceDeals.mjs';
+import { requestBook, entityVisibleToMember } from '../../lib/visibility.mjs';
 
 // GET /api/graph?workspaceId=... — the workspace context graph as a war-room:
 // companies with their buying committee, bridged to each other by the shared
@@ -392,10 +393,41 @@ async function buildNetwork(supabase, req, workspaceId) {
     for (const cid of cl.ids) edges.push({ s: cid, t: node, k: 2 });
   });
 
-  return {
+  const net = {
     nodes, edges,
     patterns: { single, budget, clusters: clusters.map(c => ({ label: c.label, ids: c.ids, node: c.node, cat: c.cat })) },
     meta: { people: contacts.length, companies: touched.length, clusters: clusters.length, ts: Date.now() },
+  };
+  // On a closed workspace a member's graph is their own book (GET-1066). /context builds on this.
+  const book = await requestBook(supabase, workspaceId, req);
+  return book ? restrictNetwork(net, book) : net;
+}
+
+/**
+ * The network cut down to a member's book (GET-1066): people and accounts outside it go, and with
+ * them every edge that touched them; a cluster keeps only its visible accounts and goes when none
+ * are left. Pure.
+ */
+export function restrictNetwork(net, book) {
+  const keep = (id) => book.has(id);
+  const clusters = net.patterns.clusters
+    .map(c => ({ ...c, ids: c.ids.filter(keep) }))
+    .filter(c => c.ids.length);
+  const sizeOf = new Map(clusters.map(c => [c.node, c.ids.length]));
+  const nodes = net.nodes
+    .filter(n => (n.t === 3 ? sizeOf.has(n.i) : keep(n.i)))
+    .map(n => (n.t === 3 ? { ...n, sz: sizeOf.get(n.i) } : n));
+  const ids = new Set(nodes.map(n => n.i));
+  return {
+    nodes,
+    edges: net.edges.filter(e => ids.has(e.s) && ids.has(e.t)),
+    patterns: { single: net.patterns.single.filter(keep), budget: net.patterns.budget.filter(keep), clusters },
+    meta: {
+      ...net.meta,
+      people: nodes.filter(n => n.t === 0).length,
+      companies: nodes.filter(n => n.t === 1).length,
+      clusters: clusters.length,
+    },
   };
 }
 
@@ -529,6 +561,9 @@ graphApiRouter.get('/committee', verifySupabaseAuth, async (req, res) => {
           byCompany.get(l.to_entity_id).add(l.from_entity_id);
         }
       }
+      // On a closed workspace a member picks only from their own book (GET-1066).
+      const book = await requestBook(supabase, workspaceId, req);
+      if (book) for (const id of [...byCompany.keys()]) if (!book.has(id)) byCompany.delete(id);
       const ids = [...byCompany.keys()];
       const named = [];
       for (let i = 0; i < ids.length; i += 200) {
@@ -541,6 +576,11 @@ graphApiRouter.get('/committee', verifySupabaseAuth, async (req, res) => {
       return res.json({ accounts: committeeAccounts(named, byCompany, network) });
     }
     if (!UUID.test(accountId)) return res.status(400).json({ error: 'invalid_account_id' });
+    // Same gate as the account page (GET-1066): outside a closed-workspace member's book is 404.
+    const viewerId = req.memberUserId ?? req.internalUserId ?? null;
+    if (!(await entityVisibleToMember(supabase, workspaceId, viewerId, accountId, { isAdmin: req.viewerScope === 'admin' }))) {
+      return res.status(404).json({ error: 'account_not_found' });
+    }
 
     // Employment, not the deal roster: a deal carries barely more than one person on average here, and the
     // committee is bigger than whoever happens to be named on the record.
@@ -668,7 +708,10 @@ graphApiRouter.get('/claims', verifySupabaseAuth, async (req, res) => {
       if (!data || data.length < 1000) break;
     }
     const internal = new Set(await getInternalEntityIds(supabase, workspaceId));
+    // On a closed workspace a member reads what was learned on their own book only (GET-1066).
+    const book = await requestBook(supabase, workspaceId, req);
     const learned = rows
+      .filter(r => !book || book.has(r.entity_id))
       .map(r => ({ r, cat: LEARNED[String(r.value?.category ?? '').trim().toLowerCase()] }))
       .filter(x => x.cat && !internal.has(x.r.entity_id) && String(x.r.value?.content ?? '').trim().length >= 8);
     const viewer = await requestMessageViewer(supabase, req, workspaceId);

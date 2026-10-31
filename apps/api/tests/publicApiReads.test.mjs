@@ -693,6 +693,19 @@ test('context: a deal focus resolves to its account and leads with the deal', as
   assert.equal(hidden.body.error, 'deal_not_found');
 });
 
+test('context: a member key on a closed workspace gets 404 for an account outside its book (GET-1066)', async () => {
+  const open = await call('POST', '/v2/context', { focus: INITECH }, member);
+  assert.equal(open.status, 200, 'an open workspace shares every account');
+  closeWorkspace();
+  for (const focus of [INITECH, 'globex.com']) {
+    const hidden = await call('POST', '/v2/context', { focus }, member);
+    assert.equal(hidden.status, 404, `${focus}: ${JSON.stringify(hidden.body)}`);
+    assert.equal(hidden.body.error, 'entity_not_found');
+  }
+  const admin = await call('POST', '/v2/context', { focus: INITECH });
+  assert.equal(admin.status, 200, 'an admin key still reads every account');
+});
+
 // ── context carries the Intelligence (GET-1042) ──────────────────────────────
 
 test('context: an account focus carries what the workspace has learned, for that account', async () => {

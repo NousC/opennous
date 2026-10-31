@@ -53,6 +53,28 @@ export async function viewerVisibleAccountSet(supabase, workspaceId, viewerUserI
   return { unrestricted: false, ids: new Set([...companyIds, ...contactIds]) };
 }
 
+// A webhook is a team destination: it is sent every account's events, whoever made it. On a closed
+// workspace that is more than a member may read, so only an admin may create or test one there
+// (GET-1066). Sends the 403 and returns true when the caller is such a member.
+export async function refuseTeamFeedToMember(supabase, workspaceId, req, res) {
+  const { restrict } = await getVisibilityScope(supabase, workspaceId, req);
+  if (!restrict) return false;
+  res.status(403).json({
+    error: 'admin_key_required',
+    detail: 'This workspace is closed: a webhook is sent every account\'s events, so only an admin can create or test one.',
+  });
+  return true;
+}
+
+// The caller's book as a Set of account and person ids, or null when they read the whole
+// workspace (admin, open workspace, no viewer). For readers that filter many rows at once: the
+// events feed, the graph, the observations log (GET-1066).
+export async function requestBook(supabase, workspaceId, req) {
+  const viewerId = req.memberUserId ?? req.internalUserId ?? null;
+  const set = await viewerVisibleAccountSet(supabase, workspaceId, viewerId, { isAdmin: req.viewerScope === 'admin' });
+  return set.unrestricted ? null : set.ids;
+}
+
 // The accounts a restricted member may see: the people they are in touch with (their
 // relationship_owner membership), plus the companies those people belong to. Only
 // called when getVisibilityScope().restrict is true.

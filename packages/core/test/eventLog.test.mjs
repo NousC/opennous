@@ -1,7 +1,7 @@
 // The event log (GET-939): a page of the feed, its cursor, and an unknown cursor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { listEvents, feedView, feedHiddenTypes, laterOfSignalEvents } from '../dist/db/eventLog.mjs';
+import { listEvents, getLoggedEvent, feedView, feedHiddenTypes, laterOfSignalEvents } from '../dist/db/eventLog.mjs';
 
 // Records every filter the read applies; answers with the fixture rows for the table.
 function fakeDb(rows, cursorRow = null) {
@@ -145,4 +145,30 @@ test('an expansion request follows the claim behind its signal row', async () =>
 test('a failed claim lookup adds no notes', async () => {
   const out = await laterOfSignalEvents(tablesDb({}, 'claims'), 'ws', [sig('e1', 'note.a')]);
   assert.equal(out.size, 0);
+});
+
+// ── A closed-workspace member reads only their book (GET-1066) ──────────────────────────────
+
+const evOn = (i, entity) => ({ ...ev(i), entity_id: entity });
+
+test("a member's book: events on accounts outside it are left out, events with no entity stay", async () => {
+  const db = fakeDb([evOn(4, 'mine'), evOn(3, 'theirs'), evOn(2, null), evOn(1, 'mine')]);
+  const page = await listEvents(db, 'ws', { limit: 10, visibleEntityIds: new Set(['mine']) });
+  assert.deepEqual(page.events.map(e => e.id), ['e4', 'e2', 'e1']);
+  assert.equal(page.has_more, false);
+});
+
+test('without a book (admin, open workspace) every event is read, as before', async () => {
+  const db = fakeDb([evOn(2, 'theirs'), evOn(1, 'mine')]);
+  const page = await listEvents(db, 'ws', { limit: 10 });
+  assert.deepEqual(page.events.map(e => e.id), ['e2', 'e1']);
+  assert.ok(db.calls.some(([, op, n]) => op === 'limit' && n === 11), 'one read of a page plus one');
+});
+
+test('one event by id: outside the book it is not found; inside, or with no entity, it is', async () => {
+  const book = new Set(['mine']);
+  assert.equal(await getLoggedEvent(fakeDb([], { entity_id: 'theirs', payload: { id: 'e1', type: 'deal.won' } }), 'ws', 'e1', { visibleEntityIds: book }), null);
+  assert.equal((await getLoggedEvent(fakeDb([], { entity_id: 'mine', payload: { id: 'e1', type: 'deal.won' } }), 'ws', 'e1', { visibleEntityIds: book })).id, 'e1');
+  assert.equal((await getLoggedEvent(fakeDb([], { entity_id: null, payload: { id: 'e2', type: 'insight.new' } }), 'ws', 'e2', { visibleEntityIds: book })).id, 'e2');
+  assert.equal((await getLoggedEvent(fakeDb([], { entity_id: 'theirs', payload: { id: 'e1', type: 'deal.won' } }), 'ws', 'e1')).id, 'e1');
 });

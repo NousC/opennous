@@ -4,6 +4,7 @@ import { icpFit, fetchIcpLayers } from '../../lib/icpFit.mjs';
 import { accountMeetings } from '../../lib/calendar.mjs';
 import { resolveDealRef, loadPublicDeal, contextDealBlock } from '../../lib/publicApi.mjs';
 import { accountIntelligence } from '../../lib/accountIntelligence.mjs';
+import { entityVisibleToMember } from '../../lib/visibility.mjs';
 
 export const contextV2Router = Router();
 
@@ -53,6 +54,14 @@ contextV2Router.post('/', async (req, res) => {
     if (resolution.status === 'ambiguous') {
       // a name matched several people — the agent picks one and re-calls
       return res.json({ status: 'ambiguous', candidates: resolution.candidates });
+    }
+
+    // Account-visibility gate, the same one GET /v2/accounts/:id applies (GET-1066): on a closed
+    // workspace a member reads context only for accounts in their own book. 404, not 403, so the
+    // answer doesn't reveal that the account exists.
+    const viewerId = req.memberUserId ?? req.internalUserId ?? null;
+    if (!(await entityVisibleToMember(supabase, workspaceId, viewerId, resolution.entity_id, { isAdmin: req.viewerScope === 'admin' }))) {
+      return res.status(404).json({ error: 'entity_not_found' });
     }
 
     const context = await assembleContext(supabase, workspaceId, resolution.entity_id, intent, budget_tokens, readContextFromReq(req));

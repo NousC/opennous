@@ -3,6 +3,7 @@ import { getSupabaseClient, redactObservationRowsForViewer, filterDerivedForView
 import { requestMessageViewer } from '../../lib/messagePrivacy.mjs';
 import { verifySupabaseAuth } from '../../middleware/supabaseAuth.mjs';
 import { ensureUserAndTeam, workspaceInTeam } from '../../lib/auth.mjs';
+import { requestBook } from '../../lib/visibility.mjs';
 
 export const observationsLogRouter = Router();
 
@@ -174,11 +175,14 @@ observationsLogRouter.get('/', verifySupabaseAuth, async (req, res) => {
     // A message's content only for the people who were on it (GET-244). This feed showed every
     // teammate's email snippet to anyone on the team.
     const viewer = await requestMessageViewer(supabase, req, workspace_id);
+    // On a closed workspace a member reads what was learned on their own book only (GET-1066).
+    const book = await requestBook(supabase, workspace_id, req);
+    const inBook = (r) => !book || book.has(r.entity_id);
     // What was read out of a message (an action item, a fact) is shared; its quote follows the message (GET-985).
     const visibleObs = await filterDerivedForViewer(supabase, workspace_id,
-      await redactObservationRowsForViewer(supabase, workspace_id, obsData || [], viewer), viewer);
+      await redactObservationRowsForViewer(supabase, workspace_id, (obsData || []).filter(inBook), viewer), viewer);
     // GET-1052: what our side said is never listed among the record's claims.
-    const visibleClaims = (await filterDerivedForViewer(supabase, workspace_id, claimRes.data || [], viewer))
+    const visibleClaims = (await filterDerivedForViewer(supabase, workspace_id, (claimRes.data || []).filter(inBook), viewer))
       .filter((c) => !(String(c.property || '').startsWith('note.') && isOurSideClaim(c.value)));
 
     // Raw observations, minus any intel root (those come from the reconciled claim

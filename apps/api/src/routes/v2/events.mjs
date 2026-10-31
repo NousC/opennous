@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseClient, listEvents, getLoggedEvent, getPersonalEntityIds, TRIGGER_EVENTS, EVENTS_PAGE_MAX, EVENT_API_VERSION } from '@nous/core';
+import { requestBook } from '../../lib/visibility.mjs';
 
 export const eventsV2Router = Router();
 
@@ -19,6 +20,7 @@ export const eventsV2Router = Router();
 //
 // Read as the whole team, like a webhook: any key or signed-in member of the workspace. An account
 // or person marked personal is not on it (GET-1014), and people.added only when asked for by type.
+// On a closed workspace a member reads only the events on their own book (GET-1066).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FAMILIES = [...new Set(TRIGGER_EVENTS.map((t) => t.split('.')[0]))];
@@ -65,8 +67,11 @@ eventsV2Router.get('/', async (req, res) => {
     const parsed = parseEventsQuery(req.query);
     if (!parsed.ok) return res.status(400).json(parsed);
     const supabase = getSupabaseClient();
-    const personal = await getPersonalEntityIds(supabase, req.workspaceId);
-    const page = await listEvents(supabase, req.workspaceId, { ...parsed.filters, excludeEntityIds: [...personal] });
+    const [personal, book] = await Promise.all([
+      getPersonalEntityIds(supabase, req.workspaceId),
+      requestBook(supabase, req.workspaceId, req),
+    ]);
+    const page = await listEvents(supabase, req.workspaceId, { ...parsed.filters, excludeEntityIds: [...personal], visibleEntityIds: book });
     if (page.unknown_cursor) return res.status(400).json({ error: 'invalid_cursor', message: 'starting_after is not an event in this workspace.' });
     const last = page.events.at(-1);
     return res.json({
@@ -85,7 +90,9 @@ eventsV2Router.get('/', async (req, res) => {
 eventsV2Router.get('/:id', async (req, res) => {
   try {
     if (!UUID.test(req.params.id)) return res.status(404).json({ error: 'event_not_found' });
-    const event = await getLoggedEvent(getSupabaseClient(), req.workspaceId, req.params.id);
+    const supabase = getSupabaseClient();
+    const book = await requestBook(supabase, req.workspaceId, req);
+    const event = await getLoggedEvent(supabase, req.workspaceId, req.params.id, { visibleEntityIds: book });
     if (!event) return res.status(404).json({ error: 'event_not_found' });
     return res.json(event);
   } catch (err) {

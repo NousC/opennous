@@ -71,10 +71,13 @@ export async function logEvent(supabase, { workspaceId, type, externalId, entity
  * narrows to one account (or person); `since` / `until` bound when it happened (ISO, until is
  * exclusive); `excludeEntityIds` drops the accounts and people the feed must not show (the ones
  * marked personal, GET-1014); `startingAfter` is the last event id of the previous page.
+ * `visibleEntityIds` (a Set) is a closed-workspace member's book (GET-1066): an event about an
+ * account or person outside it is left out, an event about no entity stays. Filtered here, page by
+ * page, instead of as an IN list, because a book can be thousands of ids.
  * Returns { events, has_more } — events are the payloads as a webhook receives them — or
  * { unknown_cursor: true } when startingAfter is not an event of this workspace.
  */
-export async function listEvents(supabase, workspaceId, { type = null, entityId = null, since = null, until = null, excludeEntityIds = [], startingAfter = null, limit = 25 } = {}) {
+export async function listEvents(supabase, workspaceId, { type = null, entityId = null, since = null, until = null, excludeEntityIds = [], startingAfter = null, limit = 25, visibleEntityIds = null } = {}) {
   const n = Math.min(Math.max(Number(limit) || 25, 1), EVENTS_PAGE_MAX);
   let cursor = null;
   if (startingAfter) {
@@ -84,24 +87,39 @@ export async function listEvents(supabase, workspaceId, { type = null, entityId 
     if (!data) return { events: [], has_more: false, unknown_cursor: true };
     cursor = data;
   }
-  let q = supabase.from('event_log').select('id, created_at, payload').eq('workspace_id', workspaceId)
-    // Not news: a next step agreed logged before GET-967 is a task, and people landing in the
-    // workspace (GET-1014) is plumbing, unless the reader asked for exactly that.
-    .not('type', 'in', `(${feedHiddenTypes(type).join(',')})`);
-  if (type?.endsWith('.*')) q = q.like('type', `${type.slice(0, -1)}%`);
-  else if (type) q = q.eq('type', type);
-  if (entityId) q = q.eq('entity_id', entityId);
-  if (since) q = q.gte('occurred_at', since);
-  if (until) q = q.lt('occurred_at', until);
-  // A plain NOT IN would also drop the events with no entity (an insight), so those are kept by name.
-  if (excludeEntityIds.length) q = q.or(`entity_id.is.null,entity_id.not.in.(${excludeEntityIds.join(',')})`);
-  if (cursor) q = q.or(`created_at.lt."${cursor.created_at}",and(created_at.eq."${cursor.created_at}",id.lt.${cursor.id})`);
-  const { data, error } = await q.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(n + 1);
-  if (error) throw error;
-  const rows = data ?? [];
-  const page = rows.slice(0, n).map(r => r.payload);
+  const visible = visibleEntityIds instanceof Set ? visibleEntityIds : null;
+  const batch = visible ? EVENTS_PAGE_MAX : n + 1;
+  const read = async (after) => {
+    let q = supabase.from('event_log').select('id, created_at, entity_id, payload').eq('workspace_id', workspaceId)
+      // Not news: a next step agreed logged before GET-967 is a task, and people landing in the
+      // workspace (GET-1014) is plumbing, unless the reader asked for exactly that.
+      .not('type', 'in', `(${feedHiddenTypes(type).join(',')})`);
+    if (type?.endsWith('.*')) q = q.like('type', `${type.slice(0, -1)}%`);
+    else if (type) q = q.eq('type', type);
+    if (entityId) q = q.eq('entity_id', entityId);
+    if (since) q = q.gte('occurred_at', since);
+    if (until) q = q.lt('occurred_at', until);
+    // A plain NOT IN would also drop the events with no entity (an insight), so those are kept by name.
+    if (excludeEntityIds.length) q = q.or(`entity_id.is.null,entity_id.not.in.(${excludeEntityIds.join(',')})`);
+    if (after) q = q.or(`created_at.lt."${after.created_at}",and(created_at.eq."${after.created_at}",id.lt.${after.id})`);
+    const { data, error } = await q.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(batch);
+    if (error) throw error;
+    return data ?? [];
+  };
+  const kept = [];
+  let after = cursor;
+  let more = true;
+  // A member's events can be sparse in a busy workspace: read on until the page is full, up to ten
+  // reads; past that, has_more says there may be more and the next page carries on from here.
+  for (let reads = 0; kept.length <= n && more && reads < 10; reads++) {
+    const rows = await read(after);
+    for (const r of rows) if (!visible || r.entity_id == null || visible.has(r.entity_id)) kept.push(r);
+    more = rows.length === batch;
+    if (rows.length) after = rows.at(-1);
+  }
+  const page = kept.slice(0, n).map(r => r.payload);
   const later = await laterOfSignalEvents(supabase, workspaceId, page);
-  return { events: page.map(e => withLater(feedView(e), later.get(e?.id))), has_more: rows.length > n };
+  return { events: page.map(e => withLater(feedView(e), later.get(e?.id))), has_more: kept.length > n || (!!visible && more) };
 }
 
 /** The event with what became of its claim, when something did. Never changes the stored payload. */
@@ -171,11 +189,15 @@ export async function laterOfSignalEvents(supabase, workspaceId, events) {
   return out;
 }
 
-/** One event by id, as a webhook receives it, or null. */
-export async function getLoggedEvent(supabase, workspaceId, id) {
-  const { data, error } = await supabase.from('event_log').select('payload')
+/**
+ * One event by id, as a webhook receives it, or null. With `visibleEntityIds` (a closed-workspace
+ * member's book, GET-1066), an event about an account or person outside it is null too.
+ */
+export async function getLoggedEvent(supabase, workspaceId, id, { visibleEntityIds = null } = {}) {
+  const { data, error } = await supabase.from('event_log').select('entity_id, payload')
     .eq('workspace_id', workspaceId).eq('id', id).maybeSingle();
   if (error) throw error;
+  if (visibleEntityIds instanceof Set && data?.entity_id != null && !visibleEntityIds.has(data.entity_id)) return null;
   return data?.payload ? feedView(data.payload) : null;
 }
 

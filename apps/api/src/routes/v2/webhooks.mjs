@@ -15,11 +15,13 @@ import {
 } from '@nous/core';
 import { mountWebhookDeliveryRoutes } from '../../lib/webhookDeliveryRoutes.mjs';
 import { buildTestPayload, testSendLimiter } from '../../lib/webhookTestSend.mjs';
+import { refuseTeamFeedToMember } from '../../lib/visibility.mjs';
 
 export const webhooksV2Router = Router();
 
 // Who may change or remove a webhook: an admin (owner/admin/legacy) key. Any key may list,
-// create and test — a webhook only ever carries what every member may read.
+// create and test on an open workspace, where a webhook carries only what every member may read.
+// On a closed one, creating and testing take an admin too (GET-1066).
 const isAdmin = (req) => req.viewerScope === 'admin' || req.viewerScope == null;
 
 const shape = webhookOut;
@@ -68,6 +70,7 @@ webhooksV2Router.get('/', async (req, res) => {
 // destination sends each event as a repository_dispatch (event_type nous.<event>) to that repo, so its
 // Actions run on it (GET-670); a Claude one fires that scheduled task with the event (GET-1035).
 webhooksV2Router.post('/', async (req, res) => {
+  if (await refuseTeamFeedToMember(getSupabaseClient(), req.workspaceId, req, res)) return;
   const { name, events } = req.body || {};
   let destination;
   try { destination = await destinationFromBody(req.body, req); } catch (err) { return badRequest(res, err); }
@@ -149,6 +152,8 @@ webhooksV2Router.delete('/:id', async (req, res) => {
 webhooksV2Router.post('/:id/test', async (req, res) => {
   try {
     const supabase = getSupabaseClient();
+    // A test send carries a real account's record, any account the caller names (GET-1066).
+    if (await refuseTeamFeedToMember(supabase, req.workspaceId, req, res)) return;
     const sub = await getTrigger(supabase, req.workspaceId, req.params.id);
     if (!sub) return res.status(404).json({ error: 'not_found' });
     if (!testSendLimiter.allow(sub.id)) return res.status(429).json({ error: 'rate_limited', retry_after_s: 60 });

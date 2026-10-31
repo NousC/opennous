@@ -20,6 +20,7 @@ import {
 } from '@nous/core';
 import { writeIcp } from '../../lib/icp.mjs';
 import { requireAdminKey } from '../../lib/v2Query.mjs';
+import { refuseTeamFeedToMember } from '../../lib/visibility.mjs';
 import { learnedIcpModel, cloudOnlyIcp } from '../../lib/icpScorer.mjs';
 import { markWorkspaceActivated } from '../../lib/onboardingState.mjs';
 import { hasLiveWebhook } from '../../lib/webhookStatus.mjs';
@@ -1059,6 +1060,8 @@ workspaceStatusV2Router.get('/triggers', async (req, res) => {
 });
 workspaceStatusV2Router.post('/triggers', async (req, res) => {
   try {
+    // Same outbox as /v2/webhooks: on a closed workspace only an admin may add one (GET-1066).
+    if (await refuseTeamFeedToMember(getSupabaseClient(), req.workspaceId, req, res)) return;
     const { name, url, events } = req.body || {};
     if (!url || !Array.isArray(events) || events.length === 0) {
       return res.status(400).json({ error: 'url_and_events_required', available_events: TRIGGER_EVENTS });
