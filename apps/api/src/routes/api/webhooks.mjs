@@ -19,6 +19,7 @@ const WEBHOOK_PATHS = {
   fireflies:  (b, w) => `${b}/inbound/fireflies/${w}`,
   fathom:     (b, w) => `${b}/inbound/fathom/${w}`,
   stripe:     (b, w) => `${b}/inbound/stripe/${w}`,
+  aiark:      (b, w) => `${b}/inbound/aiark/${w}`,
   calendly:   (b, w) => `${b}/inbound/calendly/${w}`,
   cal_com:    (b, w) => `${b}/inbound/cal_com/${w}`,
   granola:    (b, w) => `${b}/inbound/granola/${w}`,
@@ -27,9 +28,10 @@ const WEBHOOK_PATHS = {
 const WEBHOOK_SOURCES = Object.keys(WEBHOOK_PATHS);
 
 // The URL a person pastes carries the same token as one we register ourselves (GET-1088).
-function pasteUrl(source, base, workspaceId) {
+// A viewer connects nothing, so a viewer gets no token.
+function pasteUrl(source, base, workspaceId, role) {
   const url = WEBHOOK_PATHS[source](base, workspaceId);
-  if (!workspaceId || !TOKENED_PROVIDERS.has(source)) return url;
+  if (!workspaceId || role === 'viewer' || !TOKENED_PROVIDERS.has(source)) return url;
   return `${url}${url.includes('?') ? '&' : '?'}token=${inboundToken(source, workspaceId)}`;
 }
 // PostHog's destination carries the connection's secret, which only connecting creates (GET-751):
@@ -121,7 +123,7 @@ webhooksRouter.get('/urls', async (req, res) => {
   // The URL a tool must call: the public address, never the internal Docker host (GET-666).
   const b = publicApiBase();
 
-  const baseUrls = WEBHOOK_SOURCES.map(source => ({ source, url: pasteUrl(source, b, workspaceId) }));
+  const baseUrls = WEBHOOK_SOURCES.map(source => ({ source, url: pasteUrl(source, b, workspaceId, req.workspaceRole) }));
 
   // No workspace → no telemetry to enrich with. Return the raw URLs (all inactive) so a
   // caller that only needs the source→URL map (the Integrations page) still works.

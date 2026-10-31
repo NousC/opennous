@@ -42,6 +42,14 @@ test('a wrong token is refused even on the grace list: no old sender sends one',
   assert.equal(inboundAllowed(req('forged'), 'instantly', WS), false);
 });
 
+test('a refused delivery leaves a trace', () => {
+  const warned = [];
+  const original = console.warn;
+  console.warn = (m) => warned.push(m);
+  try { inboundAllowed(req(), 'rb2b', WS); } finally { console.warn = original; }
+  assert.match(warned[0], /refused/);
+});
+
 test('an untrusted Fireflies body keeps the meeting id and loses what it could inject', () => {
   const body = untrustedFirefliesBody({
     meetingId: 'm1', eventType: 'Transcription completed', participants: ['a@x.co'],

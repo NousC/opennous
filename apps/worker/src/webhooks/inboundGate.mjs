@@ -15,7 +15,10 @@ export function inboundTrusted(req, provider, workspaceId) {
 /** May this delivery be processed at all? */
 export function inboundAllowed(req, provider, workspaceId) {
   if (inboundTrusted(req, provider, workspaceId)) return true;
-  if (req.query?.token || !graced(provider)) return false;
+  if (req.query?.token || !graced(provider)) {
+    console.warn(`[WEBHOOK/${provider}] delivery refused, no valid token: workspace=${workspaceId}`);
+    return false;
+  }
   console.warn(`[WEBHOOK/${provider}] tokenless delivery allowed by grace: workspace=${workspaceId}`);
   return true;
 }

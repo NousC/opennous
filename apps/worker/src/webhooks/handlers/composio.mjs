@@ -132,10 +132,10 @@ export async function handleComposio(req, res) {
     return res.json({ ok: true, skipped: 'unknown_connection' });
   }
 
-  // Verify with THIS workspace's secret. If a secret is configured and the signature doesn't
-  // match, reject.
+  // Verify with THIS workspace's secret. With no secret nothing can be proven, and this body
+  // becomes mail on the record, so it is refused (GET-1088).
   const secret = await workspaceWebhookSecret(supabase, conn.workspace_id);
-  if (secret && !verifyComposioSignature(req, secret)) {
+  if (!secret || !verifyComposioSignature(req, secret)) {
     return res.status(401).json({ error: 'invalid_signature' });
   }
 

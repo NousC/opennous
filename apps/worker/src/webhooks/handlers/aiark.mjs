@@ -3,7 +3,7 @@
 // AI-Ark's POST /people/email-finder runs asynchronously and PUSHES the found
 // emails to a webhook (it is webhook-only — there is no synchronous return).
 // The lookalike-builder skill points that webhook at:
-//   /inbound/aiark/:workspaceId/:leadListId?secret=...
+//   /inbound/aiark/:workspaceId/:leadListId?token=... (the token from GET /api/webhooks/urls)
 // so we know which Nous lead list to write into.
 //
 // We pre-inserted the leads (no email) during the people-search step, so this
