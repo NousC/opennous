@@ -228,11 +228,14 @@ type TaskPick = { on: boolean; text: string; restored: boolean };
 // ── One card ────────────────────────────────────────────────────────────────
 
 /** One follow-up. Exported so an account page can show its own follow-up the same way. */
-export function FollowUpCard({ r, tasks, dealChange, defaultOpen = false, variant = "card", onReview, onOpenAccount, onSkip, onTask, loadDetail, actions, onChange }: Handlers & {
+export function FollowUpCard({ r, tasks, dealChange, defaultOpen = false, variant = "card", crmOnly = false, onReview, onOpenAccount, onSkip, onTask, loadDetail, actions, onChange }: Handlers & {
   r: Recommendation; tasks: Task[] | null; dealChange: DealChange | null; defaultOpen?: boolean;
   /** "card": a boxed card (the account page). "row": a row inside Home's "Waiting on you" list.
    *  "pane": the row's open body on its own, always open (the Priorities inbox's right pane, GET-678). */
   variant?: "card" | "row" | "pane";
+  /** In a pane: tasks and CRM updates alone (the Meetings sheet's CRM tab). Approve still carries the
+   *  email as it stands, as the Inbox does: the line by the button says where it goes. */
+  crmOnly?: boolean;
 }) {
   const pane = variant === "pane";
   const row = variant === "row" || pane;
@@ -625,7 +628,7 @@ export function FollowUpCard({ r, tasks, dealChange, defaultOpen = false, varian
 
         {open && (
           <div className={cn("flex flex-col gap-3", !pane && "pb-3 pl-2 pr-2 pt-0.5 sm:pl-[42px]")}>
-            {summary && <p className="text-[12.5px] leading-relaxed text-ink-2">{summary}</p>}
+            {summary && !crmOnly && <p className="text-[12.5px] leading-relaxed text-ink-2">{summary}</p>}
 
             {attribution && (
               <div className="rounded-[10px] border border-border bg-card p-3">
@@ -653,7 +656,7 @@ export function FollowUpCard({ r, tasks, dealChange, defaultOpen = false, varian
               // and the same behaviour as the row below, only grouped and labelled.
               <>
                 {/* The email is its own card, "Draft email · Not sent yet": no heading above it (GET-742). */}
-                <PaneGroup>{emailPart}</PaneGroup>
+                {!crmOnly && <PaneGroup>{emailPart}</PaneGroup>}
                 <PaneGroup label="Tasks">{tasksPart ?? <Quiet>No tasks from this meeting.</Quiet>}</PaneGroup>
                 <PaneGroup label={`${crmName()} updates`}>{flagPart}{updatesPart}{crmPart}</PaneGroup>
               </>

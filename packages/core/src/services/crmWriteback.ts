@@ -11,6 +11,8 @@
 //     follow-up email goes to (204), owned by the approver when HubSpot knows them
 //   - the approved UPDATES as ONE note on the deal (214) and the company (190)
 //   - a task ticked done (or reopened) in Nous flips the status of the HubSpot task Nous created
+//   - a call's SUMMARY as one note on the company, the deal and the people, when a person presses
+//     "Add summary to HubSpot" on the Meetings page (GET-1109); never the transcript
 // Never a deal's stage, amount, close date or owner: deals are born in the CRM and a stage that
 // should move stays a "Deal change required" flag. WRITABLE below is the guard, not a convention:
 // a write to any other path throws before it leaves the process.
@@ -43,6 +45,8 @@ export const WRITEBACK_NOT_ALLOWED_MESSAGE = 'Grant HubSpot write access (tasks,
 // A task lands on the people the email goes to. A meeting with a dozen of them is still one task,
 // and HubSpot shows every associated record on the task, so the list stays short.
 const MAX_CONTACTS = 10;
+// HubSpot caps a note's body at 65,536 characters; escaping and markup need the room left over.
+const MAX_NOTE_SUMMARY = 40_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ─── The guard: the only writes this file can make ───────────────────────────
@@ -261,6 +265,40 @@ export function hubspotNoteProperties({ updates, meeting, approverName, timeZone
       `<p>Approved${approverName ? ` by ${escapeHtml(approverName)}` : ''} via Nous</p>`,
     ].join(''),
     hs_timestamp: now.toISOString(),
+  };
+}
+
+/** A summary's markdown as the little HTML a HubSpot note holds: headings, bold, lists, paragraphs. */
+export function summaryHtml(summary: string): string {
+  const inline = (line: string) => escapeHtml(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  const out: string[] = [];
+  let items: string[] = [];
+  const flush = () => { if (items.length) out.push(`<ul>${items.join('')}</ul>`); items = []; };
+  for (const raw of String(summary ?? '').split('\n')) {
+    const line = raw.trim();
+    const bullet = /^[-*•]\s+(.*)$/.exec(line);
+    if (bullet) { items.push(`<li>${inline(bullet[1])}</li>`); continue; }
+    flush();
+    if (!line) continue;
+    const heading = /^#{1,6}\s+(.*)$/.exec(line);
+    out.push(heading ? `<p><strong>${inline(heading[1])}</strong></p>` : `<p>${inline(line)}</p>`);
+  }
+  flush();
+  return out.join('');
+}
+
+/** The note a call's summary becomes. It carries the call's own date, so it sits where the call was. */
+export function hubspotMeetingNoteProperties({ meeting, summary, approverName, timeZone, now = new Date() }: {
+  meeting: WritebackMeeting; summary: string; approverName?: string | null; timeZone?: string; now?: Date;
+}): Record<string, string> {
+  const at = new Date(meeting.at ?? '');
+  return {
+    hs_note_body: [
+      `<p><strong>Call summary: ${escapeHtml(meetingLabel(meeting, timeZone))}</strong></p>`,
+      summaryHtml(summary.slice(0, MAX_NOTE_SUMMARY)),
+      `<p>Added${approverName ? ` by ${escapeHtml(approverName)}` : ''} via Nous</p>`,
+    ].join(''),
+    hs_timestamp: (Number.isNaN(at.getTime()) ? now : at).toISOString(),
   };
 }
 
@@ -606,6 +644,43 @@ export async function syncFollowUpToHubspot(input: SyncFollowUpInput): Promise<W
 
   result.complete = result.failed.length === 0;
   return result;
+}
+
+// ─── A call's summary ───────────────────────────────────────────────────────
+
+export interface MeetingNoteResult {
+  id?: string;
+  error?: string;
+  message?: string;
+  /** No clear answer (a timeout, a 5xx): HubSpot may have created the note all the same. */
+  uncertain?: boolean;
+}
+
+/**
+ * Write one call's summary to HubSpot. One create, never retried: the caller keeps the id, and a
+ * failure comes back as `error`. Never throws on a HubSpot answer.
+ */
+export async function addMeetingNoteToHubspot({ supabase, workspaceId, token, targets, properties, meetingRef, approverId = null }: {
+  supabase?: SupabaseClient; workspaceId: string; token: string; targets: HubspotTargets;
+  properties: Record<string, string>; meetingRef: string; approverId?: string | null;
+}): Promise<MeetingNoteResult> {
+  if (!hasHubspotTarget(targets)) return { error: 'not_in_hubspot', message: 'This call has no company, deal or person in HubSpot yet.' };
+  const out = await createObject(token, 'notes', properties, HUBSPOT_NOTE_ASSOC, targets, true);
+  if (out.kind === 'created') {
+    await logWriteback(supabase, workspaceId, 'writeback_note_created', 'Call summary added to HubSpot',
+      { meeting_ref: meetingRef, hubspot_note_id: out.id, dropped_contacts: out.droppedContacts }, approverId);
+    return { id: out.id };
+  }
+  if (out.kind === 'denied') {
+    await logWriteback(supabase, workspaceId, 'writeback_not_allowed',
+      `HubSpot refused the call summary (${out.status}): grant write access to tasks and notes`,
+      { meeting_ref: meetingRef, status: out.status, hubspot_message: out.message }, approverId);
+    return { error: WRITEBACK_NOT_ALLOWED, message: WRITEBACK_NOT_ALLOWED_MESSAGE };
+  }
+  await logWriteback(supabase, workspaceId, 'writeback_failed', `HubSpot call summary not created (${out.status ?? 'network'})`,
+    { meeting_ref: meetingRef, status: out.status, hubspot_message: out.message }, approverId);
+  const uncertain = out.status == null || out.status >= 500;
+  return { error: 'hubspot_error', uncertain, message: uncertain ? 'No answer from HubSpot. Check the record before adding it again.' : "HubSpot didn't take the note. Try again." };
 }
 
 // ─── Ticking a task done ─────────────────────────────────────────────────────

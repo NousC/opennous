@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import {
   syncFollowUpToHubspot, syncTaskStatusToHubspot, hubspotAssociationsFor, hubspotTaskProperties, hubspotNoteProperties,
   isWritableHubspotRequest, readSyncState, taskDueAt, nextBusinessDay, zonedInstant, dealEntityIdsOf, approvedUpdates,
-  hubspotTaskIdOf, HUBSPOT_TASK_ASSOC, HUBSPOT_NOTE_ASSOC, WRITEBACK_NOT_ALLOWED, WRITEBACK_NOT_ALLOWED_MESSAGE,
+  hubspotTaskIdOf, hubspotMeetingNoteProperties, summaryHtml, addMeetingNoteToHubspot, HUBSPOT_TASK_ASSOC, HUBSPOT_NOTE_ASSOC, WRITEBACK_NOT_ALLOWED, WRITEBACK_NOT_ALLOWED_MESSAGE,
 } from '../dist/services/crmWriteback.js';
 
 const DEAL_A = '22222222-2222-4222-8222-222222222222';
@@ -322,4 +322,65 @@ test('the HubSpot id of a Nous task: on its value, else only a follow-up task is
   assert.equal(await hubspotTaskIdOf(sb, 'ws1', 'e1', 'action_item.x', { hubspot_task_id: 55 }), '55');
   assert.equal(await hubspotTaskIdOf(sb, 'ws1', 'e1', 'action_item.call_1_t1', {}), null, 'not a follow-up task: no read');
   assert.equal(await hubspotTaskIdOf(sb, 'ws1', 'e1', 'action_item.followup_fu_t1', {}), '777', 'the claim has not caught up: the stamp observation answers');
+});
+
+// ─── A call's summary (GET-1109) ─────────────────────────────────────────────
+
+test('a summary becomes safe note HTML', () => {
+  const html = summaryHtml('## Where it stands\nThe **pilot** is <live>\n- One\n- Two');
+  assert.equal(html, '<p><strong>Where it stands</strong></p><p>The <strong>pilot</strong> is &lt;live&gt;</p><ul><li>One</li><li>Two</li></ul>');
+});
+
+test('the note sits on the call\'s own date, not the day it was added', () => {
+  const props = hubspotMeetingNoteProperties({
+    meeting: { title: 'Pricing call', at: '2026-07-01T15:00:00.000Z' }, summary: 'Agreed.', approverName: 'Rhea',
+    timeZone: 'UTC', now: new Date('2026-10-31T12:00:00.000Z'),
+  });
+  assert.equal(props.hs_timestamp, '2026-07-01T15:00:00.000Z');
+  assert.match(props.hs_note_body, /Call summary: Pricing call, Jul 1, 2026/);
+  assert.match(props.hs_note_body, /Added by Rhea via Nous/);
+});
+
+test('one note lands on the company, the deal and the people, and nowhere else', async () => {
+  const sent = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push({ url, init }); return new Response(JSON.stringify({ id: '777' }), { status: 201 }); };
+  try {
+    const out = await addMeetingNoteToHubspot({
+      workspaceId: 'ws', token: 't', meetingRef: 'source://fellow/9', properties: { hs_note_body: 'x', hs_timestamp: 'y' },
+      targets: { dealIds: ['1'], companyId: '2', contactIds: ['3'] },
+    });
+    assert.equal(out.id, '777');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].url, /\/crm\/v3\/objects\/notes$/);
+    const types = JSON.parse(sent[0].init.body).associations.flatMap(a => a.types.map(t => t.associationTypeId)).sort();
+    assert.deepEqual(types, [HUBSPOT_NOTE_ASSOC.company, HUBSPOT_NOTE_ASSOC.contact, HUBSPOT_NOTE_ASSOC.deal].sort());
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('a call with nothing in HubSpot writes nothing, and a refusal says what to grant', async () => {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('{"message":"no"}', { status: 403 }); };
+  try {
+    const base = { workspaceId: 'ws', token: 't', meetingRef: 'r', properties: {} };
+    const none = await addMeetingNoteToHubspot({ ...base, targets: { dealIds: [], companyId: null, contactIds: [] } });
+    assert.equal(none.error, 'not_in_hubspot');
+    assert.equal(calls, 0);
+    const refused = await addMeetingNoteToHubspot({ ...base, targets: { dealIds: [], companyId: '2', contactIds: [] } });
+    assert.equal(refused.error, WRITEBACK_NOT_ALLOWED);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('a timeout or a 5xx is uncertain, a 4xx is a clear no', async () => {
+  const realFetch = globalThis.fetch;
+  const base = { workspaceId: 'ws', token: 't', meetingRef: 'r', properties: {}, targets: { dealIds: [], companyId: '2', contactIds: [] } };
+  try {
+    globalThis.fetch = async () => new Response('{}', { status: 502 });
+    assert.equal((await addMeetingNoteToHubspot(base)).uncertain, true);
+    globalThis.fetch = async () => { throw new Error('aborted'); };
+    assert.equal((await addMeetingNoteToHubspot(base)).uncertain, true);
+    globalThis.fetch = async () => new Response('{}', { status: 400 });
+    assert.equal((await addMeetingNoteToHubspot(base)).uncertain, false);
+  } finally { globalThis.fetch = realFetch; }
 });

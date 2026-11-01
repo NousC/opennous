@@ -90,6 +90,8 @@ export type FollowUpSync = {
 /** What an approval recorded: the counts the receipt reads. */
 export type FollowUpVerdict = {
   tasks_ticked?: number; tasks_edited?: number; updates_ticked?: number; email_edited?: boolean;
+  /** What was approved. Absent on a card nobody approved. */
+  task_ids?: string[]; update_ids?: string[];
   sync?: FollowUpSync | null;
 };
 export type FollowUp = {
