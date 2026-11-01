@@ -167,7 +167,7 @@ export function planFitLine(fit: PlanFit | null | undefined): { lead: string; re
 }
 
 export const SYNC_DAYS = [90, 180, 365] as const;
-export const INSTALL_PROMPT = "Set up OpenNous: fetch https://www.opennous.cloud/install.md with curl and follow it.";
+export const INSTALL_PROMPT = "Get me started with OpenNous: call the OpenNous start tool and follow it.";
 
 /** The one grey line under a step's title in the rail. Only what the data says. */
 export function stepStatus(key: StepKey, c: OnboardingChecklist, p: BackfillPreview | null): string {

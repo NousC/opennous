@@ -18,7 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 // PLUGIN_TOOLS so tools/list leads with them. Cloud adds read_brain, write_brain and read_intelligence from its own
 // module (src/cloud/index.js, GET-839), so they are not in this literal set.
 const DOCUMENTED = [
-  'whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
+  'whoami', 'start', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
   'add_note', 'enrich', 'score', 'set_icp',
   'webhooks', 'rev_plays',
 ];
@@ -69,4 +69,14 @@ test('every tool in the set is actually registered', async () => {
   for (const name of await pluginTools()) {
     assert.ok(new RegExp(`tool\\(\\s*\\n?\\s*"${name}"`).test(src), `${name} is allowlisted but never registered`);
   }
+});
+
+test('start is a tool and a prompt, and carries the guide', async () => {
+  const { createServer } = await import('../src/server.js');
+  const server = createServer();
+  const tool = server._registeredTools.start;
+  assert.ok(tool, 'start tool is registered');
+  const out = await (tool.handler ?? tool.callback)({}, {});
+  assert.match(out.content[0].text, /See what's set up/);
+  assert.ok(server._registeredPrompts.start, 'start prompt is registered');
 });

@@ -54,11 +54,11 @@ test('tools/list leads with the documented core, list_people is gone', async () 
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
   // Cloud's module adds read_brain, write_brain (GET-839) and read_intelligence (GET-1042) after score; the open-source edition has none.
-  const core = ['whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
+  const core = ['whoami', 'start', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
     'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain', 'read_intelligence'] : []), 'set_icp', 'webhooks', 'rev_plays'];
   assert.deepEqual(names.slice(0, core.length), core);
   assert.ok(!names.includes('list_people'));
-  assert.equal(names.length, HAS_CLOUD ? 25 : 22);
+  assert.equal(names.length, HAS_CLOUD ? 26 : 23);
 });
 
 test('find deals: filters map to GET /v2/deals and rows render on one line', async () => {

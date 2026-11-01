@@ -24,7 +24,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { get, post, put, patch, del, runWithToolCall } from "./client.js";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { WRITE_ONLY_TOOLS, toolHints } from "./toolHints.js";
 
@@ -43,7 +43,7 @@ const APP_URL = () => (process.env.NOUS_APP_URL || "https://app.opennous.cloud")
 const OAUTH_CONNECT = { gmail: "gmail", gmail_oauth: "gmail", google: "gmail", "google-mail": "gmail", googlemail: "gmail", linkedin: "linkedin" };
 const connectLink = (slug) => `${APP_URL()}/settings?section=integrations&connect=${slug}`;
 
-export const SERVER_VERSION = "0.78.0";
+export const SERVER_VERSION = "0.79.0";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -407,6 +407,8 @@ const CLOSED_DEAL = z.union([
   }),
 ]);
 
+const START_GUIDE = readFileSync(new URL("./start.md", import.meta.url), "utf8");
+
 export function createServer({ hideWrites = false } = {}) {
   const server = new McpServer({
     // What an MCP host shows the server as. "OpenNous", like the product and the plugin.
@@ -414,7 +416,7 @@ export function createServer({ hideWrites = false } = {}) {
     version: SERVER_VERSION,
     description:
       "OpenNous — the revenue Context Graph for your coding agent. Operated by the agent, not a human " +
-      "clicking around: call whoami to confirm who you act as (workspace, scope, GTM role). Call " +
+      "clicking around: when someone asks to get started, call start. Call whoami to confirm who you act as (workspace, scope, GTM role). Call " +
       "get_context before drafting outreach or preparing for a meeting. Call record after every " +
       "interaction, or whenever you learn something — you observe, Nous derives.",
     icons: [
@@ -441,7 +443,7 @@ export function createServer({ hideWrites = false } = {}) {
   // Claude Code already has. See docs/revenue-plugin/README.md §3.
   const PLUGIN_TOOLS = new Set([
     // The documented core (2026-09-30): one tool per door of the public API.
-    "whoami", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",
+    "whoami", "start", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",
     "add_note", "enrich", "score",
     // The Workspace layer's (Cloud) tools: read_brain, write_brain (GET-839), read_intelligence (GET-1042). None in the open-source edition.
     ...CLOUD_TOOL_NAMES,
@@ -2117,6 +2119,23 @@ export function createServer({ hideWrites = false } = {}) {
   // The identity primitive: who this key acts AS, their scope, and their GTM
   // role(s). Every governance/permission decision hangs off knowing the actor.
   // ===========================================================================
+  // The first-run guide, here so it works in any agent with nothing to install: a tool for every
+  // client, and a prompt for the ones that show prompts as slash commands (GET-1087).
+  tool(
+    "start",
+    "Get this person started with OpenNous. Returns the steps to follow: see what's already set up " +
+    "in their workspace, show what's in it, ask how they work, then propose and create RevPlays and " +
+    "event automations. Call it when someone asks to get started, says they just connected, or asks " +
+    "what you can do here. Follow the steps it returns.",
+    {},
+    async () => ({ content: [{ type: "text", text: START_GUIDE }] }),
+  );
+  server.prompt(
+    "start",
+    "Get started with OpenNous: see what's set up and automate your work",
+    () => ({ messages: [{ role: "user", content: { type: "text", text: START_GUIDE } }] }),
+  );
+
   tool(
     "whoami",
     "Report who this API key acts AS: the workspace, the person, their SCOPE (admin sees the whole " +
