@@ -32,10 +32,10 @@ import { useTopBarCrumbs } from '@/components/shell/topBar';
 import type { LivingFile } from '@/components/knowledge/LivingFilesGroup';
 import { cloud } from '@/lib/cloud';
 import { when } from '@/lib/format';
-import { KNOWLEDGE_PATH, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, CONTEXT_KIND_LABEL, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
+import { KNOWLEDGE_PATH, VISIBILITY_LABEL, pushedFolders, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, CONTEXT_KIND_LABEL, type ContextVisibility, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
 
-type Draft = { id: string | null; title: string; body: string; kind: 'reference' | 'instructions'; icp: boolean; about: boolean; shared: boolean; boxes: string[]; document: boolean };
-const empty: Draft = { id: null, title: '', body: '', kind: 'reference', icp: false, about: false, shared: false, boxes: [], document: false };
+type Draft = { id: string | null; title: string; body: string; kind: 'reference' | 'instructions'; icp: boolean; about: boolean; audience: ContextVisibility; boxes: string[]; document: boolean };
+const empty: Draft = { id: null, title: '', body: '', kind: 'reference', icp: false, about: false, audience: 'boxes', boxes: [], document: false };
 const MARKED = new Set(['icp', 'about']);
 type IcpOutcome = { status: string; signals?: number; message?: string; scorer_switched?: boolean };
 type IcpReply = { icp?: IcpOutcome };
@@ -109,7 +109,7 @@ export function ContextLibrary() {
   async function save() {
     if (!draft) return;
     const markedKind = draft.icp ? 'icp' : draft.about ? 'about' : null;
-    const payload = { title: draft.title, ...(draft.document ? {} : { body: draft.body }), kind: markedKind ?? draft.kind, ...(markedKind ? {} : { visibility: draft.shared ? 'workspace' : 'boxes' }), revbox_ids: draft.boxes };
+    const payload = { title: draft.title, ...(draft.document ? {} : { body: draft.body }), kind: markedKind ?? draft.kind, ...(markedKind ? {} : { visibility: draft.audience }), revbox_ids: draft.boxes };
     await icpCall<{ file: LibraryFile } & IcpReply>(requestTo(draft.id ? `/files/${draft.id}` : '/files', draft.id ? 'PATCH' : 'POST'), payload,
       { done: out => { setDraft(null); setOpen(out.file.id); } });
   }
@@ -118,7 +118,7 @@ export function ContextLibrary() {
     if (file.size > 262144) { setNote({ text: 'Upload text up to 256 KB.', error: true }); return; }
     setDraft({ ...empty, title: file.name, body: await file.text() });
   }
-  const edit = (f: LibraryFile) => setDraft({ id: f.id, title: f.title, body: f.body, kind: f.kind === 'icp' || f.kind === 'about' ? 'reference' : f.kind, icp: f.kind === 'icp', about: f.kind === 'about', shared: f.visibility === 'workspace', boxes: f.boxes.map(b => b.id), document: !!f.document_id });
+  const edit = (f: LibraryFile) => setDraft({ id: f.id, title: f.title, body: f.body, kind: f.kind === 'icp' || f.kind === 'about' ? 'reference' : f.kind, icp: f.kind === 'icp', about: f.kind === 'about', audience: f.visibility, boxes: f.boxes.map(b => b.id), document: !!f.document_id });
 
   const openFile = data?.files.find(f => f.id === open);
   // The ICP lives in Intelligence, not the library (GET-1044).
@@ -148,9 +148,10 @@ export function ContextLibrary() {
   const kept = living.data?.files ?? [];
   const inPlaybooks = !!openFile && (openFile.kind === 'icp' || kept.some(f => f.file_id === openFile.id));
   useTopBarCrumbs(openFile
-    ? [{ label: inPlaybooks ? 'Playbooks' : 'Library', href: KNOWLEDGE_PATH }, { label: openFile.title }]
-    : openBlock ? [{ label: `${openBlock.box.name} instructions`, href: KNOWLEDGE_PATH }, { label: openBlock.b.title }] : [{ label: 'Context' }]);
+    ? [{ label: openFile.folder ?? (inPlaybooks ? 'Playbooks' : 'Library'), href: KNOWLEDGE_PATH }, { label: openFile.title }]
+    : openBlock ? [{ label: `${openBlock.box.name} instructions`, href: KNOWLEDGE_PATH }, { label: openBlock.b.title }] : [{ label: 'Documents' }]);
   const folders: ExplorerFolder[] = [
+    ...pushedFolders(data?.files ?? []),
     {
       name: 'Playbooks', rows: playbookRows(data?.files ?? [], kept, pages ?? []),
       ...(!icpFile && !pages?.includes('icp') && data?.is_admin ? { action: <Button size="sm" variant="ghost" onClick={() => setDraft({ ...empty, title: 'ICP', icp: true })}><Plus /></Button> } : {}),
@@ -190,8 +191,8 @@ export function ContextLibrary() {
 
     <Dialog open={!!draft} onOpenChange={o => { if (!o) setDraft(null); }}>
       <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader><DialogTitle className="text-[16px] font-medium">{draft?.id ? 'Edit context' : 'New file'}</DialogTitle>
-          <DialogDescription className="mt-1 text-[12px]">Saved to the workspace library.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle className="text-[16px] font-medium">{draft?.id ? 'Edit document' : 'New document'}</DialogTitle>
+          <DialogDescription className="mt-1 text-[12px]">Saved to Documents.</DialogDescription></DialogHeader>
         {draft && <div className="mt-4 space-y-4">
           <label className="block text-[12px]">Title<input aria-label="Context title" className={cn(fieldCls, 'mt-1.5 sm:w-full')} value={draft.title} maxLength={200} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
           {draft.document ? <p className="text-[12px] text-muted-foreground">This file is a linked document. Edit its text in the document itself.</p>
@@ -202,7 +203,9 @@ export function ContextLibrary() {
             {(data?.is_admin || draft.about) && <button type="button" aria-pressed={draft.about} disabled={!data?.is_admin || (!!data?.about_file_id && data.about_file_id !== draft.id)} onClick={() => setDraft({ ...draft, about: !draft.about, icp: false })} className={cn('rounded-lg border px-2.5 py-1 text-[12px] disabled:opacity-50', draft.about ? 'border-foreground/40 bg-muted font-medium' : 'border-border/70 text-muted-foreground')}>About us</button>}
           </div>{draft.icp && <p className="mt-1.5 text-[11.5px] text-muted-foreground/80">The workspace ICP: shared with everyone, and ICP scoring builds its rules from it.</p>}
           {draft.about && <p className="mt-1.5 text-[11.5px] text-muted-foreground/80">Who you are and what you have: shared with everyone, and read wherever Nous needs to know what you sell.</p>}</fieldset>
-          {!draft.icp && !draft.about && <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={draft.shared} onChange={e => setDraft({ ...draft, shared: e.target.checked })} />Everyone in the workspace can see it<span className="text-muted-foreground/70">(otherwise only you)</span></label>}
+          {!draft.icp && !draft.about && <fieldset className="text-[12px]"><legend className="mb-1.5">Who can see it</legend><div className="flex flex-wrap gap-1.5">
+            {(data?.is_admin ? ['boxes', 'operators', 'workspace'] as const : ['boxes', 'workspace'] as const).map(v => <button key={v} type="button" aria-pressed={draft.audience === v} onClick={() => setDraft({ ...draft, audience: v })} className={cn('rounded-lg border px-2.5 py-1 text-[12px]', draft.audience === v ? 'border-foreground/40 bg-muted font-medium' : 'border-border/70 text-muted-foreground')}>{VISIBILITY_LABEL[v]}</button>)}
+          </div></fieldset>}
           {/* Box tags only where a workspace still has RevBoxes (GET-1044). */}
           {taggable.length > 0 && <fieldset className="text-[12px]"><legend className="mb-1.5">Tagged to</legend>
             <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-border/70 p-1">{taggable.map(b => <label key={b.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted"><input type="checkbox" checked={draft.boxes.includes(b.id)} onChange={e => setDraft({ ...draft, boxes: e.target.checked ? [...draft.boxes, b.id] : draft.boxes.filter(x => x !== b.id) })} /><span className="flex-1 truncate">{b.name}</span>{!b.shared && <span className="text-[10.5px] text-muted-foreground">Private</span>}</label>)}</div>

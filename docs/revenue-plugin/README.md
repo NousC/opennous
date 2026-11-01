@@ -74,8 +74,8 @@ per door of the public API: `whoami`, `find`, `get_context`, `query`, `attention
 (2026-10-11, GET-830: list the task list and close or reopen tasks; closing cannot fold into
 `record` or `add_note`, which only append) and `rules` (2026-10-12, GET-846: the operator's own
 rules, guidance or checked in the background) and `rev_plays` (2026-11-01, GET-1087: automations the
-agent sets up, which run on OpenNous without it). Nous Cloud adds `read_brain` and `write_brain` for
-the GTM brain, which the open-source edition does not have (GET-839), and `read_intelligence` for the
+agent sets up, which run on OpenNous without it). `documents` (2026-11-01, GET-1117) lists,
+reads and pushes the company's documents. Nous Cloud adds `read_intelligence` for the
 Intelligence files (GET-1042). They come
 first in `PLUGIN_TOOLS`, so an agent's tool list leads with them. `find` replaces `list_people`
 (added on the public-API branch, never released) and covers the accounts and deals lists too.
@@ -101,7 +101,6 @@ as before and are described under **Legacy** below.
 | `tasks` | The task list (`GET /v2/action-items`) and closing it (`POST /v2/action-items/status`): list by owner, status, account or due date; `done` / `reopen` by task id. The same edit as ticking a task on the Tasks page, HubSpot write-back included. |
 | `rules` | The operator's own rules (`/v2/rules`), said once: `add` with an optional check (`next_step_after_meeting`, `reply_to_buyer_email`, `stage_without_meeting`) and its window, `list`, `pause`, `resume`, `remove`, `checks`. A checked rule is evaluated hourly; a broken one raises the account in attention and opens a task, and both clear once it is met. A rule with no check is guidance the agent applies. |
 | `get_insights` | The Insights board (`GET /v2/insights`): customer insights by lane and subtype, tagged, tied to the account that said them, filterable by account and date. |
-| `read_brain` | Cloud only. The GTM brain (`GET /v2/brain`, `/search`, `/page`): no arguments for the Overview and every page path, `search` for the pages that say it, `path` for one page. |
 | `read_intelligence` | Cloud only. The Intelligence files (`GET /v2/intelligence`): the Objection playbook, Battlecards, Win/loss and the ICP's learned block, whole, each point ending in its id. For one account, `get_context` carries the sections that bear on it. |
 
 ### Write
@@ -111,7 +110,6 @@ as before and are described under **Legacy** below.
 | `add_note` | Keeps a note or document (note, meeting brief, meeting notes, pre-meeting, research, transcript) on a person or company (`POST /v2/notes`). Not an interaction; that is `record`. |
 | `enrich` | Runs the workspace's enrichment waterfall for one person (`POST /v2/people/:id/enrich`; an email or LinkedIn URL is resolved first). Reports provider, fields added, and whether a result under 90 days old was reused. |
 | `score` | The ICP fit + intent judgment, written into the graph; inline for cold leads and external lists. |
-| `write_brain` | Cloud only. Saves the next version of a GTM brain page (`PUT /v2/brain/page`): Decisions, the playbooks, `Playbooks/Competitors/<Name>`, `Working Documents/<Name>`, `Archive/<Name>`. Internal Meetings, Insights, the Overview and indexes are refused. |
 | `set_icp` | Writes the ICP (`PUT /v2/icp`). The scoring model is built from it only when none exists yet; an existing model is kept, and the result says which. Read it back with `query({scope:{foundation:'icp'}})`. |
 | `webhooks` | Subscribes the operator's own stack to events (`/v2/webhooks`): `events`, `list`, `create` (the signing secret is returned once), `update`, `delete`, `test` (a `webhook.test` built on a real account), `deliveries`. Record events carry the account, people, deal and evidence. |
 | `rev_plays` | Automations that run on OpenNous by themselves (`/v2/rev-plays`, `/v2/approvals`): `templates`, `list`, `create` (from a template, or a custom trigger and steps), `enable`, `disable`, `delete` (frees its slot), `test` (one run with every send held), `run`, `approvals`, `approve`, `reject`. The plan's limit counts every RevPlay, on or off. |
@@ -122,7 +120,7 @@ as before and are described under **Legacy** below.
 |---|---|
 | `get_account` | The full record: facts, Intel, timeline, ICP. |
 | `deals` | Deal health and the odds of closing, per account (`GET /v2/accounts/outlook`). |
-| `pages` | What has already been written in this workspace — list, or search passages; on Cloud, `brain` reaches the GTM brain. |
+| `pages` | What has already been written in this workspace — list, or search passages. |
 | `read_page` | One document: whole, one section, or the passages around a phrase, plus what it cited. |
 | `save_page` | File a **finished** document into Pages — brief, plan, report, meeting brief, objection prep. Versioned on its account, cited with the same `source_ref`s the read tools printed. |
 | `record` | Everything learned about a **contact**: interactions, facts, buying signals, Intel. Also the loop's own writes — `decision.*` (proposal, verdict, interpretation), `constraint` (what they never do, which we then refuse to generate), and `preference` (how they want things). |

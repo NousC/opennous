@@ -9224,6 +9224,7 @@ CREATE TABLE public.workspace_context_file_versions (
 
 CREATE TABLE public.workspace_context_files (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
+    folder text,
     workspace_id uuid NOT NULL,
     title text NOT NULL,
     kind text DEFAULT 'reference'::text NOT NULL,
@@ -9244,8 +9245,8 @@ CREATE TABLE public.workspace_context_files (
     CONSTRAINT workspace_context_files_icp_is_shared CHECK (((kind <> 'icp'::text) OR (visibility = 'workspace'::text))),
     CONSTRAINT workspace_context_files_kind_check CHECK ((kind = ANY (ARRAY['reference'::text, 'instructions'::text, 'icp'::text, 'about'::text]))),
     CONSTRAINT workspace_context_files_title_check CHECK (((length(title) >= 1) AND (length(title) <= 200))),
-    CONSTRAINT workspace_context_files_visibility_before_icp_check CHECK ((visibility_before_icp = ANY (ARRAY['boxes'::text, 'workspace'::text]))),
-    CONSTRAINT workspace_context_files_visibility_check CHECK ((visibility = ANY (ARRAY['boxes'::text, 'workspace'::text])))
+    CONSTRAINT workspace_context_files_visibility_before_icp_check CHECK ((visibility_before_icp = ANY (ARRAY['boxes'::text, 'workspace'::text, 'operators'::text]))),
+    CONSTRAINT workspace_context_files_visibility_check CHECK ((visibility = ANY (ARRAY['boxes'::text, 'workspace'::text, 'operators'::text])))
 );
 
 

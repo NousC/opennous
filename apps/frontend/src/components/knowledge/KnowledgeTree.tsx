@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useAuth } from "@/contexts/AuthContext";
 import { usePref } from "@/hooks/usePref";
 import { cloud } from "@/lib/cloud";
-import { FOLDED_PREF, isFolded, KNOWLEDGE_PATH, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, type ContextLibraryData, type KnowledgeRow } from "@/lib/knowledge";
+import { FOLDED_PREF, isFolded, KNOWLEDGE_PATH, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, pushedFolders, type ContextLibraryData, type KnowledgeRow } from "@/lib/knowledge";
 
 export function KnowledgeTree() {
   const { session, userData } = useAuth();
@@ -75,7 +75,7 @@ export function KnowledgeTree() {
   const showRepo = !!repo || !!repoQ.data?.can_manage;
   return (
     <>
-      <div className={`px-2 pb-1 pt-4 ${railGroupLabel}`}>Context</div>
+      <div className={`px-2 pb-1 pt-4 ${railGroupLabel}`}>Documents</div>
       {showRepo && (
         <button type="button" onClick={() => setRepoOpen(true)} className={`${railRow} gap-2 px-2 py-[6px] text-left ${railIdle}`}>
           <Github className={`h-[14px] w-[14px] flex-shrink-0 ${railIcon}`} strokeWidth={RAIL_STROKE} />
@@ -86,6 +86,7 @@ export function KnowledgeTree() {
         </button>
       )}
       <ul className="flex flex-col gap-px">
+        {pushedFolders(files).map((f) => folder(f.name, f.rows))}
         {folder("Playbooks", playbookRows(files, kept, pages))}
         {folder("Library", libraryRows(files, kept))}
       </ul>

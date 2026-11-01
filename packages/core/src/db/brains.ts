@@ -16,11 +16,11 @@
  * inside the brain, which is what gives a page its outgoing links and its backlinks.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { writeDocument, sectionText, labelEntities, isVaultPath, VAULT_FOLDERS, type DocumentRow, type DocumentSection } from './documents.js';
+import { writeDocument, sectionText, labelEntities, type DocumentRow, type DocumentSection } from './documents.js';
 import { listNotes, getWorkspaceEntityId } from './notes.js';
 import { getInternalEntityIds, getInternalEmails } from './teamMembers.js';
 import { sameTask } from './meetingTaskClosure.js';
-import { rawVisible, NO_CONTENT_VIEWER, type ReadContext } from './readContext.js';
+import { rawVisible, type ReadContext } from './readContext.js';
 import { internalMeetingSummaries, parseMeetingSummarySections, OUR_BUSINESS } from './meetingSummaries.js';
 import { resolveClientCompany } from './meetingTasks.js';
 import { proposalPath, proposalParts, PROPOSAL_PREFIX, PLAYBOOK_TOPICS } from './playbookProposals.js';
@@ -99,22 +99,7 @@ const INTERNAL_INSIGHTS = 'Internal Meetings/Internal Insights';
 const TEAM_CATEGORY_LABEL: Record<string, string> = { decisions: 'Decisions', blockers: 'Blockers', learnings: 'Learnings' };
 
 /** Folders a written page may be filed in. A written page outside them is refused. */
-const WRITABLE_FOLDERS = ['Playbooks/Competitors', 'Working Documents', 'Archive', ...VAULT_FOLDERS];
-
-/** A person with an admin seat. A workspace key, a system job and a team-wide read are not one (GET-1116). */
-export const isOperator = (ctx?: ReadContext): boolean =>
-  ctx?.viewerScope === 'admin' && !ctx.teamOnly && !!ctx.viewerUserId && ctx.viewerUserId !== NO_CONTENT_VIEWER;
-
-/** Who a Company OS page is for (GET-1116): `visibility: team` in its frontmatter, else operators. Pure. */
-export function pageVisibility(md: string): 'team' | 'operators' {
-  const front = /^\s*---\r?\n([\s\S]*?)\r?\n---/.exec(String(md ?? ''))?.[1] ?? '';
-  return /^visibility:\s*["']?team["']?\s*$/m.test(front) ? 'team' : 'operators';
-}
-
-/** May this reader see this page? Everything outside the Company OS folders stays as it was. Pure. */
-export function mayReadPage(path: string, md: string, ctx?: ReadContext): boolean {
-  return !isVaultPath(path) || isOperator(ctx) || pageVisibility(md) === 'team';
-}
+const WRITABLE_FOLDERS = ['Playbooks/Competitors', 'Working Documents', 'Archive'];
 
 const DEFAULT_CHARTER =
   'How we sell: who we sell to, how we describe ourselves, where we find buyers, what we charge, ' +
@@ -328,14 +313,12 @@ async function playbookFacts(supabase: SupabaseClient, workspaceId: string): Pro
   return out;
 }
 
-// The one place a Company OS page is held back: the tree, index, search and backlinks all read this.
-async function snapshot(supabase: SupabaseClient, workspaceId: string, brain: Brain, ctx?: ReadContext): Promise<BrainSnapshot> {
-  const [allWritten, facts, meetings] = await Promise.all([
+async function snapshot(supabase: SupabaseClient, workspaceId: string, brain: Brain): Promise<BrainSnapshot> {
+  const [written, facts, meetings] = await Promise.all([
     writtenPages(supabase, workspaceId, brain.id),
     playbookFacts(supabase, workspaceId),
     internalMeetings(supabase, workspaceId).catch((e) => { console.error('[brains] internal meetings', e?.message ?? e); return [] as InternalMeeting[]; }),
   ]);
-  const written = allWritten.filter(d => mayReadPage(pathOf(d), textOf(d), ctx));
   const playbooks = PLAYBOOK_SECTIONS.map(p => {
     const f = facts.get(p.section);
     return { name: p.name, section: p.section, content: f?.content ?? '', source: f?.source ?? '', updated_at: f?.updated_at ?? null };
@@ -355,8 +338,8 @@ const inFolder = (path: string, folder: string) => path.startsWith(`${folder}/`)
 
 // ── The tree ─────────────────────────────────────────────────────────────────
 
-export async function brainTree(supabase: SupabaseClient, workspaceId: string, brain: Brain, ctx?: ReadContext): Promise<BrainNode[]> {
-  const s = await snapshot(supabase, workspaceId, brain, ctx);
+export async function brainTree(supabase: SupabaseClient, workspaceId: string, brain: Brain): Promise<BrainNode[]> {
+  const s = await snapshot(supabase, workspaceId, brain);
   return treeOf(s);
 }
 
@@ -384,8 +367,6 @@ function treeOf(s: BrainSnapshot): BrainNode[] {
     ]),
     folder('Working Documents', writtenIn('Working Documents')),
     folder('Archive', writtenIn('Archive')),
-    // Only once they have a page: most workspaces never use them.
-    ...VAULT_FOLDERS.filter(f => writtenIn(f).length).map(f => folder(f, writtenIn(f))),
   ];
 }
 
@@ -437,11 +418,9 @@ function authoredText(s: BrainSnapshot): { path: string; title: string; md: stri
 export async function readBrainPage(
   supabase: SupabaseClient, workspaceId: string, brain: Brain, path: string, ctx?: ReadContext,
 ): Promise<BrainPage | null> {
-  const s = await snapshot(supabase, workspaceId, brain, ctx);
+  const s = await snapshot(supabase, workspaceId, brain);
   const tree = treeOf(s);
   const pages = flatten(tree);
-  // A page a member can't see reads exactly like a page that doesn't exist.
-  if (isVaultPath(path) && !isOperator(ctx) && lastSegment(path) !== 'index' && !s.written.some(w => pathOf(w) === path)) return null;
   // A written page that does not exist yet opens empty, so "new competitor page" is just
   // opening its path and saving.
   const node = pages.find(p => p.path === path)
@@ -475,7 +454,7 @@ export async function readBrainPage(
     updated = d?.updated_at ?? null;
     documentId = d?.id ?? null;
     version = d?.version ?? null;
-    editable = !isVaultPath(path) || isOperator(ctx);
+    editable = true;
   } else if (node.page === 'playbook') {
     const p = s.playbooks.find(x => `Playbooks/${x.name}` === path)!;
     body = p.content || `_Nothing written about ${p.name.toLowerCase()} yet._`;
@@ -523,12 +502,6 @@ export async function readBrainPage(
 export function isWritablePath(path: string): boolean {
   if (path === 'Decisions') return true;
   return WRITABLE_FOLDERS.some(f => inFolder(path, f) && lastSegment(path) !== 'index' && lastSegment(path).trim().length > 0);
-}
-
-/** The Company OS pages as they stand, for the repo sync (GET-1116). Not for showing to a reader. */
-export async function listVaultPages(supabase: SupabaseClient, workspaceId: string, brain: Brain) {
-  const written = await writtenPages(supabase, workspaceId, brain.id);
-  return written.filter(d => isVaultPath(pathOf(d))).map(d => ({ path: pathOf(d), body: textOf(d), updated_at: d.updated_at }));
 }
 
 /** The playbook section a page path stands for, if it is one. */
@@ -635,9 +608,6 @@ async function rootIndex(supabase: SupabaseClient, workspaceId: string, s: Brain
   };
   out.push('## [[Working Documents/index|Working Documents]]', '', ...listed('Working Documents'), '');
   out.push('## [[Archive/index|Archive]]', '', ...listed('Archive'), '');
-  for (const f of VAULT_FOLDERS) {
-    if (s.written.some(d => inFolder(pathOf(d), f))) out.push(`## [[${f}/index|${f}]]`, '', ...listed(f), '');
-  }
 
   out.push('## Where things are', '',
     '| Looking for | Page |', '| --- | --- |',
@@ -1026,13 +996,13 @@ export interface BrainSearchHit { path: string; title: string; kind: string; sni
  * summary and what the team believes per topic. Every word of the query must appear; a hit in the
  * title counts more. The brain is small (tens of pages), so this reads the snapshot in memory.
  */
-export async function searchBrain(supabase: SupabaseClient, workspaceId: string, brain: Brain, query: string, limit = 30, ctx?: ReadContext): Promise<BrainSearchHit[]> {
+export async function searchBrain(supabase: SupabaseClient, workspaceId: string, brain: Brain, query: string, limit = 30): Promise<BrainSearchHit[]> {
   // Words that carry meaning, stemmed so "pricing" finds "priced" and "task" finds "tasks".
   const STOP = new Set(['the', 'and', 'for', 'per', 'with', 'from', 'our', 'we', 'of', 'to', 'in', 'on', 'at', 'by', 'is', 'a', 'an', 'or', 'what', 'did', 'do', 'about']);
   const stem = (t: string) => (t.length > 4 ? t.replace(/(ing|ed|es|s)$/, '') : t);
   const terms = query.toLowerCase().split(/[^a-z0-9$%]+/).map(t => t.trim()).filter(t => t.length >= 2 && !STOP.has(t)).map(stem);
   if (!terms.length) return [];
-  const s = await snapshot(supabase, workspaceId, brain, ctx);
+  const s = await snapshot(supabase, workspaceId, brain);
   const docs: { path: string; title: string; kind: string; text: string }[] = [];
   for (const p of s.playbooks) if (p.content) docs.push({ path: `Playbooks/${p.name}`, title: p.name, kind: 'Playbook', text: p.content });
   for (const d of s.written) {

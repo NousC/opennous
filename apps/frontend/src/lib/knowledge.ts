@@ -5,12 +5,14 @@ import { freshAccessToken } from "@/lib/freshToken";
 import { PREVIEW } from "@/lib/preview";
 
 export type ContextKind = "reference" | "instructions" | "icp" | "about";
+export type ContextVisibility = "boxes" | "workspace" | "operators";
+export const VISIBILITY_LABEL: Record<ContextVisibility, string> = { boxes: "Only me", operators: "Operators", workspace: "Everyone" };
 export type ContextBlock = { id: string; title: string; body: string };
 export type ContextFile = { id: string; title: string; body: string; document_id: string | null; kind?: ContextKind };
 // A file saved once for the workspace. `boxes` are the RevBox tags this viewer can see; `hidden_boxes`
 // counts tags on boxes they cannot open. Both are empty without RevBoxes.
 export type LibraryFile = ContextFile & {
-  kind: ContextKind; visibility: "boxes" | "workspace"; created_by: string; updated_at: string; icp_marked_at: string | null;
+  kind: ContextKind; visibility: ContextVisibility; folder?: string | null; created_by: string; updated_at: string; icp_marked_at: string | null;
   boxes: { id: string; name: string; shared: boolean }[]; hidden_boxes: number; can_edit: boolean;
 };
 export type ContextLibraryData = {
@@ -42,11 +44,17 @@ export function playbookRows(files: LibraryFile[], living: LivingRow[], pages: r
 /** The Library folder: every file that is not already in Playbooks. */
 export function libraryRows(files: LibraryFile[], living: LivingRow[]): KnowledgeRow[] {
   const kept = new Set(living.map((f) => f.file_id));
-  return files.filter((f) => f.kind !== "icp" && !kept.has(f.id)).map((f) => ({
-    key: f.id, title: f.title, href: `${KNOWLEDGE_PATH}?file=${f.id}`, updated: f.updated_at,
-    type: [CONTEXT_KIND_LABEL[f.kind], f.visibility !== "workspace" && "Private"].filter(Boolean).join(" · "),
-  }));
+  return files.filter((f) => f.kind !== "icp" && !kept.has(f.id) && !f.folder).map(row);
 }
+/** The folders operators push documents into (GET-1117), as far as this viewer may see them. */
+export function pushedFolders(files: LibraryFile[]): { name: string; rows: KnowledgeRow[] }[] {
+  const names = [...new Set(files.flatMap((f) => (f.folder ? [f.folder] : [])))].sort();
+  return names.map((name) => ({ name, rows: files.filter((f) => f.folder === name).map(row) }));
+}
+const row = (f: LibraryFile): KnowledgeRow => ({
+  key: f.id, title: f.title, href: `${KNOWLEDGE_PATH}?file=${f.id}`, updated: f.updated_at,
+  type: [CONTEXT_KIND_LABEL[f.kind], f.visibility !== "workspace" && VISIBILITY_LABEL[f.visibility]].filter(Boolean).join(" · "),
+});
 /** Which folders are folded: one pref, so the tree and the explorer fold together. */
 export const FOLDED_PREF = "sidebar.knowledge.folded";
 export const isFolded = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");

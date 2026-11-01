@@ -16,7 +16,7 @@
  *   READ      find (people | accounts | deals lists) · get_context (person, account or deal) ·
  *             query · attention · get_insights
  *   WRITE     add_note · enrich · score · set_icp · rev_plays
- * (Cloud adds read_brain, write_brain and read_intelligence through src/cloud/, GET-839, GET-1042.)
+ * (Cloud adds read_intelligence through src/cloud/, GET-1042.)
  * Legacy, still registered because plugin skills call them (retire with GET-536):
  *   get_account · deals · pages · read_page · save_page · record · record_insight · record_closed_deals
  */
@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { WRITE_ONLY_TOOLS, toolHints } from "./toolHints.js";
 
 // The Workspace layer's (Cloud) additions to the plugin surface, when this checkout carries them:
-// the GTM brain (GET-839). The open-source edition has no src/cloud/ and serves without them.
+// read_intelligence (GET-1042). The open-source edition has no src/cloud/ and serves without them.
 const CLOUD_ENTRY = new URL("./cloud/index.js", import.meta.url);
 const cloudMcp = existsSync(fileURLToPath(CLOUD_ENTRY)) ? await import(CLOUD_ENTRY.href) : null;
 const CLOUD_TOOL_NAMES = cloudMcp?.toolNames ?? [];
@@ -443,9 +443,9 @@ export function createServer({ hideWrites = false } = {}) {
   // Claude Code already has. See docs/revenue-plugin/README.md §3.
   const PLUGIN_TOOLS = new Set([
     // The documented core (2026-09-30): one tool per door of the public API.
-    "whoami", "start", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",
+    "whoami", "start", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights", "documents",
     "add_note", "enrich", "score",
-    // The Workspace layer's (Cloud) tools: read_brain, write_brain (GET-839), read_intelligence (GET-1042). None in the open-source edition.
+    // The Workspace layer's (Cloud) tool: read_intelligence (GET-1042). None in the open-source edition.
     ...CLOUD_TOOL_NAMES,
     "set_icp",
     // Events pushed to the operator's own stack (GET-559): a door of its own, /v2/webhooks —
@@ -473,6 +473,43 @@ export function createServer({ hideWrites = false } = {}) {
   };
   // What the cloud module's tools and tool extensions call the API with.
   const helpers = { get, post, put, relAge };
+
+  // ===========================================================================
+  // TOOL: documents  —  GET /v2/company-documents (GET-1117)
+  // The company's doctrine, strategy, initiatives and library, as far as this person may see them.
+  // ===========================================================================
+  tool(
+    "documents",
+    "The company's DOCUMENTS: initiatives, strategy, objection handbooks, doctrine and anything else operators " +
+    "push for the team. An operator chooses who sees each one, so this lists only what this person may read. Read " +
+    "what bears on the work before drafting or deciding on the company's behalf. No arguments lists them; `search` " +
+    "filters by a word or phrase; `id` opens one.\n" +
+    "PUSH (workspace owners and admins): pass `title`, `folder` and `markdown` to put a document from the repo into " +
+    "Documents, with `shared_with`. The same title in the same folder becomes its next version. Push only when the " +
+    "operator asks, and confirm who it's shared with. The repo stays the source: nothing syncs back.",
+    {
+      id: z.string().optional().describe("Open this document, by the id from the list."),
+      search: z.string().optional().describe("Only documents with this word or phrase."),
+      title: z.string().optional().describe("Push: the document's title."),
+      folder: z.string().optional().describe("Push: its folder in the sidebar, like Initiatives, Strategy or Objections."),
+      markdown: z.string().optional().describe("Push: the whole document."),
+      shared_with: z.enum(["everyone", "operators", "only_me"]).optional().describe("Push: who can see it. A new document defaults to operators."),
+    },
+    async ({ id, search, title, folder, markdown, shared_with }) => {
+      if (markdown !== undefined) {
+        const d = await post("/v2/company-documents", { title, folder, markdown, shared_with });
+        return { content: [{ type: "text", text: `${d.created ? "Pushed" : "Updated"} "${d.title}" in ${d.folder}, shared with ${d.shared}.` }] };
+      }
+      if (id) {
+        const d = await get(`/v2/company-documents/${encodeURIComponent(id)}`);
+        return { content: [{ type: "text", text: `# ${d.title}\n${d.folder} · shared with ${d.shared}\n\n${d.body}` }] };
+      }
+      const r = await get("/v2/company-documents", search ? { q: search } : undefined);
+      if (!r.documents?.length) return { content: [{ type: "text", text: search ? `No document you can read says "${search}".` : "No documents you can read yet." }] };
+      const lines = r.documents.map(d => `• ${d.title}  [${d.folder}, ${d.shared}]  id ${d.id}`);
+      return { content: [{ type: "text", text: `${r.documents.length} document(s). Open one with documents { id }.\n${lines.join("\n")}` }] };
+    }
+  );
 
   // ===========================================================================
   // TOOL: get_context  —  POST /v2/context

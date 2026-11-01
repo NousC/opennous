@@ -4,6 +4,10 @@
 //
 // Who sees a file:
 //   - visibility 'workspace': every workspace member;
+//   - visibility 'operators': workspace owners and admins only (GET-1117);
+// `folder` is where a pushed document shows in Documents: Initiatives, Strategy, Objections, whatever the
+// operator names. A pushed document is OpenNous's copy to read: its source stays in the company's repo,
+// and pushing again makes a new version. It never syncs back.
 //   - visibility 'boxes' (the default): its creator, and on Cloud the people who can open a RevBox
 //     it is tagged to. Without RevBoxes (the open-source build) nothing is tagged, so it is the
 //     creator's alone: "Private" in the app.
@@ -22,9 +26,10 @@ export const CONTEXT_KINDS = ['reference', 'instructions', 'icp', 'about'];
 export const MARKED_KINDS = ['icp', 'about'];
 const MARK_NAME = { icp: 'ICP', about: 'About us' };
 const marked = (kind) => MARKED_KINDS.includes(kind);
-export const CONTEXT_VISIBILITY = ['boxes', 'workspace'];
+export const CONTEXT_VISIBILITY = ['boxes', 'workspace', 'operators'];
+
 const MAX_BODY = 262144;
-const FILE_COLS = 'id, workspace_id, title, kind, body, document_id, visibility, visibility_before_icp, created_by, updated_by, icp_marked_at, created_at, updated_at';
+const FILE_COLS = 'id, workspace_id, title, kind, body, document_id, visibility, visibility_before_icp, created_by, updated_by, icp_marked_at, created_at, updated_at, folder';
 const VERSION_COLS = 'id, file_id, title, kind, body, author_kind, author_user_id, author_name, changelog, git_sha, created_at';
 const CHANGELOG_MAX = 200;
 
@@ -37,6 +42,11 @@ const clean = (s, n) => typeof s === 'string' ? s.trim().slice(0, n) : '';
 export const missingLibrary = (e) => ['42P01', 'PGRST205'].includes(e?.code) || /workspace_context_files|revbox_context_links/.test(e?.message ?? '') && /schema cache|does not exist/.test(e?.message ?? '');
 const uniqueViolation = (e) => e?.code === '23505';
 
+async function isLivingFile(sb, ws, fileId) {
+  const { data } = await sb.from('workspace_living_files').select('key').eq('workspace_id', ws).eq('file_id', fileId).limit(1);
+  return !!data?.length;
+}
+
 async function workspaceRole(sb, ws, uid) {
   const m = await one(sb.from('workspace_members').select('role').eq('workspace_id', ws).eq('user_id', uid).maybeSingle());
   if (!m) fail(403, 'You are not a member of this workspace.');
@@ -48,8 +58,9 @@ const isAdmin = (role) => role === 'owner' || role === 'admin';
  * Can this viewer see the file? `visibleBoxIds`: the boxes the viewer can open; `links`: the file's
  * revbox ids. Pure.
  */
-export function contextFileVisible(file, uid, visibleBoxIds, links) {
+export function contextFileVisible(file, uid, visibleBoxIds, links, role = null) {
   if (!file || !uid) return false;
+  if (file.visibility === 'operators') return isAdmin(role);
   if (file.visibility === 'workspace' || file.created_by === uid) return true;
   return links.some(id => visibleBoxIds.has(id));
 }
@@ -63,7 +74,8 @@ export function contextFileVisible(file, uid, visibleBoxIds, links) {
  */
 export function contextFileEditable(file, uid, role, boxAccess, links) {
   if (!file || !uid) return false;
-  const admin = isAdmin(role) && contextFileVisible(file, uid, new Set(boxAccess.keys()), links);
+  if (file.visibility === 'operators' && !isAdmin(role)) return false;
+  const admin = isAdmin(role) && contextFileVisible(file, uid, new Set(boxAccess.keys()), links, role);
   if (marked(file.kind)) return admin;
   if (file.created_by === uid || admin) return true;
   return links.length > 0 && links.every(id => ['owner', 'editor'].includes(boxAccess.get(id)));
@@ -72,7 +84,7 @@ export function contextFileEditable(file, uid, role, boxAccess, links) {
 /** A library request body, validated. -> error message or null. Pure. */
 export function validateContextFile(body, { partial = false } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'Invalid context file.';
-  const keys = ['title', 'body', 'kind', 'visibility', 'document_id', 'revbox_ids', 'changelog'];
+  const keys = ['title', 'body', 'kind', 'visibility', 'document_id', 'revbox_ids', 'changelog', 'folder'];
   if (Object.keys(body).some(k => !keys.includes(k))) return 'Unsupported context file field.';
   if ((!partial || 'title' in body) && (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200)) return 'Give the file a title of up to 200 characters.';
   if ('body' in body && (typeof body.body !== 'string' || Buffer.byteLength(body.body) > MAX_BODY)) return 'Write or upload text up to 256 KB.';
@@ -80,6 +92,7 @@ export function validateContextFile(body, { partial = false } = {}) {
   if ('visibility' in body && !CONTEXT_VISIBILITY.includes(body.visibility)) return 'Choose who can see this file.';
   if ('document_id' in body && body.document_id != null && typeof body.document_id !== 'string') return 'Choose a valid document.';
   if ('revbox_ids' in body && (!Array.isArray(body.revbox_ids) || body.revbox_ids.length > 100 || body.revbox_ids.some(id => typeof id !== 'string'))) return 'Choose valid RevBoxes.';
+  if ('folder' in body && body.folder != null && (typeof body.folder !== 'string' || !body.folder.trim() || body.folder.length > 60 || body.folder.includes('/'))) return 'Name the folder in up to 60 characters, with no slashes.';
   if ('changelog' in body && body.changelog != null && (typeof body.changelog !== 'string' || body.changelog.length > CHANGELOG_MAX)) return `Keep the change note to ${CHANGELOG_MAX} characters.`;
   return null;
 }
@@ -114,7 +127,7 @@ export function contextFileOut(f, boxIds, access, boxes, uid, role) {
   const names = new Map(boxes.map(b => [b.id, b]));
   const seen = boxIds.filter(id => access.has(id));
   return {
-    id: f.id, title: f.title, kind: f.kind, body: f.body ?? '', document_id: f.document_id ?? null, visibility: f.visibility,
+    id: f.id, title: f.title, kind: f.kind, body: f.body ?? '', document_id: f.document_id ?? null, visibility: f.visibility, folder: f.folder ?? null,
     created_by: f.created_by, created_at: f.created_at, updated_at: f.updated_at, icp_marked_at: f.icp_marked_at ?? null,
     boxes: seen.map(id => ({ id, name: names.get(id)?.name ?? 'RevBox', shared: !!names.get(id)?.shared })),
     hidden_boxes: boxIds.length - seen.length,
@@ -136,7 +149,7 @@ export async function listContextLibrary(sb, ws, uid) {
   for (let i = 0; i < files.length; i += 200) links.push(...await linksOf(sb, ws, files.slice(i, i + 200).map(f => f.id)));
   const byFile = linkMap(links);
   const visibleIds = new Set(access.keys());
-  const out = files.filter(f => contextFileVisible(f, uid, visibleIds, byFile.get(f.id) ?? []))
+  const out = files.filter(f => contextFileVisible(f, uid, visibleIds, byFile.get(f.id) ?? [], role))
     .map(f => contextFileOut(f, byFile.get(f.id) ?? [], access, boxes, uid, role));
   return { files: out, boxes: boxes.map(b => ({ id: b.id, name: b.name, shared: !!b.shared, access: b.access, blocks: Array.isArray(b.blocks) ? b.blocks : [] })), is_admin: isAdmin(role) };
 }
@@ -147,8 +160,42 @@ export async function loadContextFile(sb, ws, uid, fileId) {
   const file = await one(sb.from('workspace_context_files').select(FILE_COLS).eq('workspace_id', ws).eq('id', fileId).maybeSingle());
   const { boxes, access } = await viewerBoxes(sb, ws, uid);
   const links = file ? (await linksOf(sb, ws, [file.id])).map(l => l.revbox_id) : [];
-  if (!file || !contextFileVisible(file, uid, new Set(access.keys()), links)) fail(404, 'Context file not found.');
+  if (!file || !contextFileVisible(file, uid, new Set(access.keys()), links, role)) fail(404, 'Context file not found.');
   return { file, links, role, access, boxes };
+}
+
+/**
+ * The files an agent may read for this reader (GET-1117). `userId` is a person, null for a key with
+ * no person behind it, which reads only what everyone may read. No document links, whose own
+ * visibility the API would have to check.
+ */
+export async function readableContextFiles(sb, ws, { userId = null, admin = false } = {}) {
+  const files = await rows(sb.from('workspace_context_files').select('id, title, kind, body, visibility, created_by, folder, document_id, updated_at').eq('workspace_id', ws).order('updated_at', { ascending: false }).limit(1000));
+  return files.filter(f => !f.document_id && (f.visibility === 'workspace'
+    || (f.visibility === 'operators' && admin && !!userId)
+    || (f.visibility === 'boxes' && !!userId && f.created_by === userId)));
+}
+
+/**
+ * Push a document into Documents (GET-1117): operators only. The same title in the same folder is the
+ * same document, so pushing again makes its next version. A new one is for operators until they say
+ * otherwise; an update keeps who it's shared with unless `visibility` is passed. -> { file, created }
+ */
+export async function pushDocument(sb, ws, uid, { title, folder, body, visibility, changelog } = {}) {
+  const role = await workspaceRole(sb, ws, uid);
+  if (!isAdmin(role)) fail(403, 'Only a workspace owner or admin can push a document.');
+  if (!String(folder ?? '').trim()) fail(400, 'Choose a folder, like Initiatives or Strategy.');
+  if (typeof body !== 'string' || !body.trim()) fail(400, 'A document needs text.');
+  const name = clean(title, 200), place = clean(folder, 60);
+  // Someone else's private file is not this document: it can't be seen, confirmed or overwritten.
+  const named = await rows(sb.from('workspace_context_files').select('id, visibility, created_by').eq('workspace_id', ws).eq('folder', place).eq('title', name));
+  const found = named.find(f => f.visibility !== 'boxes' || f.created_by === uid);
+  const fields = { body, ...(visibility ? { visibility } : {}), ...(changelog ? { changelog } : {}) };
+  if (found) {
+    if (visibility === 'boxes' && found.created_by !== uid) fail(400, 'Only the person who pushed this document can make it private.');
+    return { file: await updateContextFile(sb, ws, uid, found.id, fields), created: false };
+  }
+  return { file: await createContextFile(sb, ws, uid, { title: name, folder: place, visibility: 'operators', ...fields }), created: true };
 }
 
 /** Make `fileId` the workspace's ICP or About us file (`kind`), or a plain reference again (null).
@@ -184,10 +231,11 @@ export async function createContextFile(sb, ws, uid, body) {
   const kind = body.kind ?? 'reference';
   if (marked(kind) && !isAdmin(role)) fail(403, `Only a workspace owner or admin can choose the ${MARK_NAME[kind]} file.`);
   const visibility = body.visibility ?? 'boxes';
+  if (visibility === 'operators' && !isAdmin(role)) fail(403, 'Only a workspace owner or admin can share a file with operators.');
   // An ICP file is inserted as the ICP: the one-per-workspace index refuses a second one before
   // anything is written (no orphan row, no tags).
   const row = {
-    workspace_id: ws, created_by: uid, updated_by: uid, title: clean(body.title, 200), kind,
+    workspace_id: ws, created_by: uid, updated_by: uid, title: clean(body.title, 200), kind, folder: clean(body.folder, 60) || null,
     body: body.document_id ? '' : (body.body ?? ''), document_id: body.document_id ?? null,
     ...(marked(kind) ? { visibility: 'workspace', visibility_before_icp: visibility, icp_marked_at: now() } : { visibility }),
   };
@@ -207,7 +255,13 @@ export async function updateContextFile(sb, ws, uid, fileId, body) {
   if (content && !contextFileEditable(file, uid, role, access, links)) fail(403, 'You cannot change this file.');
   if ('document_id' in body && body.document_id !== file.document_id) fail(400, 'A linked document cannot be swapped. Add it as a new file.');
   if (file.document_id && 'body' in body) fail(400, 'This file is a linked document. Edit the document itself.');
-  if (marked(file.kind) && body.visibility === 'boxes') fail(400, `The ${MARK_NAME[file.kind]} file is shared with the workspace. Unmark it first.`);
+  const willBeMarked = marked(body.kind) || (marked(file.kind) && !('kind' in body));
+  if (willBeMarked && 'visibility' in body && body.visibility !== 'workspace') fail(400, `The ${MARK_NAME[body.kind ?? file.kind]} file is shared with the workspace.`);
+  // A pushed document stays in its folder: push it again to change what it says, not where it lives.
+  if ('folder' in body && (body.folder ?? null) !== (file.folder ?? null)) fail(400, 'A document stays in its folder.');
+  // Every agent reads the Intelligence files, so they can't be closed to operators.
+  if (body.visibility === 'operators' && await isLivingFile(sb, ws, file.id)) fail(400, 'OpenNous keeps this file for every agent, so it stays shared.');
+  if (body.visibility === 'operators' && !isAdmin(role)) fail(403, 'Only a workspace owner or admin can share a file with operators.');
   const kindBefore = file.kind;
   if ('kind' in body && body.kind !== file.kind && (marked(body.kind) || marked(file.kind))) file = await setMark(sb, ws, uid, role, file, marked(body.kind) ? body.kind : null);
   const patch = {};

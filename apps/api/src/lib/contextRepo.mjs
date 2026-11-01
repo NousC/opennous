@@ -22,7 +22,7 @@ import { publicApiBase } from './publicApiBase.mjs';
 const GH = 'https://api.github.com';
 const OPENNOUS = { name: 'OpenNous', email: 'agent@opennous.cloud' };
 const REPO_COLS = 'workspace_id, github_repo, github_branch, base_path, github_token_enc, webhook_id, webhook_secret, sync_token, auto_sync, sync_status, last_error, last_synced_at, last_synced_via, last_polled_at, connected_by, created_at, updated_at';
-const SYNC_COLS = 'id, workspace_id, title, kind, body, document_id, visibility, created_by, updated_by, updated_at, repo_path, git_sha, repo_synced_at';
+const SYNC_COLS = 'id, workspace_id, title, kind, body, document_id, visibility, created_by, updated_by, updated_at, repo_path, git_sha, repo_synced_at, folder';
 const MAX_PULL = 200;
 
 const headers = (token) => ({
@@ -48,8 +48,9 @@ export function titleOf(path, text) {
   return (name.charAt(0).toUpperCase() + name.slice(1)).slice(0, 200) || 'Untitled';
 }
 
-/** Does this file belong in the repo? Shared with the workspace, and its own text (not a linked doc). Pure. */
-export const syncable = (f) => !!f && f.visibility === 'workspace' && !f.document_id;
+/** Does this file belong in the repo? Shared with the workspace, its own text (not a linked doc), and
+ *  not a pushed document, whose source is already the repo (GET-1117). Pure. */
+export const syncable = (f) => !!f && f.visibility === 'workspace' && !f.document_id && !f.folder;
 
 /** Which side wins when both changed since the last sync: the later edit. Pure. */
 export function latestWins({ appEditedAt, repoCommittedAt }) {
@@ -184,7 +185,7 @@ export async function pullContextRepo(sb, cfg, { via = 'poll', afterChange = nul
   const base = clean(cfg.base_path);
   const prefix = base ? `${base}/` : '';
   const tree = (await fetchTree(token, cfg.github_repo, cfg.github_branch))
-    .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.slice(prefix.length).includes('/') && !hookOwns?.(t.path))
+    .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.slice(prefix.length).includes('/'))
     .slice(0, MAX_PULL);
   const { data: files, error } = await sb.from('workspace_context_files').select(SYNC_COLS).eq('workspace_id', ws).not('repo_path', 'is', null);
   if (error) throw error;
@@ -234,37 +235,13 @@ export async function pullContextRepo(sb, cfg, { via = 'poll', afterChange = nul
     await afterChange?.(next);
     out.pulled++;
   }
-  // Before last_synced_at moves: when this throws, the connection shows the error and the next pass retries.
-  if (afterPullHook) await afterPullHook(sb, cfg);
   await sb.from('workspace_context_repos').update({ sync_status: 'ok', last_error: null, last_synced_at: now(), last_synced_via: via, last_polled_at: now(), updated_at: now() }).eq('workspace_id', ws);
   return out;
 }
 
-/** What a Cloud hook may do with a connection's repo, or null when its token can't be read. */
-export function repoTools(cfg) {
-  const token = tokenOf(cfg);
-  if (!token) return null;
-  return {
-    tree: () => fetchTree(token, cfg.github_repo, cfg.github_branch),
-    blob: (sha) => fetchBlob(token, cfg.github_repo, sha),
-    lastCommit: (path) => lastCommit(token, cfg, path),
-    put: (path, text, opts) => putPath(token, cfg, path, text, opts),
-    isPrivate: async () => {
-      const r = await gh(token, `/repos/${cfg.github_repo}`);
-      return r.ok && (await r.json())?.private === true;
-    },
-  };
-}
-
-let afterPullHook = null;
-let hookOwns = null;
-/** Cloud reads more of the repo on each pull (the Company OS folders, GET-1116). `owns(path)` keeps its
- *  files out of the context files, whatever base_path is. */
-export function registerAfterPull(fn, owns = null) { afterPullHook = fn; hookOwns = owns; }
-
 /** Commit every shared file the repo does not have yet (after connecting). -> files pushed. */
 export async function pushAllContextFiles(sb, ws, who) {
-  const { data, error } = await sb.from('workspace_context_files').select('id, visibility, document_id, repo_path').eq('workspace_id', ws).is('repo_path', null);
+  const { data, error } = await sb.from('workspace_context_files').select('id, visibility, document_id, repo_path, folder').eq('workspace_id', ws).is('repo_path', null);
   if (error) throw error;
   let n = 0;
   for (const f of (data ?? []).filter(syncable)) {
@@ -302,8 +279,6 @@ export async function connectContextRepo(sb, ws, uid, { repo, token, branch = nu
   // A reconnect to another repo or folder starts the files' repo tracking over.
   if (before && (before.github_repo !== saved.github_repo || before.base_path !== saved.base_path || before.github_branch !== saved.github_branch)) {
     await sb.from('workspace_context_files').update({ repo_path: null, git_sha: null, repo_synced_at: null }).eq('workspace_id', ws);
-    await sb.from('workspace_context_repos').update({ last_synced_at: null }).eq('workspace_id', ws);
-    saved.last_synced_at = null;
   }
   const pulled = await pullContextRepo(sb, saved, { via: 'connect', afterChange });
   const pushed = await pushAllContextFiles(sb, ws, { kind: 'person', userId: uid });

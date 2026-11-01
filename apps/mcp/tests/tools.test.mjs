@@ -53,12 +53,13 @@ const ACC = '22222222-2222-4222-8222-222222222222';
 test('tools/list leads with the documented core, list_people is gone', async () => {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
-  // Cloud's module adds read_brain, write_brain (GET-839) and read_intelligence (GET-1042) after score; the open-source edition has none.
-  const core = ['whoami', 'start', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
-    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain', 'read_intelligence'] : []), 'set_icp', 'webhooks', 'rev_plays'];
+  // Cloud's module adds read_intelligence (GET-1042) after score; the open-source edition has none.
+  const core = ['whoami', 'start', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights', 'documents',
+    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_intelligence'] : []), 'set_icp', 'webhooks', 'rev_plays'];
   assert.deepEqual(names.slice(0, core.length), core);
   assert.ok(!names.includes('list_people'));
-  assert.equal(names.length, HAS_CLOUD ? 26 : 23);
+  assert.equal(names.length, HAS_CLOUD ? 25 : 24);
+  assert.ok(!names.includes('read_brain') && !names.includes('write_brain'));
 });
 
 test('find deals: filters map to GET /v2/deals and rows render on one line', async () => {
@@ -441,4 +442,15 @@ test('rev_plays: templates, list, create, switches, test and approvals', async (
 
   assert.equal((await callTool('rev_plays', { action: 'create' }, {})).isError, true);
   assert.equal((await callTool('rev_plays', { action: 'enable' }, {})).isError, true);
+});
+
+test('documents: lists what the reader may see, searches, and opens one (GET-1117)', async () => {
+  const docs = { documents: [{ id: 'd1', title: 'Doctrine', folder: 'Doctrine', shared: 'everyone' }] };
+  const list = await callTool('documents', {}, { 'GET /v2/company-documents': () => [200, docs] });
+  assert.match(list.text, /Doctrine \[?\s*\[?Doctrine, everyone\]\s+id d1|Doctrine  \[Doctrine, everyone\]  id d1/);
+  const found = await callTool('documents', { search: 'pricing' }, { 'GET /v2/company-documents': () => [200, { documents: [] }] });
+  assert.match(found.text, /No document you can read says "pricing"/);
+  assert.equal(found.calls[0].query.q, 'pricing');
+  const open = await callTool('documents', { id: 'd1' }, { 'GET /v2/company-documents/d1': () => [200, { title: 'Doctrine', folder: 'Doctrine', shared: 'everyone', body: 'The rules.' }] });
+  assert.match(open.text, /The rules\./);
 });

@@ -9,15 +9,15 @@ const OVERWRITES = { readOnlyHint: false, destructiveHint: true };
 
 export const TOOL_HINTS = {
   whoami: READ, find: READ, get_context: READ, query: READ, attention: READ, get_insights: READ,
-  get_account: READ, deals: READ, read_page: READ, read_brain: READ, read_intelligence: READ,
+  get_account: READ, deals: READ, read_page: READ, read_intelligence: READ,
   score: ADDS, add_note: ADDS, enrich: ADDS, record: ADDS, record_insight: ADDS, record_closed_deals: ADDS,
-  set_icp: OVERWRITES, save_page: OVERWRITES, write_brain: OVERWRITES,
+  set_icp: OVERWRITES, save_page: OVERWRITES, documents: OVERWRITES,
   tasks: ADDS, pages: OVERWRITES, rules: OVERWRITES, webhooks: OVERWRITES, rev_plays: OVERWRITES,
 };
 
 /** Tools with nothing for a read-only grant to do, so tools/list leaves them out. */
 export const WRITE_ONLY_TOOLS = new Set([
-  'add_note', 'enrich', 'record', 'record_insight', 'record_closed_deals', 'set_icp', 'save_page', 'write_brain',
+  'add_note', 'enrich', 'record', 'record_insight', 'record_closed_deals', 'set_icp', 'save_page',
 ]);
 
 export const toolHints = (name) => TOOL_HINTS[name] ?? { readOnlyHint: false };

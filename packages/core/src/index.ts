@@ -60,6 +60,7 @@ export {
   registerContextBoxes, contextFileOut, listContextLibrary, loadContextFile, createContextFile, updateContextFile, deleteContextFile,
   recordContextVersion, listContextVersions, restoreContextVersion, workspaceIcpContext, workspaceAboutContext,
   ICP_LEARNED_START, ICP_LEARNED_END, withoutLearnedBlock, learnedBlockOf, withLearnedBlock, scorecardSeedText,
+  readableContextFiles, pushDocument,
 } from './context/library.mjs';
 export * from './db/flags.js';
 export * from './db/features.js';

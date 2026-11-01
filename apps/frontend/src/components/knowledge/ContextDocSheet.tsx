@@ -25,7 +25,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/
 import { cn } from '@/lib/utils';
 import { when } from '@/lib/format';
 import { docFormat, docHeading, isEmptyDoc, plainParagraphs, prettyJson, withoutFrontmatter } from '@/lib/contextDoc';
-import { CONTEXT_KIND_LABEL, type ContextKind } from '@/lib/knowledge';
+import { CONTEXT_KIND_LABEL, VISIBILITY_LABEL, type ContextKind, type ContextVisibility } from '@/lib/knowledge';
 
 export type ContextDoc = {
   id: string; title: string; body: string;
@@ -33,7 +33,7 @@ export type ContextDoc = {
   kind?: ContextKind | 'block';
   linkedDocument?: boolean;
   tags?: { id: string; name: string }[]; hiddenBoxes?: number;
-  visibility?: 'boxes' | 'workspace';
+  visibility?: ContextVisibility;
   updatedAt?: string | null;
   /** Where it comes from when that is not the library, e.g. the box a block belongs to. */
   source?: string;
@@ -134,7 +134,7 @@ function DocView({ page = false, doc, canEdit, busy, onSave, actions, menu, abou
   }
   const meta = [
     doc.source,
-    doc.visibility === 'workspace' ? 'Workspace' : doc.visibility === 'boxes' ? 'Private' : null,
+    doc.visibility ? VISIBILITY_LABEL[doc.visibility] : null,
     doc.linkedDocument ? 'Linked document' : null,
     doc.updatedAt ? `Updated ${when(doc.updatedAt)}` : null,
   ].filter(Boolean).join(' · ');
