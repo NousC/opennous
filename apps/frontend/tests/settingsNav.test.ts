@@ -13,7 +13,7 @@ test("API plan admin: Account, Connections (Integrations, Webhooks), Workspace; 
   assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Connections", "Workspace"]);
   assert.deepEqual(ids(nav), [
     "profile", "notifications", "security", "api-keys",
-    "integrations", "company-sources", "webhooks",
+    "integrations", "company-sources", "webhooks", "company-repo",
     "general", "members", "activity-log", "billing",
   ]);
   const billing = nav.find((i) => i.id === "billing")!;
@@ -23,7 +23,7 @@ test("API plan admin: Account, Connections (Integrations, Webhooks), Workspace; 
   // (GET-1043). Shared is one page's tab, so its id stays routable but is not its own row.
   // API keys are the account's own and live here, under Account, in the pane (GET-1030).
   const rail = groupNav(nav).flatMap((g) => g.items.map((i) => i.id));
-  assert.deepEqual(rail, ["profile", "notifications", "security", "api-keys", "integrations", "webhooks", "general", "members", "activity-log", "billing"]);
+  assert.deepEqual(rail, ["profile", "notifications", "security", "api-keys", "integrations", "webhooks", "company-repo", "general", "members", "activity-log", "billing"]);
   assert.equal(nav.find((i) => i.id === "integrations")!.label, "Integrations");
   assert.equal(nav.find((i) => i.id === "api-keys")!.href, undefined, "opens in Settings, not /keys");
   assert.equal(resolveSection("repo", nav), "profile");
@@ -88,7 +88,7 @@ test("Integrations, Webhooks, API keys and billing open inside Settings on every
 test("self-host admin: Integrations and Webhooks in Settings (no sidebar group any more), no billing, Instance setup first in Workspace", () => {
   const nav = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false, selfHosted: true });
   assert.deepEqual(groupNav(nav).map((g) => g.group), ["Account", "Connections", "Workspace"]);
-  assert.deepEqual(ids(nav), ["profile", "security", "integrations", "company-sources", "webhooks", "instance", "general", "members"]);
+  assert.deepEqual(ids(nav), ["profile", "security", "integrations", "company-sources", "webhooks", "company-repo", "instance", "general", "members"]);
   assert.equal(resolveSection("notifications", nav), "profile", "a hidden section lands on Account");
 });
 
@@ -134,4 +134,10 @@ test("Agent activity (was API & MCP activity, GET-900): Workspace group, admins 
   }
   const selfHost = settingsNav({ tier: "api", isWorkspaceAdmin: true, isOwner: false, selfHosted: true });
   assert.ok(!ids(selfHost).includes("activity-log"));
+});
+
+test("the company repo is in Settings for admins only (GET-1118)", () => {
+  const rows = (isWorkspaceAdmin: boolean) => settingsNav({ tier: "api", isWorkspaceAdmin, isOwner: false }).map((r) => r.id);
+  assert.ok(rows(true).includes("company-repo"));
+  assert.ok(!rows(false).includes("company-repo"));
 });

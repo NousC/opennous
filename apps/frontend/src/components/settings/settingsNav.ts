@@ -67,6 +67,8 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "integrations",    label: "Integrations",          group: "Connections" },
     { id: "company-sources", label: "Shared integrations",   group: "Connections", unlisted: true },
     { id: "webhooks",        label: "Webhooks",              group: "Connections" },
+    // The repo behind Documents: admins only, out of the sidebar since GET-1118.
+    { id: "company-repo",    label: "Company repo",          group: "Connections", show: isWorkspaceAdmin },
     ...(core ? [] : [{ id: "api-keys", label: "API keys", group: "Connections", show: !selfHosted } as Row]),
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.

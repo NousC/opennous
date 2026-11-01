@@ -25,6 +25,7 @@ import Integrations from "@/pages/Integrations";
 import Webhooks from "@/pages/Webhooks";
 import { AutomationsPanel } from "@/components/AutomationsPanel";
 import { RepositoriesPane } from "@/components/settings/RepoPane";
+import { ContextRepoBar } from "@/components/knowledge/ContextRepoBar";
 import MarketFocus from "@/pages/MarketFocus";
 import { ApiActivity } from "@/components/settings/ApiActivity";
 import { activeTeam } from "@/lib/activeTeam";
@@ -1424,6 +1425,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}
           {section === "activity-log" && <SectionShell title="Agent activity" wide><ApiActivity /></SectionShell>}
           {section === "repo"         && <RepositoriesPane token={token ?? ""} workspaceId={workspaceId} />}
+          {section === "company-repo" && <SectionShell title="Company repo"><ContextRepoBar ws={workspaceId} token={token ?? ""} /></SectionShell>}
           {/* The Workspace layer's sections (memory, skills, config, models, changes, spend,
               adoption, reporting, insights, categories, agents, runs), each with its own shell. */}
           {CloudSection && section !== "billing" && (

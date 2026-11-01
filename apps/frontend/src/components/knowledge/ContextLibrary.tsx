@@ -156,7 +156,7 @@ export function ContextLibrary() {
       name: 'Playbooks', rows: playbookRows(data?.files ?? [], kept, pages ?? []),
       ...(!icpFile && !pages?.includes('icp') && data?.is_admin ? { action: <Button size="sm" variant="ghost" onClick={() => setDraft({ ...empty, title: 'ICP', icp: true })}><Plus /></Button> } : {}),
     },
-    { name: 'Library', rows: libraryRows(data?.files ?? [], kept) },
+    ...(libraryRows(data?.files ?? [], kept).length ? [{ name: 'Library', rows: libraryRows(data?.files ?? [], kept) }] : []),
     ...(data?.boxes.filter(b => b.blocks.length).map(box => ({ name: `${box.name} instructions`, rows: box.blocks.map(b => ({ key: b.id, title: b.title, href: `${KNOWLEDGE_PATH}?file=${b.id}`, type: box.shared ? 'Instructions' : 'Instructions · Private' })) })) ?? []),
   ];
 
