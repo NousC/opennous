@@ -184,7 +184,7 @@ export async function pullContextRepo(sb, cfg, { via = 'poll', afterChange = nul
   const base = clean(cfg.base_path);
   const prefix = base ? `${base}/` : '';
   const tree = (await fetchTree(token, cfg.github_repo, cfg.github_branch))
-    .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.slice(prefix.length).includes('/'))
+    .filter(t => t.type === 'blob' && t.path.startsWith(prefix) && /\.md$/i.test(t.path) && !t.path.slice(prefix.length).includes('/') && !hookOwns?.(t.path))
     .slice(0, MAX_PULL);
   const { data: files, error } = await sb.from('workspace_context_files').select(SYNC_COLS).eq('workspace_id', ws).not('repo_path', 'is', null);
   if (error) throw error;
@@ -234,9 +234,33 @@ export async function pullContextRepo(sb, cfg, { via = 'poll', afterChange = nul
     await afterChange?.(next);
     out.pulled++;
   }
+  // Before last_synced_at moves: when this throws, the connection shows the error and the next pass retries.
+  if (afterPullHook) await afterPullHook(sb, cfg);
   await sb.from('workspace_context_repos').update({ sync_status: 'ok', last_error: null, last_synced_at: now(), last_synced_via: via, last_polled_at: now(), updated_at: now() }).eq('workspace_id', ws);
   return out;
 }
+
+/** What a Cloud hook may do with a connection's repo, or null when its token can't be read. */
+export function repoTools(cfg) {
+  const token = tokenOf(cfg);
+  if (!token) return null;
+  return {
+    tree: () => fetchTree(token, cfg.github_repo, cfg.github_branch),
+    blob: (sha) => fetchBlob(token, cfg.github_repo, sha),
+    lastCommit: (path) => lastCommit(token, cfg, path),
+    put: (path, text, opts) => putPath(token, cfg, path, text, opts),
+    isPrivate: async () => {
+      const r = await gh(token, `/repos/${cfg.github_repo}`);
+      return r.ok && (await r.json())?.private === true;
+    },
+  };
+}
+
+let afterPullHook = null;
+let hookOwns = null;
+/** Cloud reads more of the repo on each pull (the Company OS folders, GET-1116). `owns(path)` keeps its
+ *  files out of the context files, whatever base_path is. */
+export function registerAfterPull(fn, owns = null) { afterPullHook = fn; hookOwns = owns; }
 
 /** Commit every shared file the repo does not have yet (after connecting). -> files pushed. */
 export async function pushAllContextFiles(sb, ws, who) {
@@ -278,6 +302,8 @@ export async function connectContextRepo(sb, ws, uid, { repo, token, branch = nu
   // A reconnect to another repo or folder starts the files' repo tracking over.
   if (before && (before.github_repo !== saved.github_repo || before.base_path !== saved.base_path || before.github_branch !== saved.github_branch)) {
     await sb.from('workspace_context_files').update({ repo_path: null, git_sha: null, repo_synced_at: null }).eq('workspace_id', ws);
+    await sb.from('workspace_context_repos').update({ last_synced_at: null }).eq('workspace_id', ws);
+    saved.last_synced_at = null;
   }
   const pulled = await pullContextRepo(sb, saved, { via: 'connect', afterChange });
   const pushed = await pushAllContextFiles(sb, ws, { kind: 'person', userId: uid });

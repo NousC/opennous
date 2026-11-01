@@ -87,7 +87,18 @@ export interface DocumentRow extends DocumentSummary {
 }
 
 const SUMMARY_COLS = 'id, kind, series, cadence, title, headline, subject_entity_id, period_start, period_end, skill, version, status, word_count, created_at, updated_at';
-const ROW_COLS = `${SUMMARY_COLS}, workspace_id, sections, body_md, content_hash, generated_from, author_user_id, thread_id, written_by, supersedes_id, legacy_claim_id, deleted_at`;
+const ROW_COLS = `${SUMMARY_COLS}, workspace_id, sections, body_md, content_hash, generated_from, author_user_id, thread_id, written_by, supersedes_id, legacy_claim_id, deleted_at, brain_path`;
+
+/** The Company OS folders of a brain (GET-1116). Their pages can be operators-only, so they are read
+ *  only through db/brains.ts, which checks the reader: no search chunks, no links, nothing by id. */
+export const VAULT_FOLDERS = ['Doctrine', 'Strategy', 'Initiatives'];
+export const isVaultPath = (path: string | null | undefined): boolean =>
+  VAULT_FOLDERS.some(f => String(path ?? '').startsWith(`${f}/`));
+
+async function isVaultDocument(supabase: SupabaseClient, workspaceId: string, id: string): Promise<boolean> {
+  const { data } = await supabase.from('documents').select('brain_path').eq('workspace_id', workspaceId).eq('id', id).maybeSingle();
+  return isVaultPath((data as { brain_path?: string | null } | null)?.brain_path);
+}
 
 // ── Refs ─────────────────────────────────────────────────────────────────────
 //
@@ -492,6 +503,8 @@ export async function writeDocument(supabase: SupabaseClient, workspaceId: strin
       .eq('id', previous.id).eq('workspace_id', workspaceId);
   }
 
+  if (isVaultPath(input.brainPath)) return row;
+
   // Everything below enriches the document; none of it may lose the document if it fails.
   await Promise.all([
     writeSources(supabase, workspaceId, row, input.sources ?? []).catch(e => console.error('[documents] sources', e?.message ?? e)),
@@ -627,7 +640,7 @@ export interface ListDocumentsFilters {
 }
 
 export async function listDocuments(supabase: SupabaseClient, workspaceId: string, f: ListDocumentsFilters = {}): Promise<DocumentSummary[]> {
-  let q = supabase.from('documents').select(SUMMARY_COLS).eq('workspace_id', workspaceId);
+  let q = supabase.from('documents').select(`${SUMMARY_COLS}, brain_path`).eq('workspace_id', workspaceId);
   q = f.includeSuperseded ? q.neq('status', 'deleted') : q.eq('status', 'live');
   // Brain pages live in their brain (GET-431). They have no subject, so without this they
   // would read as workspace reports and land in the Pages index.
@@ -642,7 +655,7 @@ export async function listDocuments(supabase: SupabaseClient, workspaceId: strin
   if (f.titleContains) q = q.ilike('title', `%${f.titleContains.replace(/[%_]/g, '')}%`);
   const { data, error } = await q.order('created_at', { ascending: false }).limit(Math.min(f.limit ?? 100, 500));
   if (error) throw error;
-  return (data ?? []) as unknown as DocumentSummary[];
+  return ((data ?? []) as unknown as (DocumentSummary & { brain_path?: string | null })[]).filter(d => !isVaultPath(d.brain_path));
 }
 
 /**
@@ -783,6 +796,7 @@ export async function getDocument(supabase: SupabaseClient, workspaceId: string,
     .eq('workspace_id', workspaceId).eq('id', id).neq('status', 'deleted').maybeSingle();
   if (!doc) return null;
   const row = doc as unknown as DocumentRow;
+  if (isVaultPath((row as unknown as { brain_path?: string | null }).brain_path)) return null;
 
   const [{ data: sources }, { data: outLinks }, { data: inLinks }, { count: chunks }] = await Promise.all([
     supabase.from('document_sources')
@@ -1102,6 +1116,7 @@ export async function documentTree(
 export async function renameDocument(supabase: SupabaseClient, workspaceId: string, id: string, title: string) {
   const clean = String(title ?? '').trim().slice(0, 300);
   if (!clean) throw new Error('title_required');
+  if (await isVaultDocument(supabase, workspaceId, id)) return null;
   const { data, error } = await supabase.from('documents').update({ title: clean, updated_at: new Date().toISOString() })
     .eq('workspace_id', workspaceId).eq('id', id).neq('status', 'deleted').select(SUMMARY_COLS).maybeSingle();
   if (error) throw error;
@@ -1124,6 +1139,7 @@ export async function renameDocument(supabase: SupabaseClient, workspaceId: stri
 export async function editDocumentSection(
   supabase: SupabaseClient, workspaceId: string, id: string, index: number, body: string,
 ): Promise<DocumentRow | null> {
+  if (await isVaultDocument(supabase, workspaceId, id)) return null;
   const { data: row, error: readErr } = await supabase.from('documents')
     .select('sections').eq('workspace_id', workspaceId).eq('id', id).neq('status', 'deleted').maybeSingle();
   if (readErr) throw readErr;
@@ -1149,6 +1165,7 @@ export async function editDocumentSection(
  */
 export async function deleteDocument(supabase: SupabaseClient, workspaceId: string, id: string) {
   const now = new Date().toISOString();
+  if (await isVaultDocument(supabase, workspaceId, id)) return false;
   const { data: doc } = await supabase.from('documents').select('id, status, supersedes_id')
     .eq('workspace_id', workspaceId).eq('id', id).neq('status', 'deleted').maybeSingle();
   if (!doc) return false;
