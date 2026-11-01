@@ -44,7 +44,8 @@ backfillRouter.get('/preview', verifySupabaseAuth, async (req, res) => {
     const { data: job } = await ownerJobFilter(supabase
       .from('contact_enrichment_jobs')
       .select('job_id, status, paused_reason, contact_ids, window_days, created_at, updated_at, done, state')
-      .eq('workspace_id', workspaceId), owner)
+      .eq('workspace_id', workspaceId)
+      .is('state->>sync_only', null), owner)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();

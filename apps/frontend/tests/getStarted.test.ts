@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backfillCount, setupLocked, setupSteps, stepStatus } from "../src/lib/getStarted.ts";
+import { backfillCount, planFitLine, setupDone, setupLocked, setupSteps, stepStatus, syncDoneDue, syncDoneMayOpen, topButton } from "../src/lib/getStarted.ts";
 
 type C = Parameters<typeof setupSteps>[0];
 const base: C = {
@@ -94,4 +94,68 @@ test("the backfill step names the people the meeting notes add that are not in t
   assert.equal(notInCrmLine({ people: 1, accounts: 0 }), "1 person from your meeting notes isn't in your CRM. They're added too, tagged Not in CRM.");
   assert.equal(notInCrmLine({ people: 0, accounts: 0 }), null);
   assert.equal(notInCrmLine(null), null);
+});
+
+// ── The sync flow (GET-1087) ─────────────────────────────────────────────────
+
+const syncFlow: C = {
+  ...base, flow: "sync", plan: { live: false },
+  crm: { done: false, provider: null, imported: false, accounts: 0 },
+  mail: { done: false }, notes: { done: false }, backfill: { state: "none", started: false },
+};
+
+test("the sync flow is email, notetaker, CRM, agent, and no backfill step", () => {
+  assert.deepEqual(setupSteps(syncFlow).map((s) => s.key), ["email", "notes", "crm", "agent"]);
+});
+
+test("an invited member never sees the CRM step", () => {
+  assert.deepEqual(setupSteps({ ...syncFlow, seat: "member" }).map((s) => s.key), ["email", "notes", "agent"]);
+});
+
+test("the unpaid lock is gone on the sync flow and stays on the old one", () => {
+  assert.equal(setupLocked(syncFlow), false);
+  assert.equal(setupLocked({ ...syncFlow, flow: "backfill" }), true);
+});
+
+test("skipping settles a step, the agent's included: it can wait", () => {
+  assert.equal(setupDone(syncFlow, new Set(["email", "notes", "crm"] as const)), false);
+  assert.equal(setupDone(syncFlow, new Set(["email", "notes", "crm", "agent"] as const)), true);
+  assert.equal(setupDone({ ...syncFlow, api_key: { created: true, used: true } }, new Set(["email", "notes", "crm"] as const)), true);
+});
+
+test("the button says Syncing… whenever it runs, agent step done or not", () => {
+  const running = { ...syncFlow, sync: { state: "running", counts: null, seen: false, finished_at: null } } as C;
+  assert.equal(topButton(running, false), "syncing");
+  assert.equal(topButton(running, true), "syncing");
+  assert.equal(topButton(syncFlow, false), "get_started");
+  assert.equal(topButton({ ...running, sync: { ...running.sync!, state: "done" } }, false), "get_started");
+  assert.equal(topButton({ ...running, sync: { ...running.sync!, state: "done" } }, true), "none");
+});
+
+test("Sync done does not wait on the agent step, only on a data step someone is on", () => {
+  const done = { ...syncFlow, mail: { done: true, providers: ["gmail_oauth"] }, notes: { done: true }, crm: { ...syncFlow.crm, done: true }, sync: { state: "done", counts: { accounts: 1, people: 2, conversations: 3 }, seen: false, finished_at: null } } as C;
+  assert.equal(syncDoneMayOpen(done, { panelOpen: false, connecting: false }), true);
+  assert.equal(syncDoneMayOpen(done, { panelOpen: true, connecting: false }), true, "sat on the agent step");
+  assert.equal(syncDoneMayOpen(done, { panelOpen: false, connecting: true }), false);
+  const notesOpen = { ...done, notes: { done: false } } as C;
+  assert.equal(syncDoneMayOpen(notesOpen, { panelOpen: true, connecting: false }), false);
+  assert.equal(syncDoneMayOpen(notesOpen, { panelOpen: false, connecting: false }), true);
+  assert.equal(syncDoneMayOpen({ ...done, sync: { ...done.sync!, seen: true } }, { panelOpen: false, connecting: false }), false);
+});
+
+test("the pop-up is due once, when the sync is done", () => {
+  const done = (seen: boolean) => ({ ...syncFlow, sync: { state: "done", counts: { accounts: 1, people: 2, conversations: 3 }, seen, finished_at: null } }) as C;
+  assert.equal(syncDoneDue(done(false)), true);
+  assert.equal(syncDoneDue(done(true)), false);
+  assert.equal(syncDoneDue(syncFlow), false);
+});
+
+test("plan fit is one line, names the size, and above the sizes it's Talk to us", () => {
+  const sizes = [{ credits: 2000, price_usd: 79 }, { credits: 4000, price_usd: 149 }, { credits: 8000, price_usd: 249 }];
+  assert.deepEqual(planFitLine({ monthly_credits: 3200, sizes, recommended_credits: 4000 }),
+    { lead: "About 3,200 credits a month.", rec: "Recommended: Growth, $149.", credits: 4000 });
+  assert.deepEqual(planFitLine({ monthly_credits: 12000, sizes, recommended_credits: "custom" }),
+    { lead: "About 12,000 credits a month.", rec: "Talk to us", credits: null });
+  assert.equal(planFitLine(null), null);
+  assert.equal(planFitLine({ monthly_credits: 0, sizes, recommended_credits: 2000 }), null);
 });

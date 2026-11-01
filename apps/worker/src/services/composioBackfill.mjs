@@ -6,7 +6,7 @@
 // Google Calendar: a calendar scan over a wider lookback (services/calendarSync.mjs) — the same
 // reconcile the schedule runs every 30 minutes, so there is one calendar path, not two.
 
-import { appOwnsHistoryBackfill } from './contactHistoryEnricher.mjs';
+import { appOwnsHistoryBackfill, historySyncOnly } from './contactHistoryEnricher.mjs';
 import { syncCalendarConnection } from './calendarSync.mjs';
 import { syncGmailConnection } from './gmailSync.mjs';
 import { hasGoogleTransport } from '../utils/googleClient.mjs';
@@ -32,6 +32,9 @@ export async function backfillComposioConnection(supabase, conn, { days = DEFAUL
     return syncCalendarConnection(supabase, conn, ownsHistory ? { lookbackDays: days } : {});
   }
   if (provider !== 'gmail_oauth') return { ok: false, error: `no backfill spec for ${provider}` };
+  // The workspace's sync job reads this mailbox with no model calls (GET-1087). This scan would
+  // file the same mail through the live path, reply labels and all.
+  if (await historySyncOnly(supabase, conn.workspace_id)) return { ok: true, logged: 0, skipped: 'sync_job' };
   if (!ownsHistory) return { ok: true, logged: 0, skipped: 'api_agent_backfill' };
 
   // The same scan the schedule runs, over the lookback: received and sent, paged, deduped.

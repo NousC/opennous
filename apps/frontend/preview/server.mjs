@@ -11,6 +11,7 @@
 // of silently blanking a page.
 import http from "node:http";
 import { existsSync } from "node:fs";
+import { listRevPlayTemplates } from "../../../packages/core/src/services/revPlayTemplates.mjs";
 import {
   WS, USERS, COMPANIES, CONTACTS, FLAGS, TASKS, PORTFOLIO, GRAPH, CAMPAIGNS,
   companyDetail, personRecord, icpRecord,
@@ -359,7 +360,7 @@ const routes = [
   // Automations (GET-598: its baseline was a loader). The routes' shapes with nothing built
   // yet, so the page shows its templates; the connected tools let the template cards resolve.
   // GET-616: a few of the workspace's own, so the list, its last-run states and History draw.
-  ["GET", /^\/api\/automations$/, () => ({ plan: "Custom", limit: null, used: PREVIEW_AUTOMATIONS.length, automations: PREVIEW_AUTOMATIONS, catalogue: [], destinations: [], triggers: [] })],
+  ["GET", /^\/api\/automations$/, () => ({ plan: "Custom", limit: null, used: PREVIEW_AUTOMATIONS.length, automations: PREVIEW_AUTOMATIONS, catalogue: [], destinations: [], triggers: [], templates: listRevPlayTemplates() })],
   ["GET", /^\/api\/automations\/runs$/, (_m, q) => previewAutomationRuns(q)],
   // GET-713: one step waiting on a person, so the Approvals tab has something to show.
   ["GET", /^\/api\/workflows\/approvals$/, () => ({ approvals: [{

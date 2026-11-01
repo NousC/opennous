@@ -55,10 +55,10 @@ test('tools/list leads with the documented core, list_people is gone', async () 
   const names = tools.map((t) => t.name);
   // Cloud's module adds read_brain, write_brain (GET-839) and read_intelligence (GET-1042) after score; the open-source edition has none.
   const core = ['whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
-    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain', 'read_intelligence'] : []), 'set_icp', 'webhooks'];
+    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_brain', 'write_brain', 'read_intelligence'] : []), 'set_icp', 'webhooks', 'rev_plays'];
   assert.deepEqual(names.slice(0, core.length), core);
   assert.ok(!names.includes('list_people'));
-  assert.equal(names.length, HAS_CLOUD ? 24 : 21);
+  assert.equal(names.length, HAS_CLOUD ? 25 : 22);
 });
 
 test('find deals: filters map to GET /v2/deals and rows render on one line', async () => {
@@ -237,6 +237,17 @@ test('get_context prints the Intelligence as its own section, after the account 
   assert.ok(text.indexOf('INTELLIGENCE') < text.indexOf('ATTRIBUTES'));
 });
 
+test('whoami shows what is set up inside the app, and an older API just omits it', async () => {
+  const setup = { onboarded: true, accounts: 3, has_icp: false, integrations: ['fireflies', 'gmail_oauth'], email_connected: true, notetaker_connected: true, crm_connected: false,
+    sync: { state: 'done', counts: { accounts: 4, people: 9, conversations: 24 } }, foundations: { done: [], missing: ['icp'] }, webhooks: 1, rev_plays: { used: 2, limit: 5 }, members: 3,
+    plan: { name: 'Self-serve', trial_ends_at: '2026-11-15T00:00:00Z', credits_left: 400 } };
+  const r = await callTool('whoami', {}, { 'GET /v2/workspace/whoami': () => [200, { workspace: { name: 'Acme Co' }, you: { name: 'Theo', scope: 'admin', roles: [] }, setup, usage: null }] });
+  assert.match(r.text, /Connected: fireflies, gmail_oauth \(email yes, notetaker yes, CRM no\)/);
+  assert.match(r.text, /Sync: done \(4 accounts, 9 people, 24 conversations\)/);
+  assert.match(r.text, /Foundations missing: icp\. Webhooks: 1\. RevPlays: 2 of 5\. Members: 3\./);
+  assert.match(r.text, /trial ends/);
+});
+
 test('whoami renders the usage block; null fields read as unlimited', async () => {
   const base = { workspace: { name: 'Acme Co' }, you: { name: 'Theo', scope: 'admin', roles: ['founder'] }, setup: { onboarded: true, accounts: 3, has_icp: true } };
   const a = await callTool('whoami', {}, {
@@ -370,4 +381,64 @@ test('whoami counts accounts as companies and names an MCP tool next (GET-1011)'
   assert.match(text, /12 accounts · 1,340 people/);
   assert.match(text, /NEXT → call `attention`/);
   assert.doesNotMatch(text, /`focus`/);
+});
+
+test('rev_plays: templates, list, create, switches, test and approvals', async () => {
+  const PLAY = { id: 'p1', name: 'Account handoff', enabled: true, trigger: { type: 'clock', frequency: 'weekly', at: '08:00' }, steps_count: 2, last_run_at: null };
+  const t = await callTool('rev_plays', { action: 'templates' }, { 'GET /v2/rev-plays/templates': () => [200, { templates: [
+    { id: 'account_handoff', name: 'Account handoff', does: 'CS gets the summary.', trigger: 'deal_closed_won', needs: ['hubspot'], needs_to: true, available: true },
+    { id: 'stale_deal', available: false, why_not: 'Nothing fires Stale deal detection as a RevPlay yet.' },
+  ] }] });
+  assert.match(t.text, /account_handoff: Account handoff\. CS gets the summary\. Trigger deal_closed_won\. Needs hubspot\. Needs `to`/);
+  assert.match(t.text, /stale_deal: not available/);
+
+  const list = await callTool('rev_plays', {}, { 'GET /v2/rev-plays': () => [200, { rev_plays: [PLAY], plan: 'Self-serve', limit: 5, used: 1 }] });
+  assert.match(list.text, /1 RevPlay · Self-serve plan · yours 1 of 5, shared 0 of 5, on or off/);
+  assert.match(list.text, /Account handoff \(on, shared\) · clock weekly 08:00 · 2 steps · last run never/);
+
+  const made = await callTool('rev_plays', { action: 'create', template: 'account_handoff', to: 'ida@harborline.example' }, {
+    'POST /v2/rev-plays': () => [201, { rev_play: PLAY, warnings: ["HubSpot isn't connected, so the HubSpot step will stop the run."] }],
+  });
+  assert.deepEqual(made.calls[0].body, { template: 'account_handoff', to: 'ida@harborline.example' });
+  assert.match(made.text, /Created Account handoff \(on\)/);
+  assert.match(made.text, /Heads up: HubSpot/);
+
+  const custom = await callTool('rev_plays', { action: 'create', name: 'Mine', trigger: { type: 'call_ended' }, steps: [{ type: 'agent', prompt: 'Sum it up' }, { type: 'webhook', url: 'https://a.example' }] }, {
+    'POST /v2/rev-plays': () => [201, { rev_play: PLAY }],
+  });
+  assert.deepEqual(custom.calls[0].body.steps[1], { type: 'webhook', url: 'https://a.example' });
+
+  const atLimit = await callTool('rev_plays', { action: 'create', template: 'x' }, {
+    'POST /v2/rev-plays': () => [402, { error: 'automation_limit_reached', message: 'This plan includes 5 RevPlays, on or off, and all are in use.' }],
+  });
+  assert.equal(atLimit.isError, true);
+  assert.match(atLimit.text, /5 RevPlays/);
+
+  const off = await callTool('rev_plays', { action: 'disable', id: 'p1' }, { 'PATCH /v2/rev-plays/p1': () => [200, { rev_play: { ...PLAY, enabled: false } }] });
+  assert.deepEqual(off.calls[0].body, { enabled: false });
+  assert.match(off.text, /is off/);
+
+  const shared = await callTool('rev_plays', { action: 'share', id: 'p1' }, { 'PATCH /v2/rev-plays/p1': () => [200, { rev_play: { ...PLAY, visibility: 'shared' } }] });
+  assert.deepEqual(shared.calls[0].body, { visibility: 'shared' });
+  assert.match(shared.text, /only admins can change it/);
+
+  const gone = await callTool('rev_plays', { action: 'delete', id: 'p1' }, { 'DELETE /v2/rev-plays/p1': () => [200, { deleted: true, id: 'p1' }] });
+  assert.match(gone.text, /slot is free/);
+  assert.equal((await callTool('rev_plays', { action: 'delete' }, {})).isError, true);
+
+  const started = await callTool('rev_plays', { action: 'test', id: 'p1' }, { 'POST /v2/rev-plays/p1/test': () => [202, { run_id: 'r1', trigger: { label: 'Run now' } }] });
+  assert.match(started.text, /every send held/);
+  assert.match(started.text, /run_id: r1/);
+
+  const run = await callTool('rev_plays', { action: 'run', id: 'p1', run_id: 'r1' }, { 'GET /v2/rev-plays/p1/runs/r1': () => [200, { run: { status: 'ok', automation: { name: 'Account handoff' }, steps: [{ step: 2, name: 'Email', status: 'held', detail: 'Would email ida@harborline.example' }] } }] });
+  assert.match(run.text, /Account handoff: ok/);
+  assert.match(run.text, /2\. Email: held · Would email/);
+
+  const waiting = await callTool('rev_plays', { action: 'approvals' }, { 'GET /v2/approvals': () => [200, { approvals: [{ run_id: 'r2', automation: { name: 'CRM sync back' }, rows: [['Field', 'Next step']] }] }] });
+  assert.match(waiting.text, /CRM sync back[\s\S]*run_id: r2[\s\S]*Field: Next step/);
+  const yes = await callTool('rev_plays', { action: 'approve', run_id: 'r2' }, { 'POST /v2/approvals/r2/approve': () => [200, { ok: true }] });
+  assert.match(yes.text, /Approved/);
+
+  assert.equal((await callTool('rev_plays', { action: 'create' }, {})).isError, true);
+  assert.equal((await callTool('rev_plays', { action: 'enable' }, {})).isError, true);
 });

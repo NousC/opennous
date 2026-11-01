@@ -25,6 +25,7 @@ import {
   emptyTaskProvenance, provenanceFromModel, dealForTask, companyOfContact,
   isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, saveAboutUsClaims,
 } from '@nous/core';
+import { ownModelActive } from '@nous/core';
 import { read, parseArray, acceptsArray } from './read.mjs';
 import { theirSideOf, sideBlocks, groundQuote } from './grounding.mjs';
 import { renderThread, lastAt } from './emailThreads.mjs';
@@ -141,6 +142,8 @@ export async function markThreadRead(supabase, workspaceId, thread, contactId, {
     commitments: commitments.length,
     insights,
     messages: thread.messages.length,
+    // Read on the person's own plan (GET-1085): this marker is not a credit.
+    ...(ownModelActive() ? { own_model: true } : {}),
   };
   const written = await recordObservation(supabase, {
     workspaceId,

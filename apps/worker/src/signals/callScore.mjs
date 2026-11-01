@@ -16,6 +16,7 @@
 
 import {
   writesTasks, getCoachingRubric, buildCallScorePrompt, buildCallTypePrompt, parseCallType, callTypeAgainstRoom, parseCallScoreJson, isGradedCallType, buildHealthReadPrompt, parseHealthReadJson, buildCommitmentsPrompt, parseCommitmentsJson, writeHealthPage, healthSignalsToSave, HEALTH_SIGNAL, saveNote, recordObservation, resolveDuePhrase, dueDateAgreeingWith, getWorkspaceTimezone, enqueueGithubDispatches, callScoreFromStored, saveDocument, talkShareFromTranscript, sidesOfCall, resolveCallTarget, storeCallReview, emptyTaskProvenance, provenanceFromModel, matchPersonByName, dealForTask, companyOfContact, isAutoNotification, AUTO_NOTIFICATION_REASON, notACommitment, previousMeetingTasks, carriedOver, retirePreviousMeetingTasks, retireMeetingNotes, repeatsFiledTask, emitEvent, runCallEndedAutomations, advanceStageForCall,
+  isSyncOnly,
 } from '@nous/core';
 import { createMessage, pipelineModel } from '../lib/llm.mjs';
 import { spokenByOurSide } from '../noema/grounding.mjs';
@@ -308,6 +309,7 @@ export async function scoreCall({
   // (GET-351, GET-355). Live ingest always writes one.
   writePage = true,
 }) {
+  if (isSyncOnly()) return null;   // scored by the backfill that replays it (GET-1087)
   try {
     if (!transcript || transcript.length < 200) return null; // too thin to score honestly
     const at = occurredAt || new Date().toISOString();

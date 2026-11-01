@@ -23,6 +23,10 @@ export type BillingState = {
   plan: string;
   planName?: string;
   customPlan?: CustomPlan | null;
+  /** What this subscription pays a month. */
+  priceUsd?: number | null;
+  /** The sizes on sale here (GET-1087). A size with no Stripe price is not listed. */
+  sizes?: { name: string; credits: number; priceUsd: number }[];
   subscription?: {
     status: string;
     current_period_start?: string | null;
@@ -43,7 +47,9 @@ export type BillingState = {
     nextTier?: { credits: number; priceUsd: number } | null;
     /** Not paying (GET-532, GET-539): never subscribed, canceled, or a card that failed. */
     needsPlan?: boolean;
-    notLiveReason?: 'no_plan' | 'canceled' | 'payment_failed' | null;
+    notLiveReason?: 'no_plan' | 'canceled' | 'payment_failed' | 'trial_ended' | null;
+    /** The no-card trial (GET-1087). */
+    trial?: { endsAt: string; daysLeft: number; ended: boolean } | null;
     /** A failed card still inside its grace (GET-698): reading continues until graceUntil. */
     paymentFailed?: boolean;
     graceUntil?: string | null;

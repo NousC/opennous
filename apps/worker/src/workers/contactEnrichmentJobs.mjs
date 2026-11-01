@@ -8,16 +8,24 @@
 // Resumable: a job whose lock goes stale (the worker died mid-run) is reclaimed, and
 // external_id dedup in logActivity makes the re-run free. One job per tick; the
 // `running` guard skips overlapping ticks while a long job is in flight.
+//
+// TWO LANES (GET-1087). A twelve-month sync can run for hours, and a queue of one would hold every
+// other workspace's paid read behind it. So syncs have their own lane: one sync at a time, beside
+// one of everything else. A sync waits only on another sync. Each lane claims only its own rows, so
+// a long run in one can never be reclaimed as stale by the other.
 
-import { getSupabaseClient, sendEmail, CREDIT_SCALE, withBackfillLock, lockHolder, LockHeldError } from '@nous/core';
+import { getSupabaseClient, sendEmail, CREDIT_SCALE, withBackfillLock, lockHolder, LockHeldError, withSyncOnly } from '@nous/core';
 import { backfillCreditState, BACKFILL_CREDIT_FLOOR, CreditsExhausted } from '../utils/credits.mjs';
+import { holdPaidBackfill, releasePaidBackfill } from '../lib/creditGate.mjs';
 import { providerFailures, probeProvider, ProviderUnavailable, PROVIDER_FAIL_THRESHOLD, PROBE_EVERY_MS, providerPauseLine } from '../lib/providerHealth.mjs';
 import { createMessage, modelEndpoint } from '../lib/llm.mjs';
 import { apiInternalBase } from '../lib/apiInternal.mjs';
+import { workspaceTrialLapsed, TrialEnded } from '../lib/trialGate.mjs';
 
 const LOCK_STALE_MS = 20 * 60_000; // a 'running' job locked longer than this is reclaimable
 const MAX_ATTEMPTS = 3;
 let running = false;
+let syncRunning = false;
 
 // Resolve the team that owns a workspace (for the credit wallet lookup).
 /** Merge into a job's state without clobbering what the enricher wrote there. */
@@ -41,7 +49,7 @@ async function patchJobState(supabase, jobId, patch) {
  * on the billing page. Under the same lock as the daily reader, so the two never read one thread
  * twice; if the daily run holds it, the job says so and the next daily run catches up.
  */
-async function readBackfilledEmail(supabase, job) {
+export async function readBackfilledEmail(supabase, job) {
   const days = job.window_days ?? 90;
   // What is LEFT of the backfill's allowance after filing (GET-699), not the whole of it: the
   // filing phase already read meetings and calls inside the same window.
@@ -63,8 +71,7 @@ async function readBackfilledEmail(supabase, job) {
         countsAgainstMonth: budget.kind !== 'backfill',
         onProgress: (p) => patchJobState(supabase, job.job_id, { reading: { ...p, at: new Date().toISOString() } }),
       }));
-    await patchJobState(supabase, job.job_id, { reading: { total: stats.read + stats.failed + stats.skipped, done: stats.read + stats.failed + stats.skipped, read: stats.read, failed: stats.failed, finished: true, paused: stats.paused ?? null } });
-    console.log(`[CONTACT_ENRICH_JOB] email read job=${job.job_id} ${days}d ${JSON.stringify(stats)}`);
+    await noteReadFinished(supabase, job, stats, days);
   } catch (err) {
     if (err instanceof LockHeldError) {
       await patchJobState(supabase, job.job_id, { reading: { deferred: true } });
@@ -73,6 +80,90 @@ async function readBackfilledEmail(supabase, job) {
       console.error(`[CONTACT_ENRICH_JOB] email read job=${job.job_id} failed:`, err?.message || err);
     }
   }
+}
+
+/**
+ * A SYNC (GET-1087): contacts, accounts and activities over twelve months, no model. It starts by
+ * itself when email or a notetaker connects, so nothing about it may wait on a person, a plan or
+ * credits, and it spends none of them. It stops at filing: no reading, no reports, and above all no
+ * watermark, because the watermark says history is covered and a later backfill would then skip
+ * exactly the conversations this filed without reading.
+ */
+const SYNC_TRIAL_ENDED = 'paused_trial_ended';
+
+/** A sync the trial's end stopped goes back in the queue once the workspace is paying. */
+async function resumeTrialStoppedSyncs(supabase) {
+  const { data: stopped } = await supabase.from('contact_enrichment_jobs')
+    .select('job_id, workspace_id').eq('status', SYNC_TRIAL_ENDED).limit(25);
+  for (const job of stopped ?? []) {
+    if (await workspaceTrialLapsed(supabase, job.workspace_id, { fresh: true })) continue;
+    await supabase.from('contact_enrichment_jobs')
+      .update({ status: 'pending', paused_at: null, locked_at: null, updated_at: new Date().toISOString() })
+      .eq('job_id', job.job_id).eq('status', SYNC_TRIAL_ENDED);
+  }
+}
+
+export async function runSyncJob(supabase, job, input, { attempts = 1, enrich = null, lapsed = workspaceTrialLapsed } = {}) {
+  const startedAt = new Date().toISOString();
+  const store = {};
+  // A trial that ended stops the sync and keeps its place; paying resumes it (dedup makes that free).
+  const stopForTrial = () => supabase.from('contact_enrichment_jobs')
+    .update({ status: SYNC_TRIAL_ENDED, paused_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('job_id', job.job_id);
+  if (await lapsed(supabase, job.workspace_id, { fresh: true })) {
+    await stopForTrial();
+    console.log(`[SYNC_JOB] stopped job=${job.job_id} — trial ended`);
+    return;
+  }
+  try {
+    const enrichContactHistory = enrich ?? (await import('../services/contactHistoryEnricher.mjs')).enrichContactHistory;
+    const result = await withSyncOnly(store, () => enrichContactHistory(supabase, job.workspace_id, input, job.job_id, {
+      ownerUserId: job.state?.owner_user_id ?? null,
+      allowEmpty: true,
+      // Between sources, the same place a backfill checks its credits.
+      creditGuard: async () => { if (await lapsed(supabase, job.workspace_id)) throw new TrialEnded(); },
+    }));
+    await patchJobState(supabase, job.job_id, {
+      sync_started_at: startedAt, sync_finished_at: new Date().toISOString(),
+      sync_failed_sources: result?.failedSources ?? [],
+      // Should stay empty: a call site the entry points missed, stopped at the door.
+      sync_refused_model_calls: store.refused,
+    });
+    await supabase.from('contact_enrichment_jobs')
+      .update({ status: 'done', done: true, updated_at: new Date().toISOString() })
+      .eq('job_id', job.job_id);
+    if (store.refused.length) console.warn(`[SYNC_JOB] job=${job.job_id} refused model calls: ${[...new Set(store.refused)].join(', ')}`);
+    console.log(`[SYNC_JOB] done job=${job.job_id} activities=${result?.activitiesLogged ?? 0} failed=${(result?.failedSources ?? []).join(',') || 'none'}`);
+  } catch (e) {
+    if (e instanceof TrialEnded) { await stopForTrial(); return; }
+    const giveUp = attempts >= MAX_ATTEMPTS;
+    console.error(`[SYNC_JOB] job=${job.job_id} failed (attempt ${attempts}${giveUp ? ', giving up' : ''}):`, e?.message || e);
+    await supabase.from('contact_enrichment_jobs')
+      .update({ status: giveUp ? 'failed' : 'pending', error: String(e?.message || e).slice(0, 500), updated_at: new Date().toISOString() })
+      .eq('job_id', job.job_id);
+  }
+}
+
+async function noteReadFinished(supabase, job, stats, days) {
+  await patchJobState(supabase, job.job_id, { reading: { total: stats.read + stats.failed + stats.skipped, done: stats.read + stats.failed + stats.skipped, read: stats.read, failed: stats.failed, finished: true, paused: stats.paused ?? null } });
+  console.log(`[CONTACT_ENRICH_JOB] email read job=${job.job_id} ${days}d ${JSON.stringify(stats)}`);
+}
+
+/**
+ * The same read for an own-plan backfill (GET-1085): this person's threads from before the job
+ * started, on their plan. No lock, no allowance. The hourly reader leaves exactly these threads
+ * alone (heldForOwnBackfill), so the two cannot read one twice, and a read that lasts days must not
+ * stop a workspace's new mail. An error stops the job: unlike the hosted read, nothing catches up.
+ */
+export async function readOwnBackfilledEmail(supabase, job) {
+  const days = job.window_days ?? 90;
+  const { readWorkspace } = await import('./emailThreadsDaily.mjs');
+  const stats = await readWorkspace(supabase, job.workspace_id, {
+    days, maxThreads: 5000, countsAgainstMonth: false,
+    ownerUserId: job.state.own_model.owner_user_id, ownBefore: Date.parse(job.state.own_model.started_at),
+    onProgress: (p) => patchJobState(supabase, job.job_id, { reading: { ...p, at: new Date().toISOString() } }),
+  });
+  await noteReadFinished(supabase, job, stats, days);
 }
 
 // Pause the job (not fail) and tell the operator their backfill stalled on credits.
@@ -193,19 +284,53 @@ async function resumePausedBackfills(supabase) {
   }
 }
 
+/** The sync lane: one sync a tick, next to whatever the other lane is running. */
+export async function processSyncJobs({ db = null, run = runSyncJob } = {}) {
+  if (syncRunning) return;
+  syncRunning = true;
+  try {
+    const supabase = db ?? getSupabaseClient();
+    const staleLock = new Date(Date.now() - LOCK_STALE_MS).toISOString();
+    const { data: jobs, error } = await supabase.from('contact_enrichment_jobs')
+      .select('job_id, workspace_id, contacts, status, attempts, window_days, state')
+      .or(`status.eq.pending,and(status.eq.running,locked_at.lt.${staleLock})`)
+      .eq('state->>sync_only', 'true')
+      .order('created_at', { ascending: true })
+      .limit(1);
+    if (['42P01', 'PGRST205', '42703', 'PGRST204'].includes(error?.code)) return;
+    if (error) throw error;
+    const job = jobs?.[0];
+    if (!job) return;
+    const attempts = (job.attempts ?? 0) + 1;
+    const { data: claimed } = await supabase.from('contact_enrichment_jobs')
+      .update({ status: 'running', locked_at: new Date().toISOString(), attempts })
+      .eq('job_id', job.job_id).eq('status', job.status).select('job_id').maybeSingle();
+    if (!claimed) return;
+    // A sync spends no credits, so none of the backfill's gates are its business.
+    await run(supabase, job, Array.isArray(job.contacts) ? job.contacts : [], { attempts });
+  } catch (e) {
+    console.error('[SYNC_JOB] tick failed:', e?.message || e);
+  } finally {
+    syncRunning = false;
+  }
+}
+
 export async function processContactEnrichmentJobs() {
   if (running) return;
   running = true;
   const supabase = getSupabaseClient();
+  let heldWorkspace = null;
   try {
     await resumePausedBackfills(supabase).catch((e) => console.warn('[CONTACT_ENRICH_JOB] resume sweep:', e?.message || e));
     await resumeProviderPausedBackfills(supabase).catch((e) => console.warn('[CONTACT_ENRICH_JOB] provider resume sweep:', e?.message || e));
+    await resumeTrialStoppedSyncs(supabase).catch((e) => console.warn('[CONTACT_ENRICH_JOB] trial resume sweep:', e?.message || e));
 
     const staleLock = new Date(Date.now() - LOCK_STALE_MS).toISOString();
     const { data: jobs, error } = await supabase
       .from('contact_enrichment_jobs')
       .select('job_id, workspace_id, contact_ids, contacts, status, attempts, locked_at, phase, window_days, state')
       .or(`status.eq.pending,and(status.eq.running,locked_at.lt.${staleLock})`)
+      .is('state->>sync_only', null)
       .order('created_at', { ascending: true })
       .limit(1);
     // Migration not (fully) applied yet: table missing (42P01/PGRST205) or the
@@ -226,6 +351,7 @@ export async function processContactEnrichmentJobs() {
       .select('job_id')
       .maybeSingle();
     if (!claimed) return;
+    if (job.state?.paid_backfill) { heldWorkspace = job.workspace_id; holdPaidBackfill(heldWorkspace); }
 
     // ── Credit gate (GET-699) ── A confirmed backfill spends its OWN allowance (the one the api
     // priced it against), never the month's; a job with no backfill window spends the month's,
@@ -264,6 +390,8 @@ export async function processContactEnrichmentJobs() {
       const { enrichContactHistory } = await import('../services/contactHistoryEnricher.mjs');
       const result = await enrichContactHistory(supabase, job.workspace_id, input, job.job_id, {
         windowDays: job.window_days ?? null,
+        // Bought by the day (GET-1087): the window paid for, past the plan's and the watermark.
+        paidWindow: !!job.state?.paid_backfill,
         // A member's own backfill (GET-571): their connections only, no workspace watermark.
         ownerUserId: job.state?.owner_user_id ?? null,
         creditGuard,
@@ -365,6 +493,7 @@ export async function processContactEnrichmentJobs() {
   } catch (e) {
     console.error('[CONTACT_ENRICH_JOB]', e?.message || e);
   } finally {
+    if (heldWorkspace) releasePaidBackfill(heldWorkspace);
     running = false;
   }
 }

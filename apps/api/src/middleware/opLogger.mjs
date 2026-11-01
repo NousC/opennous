@@ -68,6 +68,12 @@ const PATH_LABELS = {
   'POST /v2/workflows/duplicate': 'v2.workflows.duplicate',
   'POST /v2/workflows/run':      'v2.workflows.run',
   'GET /v2/workflows/runs':      'v2.workflows.runs',
+  'GET /v2/rev-plays':           'v2.rev_plays',
+  'GET /v2/rev-plays/templates': 'v2.rev_plays.templates',
+  'POST /v2/rev-plays':          'v2.rev_plays.create',
+  'PATCH /v2/rev-plays':         'v2.rev_plays.update',
+  'POST /v2/rev-plays/test':     'v2.rev_plays.test',
+  'GET /v2/rev-plays/runs':      'v2.rev_plays.run',
 };
 
 // The LIST read on a router whose '/:id' read shares the same key above (params are stripped).
@@ -249,6 +255,12 @@ function describeCall(req) {
     case 'POST /v2/workflows/duplicate': return `duplicate_workflow · ${trunc(req.params?.id, 16)}`;
     case 'POST /v2/workflows/run': return `run_workflow · ${trunc(req.params?.id, 16)}`;
     case 'GET /v2/workflows/runs': return `workflow_runs · ${trunc(req.params?.id, 16)}`;
+    case 'GET /v2/rev-plays':   return 'list_rev_plays';
+    case 'GET /v2/rev-plays/templates': return 'rev_play_templates';
+    case 'POST /v2/rev-plays':  return `create_rev_play · ${trunc(body.template ?? body.name ?? body.trigger?.type, 32)}`;
+    case 'PATCH /v2/rev-plays': return `${body.enabled ? 'enable' : 'disable'}_rev_play · ${trunc(req.params?.id, 16)}`;
+    case 'POST /v2/rev-plays/test': return `test_rev_play · ${trunc(req.params?.id, 16)}`;
+    case 'GET /v2/rev-plays/runs': return `rev_play_run · ${trunc(req.params?.runId, 16)}`;
     default:
       return `${req.method} ${req.originalUrl.split('?')[0]}`;
   }

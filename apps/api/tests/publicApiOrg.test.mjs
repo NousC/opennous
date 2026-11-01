@@ -591,9 +591,9 @@ test('workflows: PATCH steps that are not an array is a 400, not a crash', async
   }
 });
 
-test('workflows: list pages and a member key sees only its own', async () => {
-  for (let i = 0; i < 3; i++) tables.agent_routines.push({ id: `mine-${i}`, workspace_id: WS, user_id: MEMBER, name: `Mine ${i}`, trigger_kind: 'manual', prompt: 'go', enabled: false, created_at: daysAgo(10 - i) });
-  tables.agent_routines.push({ id: 'theirs', workspace_id: WS, user_id: OTHER, name: 'Theirs', trigger_kind: 'manual', prompt: 'go', enabled: false, created_at: daysAgo(1) });
+test('workflows: list pages, and a member key sees the shared ones and its own', async () => {
+  for (let i = 0; i < 4; i++) tables.agent_routines.push({ id: `mine-${i}`, workspace_id: WS, user_id: MEMBER, name: `Mine ${i}`, trigger_kind: 'manual', prompt: 'go', enabled: false, created_at: daysAgo(10 - i) });
+  tables.agent_routines.push({ id: 'theirs', workspace_id: WS, user_id: OTHER, visibility: 'personal', name: 'Theirs', trigger_kind: 'manual', prompt: 'go', enabled: false, created_at: daysAgo(1) });
 
   const all = await call('GET', '/v2/workflows?limit=2');
   assert.equal(all.status, 200);
@@ -603,10 +603,10 @@ test('workflows: list pages and a member key sees only its own', async () => {
   const page2 = await call('GET', '/v2/workflows?limit=2&offset=2');
   assert.equal(page2.body.workflows.length, 2);
   assert.equal(page2.body.has_more, false);
-  assert.deepEqual(Object.keys(page2.body.workflows[0]).sort(), ['created_at', 'enabled', 'id', 'last_run_at', 'name', 'steps_count', 'trigger'].sort());
+  assert.deepEqual(Object.keys(page2.body.workflows[0]).sort(), ['created_at', 'enabled', 'id', 'can_edit', 'can_share', 'last_run_at', 'name', 'steps_count', 'trigger', 'visibility', 'yours'].sort());
 
   const mine = await call('GET', '/v2/workflows', null, 'member');
-  assert.deepEqual(mine.body.workflows.map(w => w.id), ['mine-0', 'mine-1', 'mine-2']);
+  assert.deepEqual(mine.body.workflows.map(w => w.id), ['mine-0', 'mine-1', 'mine-2', 'mine-3']);
   const theirs = await call('GET', '/v2/workflows/theirs', null, 'member');
   assert.equal(theirs.status, 404);
   assert.equal(theirs.body.error, 'workflow_not_found');

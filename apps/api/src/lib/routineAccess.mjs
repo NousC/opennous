@@ -6,6 +6,8 @@
 // cloud/index.mjs); without one every routine is an ordinary automation and every check here lets the
 // request through. Each check reads the rule when it runs, so the order of imports does not matter.
 
+import { getSupabaseClient } from '@nous/core';
+
 let rule = null;
 
 /**
@@ -26,16 +28,45 @@ export const ownsRoutine = (supabase, workspaceId, id) => (rule ? rule.ownsRouti
 
 /**
  * What the caller may do with each owned routine on this workspace: Map routineId -> a role, or null
- * when it is not theirs to see. A routine not in the map is an ordinary automation.
+ * when it is not theirs to see. A routine not in the map is an ordinary automation. Someone else's
+ * personal RevPlay (GET-1087) is in it as false: not theirs to see, and not a surface's either.
  */
-export const routineAccess = (supabase, workspaceId, userId, opts = {}) => (rule ? rule.access(supabase, workspaceId, userId, opts) : Promise.resolve(new Map()));
+export async function routineAccess(supabase, workspaceId, userId, opts = {}) {
+  const access = rule ? await rule.access(supabase, workspaceId, userId, opts) : new Map();
+  let q = supabase.from('agent_routines').select('id, user_id').eq('workspace_id', workspaceId).eq('visibility', 'personal');
+  if (opts.routineIds) q = q.in('id', opts.routineIds);
+  const { data, error } = await q;
+  if (error) { if (!['42703', 'PGRST204'].includes(error.code)) throw error; return access; }
+  for (const r of data ?? []) if (!userId || r.user_id !== userId) access.set(r.id, false);
+  return access;
+}
 /** May the caller see this routine (and its runs)? Ordinary automations: yes. */
 export const canSeeRoutineRuns = (access, routineId) => !access.has(routineId) || !!access.get(routineId);
 /** The owned routines the caller may not see. */
 export const hiddenRoutines = (access) => [...access].filter(([, a]) => !a).map(([id]) => id);
 
-/** The /:runId check (an Express param handler) for an owned routine's runs; next() for any other. */
-export const routineRunGuard = (userOf) => (req, res, next, runId) => (rule ? rule.runGuard(userOf)(req, res, next, runId) : next());
+/** The /:runId check (an Express param handler) for an owned or personal routine's runs; next() for any other. */
+export const routineRunGuard = (userOf) => async (req, res, next, runId) => {
+  try {
+    const { data: run } = await getSupabaseClient().from('agent_routine_runs').select('routine_id').eq('id', runId).maybeSingle();
+    if (run?.routine_id) {
+      const access = await routineAccess(getSupabaseClient(), req.workspaceId, userOf(req), { routineIds: [run.routine_id] });
+      if (access.get(run.routine_id) === false) return res.status(404).json({ error: 'not_found' });
+    }
+  } catch (err) {
+    console.error('[routineRunGuard]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+  return rule ? rule.runGuard(userOf)(req, res, next, runId) : next();
+};
 
 /** Usage per automation with the owned routines the caller may not see folded into one line (the rule's). */
-export const foldHiddenRoutines = (rows, access) => (rule?.fold ? rule.fold(rows, access) : rows);
+export function foldHiddenRoutines(rows, access) {
+  const theirs = new Set([...access].filter(([, a]) => a === false).map(([id]) => id));
+  const folded = rows.filter(r => theirs.has(r.routine_id));
+  const shown = theirs.size ? rows.filter(r => !theirs.has(r.routine_id)) : rows;
+  const out = rule?.fold ? rule.fold(shown, new Map([...access].filter(([, a]) => a !== false))) : shown;
+  if (!folded.length) return out;
+  const line = { routine_id: null, name: "Teammates' personal RevPlays", runs: null, credits: folded.reduce((n, r) => n + (Number(r.credits) || 0), 0) };
+  return [...out, line].sort((a, b) => b.credits - a.credits);
+}

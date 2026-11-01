@@ -5,7 +5,7 @@
 
 import { meetingHooks } from '../lib/meetingHooks.mjs';
 import { buildInternalMeetingSummaryPrompt, parseInternalMeetingSummary, saveInternalMeetingSummary, fileInternalMeetingTasks, listInternalMeetings, internalMeetingSummaries,
-  openInternalMeetingTasks, buildTaskClosurePrompt, parseTaskClosure, applyTaskClosure } from '@nous/core';
+  openInternalMeetingTasks, buildTaskClosurePrompt, parseTaskClosure, applyTaskClosure, isSyncOnly } from '@nous/core';
 import { read } from '../noema/read.mjs';
 
 /**
@@ -22,6 +22,7 @@ import { read } from '../noema/read.mjs';
  * @returns {Promise<boolean>} whether a summary was saved
  */
 export async function summarizeInternalMeeting({ supabase, workspaceId, transcript, title, occurredAt, sourceRef, sourceSystem, subjectEntityId, participants = [] }) {
+  if (isSyncOnly()) return false;   // summarized by the backfill that replays it (GET-1087)
   try {
     if (!transcript || transcript.length < 200 || !subjectEntityId || !sourceRef) return false;
     // The same call from a second recorder (GET-458): it is already summarized under the first.

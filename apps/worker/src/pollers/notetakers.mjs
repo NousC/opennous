@@ -11,6 +11,7 @@
 // to read, inside the window the owner confirmed. The cursor (the newest meeting time read) is
 // kept plain on the connection's credentials, like the Granola poller's.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import { getSupabaseClient } from '@nous/core';
 import { reprocessFireflies, firefliesBodyFromTranscript, FIREFLIES_TRANSCRIPT_FIELDS } from '../webhooks/handlers/fireflies.mjs';
 import { reprocessFathom } from '../webhooks/handlers/fathom.mjs';
@@ -140,7 +141,7 @@ export async function pollNotetakers() {
   const supabase = getSupabaseClient();
   let total = 0;
   for (const [name, spec] of [['fireflies', FIREFLIES], ['fathom', FATHOM]]) {
-    for (const conn of await connectionsFor(supabase, name)) {
+    for (const conn of await withoutLapsedTrials(supabase, await connectionsFor(supabase, name))) {
       try { total += await pollOne(supabase, conn, spec); }
       catch (e) { console.warn(`[${spec.label}_POLL] workspace=${conn.workspace_id}:`, e?.message || e); }
     }

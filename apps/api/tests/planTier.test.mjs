@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTier, isApiTier, PLAN_IDS, SELF_SERVE_TIERS, ENTRY_TIER, tierForCredits, getPlanFromSubscription, creditState, nextTierAfter, needsPlan, planIsLive, notLiveReason } from '../src/lib/plans.mjs';
+import { planTier, isApiTier, PLAN_IDS, SELF_SERVE_TIERS, ENTRY_TIER, tierForCredits, getPlanFromSubscription, creditState, needsPlan, planIsLive, notLiveReason } from '../src/lib/plans.mjs';
 
 // Two plans — self-serve (one plan at five volumes) and Custom — over ten billing ids. The
 // ids are not renamed here on purpose: that is a billing migration, and this is the shape of
@@ -109,14 +109,6 @@ test('a quoted plan is told, never stopped', () => {
   // Custom is negotiated: going over is a conversation with us, not a locked workspace.
   assert.equal(creditState(130, { enforced: false }), 'over');
   assert.equal(creditState(999, { enforced: false }), 'over');
-});
-
-test('the next bundle up is the offer, and the top of the ladder has none', () => {
-  assert.equal(nextTierAfter(960).credits, 2_000);
-  assert.equal(nextTierAfter(2_000).credits, 4_000);
-  assert.equal(nextTierAfter(6_000).credits, 10_000);
-  assert.equal(nextTierAfter(10_000), null, 'past the top bundle it is a quote');
-  assert.equal(nextTierAfter(0).credits, 960, 'an unknown allowance still has somewhere to go');
 });
 
 // ── The payment loop (GET-529) ─────────────────────────────────────────────────

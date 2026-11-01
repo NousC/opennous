@@ -22,7 +22,7 @@
 // Everything is best-effort and nothing here may fail the connect: a person who just pasted a
 // valid API key has connected the tool, whatever the import then does.
 
-import { backfillOwnerFor } from './backfillStart.mjs';
+import { backfillOwnerFor, workspaceSyncMode } from './backfillStart.mjs';
 import { getSupabaseClient, syncCrmProvider, adoptCrmStages, writePrimaryPipelineRef, hubspotImportScope, settleClaimQueue, hasLearnedIcpScorer, salesforceAccess } from '@nous/core';
 import { runClosedDeals } from './closedDealsRecord.mjs';
 import { decrypt } from '../providers/crypto.mjs';
@@ -403,7 +403,8 @@ export async function ingestOnConnect(workspaceId, providerName, { supabase = ge
     // to attach history to, because tier 1 finished above.
     const { count: accounts } = await supabase.from('companies')
       .select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId);
-    if ((accounts ?? 0) > BACKFILL_ON_CONNECT_MAX_ACCOUNTS) {
+    // The size check guards spending. A sync spends nothing (GET-1087).
+    if ((accounts ?? 0) > BACKFILL_ON_CONNECT_MAX_ACCOUNTS && !(await workspaceSyncMode(supabase, workspaceId))) {
       await log(supabase, workspaceId, provider, 'backfill_deferred',
         `${accounts} accounts — history backfill not started automatically. Run it when you want to spend on it.`,
         { trigger: 'connect', accounts });

@@ -48,6 +48,10 @@ import { AppShortcuts } from "@/components/shell/Shortcuts";
 import { SystemBanner } from "@/components/shell/SystemBanner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { OpsLimitBanner } from "@/components/OpsLimitBanner";
+import { TrialBanner } from "@/components/TrialBanner";
+import { TrialWall } from "@/components/TrialWall";
+import { useBillingState } from "@/hooks/useCredits";
+import { trialEnded, trialWallApplies } from "@/lib/trial";
 import { AccountLimitWall, isAccountLimitOpenPath } from "@/components/AccountLimitWall";
 import { TabsProvider } from "@/contexts/TabsContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -190,6 +194,9 @@ function StandardLayout({ children }: { children: React.ReactNode }) {
   const { activeAccounts, plan, selfHosted } = usePlan();
   const { pathname } = useLocation();
   const locked = !selfHosted && activeAccounts?.state === "restricted" && !isAccountLimitOpenPath(pathname);
+  // A trial that ended: a subscribe screen, with billing, settings and admin still open (GET-1087).
+  const billing = useBillingState(!selfHosted);
+  const walled = !selfHosted && trialEnded(billing) && trialWallApplies(pathname);
   return (
     // Grey app frame; the content lives in a rounded panel floating on it, flush
     // beside the (same-grey) sidebar. The panel is where every page renders.
@@ -207,8 +214,11 @@ function StandardLayout({ children }: { children: React.ReactNode }) {
           <AppTopBar />
           <SystemBanner />
           <OpsLimitBanner />
+          <TrialBanner />
           {/* The API plan's pages share one top bar (GET-621); the provider draws it. */}
-          {isApiTier(plan) && !locked ? (
+          {walled ? (
+            <div className="flex-1 overflow-auto"><TrialWall /></div>
+          ) : isApiTier(plan) && !locked ? (
             <ApiTopBarProvider>
               <div className="flex-1 overflow-auto">{children}</div>
             </ApiTopBarProvider>

@@ -15,6 +15,7 @@
 // Rate limit is 3 req/s and 10k/day per key: calls are spaced ~400ms apart and each run
 // is capped per connection. Anything left is picked up on the next tick.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import { getSupabaseClient } from '@nous/core';
 import { reprocessFellow, getFellowConnections, fellowApiBase, callFromRecording, fellowAccountEmail } from '../webhooks/handlers/fellow.mjs';
 
@@ -128,8 +129,8 @@ async function pollConnection(supabase, conn) {
 
 export async function pollAllFellowWorkspaces() {
   const supabase = getSupabaseClient();
-  const connections = (await getFellowConnections(supabase))
-    .filter(c => c.isVerified && !c.webhookId);
+  const connections = await withoutLapsedTrials(supabase, (await getFellowConnections(supabase))
+    .filter(c => c.isVerified && !c.webhookId));
   if (!connections.length) return 0;
   console.log(`[FELLOW_POLL] Starting — ${connections.length} connection(s) without a webhook`);
 

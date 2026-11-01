@@ -5,23 +5,16 @@
 // the silent <Navigate to="/accounts"> that used to happen instead, which told the user
 // nothing and looked like a bug.
 //
-// The markup is the UpgradeState that lived inside Insights, lifted verbatim so that
-// surface looks exactly as it did. The copy and the plan name are now derived, not
-// hardcoded — upsellCopy() for the sentence, lowestPlanWith() for the plan — so this one
-// component covers every gated feature and a repricing doesn't leave stale text behind.
-import { Link } from "react-router-dom";
 import { Lock } from "lucide-react";
-import { lowestPlanWith, type PlanFeatures } from "@/config/plans";
+import { contactUrl } from "@/config/contact";
+import type { PlanFeatures } from "@/config/plans";
 import { upsellCopy } from "@/config/upsell";
 
 export function FeatureUpgrade({ feature }: { feature: keyof PlanFeatures }) {
-  const { name, pitch } = upsellCopy(feature);
-  const plan = lowestPlanWith(feature);
-  const planName = plan?.name ?? "Workspace";
-  // Headless is sales-led and unpriced. "Upgrade to Headless" implies a button that charges
-  // a card, and there isn't one — it's a conversation.
-  const cta = plan?.monthlyPriceUsd === null ? `See ${planName}` : `Upgrade to ${planName}`;
+  const { name } = upsellCopy(feature);
 
+  // Self-serve is one plan at three volumes, and nothing above it is sold from here (GET-1087):
+  // this names no other plan and offers no upgrade, only a conversation.
   return (
     <div className="flex h-full items-center justify-center bg-background px-6">
       <div className="max-w-md rounded-2xl border border-border bg-background p-8 text-center">
@@ -29,17 +22,16 @@ export function FeatureUpgrade({ feature }: { feature: keyof PlanFeatures }) {
           <Lock className="h-5 w-5 text-foreground" />
         </div>
         <h1 className="mt-5 text-lg font-semibold tracking-tight text-foreground">
-          {name} is a {planName} feature
+          {name} isn&rsquo;t on your plan
         </h1>
-        <p className="mx-auto mt-2 text-[13.5px] leading-relaxed text-muted-foreground">
-          {pitch} It&rsquo;s included on {planName}.
-        </p>
-        <Link
-          to="/billing"
+        <a
+          href={contactUrl()}
+          target="_blank"
+          rel="noreferrer"
           className="mt-6 inline-flex items-center justify-center rounded-md bg-foreground px-4 py-2 text-[13px] font-semibold text-background transition-opacity hover:opacity-90"
         >
-          {cta}
-        </Link>
+          Talk to us
+        </a>
       </div>
     </div>
   );

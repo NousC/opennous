@@ -21,7 +21,7 @@ registerUsageSink(async (rows) => {
 });
 
 export {
-  createMessage, messageText, parseJsonArray, ModelUnavailableError,
+  createMessage, withOwnModel, messageText, parseJsonArray, ModelUnavailableError,
   pipelineModel, pipelineFallbackModel, writingModel, writingFallbackModel, tierModels,
   modelEndpoint, modelRoute, modelSetupStatus,
 } from '@nous/core';

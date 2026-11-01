@@ -29,10 +29,12 @@ import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { citeKey } from '../evidenceDetail.js';
 import { writeDocument } from '../db/documents.js';
+import { HIDDEN_INSIGHT_STATUS_LIST } from '../db/insightCategories.js';
 import { sendEmail } from '../utils/email.js';
 import { createMessage, messageText } from '../llm/modelDoor.mjs';
 import { renderDocumentPdf } from './briefPdf.mjs';
 import { emitEvent } from './events.mjs';
+import { dropStoppedRoutines } from './routineGate.mjs';
 import { filterDerivedForViewer, filterByCitedClaimsForViewer, TEAM_VIEWER } from '../privacy/messagePrivacy.mjs';
 import { roleFromAuthorityClaims } from './committee.js';
 import { championLeftEvent, expansionRequestedEvent, stalledDealEvent, quietOpenDeals, REPLACEMENT_WINDOW_DAYS } from './interpretedEvents.mjs';
@@ -1602,6 +1604,21 @@ export const JOB_PROMPTS = {
 };
 export const JOB_ARTIFACTS = { call_summary: 'call_summary', account_summary: 'account_summary' };
 
+/**
+ * The artifact/prompt columns for a flow's first AI step, the pair the event runners read. An action
+ * with no artifact (a follow-up, a brief) carries its own words here, or the runner writes a plain
+ * account summary instead. Pure.
+ */
+export function agentColumnsOf(steps) {
+  const c = (Array.isArray(steps) ? steps : []).find(s => s?.type === 'agent')?.config ?? {};
+  const extra = String(c.extra ?? '').trim();
+  if (c.mode === 'pick' && c.job) {
+    if (JOB_ARTIFACTS[c.job]) return { artifact: JOB_ARTIFACTS[c.job], prompt: extra || null };
+    return { artifact: null, prompt: [JOB_PROMPTS[c.job], extra].filter(Boolean).join('\n\n') || null };
+  }
+  return { artifact: typeof c.artifact === 'string' && c.artifact ? c.artifact : null, prompt: String(c.prompt ?? '').trim() || null };
+}
+
 // THE DIGEST WRITER (GET-773). An AI step after a Read step writes from that data, not from one
 // account: "yesterday's activity and what changed". Short, exact, for a channel.
 const DIGEST_SYSTEM = `You write a short update from data a system read for you. It goes to a team's Slack channel or an email.
@@ -2521,6 +2538,20 @@ export async function testTriggers(supabase, workspaceId, automation, { limit = 
   return [];
 }
 
+/**
+ * May this routine fire on this account? A personal RevPlay runs as its owner, so it fires only on
+ * what they may see: on a closed workspace, their own book. A shared one fires as it always did.
+ * No `visible_accounts` handler means nobody can vouch for the account, so a personal one does not run.
+ */
+export async function ownerMaySee(supabase, workspaceId, automation, entityId) {
+  if (automation?.visibility !== 'personal') return true;
+  const see = STEP_HANDLERS.visible_accounts;
+  if (!see) return false;
+  const visible = await Promise.resolve(see({ supabase, workspaceId, userId: automation.user_id ?? null })).catch(() => false);
+  if (visible === false) return false;
+  return visible == null || (visible instanceof Set && visible.has(entityId));
+}
+
 /** Deal triggers a Test can run on: the latest closed deal (GET-873 review). */
 const DEAL_TEST_KINDS = ['deal_closed_won', 'deal_closed_lost', 'deal_stage_changed'];
 
@@ -2643,12 +2674,50 @@ async function latestSignalTestTrigger(supabase, workspaceId, automation, pick) 
 export async function runScheduledFlow(supabase, workspaceId, automation, { runId = null, onLog = null, meeting = null, entityId = null, holdSends = false, test = false } = {}) {
   // A before_meeting run (GET-868) is about THAT meeting: it goes in as what the
   // steps read first, and its account is the run's account.
-  const seedData = meeting ? [{ step: 0, label: 'Meeting', text: meetingText(meeting) }] : undefined;
+  // With no meeting, no account and no Read step, the AI step has nothing to write from: the digest
+  // writer uses only the data it is given, so "the week's calls" came out empty (GET-1087). It reads
+  // the period's insights instead.
+  const read = !meeting && !entityId ? await scheduledRead(supabase, workspaceId, automation) : null;
+  const seedData = meeting ? [{ step: 0, label: 'Meeting', text: meetingText(meeting) }] : read ? [read] : undefined;
   const out = await runSteps(automation, null, {
     stage: meeting ? 'before_meeting' : 'scheduled', at: new Date().toISOString(),
     ctx: { supabase, workspaceId, entityId: meeting?.entity_id ?? entityId ?? null, dealId: null, runId, writeAllInLoop: true, onLog, ...(seedData ? { seedData } : {}), ...(holdSends ? { holdSends: true } : {}), ...(test ? { test: true } : {}) },
   });
   return runOutcome(out);
+}
+
+const SCHEDULE_DAYS = { daily: 1, weekly: 7, monthly: 31, quarterly: 92 };
+const READ_INSIGHTS = 120;
+
+/**
+ * What a scheduled AI step reads when nothing above it read anything (GET-1087): what customers said
+ * over the schedule's period, as one seed for the digest writer, or null when the flow brings its
+ * own data (a Read step, a fixed account, an extension's scope). As its owner: on a closed workspace,
+ * only the accounts they may see. No owner sees nothing there, the same as a Test on a deal.
+ */
+export async function scheduledRead(supabase, workspaceId, automation, { now = Date.now() } = {}) {
+  if (automationExtension()?.scoped?.(automation)) return null;
+  const steps = Array.isArray(automation?.steps) ? automation.steps : [];
+  const first = steps.findIndex(s => s?.type === 'agent');
+  if (first < 0 || steps[first]?.config?.account_id || steps.slice(0, first).some(isRead)) return null;
+  const days = SCHEDULE_DAYS[automation?.frequency] ?? 7;
+  const { data, error } = await supabase.from('insight_items')
+    .select('statement, quote, speaker, occurred_at, lane, subtype, company_id')
+    .eq('workspace_id', workspaceId).eq('source', 'external')
+    .not('status', 'in', HIDDEN_INSIGHT_STATUS_LIST)
+    .gte('occurred_at', new Date(now - days * 86_400_000).toISOString())
+    .order('occurred_at', { ascending: false }).limit(READ_INSIGHTS);
+  if (error) console.warn('[automations] scheduled read failed:', error.message);
+  const see = STEP_HANDLERS.visible_accounts;
+  const visible = see ? await see({ supabase, workspaceId, userId: automation?.user_id ?? null }).catch(() => new Set()) : null;
+  const rows = (data ?? []).filter(i => !visible || visible.has(i.company_id));
+  const ids = [...new Set(rows.map(i => i.company_id).filter(Boolean))];
+  const { data: named } = ids.length ? await supabase.from('companies').select('id, name').in('id', ids) : { data: [] };
+  const names = new Map((named ?? []).map(c => [c.id, c.name]));
+  const lines = rows.map(i => `- ${String(i.occurred_at ?? '').slice(0, 10)} · ${names.get(i.company_id) ?? 'Unnamed account'} · ${[i.lane, i.subtype].filter(Boolean).join('/') || 'insight'}: ${i.statement}${i.quote ? ` ("${i.quote}"${i.speaker ? `, ${i.speaker}` : ''})` : ''}`);
+  return { step: 0, label: 'What customers said', text: lines.length
+    ? `What customers said in the last ${days} day${days === 1 ? '' : 's'} (${lines.length}):\n${lines.join('\n')}`
+    : `Nothing was recorded from customers in the last ${days} day${days === 1 ? '' : 's'}. Say so in one line.` };
 }
 
 /** The meeting a before_meeting run is about, as the routine runner's chat turn words it. Pure. */
@@ -2956,9 +3025,10 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
     // A TEST RUN IGNORES THE SWITCH. You set one up, you want to see it work, and being
     // told to enable it first — on a schedule that next fires tomorrow — is not an answer.
     .or(onlyAutomation ? `id.eq.${onlyAutomation},enabled.eq.true` : 'enabled.eq.true');
+  const startable = await dropStoppedRoutines(supabase, routines ?? []);
   // A job on several signals (GET-873) listens through trigger_config.also as well as trigger_kind.
   const listens = (a, kind) => routineListensTo(a, kind);
-  const dealAutomations = (routines ?? []).filter(r =>
+  const dealAutomations = startable.filter(r =>
     EVENT_TRIGGERS.some(k => listens(r, k))
     && (!onlyAutomation || r.id === onlyAutomation));
   if (!dealAutomations.length) return { ran: 0, skipped: 0 };
@@ -3053,6 +3123,7 @@ export async function runAutomationsForWorkspace(supabase, workspaceId, since, {
       const dedupe = change.dedupe ? `${a.id}:${change.dedupe}`
         : perDeal ? `${a.id}:deal:${change.dealId}:${change.stage}` : legacy;
       if (ranThisPass.has(dedupe)) continue;
+      if (!(await ownerMaySee(supabase, workspaceId, a, change.entityId))) continue;
       // A test may repeat itself; the daily pass may not.
       if (!onlyAutomation) {
         if ((startedBy.get(a.id) ?? 0) >= perJob) { capped.add(a.name ?? a.id); continue; }
@@ -3474,7 +3545,7 @@ export async function processAccountSignals({ onlyWorkspace = null, supabase: gi
       // Primary or `also` (GET-873); one run per routine and conversation either way.
       const { data: listed } = await supabase.from('agent_routines').select('*')
         .eq('workspace_id', ws).eq('enabled', true).or(listensToFilter('account_signal'));
-      const routines = (listed ?? []).filter(a => routineListensTo(a, 'account_signal'));
+      const routines = (await dropStoppedRoutines(supabase, listed ?? [])).filter(a => routineListensTo(a, 'account_signal'));
       const runnable = [];
       for (const s of signals) {
         const ok = readable.has(s.id);
@@ -3867,7 +3938,7 @@ export async function runCallEndedAutomations(supabase, workspaceId, call) {
   const { data: listed, error } = await supabase.from('agent_routines').select('*')
     .eq('workspace_id', workspaceId).eq('enabled', true).or(listensToFilter('call_ended'));
   // Primary or `also` (GET-873); the call's dedupe key keeps it one run per routine.
-  const autos = (listed ?? []).filter(a => routineListensTo(a, 'call_ended'));
+  const autos = (await dropStoppedRoutines(supabase, listed ?? [])).filter(a => routineListensTo(a, 'call_ended'));
   if (error || !autos.length) return { ran: 0 };
   if (!call.nextSteps) call = { ...call, nextSteps: await loadCallNextSteps(supabase, workspaceId, call.sourceMeetingId ?? call.meetingId) };
   const recorder = String(call.source ?? '').toLowerCase();
@@ -3923,6 +3994,7 @@ export function callRunKey(a, call) {
 }
 
 async function runCallAutomation(supabase, workspaceId, a, call, entityId) {
+  if (!(await ownerMaySee(supabase, workspaceId, a, entityId))) return false;
   const dedupe = callRunKey(a, call);
   const { data: seen } = await supabase.from('agent_routine_runs').select('id').eq('routine_id', a.id).eq('dedupe_key', dedupe).maybeSingle();
   if (seen) return false;
@@ -3967,6 +4039,7 @@ function fieldChangeSignal(cfg, ch, entityId) {
 /** One change, one run: with the account when we know it, else from the change alone. */
 export async function runFieldChangeAutomation(supabase, workspaceId, a, ch, { test = false, holdSends = false, runId: given = null, onLog = null } = {}) {
   const cfg = a.trigger_config ?? {};
+  if (!(await ownerMaySee(supabase, workspaceId, a, ch.entityId ?? ch.accountId ?? null))) return false;
   const dedupe = `${a.id}:hs:${ch.objectId}:${cfg.property}:${ch.at}`;
   let runId = given;
   if (!runId) {
@@ -4008,8 +4081,9 @@ export async function processHubspotFieldChanges({ onlyWorkspace = null, supabas
   const supabase = given ?? getSupabaseClient();
   let q = supabase.from('agent_routines').select('*').eq('enabled', true).or(listensToFilter('hubspot_field_changed'));
   if (onlyWorkspace) q = q.eq('workspace_id', onlyWorkspace);
-  const { data: routines, error } = await q;
-  if (error || !routines?.length) return { ran: 0 };
+  const { data: listed, error } = await q;
+  const routines = await dropStoppedRoutines(supabase, listed ?? []);
+  if (error || !routines.length) return { ran: 0 };
   let ran = 0;
   for (const a of routines) {
     // Each watched field of the routine (primary or `also`, GET-873) is its own event; the run's
@@ -4027,6 +4101,7 @@ export async function processHubspotFieldChanges({ onlyWorkspace = null, supabas
 
 /** One event, one run: on the person's account when we know it, else on the person. */
 export async function runPostHogEventAutomation(supabase, workspaceId, a, row, { test = false, holdSends = false, runId: given = null, onLog = null } = {}) {
+  if (!(await ownerMaySee(supabase, workspaceId, a, row.entity_id ?? row.entityId ?? null))) return false;
   const dedupe = `${a.id}:ph:${row.id}`;
   let runId = given;
   if (!runId) {
@@ -4061,8 +4136,9 @@ export async function processPostHogEvents({ onlyWorkspace = null, supabase: giv
   const supabase = given ?? getSupabaseClient();
   let q = supabase.from('agent_routines').select('*').eq('enabled', true).or(listensToFilter('posthog_event'));
   if (onlyWorkspace) q = q.eq('workspace_id', onlyWorkspace);
-  const { data: routines, error } = await q;
-  if (error || !routines?.length) return { ran: 0 };
+  const { data: listed, error } = await q;
+  const routines = await dropStoppedRoutines(supabase, listed ?? []);
+  if (error || !routines.length) return { ran: 0 };
   let ran = 0;
   for (const a of routines) {
     for (const cfg of triggerConfigsFor(a, 'posthog_event')) {
@@ -4075,6 +4151,7 @@ export async function processPostHogEvents({ onlyWorkspace = null, supabase: giv
 }
 
 async function runSignalAutomation(supabase, workspaceId, a, group) {
+  if (!(await ownerMaySee(supabase, workspaceId, a, group.accountId))) return false;
   const s = group.lead;
   // Signals from the same conversation that land in a later pass find this key and stop here.
   const dedupe = signalRunKey(a.id, group.accountId, group.moment);

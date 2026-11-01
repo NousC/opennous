@@ -8,7 +8,7 @@
 export const MCP_TOOLS: readonly string[] = [
   "whoami", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights",
   "add_note", "enrich", "score", "set_icp",
-  "webhooks",
+  "webhooks", "rev_plays",
   "get_account", "deals", "pages", "read_page", "save_page",
   "record", "record_insight", "record_closed_deals",
 ];

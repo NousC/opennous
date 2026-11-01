@@ -137,7 +137,7 @@ function apiClient() {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
-      console.error(`Error: ${err.error || err.message}`);
+      console.error(`Error: ${err.message || err.error}`);
       process.exit(1);
     }
     if (res.status === 204) return {};
@@ -538,6 +538,56 @@ program
   });
 
 // nous logout — top-level alias of `auth logout`. Removes the saved API key.
+program
+  .command("backfill")
+  .description("Read your email and meeting history on your own Claude or ChatGPT plan")
+  .option("--agent <agent>", "claude or codex (default: whichever you're signed in to)")
+  .option("--days <days>", "how many days back to read, 1 to 730", "180")
+  .option("--yes", "start without asking")
+  .action(async (opts) => {
+    const { detectAgents, runBackfill, liveRun } = await import("./backfill.js");
+    const days = Number(opts.days);
+    if (!Number.isInteger(days) || days < 1 || days > 730) {
+      console.error("--days must be a whole number from 1 to 730.");
+      process.exit(1);
+    }
+    const agents = detectAgents();
+    const agent = opts.agent ?? agents[0];
+    if (!agent || !agents.includes(agent)) {
+      console.error(opts.agent ? `You're not signed in to ${opts.agent}.` : "Sign in to Claude Code or Codex first: this runs on your own plan.");
+      process.exit(1);
+    }
+    const api = apiClient();
+    const est = await api.post("/v2/backfill/own/estimate", { days });
+    console.log(`\nLast ${days} days: about ${est.counts.email_thread} email threads, ${est.counts.meeting} meetings, ${est.counts.call} calls.`);
+    console.log(`They're filtered first, then read on your ${agent} plan. None of it uses your OpenNous credits.`);
+    console.log("You can stop at any time and run this again: it carries on where it stopped.\n");
+    if (!opts.yes) {
+      const { createInterface } = await import("node:readline/promises");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const ok = /^y/i.test(await rl.question("Start? (y/N) "));
+      rl.close();
+      if (!ok) return;
+    }
+    const job = await api.post("/v2/backfill/own", { days });
+    console.log(job.resumed ? "Picking up where you left off. Stop any time with Ctrl-C." : "Started. Stop any time with Ctrl-C; run `nous backfill` again to carry on.");
+    process.once("SIGINT", () => {
+      console.log("\nStopped. Everything read so far is saved. Run `nous backfill` to carry on.");
+      process.exit(130);
+    });
+    const result = await runBackfill({
+      agent, jobId: job.job_id, run: liveRun(), log: console.log,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      api: {
+        calls: (id, limit) => api.get(`/v2/backfill/own/${id}/calls`, { limit }),
+        answer: (id, body) => api.post(`/v2/backfill/own/calls/${id}`, body),
+        resume: () => api.post("/v2/backfill/own", { days }),
+      },
+    });
+    console.log(`Done. This run: ${result.read} email threads read, ${result.answered} model calls on your ${agent} plan.`);
+    if (result.failed) console.log(`${result.failed} threads couldn't be read. Run \`nous backfill\` again to retry them.`);
+  });
+
 program
   .command("logout")
   .description("Sign out — remove the saved API key")

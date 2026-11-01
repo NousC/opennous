@@ -36,7 +36,7 @@ import { isApiTier } from "@/config/plans";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
 import { AiMark, ModelMark, StepMark, ToolLogo, TriggerMark } from "@/components/AutomationMarks";
-import { TEMPLATES, type TemplateTool } from "@/lib/templates";
+import type { Template, TemplateTool } from "@/lib/templates";
 import { flowFromRow, sentence, stepTitle, triggerDef, type Flow, type Step } from "@/lib/flows";
 import {
   automationsFetch, marksFor, toolKindFor,
@@ -100,7 +100,7 @@ const WINDOWS: [string, number | null][] = [
 /** A row of the list: one of yours, or one OpenNous runs for every workspace. */
 type WorkflowRow =
   | { key: string; kind: "own"; a: Automation; flow: Flow; marks: { slug: string; label: string }[] }
-  | { key: string; kind: "default"; t: (typeof TEMPLATES)[number]; flow: Flow; shownFlow: Flow; marks: { slug: string; label: string }[] };
+  | { key: string; kind: "default"; t: Template; flow: Flow; shownFlow: Flow; marks: { slug: string; label: string }[] };
 
 /**
  * What an automation is, on hover over the ⓘ: one line of what it does, then the trigger and
@@ -292,9 +292,9 @@ export function BuiltInAutomations({
       {/* How many of the plan's automations are in use. Unlimited plans say nothing; the
           defaults are ours and do not count. */}
       {data?.limit != null && view === "automations" && (
-        <span title="Your Rev Plays count toward your plan. The defaults don't."
+        <span title="Your own Rev Plays and the team's shared ones each have their own limit. The defaults don't count."
           className={cn("text-xs tabular-nums", data.used >= data.limit ? "text-warning" : "text-muted-foreground")}>
-          {data.used} of {data.limit} used
+          {data.used} of {data.limit} yours · {data.used_shared ?? 0} of {data.limit} shared
         </span>
       )}
       {onView && (
@@ -364,8 +364,8 @@ export function BuiltInAutomations({
   // The API plan runs no defaults. A ROW PER TOOL a default runs on: with Fellow and RingCentral
   // both connected, the follow-up runs for each, so it is listed for each, never one row wearing
   // two logos.
-  const defaultRows: WorkflowRow[] = apiPlan ? [] : TEMPLATES.filter(t => t.byDefault).flatMap(t => {
-    const flow = t.flow();
+  const defaultRows: WorkflowRow[] = apiPlan ? [] : (data.templates ?? []).filter(t => t.byDefault).flatMap(t => {
+    const flow = t.flow;
     const kind = toolKindFor(flow.trigger.kind);
     const on = kind ? tools[kind] : [];
     const rows = on.length ? on.map(tool => ({ key: `${t.id}:${tool.slug}`, tool })) : [{ key: t.id, tool: null as Tool | null }];
@@ -381,6 +381,7 @@ export function BuiltInAutomations({
       <span className={cn("group/name flex min-w-0 items-center gap-2.5", off(r) && "opacity-60")}>
         <ListTile><TriggerTiny when={r.flow.trigger.kind} tools={r.marks} /></ListTile>
         <span className="truncate text-foreground">{r.kind === "own" ? r.a.name : r.t.name}</span>
+        {r.kind === "own" && r.a.visibility === "shared" && <span className="shrink-0 text-xs text-muted-foreground">Shared</span>}
         {r.kind === "own" && r.a.draft && <span className="shrink-0 text-xs text-warning">Unpublished</span>}
         {r.kind === "default" && <span title="Run by OpenNous, always on"><Lock className="h-3 w-3 shrink-0 text-muted-foreground/40" /></span>}
         <span className="opacity-0 transition-opacity group-hover/name:opacity-100 focus-within:opacity-100">
@@ -404,7 +405,7 @@ export function BuiltInAutomations({
       <span className="inline-flex" onClick={e => e.stopPropagation()}>
         {busy === r.a.id
           ? <span className="flex h-[18px] w-[30px] items-center justify-center"><Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /></span>
-          : <Switch checked={r.a.enabled} onCheckedChange={() => void toggle(r.a)} aria-label={`${r.a.name}: ${r.a.enabled ? "on" : "off"}`}
+          : <Switch checked={r.a.enabled} disabled={r.a.can_edit === false} onCheckedChange={() => void toggle(r.a)} aria-label={`${r.a.name}: ${r.a.enabled ? "on" : "off"}`}
               className="h-[18px] w-[30px] border-0 data-[state=unchecked]:bg-border [&>span]:size-3.5 [&>span]:translate-x-0.5 [&>span]:shadow-[0_1px_2px_rgba(0,0,0,.2)] [&>span]:data-[state=checked]:translate-x-[14px]" />}
       </span>
     ) : null },
@@ -451,7 +452,7 @@ export function BuiltInAutomations({
                   <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground"><Plus className="h-3.5 w-3.5" /> Start from scratch</span>
                   <span className="text-[12px] leading-snug text-muted-foreground">Pick a trigger, then add the steps you want.</span>
                 </button>
-                {TEMPLATES.filter(t => !t.byDefault).map(t => (
+                {(data?.templates ?? []).filter(t => !t.byDefault).map(t => (
                   <button
                     key={t.id}
                     onClick={() => navigate(`/rev-plays/new?template=${t.id}`)}

@@ -49,6 +49,8 @@ export function readValue(claim, bill) {
     source_ref: claim.ref, kind: bill.kind, credits: bill.credits, read_at: claim.valid_from,
     ...(bill.minutes ? { minutes: bill.minutes } : {}),
     api_key_id: typeof key === 'string' && key ? key : null,
+    // Read on the person's own plan (GET-1085): recorded, so the Activity page is true, but not billed.
+    ...(claim?.meta?.own_model ? { own_model: true } : {}),
   };
 }
 
@@ -112,7 +114,8 @@ export async function sweepWorkspace(supabase, workspaceId, { since = null } = {
       const row = await recordObservation(supabase, {
         workspaceId, entityId: c.entity_id, kind: 'state', property: 'noema.read',
         externalId: `read_${c.ref}`,
-        value: readValue(c, bill),
+        // Any claim citing it says so: a conversation's claims are written by one read.
+        value: readValue({ ...c, meta: { ...c.meta, own_model: c.meta?.own_model || (data ?? []).some(o => o.ref === c.ref && o.meta?.own_model) } }, bill),
         source: bill.system, method: 'extraction', observedAt: c.valid_from,
       }).catch(() => null);
       if (row) recorded++;

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { workspacePlanLive, workspaceOnFree, backfillOwnerFor, ownerJobFilter } from '../../lib/backfillStart.mjs';
+import { workspacePlanLive, workspaceOnFree, backfillOwnerFor, ownerJobFilter, workspaceSyncMode } from '../../lib/backfillStart.mjs';
 import { captureProductEvent } from '../../lib/productEvents.mjs';
 import { getPlanFromSubscription, isApiTier } from '../../lib/plans.mjs';
 import { getSupabaseClient } from '@nous/core';
@@ -10,6 +10,7 @@ import { hasIcp } from '../../lib/icp.mjs';
 import { hasLiveWebhook } from '../../lib/webhookStatus.mjs';
 import { isWorkspaceSetUp, selfServeOnboardingEnabled } from '../../lib/onboardingState.mjs';
 import { crmImportStatus } from '../../lib/connectIngest.mjs';
+import { syncStatus, markSyncSeen } from '../../lib/syncStatus.mjs';
 
 // The onboarding reports are the in-app agent's work, which is Cloud's (cloud/lib/onboardingReports.mjs).
 // Cloud registers the runner at boot (GET-754); without it POST /reports starts nothing.
@@ -120,9 +121,9 @@ onboardingRouter.post('/reports', async (req, res) => {
 // One answer for both flows: the API plan's Get started page ticks these off, and the Workspace
 // agent reads the same state to know what to ask next. Every step is a fact about the workspace,
 // not a click we remember: a CRM that is connected is connected however it got that way.
-const CRM_PROVIDERS = ['hubspot', 'salesforce', 'attio', 'pipedrive'];
-const MAIL_PROVIDERS = ['gmail_oauth', 'gmail', 'smtp'];
-const NOTES_PROVIDERS = ['fellow', 'fireflies', 'granola', 'fathom', 'otter', 'zoom'];
+export const CRM_PROVIDERS = ['hubspot', 'salesforce', 'attio', 'pipedrive'];
+export const MAIL_PROVIDERS = ['gmail_oauth', 'gmail', 'smtp'];
+export const NOTES_PROVIDERS = ['fellow', 'fireflies', 'granola', 'fathom', 'otter', 'zoom'];
 
 onboardingRouter.get('/checklist', verifySupabaseAuth, async (req, res) => {
   try {
@@ -138,7 +139,7 @@ onboardingRouter.get('/checklist', verifySupabaseAuth, async (req, res) => {
       supabase.from('entities').select('id', { count: 'exact', head: true })
         .eq('workspace_id', workspaceId).eq('type', 'company').eq('status', 'active'),
       ownerJobFilter(supabase.from('contact_enrichment_jobs').select('status, done, state, updated_at')
-        .eq('workspace_id', workspaceId), owner).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        .eq('workspace_id', workspaceId).is('state->>sync_only', null), owner).order('created_at', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('api_keys').select('last_used_at').eq('workspace_id', workspaceId).is('revoked_at', null),
     ]);
     const names = (conns ?? []).map(c => c?.provider?.name).filter(Boolean);
@@ -162,9 +163,26 @@ onboardingRouter.get('/checklist', verifySupabaseAuth, async (req, res) => {
       // Paying yet? The backfill step asks for a plan before it runs (GET-549).
       plan: { live: await workspacePlanLive(supabase, workspaceId), free: await workspaceOnFree(supabase, workspaceId) },
       api_key: { created: (keys ?? []).length > 0, used: (keys ?? []).some(k => !!k.last_used_at) },
+      // Which onboarding this is (GET-1087): 'sync' files history by itself, 'backfill' asks first.
+      flow: await workspaceSyncMode(supabase, workspaceId) ? 'sync' : 'backfill',
+      sync: await syncStatus(supabase, workspaceId, owner).catch(() => null),
     });
   } catch (err) {
     console.error('[GET /api/onboarding/checklist]', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// POST /api/onboarding/sync-seen — the Sync done pop-up shows once (GET-1087).
+onboardingRouter.post('/sync-seen', verifySupabaseAuth, async (req, res) => {
+  try {
+    const supabase = getSupabaseClient();
+    const workspaceId = await resolveWorkspaceId(supabase, req.user, req.workspaceId);
+    if (!workspaceId) return res.status(400).json({ error: 'workspaceId_required' });
+    const owner = await backfillOwnerFor(supabase, workspaceId, req.internalUserId).catch(() => null);
+    return res.json({ ok: await markSyncSeen(supabase, workspaceId, owner) });
+  } catch (err) {
+    console.error('[POST /api/onboarding/sync-seen]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
@@ -269,7 +287,10 @@ onboardingRouter.get('/status', verifySupabaseAuth, async (req, res) => {
     else if (hasDataSource) onboardingStep = 'integrations';
     else onboardingStep = 'data_source';
 
+    const owner = await backfillOwnerFor(supabase, workspaceId, req.internalUserId).catch(() => null);
     return res.json({
+      // The history sync (GET-1087): running, then what landed, then whether the pop-up was seen.
+      sync: await syncStatus(supabase, workspaceId, owner).catch(() => null),
       // NEW gate: has the user finished the connect wizard and entered the app.
       activated,
       completed,

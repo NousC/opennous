@@ -25,6 +25,7 @@
 //     Failing open means not stopping on a billing hiccup; it does not mean forgetting a stop we
 //     already measured.
 
+import { ownModelActive } from '@nous/core';
 import { apiInternalBase } from './apiInternal.mjs';
 
 const TTL_MS = 5 * 60_000;
@@ -42,6 +43,13 @@ const view = (a) => ({ allowed: a.allowed, reason: a.reason, hardCap: !!a.hardCa
 /** A hard cap we have measured, which an outage must not reopen. */
 const knownHardCap = (hit) => hit && hit.hardCap && typeof hit.untilStop === 'number';
 
+// A paid backfill (GET-1087) is its own money: an ended trial or a spent month does not stop it.
+// Its limit is the amount bought (backfillCreditState), not this gate. Held in this process for
+// the length of the job, which also lets through anything else this workspace reads meanwhile.
+const paidBackfills = new Set();
+export function holdPaidBackfill(workspaceId) { paidBackfills.add(workspaceId); }
+export function releasePaidBackfill(workspaceId) { paidBackfills.delete(workspaceId); }
+
 /**
  * @param {string} workspaceId
  * @param {{ fresh?: boolean }} [opts] fresh: skip the cache and ask now.
@@ -51,6 +59,9 @@ const knownHardCap = (hit) => hit && hit.hardCap && typeof hit.untilStop === 'nu
  */
 export async function mayReadWorkspace(workspaceId, { fresh = false } = {}) {
   if (!workspaceId) return { ...OPEN };
+  if (paidBackfills.has(workspaceId)) return { ...OPEN };
+  // A read on the person's own plan spends none of ours (GET-1085). The plan was checked at the door.
+  if (ownModelActive()) return { ...OPEN };
 
   const hit = cache.get(workspaceId);
   // Near a hard cap a cached yes goes stale in a few threads, so it is not served (GET-700). An

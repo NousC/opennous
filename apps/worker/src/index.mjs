@@ -48,7 +48,8 @@ import { processClaimJobs } from './workers/claimEngine.mjs';
 import { writeHeartbeat } from './workers/heartbeat.mjs';
 import { processInvariants } from './workers/invariants.mjs';
 import { processBulkLeadJobs } from './workers/bulkLeadJobs.mjs';
-import { processContactEnrichmentJobs } from './workers/contactEnrichmentJobs.mjs';
+import { processContactEnrichmentJobs, processSyncJobs } from './workers/contactEnrichmentJobs.mjs';
+import { startOwnBackfills } from './workers/ownBackfillJobs.mjs';
 import { scoreIntentCron } from './intentScore.mjs';
 import { runPipelineStageStats } from './workers/pipelineStageStats.mjs';
 import { runInsightThemes } from './workers/insightThemes.mjs';
@@ -783,6 +784,8 @@ console.log('[WORKER] Bulk enrich/verify jobs — every 20 seconds');
 // Drains contact_enrichment_jobs (enqueued by the API on CSV import). Runs the
 // bulk, rate-lane'd history backfill off the API request path; resumable.
 cron.schedule('*/20 * * * * *', processContactEnrichmentJobs);
+cron.schedule('*/20 * * * * *', () => processSyncJobs());
+cron.schedule('*/20 * * * * *', () => startOwnBackfills().catch((e) => console.warn('[OWN_BACKFILL] start:', e?.message || e)));
 console.log('[WORKER] Contact enrichment jobs — every 20 seconds');
 
 // Scorecard prediction-write (every 10 minutes) stakes the learned scorer's icp_fit

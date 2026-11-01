@@ -8,6 +8,7 @@
 // prompt back into its job by its opening line, so a prompt-job reopens as the job, not as a
 // wall of text you did not write.
 import { freshAccessToken } from "@/lib/freshToken";
+import type { Template } from "@/lib/templates";
 
 export const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
@@ -18,6 +19,8 @@ export type Automation = {
   offset_minutes?: number | null; frequency?: string | null; at_time?: string | null;
   /** Versions (GET-584): the live version's number, and the unpublished draft when there is one. */
   version?: number; draft?: DraftBody | null;
+  /** Personal or shared (GET-1087). Shared is read-only below admin; the server decides all three. */
+  visibility?: "personal" | "shared"; yours?: boolean; can_edit?: boolean; can_share?: boolean;
 };
 /** What the editor saves as a draft: the same body a save sends. */
 export type DraftBody = {
@@ -65,10 +68,12 @@ export type Run = {
   credits?: number; credit_steps?: { step: number; credits: number }[];
 };
 export type Payload = {
-  plan: string; limit: number | null; used: number;
+  plan: string; limit: number | null; used: number; used_shared?: number;
   automations: Automation[]; catalogue: Recipe[];
   destinations: { key: string; label: string; needs_target?: boolean }[];
   triggers: Trigger[];
+  /** The RevPlay templates, each with its flow drawn: the one list, kept on the server (GET-1087). */
+  templates?: Template[];
 };
 
 /** Fetch against the automations API with a fresh token. */

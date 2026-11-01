@@ -77,9 +77,11 @@ import { membersV2Router } from './routes/v2/members.mjs';
 import { icpV2Router } from './routes/v2/icp.mjs';
 import { usageV2Router } from './routes/v2/usage.mjs';
 import { workflowsV2Router } from './routes/v2/workflows.mjs';
+import { revPlaysV2Router } from './routes/v2/revPlays.mjs';
 import { approvalsV2Router } from './routes/v2/approvals.mjs';
 import { webhooksV2Router } from './routes/v2/webhooks.mjs';
 import { eventsV2Router } from './routes/v2/events.mjs';
+import { ownBackfillRouter } from './routes/v2/ownBackfill.mjs';
 
 // /api — Frontend API (Supabase JWT auth)
 import { apiKeysRouter } from './routes/api/apiKeys.mjs';
@@ -420,6 +422,8 @@ app.use('/v2/members',         verifyApiKey,     requireOpsBalance, logV2Op, mem
 app.use('/v2/icp',             verifyApiKey,     logV2Op, icpV2Router);
 app.use('/v2/usage',           verifyApiKey,     logV2Op, usageV2Router);
 app.use('/v2/workflows',       verifyApiKey,     requireOpsBalance, logV2Op, workflowsV2Router);
+// RevPlays for agents (GET-1087): the same rows as /v2/workflows, from a template, with the plan's limit.
+app.use('/v2/rev-plays',       verifyApiKey,     requireOpsBalance, logV2Op, revPlaysV2Router);
 app.use('/v2/approvals',       verifyApiKey,     requireOpsBalance, logV2Op, approvalsV2Router);
 // Events pushed to your own stack (GET-559). Same outbox as /v2/workspace/triggers, so the
 // same self-host block: a self-hosted install has no delivery worker reaching the internet.
@@ -427,6 +431,9 @@ app.use('/v2/webhooks',        verifyApiKey,     requireOpsBalance, logV2Op, web
 // Every event, as Stripe lists them (GET-939): a key, or the Events page signed in. Only a key's
 // calls go in the op log: the page polls, and its reads are not an agent's activity.
 app.use('/v2/events',          verifyAuthEither, requireOpsBalance, (req, res, next) => (req.apiKeyId ? logV2Op(req, res, next) : next()), eventsV2Router);
+
+// `nous backfill` (GET-1085): a person's history, read on their own plan. Their calls are not ops.
+app.use('/v2/backfill/own',    verifyApiKey, ownBackfillRouter);
 
 // ── /api — Frontend API ───────────────────────────────────────────────────────
 app.use('/me',                        meRouter); // legacy path used by AuthContext

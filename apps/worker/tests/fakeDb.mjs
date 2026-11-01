@@ -31,6 +31,7 @@ export function fakeDb(seed = {}) {
       not(c, o, v) { if (o === 'is') filters.push((r) => (r[c] ?? null) !== v); return q; },
       gte(c, v) { filters.push((r) => r[c] >= v); return q; },
       lt(c, v) { filters.push((r) => r[c] < v); return q; },
+      lte(c, v) { filters.push((r) => r[c] <= v); return q; },
       like(c, p) { const re = likeRe(p); filters.push((r) => re.test(String(r[c] ?? ''))); return q; },
       ilike(c, p) { const re = new RegExp(likeRe(p).source, 'i'); filters.push((r) => re.test(String(r[c] ?? ''))); return q; },
       or() { return q; },

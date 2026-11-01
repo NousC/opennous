@@ -6,6 +6,7 @@ import {
 import { AccountSecurity } from "@/contexts/auth/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePlan } from "@/hooks/usePlan";
+import { SyncDoneRow } from "@/components/settings/SyncDoneRow";
 import { InstanceSetup } from "@/components/settings/InstanceSetup";
 import { isCorePlan, planTier } from "@/config/plans";
 import { PREVIEW } from "@/lib/preview";
@@ -951,6 +952,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {/* ── General (GET-637, board SettingsGeneral): what the company is, and where it sells. ── */}
           {section === "general" && (
             <SectionShell title="General" description="What the company is, and where it sells.">
+              <SyncDoneRow />
               <SettingsGroup title="Company">
                 <SettingsRow
                   label="Logo"

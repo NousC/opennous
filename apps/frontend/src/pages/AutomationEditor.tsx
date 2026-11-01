@@ -273,6 +273,12 @@ export default function AutomationEditor() {
   };
   const pick = (sid: string) => { setSel(sid); if (!panelOpen) showPanel(true); };
   const [busy, setBusy] = useState<null | "save" | "toggle" | "delete" | "restore">(null);
+  // A shared RevPlay below admin (GET-1087): seen and followed, never changed. The server refuses
+  // anyway; this shows the live flow the way a published version is shown.
+  const readOnly = saved?.can_edit === false;
+  useEffect(() => {
+    if (readOnly && flow && !viewing) setViewing({ version: saved?.version ?? 1, publishedAt: saved?.last_run_at ?? new Date().toISOString(), by: "Shared, read-only", live: true, flow });
+  }, [readOnly, flow, viewing]); // eslint-disable-line react-hooks/exhaustive-deps
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -337,10 +343,10 @@ export default function AutomationEditor() {
       hydrated.current = hydrateKey;
       const { body } = got;
       const onOwnModel = (f: Flow): Flow => f;
-      const tpl = isNew ? templateById(templateParam) : null;
+      const tpl = isNew ? templateById(body.templates, templateParam) : null;
       if (tpl && !tpl.byDefault) {
         // From a template: the whole flow drawn, named, the trigger open first.
-        setFlow(onOwnModel(tpl.flow()));
+        setFlow(onOwnModel(tpl.flow));
         setName({ value: tpl.name, touched: true });
         setDirty(true);
       } else if (isNew) {
@@ -557,6 +563,17 @@ export default function AutomationEditor() {
     return first + 1 === n ? { status: "running", detail: null } : { status: "pending", detail: null };
   };
 
+  const share = async () => {
+    if (!saved) return;
+    setBusy("toggle"); setError(null);
+    try {
+      const res = await automationsFetch(`/${saved.id}?workspaceId=${workspaceId}`, token, { method: "PATCH", body: JSON.stringify({ visibility: "shared" }) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(out.message ?? out.error ?? "Could not share that."); return; }
+      setSaved(out);
+    } finally { setBusy(null); }
+  };
+
   const toggle = async () => {
     if (!saved) return;
     setBusy("toggle"); setError(null);
@@ -611,6 +628,7 @@ export default function AutomationEditor() {
             value={shownName}
             onChange={e => { setName({ value: e.target.value, touched: true }); setDirty(true); version.current++; }}
             onFocus={() => tab !== "editor" && setTab("editor")}
+            readOnly={readOnly}
             aria-label="Name"
             size={Math.max(12, shownName.length + 1)}
             className="min-w-0 max-w-[320px] truncate rounded-md bg-transparent px-1.5 py-1 text-[13.5px] font-medium text-foreground transition-colors hover:bg-accent/60 focus:bg-accent/60 focus:outline-none"
@@ -621,13 +639,18 @@ export default function AutomationEditor() {
         </div>
 
         <div className="flex flex-shrink-0 items-center gap-0.5">
-          {saved && (
+          {saved && !readOnly && (
             <button onClick={() => void toggle()} disabled={busy !== null} className={BAR_BTN} title={saved.enabled ? "Stop it running" : "Let it run on its trigger"}>
               {busy === "toggle" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className={cn("h-3.5 w-3.5", saved.enabled && "text-emerald-600 dark:text-emerald-400")} />}
               {saved.enabled ? "Deactivate" : "Activate"}
             </button>
           )}
-          {saved?.draft && !dirty && (
+          {saved?.can_share && (
+            <button onClick={() => void share()} disabled={busy !== null} className={BAR_BTN} title="Everyone on the team sees it. Only admins can change it.">
+              Share with team
+            </button>
+          )}
+          {saved?.draft && !dirty && !readOnly && (
             <button onClick={() => void discard()} disabled={busy !== null} className={BAR_BTN}>
               <Undo2 className="h-3.5 w-3.5" /> Discard draft
             </button>
@@ -642,7 +665,7 @@ export default function AutomationEditor() {
               <Layers className="h-3.5 w-3.5" /> Versions
             </button>
           )}
-          {saved && (
+          {saved && !readOnly && (
             <Popover open={testPicking} onOpenChange={setTestPicking}>
               <PopoverTrigger asChild>
                 <button
@@ -675,12 +698,12 @@ export default function AutomationEditor() {
               </PopoverContent>
             </Popover>
           )}
-          {saved && (
+          {saved && !readOnly && (
             <button onClick={() => void remove()} aria-label="Delete" title="Delete" className={cn(BAR_BTN, "w-8 justify-center px-0")}>
               {busy === "delete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             </button>
           )}
-          {saved?.draft && !dirty && (
+          {saved?.draft && !dirty && !readOnly && (
             <button
               onClick={() => void publish()}
               disabled={busy !== null || !allReady}

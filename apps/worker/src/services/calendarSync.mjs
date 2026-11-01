@@ -29,6 +29,7 @@
 // harborline.example joins the Harborline account; a random vendor on a random domain does not become
 // a lead because they sent an invite. Personal mailboxes (gmail.com, …) are never created.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import { getSupabaseClient, getInternalIdentities, getInternalEntityIds, isFreeEmailDomain } from '@nous/core';
 import { logActivity } from '../utils/activity.mjs';
 import { calendarHooks } from '../lib/calendarHooks.mjs';
@@ -334,7 +335,7 @@ export async function syncAllCalendars() {
     .not('composio_connection_id', 'is', null)
     .eq('workflow_providers.name', 'google_calendar');
   if (error) { console.error('[CALENDAR] connections query failed:', error.message); return; }
-  for (const conn of [...(conns || []), ...await nativeConnections(supabase, 'google_calendar')]) {
+  for (const conn of await withoutLapsedTrials(supabase, [...(conns || []), ...await nativeConnections(supabase, 'google_calendar')])) {
     try { await syncCalendarConnection(supabase, conn); }
     catch (e) { console.error(`[CALENDAR] connection=${conn.id}:`, e.message); }
   }

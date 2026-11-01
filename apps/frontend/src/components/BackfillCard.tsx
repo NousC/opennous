@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CONTACT_URL } from "@/config/contact";
+import { contactUrl } from "@/config/contact";
 import { notInCrmLine } from "@/lib/getStarted";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
@@ -99,7 +99,7 @@ export function BackfillCard({ className, onStarted, hideIfRan = false }: { clas
           <p className="mt-1.5 text-[14px] text-foreground">
             We found {found(e)} from the last 3 months. That's more than onboarding reads on its own.
           </p>
-          <a href={CONTACT_URL} target="_blank" rel="noreferrer" className="mt-4 inline-flex h-9 items-center rounded-lg bg-foreground px-4 text-[13px] font-medium text-background">Contact us</a>
+          <a href={contactUrl()} target="_blank" rel="noreferrer" className="mt-4 inline-flex h-9 items-center rounded-lg bg-foreground px-4 text-[13px] font-medium text-background">Contact us</a>
         </>
       ) : (
         <>
@@ -115,7 +115,7 @@ export function BackfillCard({ className, onStarted, hideIfRan = false }: { clas
                 className="inline-flex h-9 items-center rounded-lg bg-foreground px-4 text-[13px] font-medium text-background disabled:opacity-60">
                 Read the last 30 days{p.estimate_30 ? ` · ${num(p.estimate_30.credits)} credits` : ""}
               </button>
-              <a href={CONTACT_URL} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center rounded-lg border border-border px-4 text-[13px] text-foreground">Contact us for all 3 months</a>
+              <a href={contactUrl()} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center rounded-lg border border-border px-4 text-[13px] text-foreground">Contact us for all 3 months</a>
             </div>
           ) : (
             <button disabled={busy} onClick={() => start()}

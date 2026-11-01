@@ -4,7 +4,7 @@
 // Graph edges (REPORTS_TO, BUDGET_HOLDER_AT, etc.) extracted from each fact → workspace_graph_edges.
 
 import { createHash } from 'node:crypto';
-import { teamReadContext, writesTasks, isTimeBound, retireNote, claimAboutFor } from '@nous/core';
+import { isSyncOnly, teamReadContext, writesTasks, isTimeBound, retireNote, claimAboutFor } from '@nous/core';
 import { extractionCriteria } from '../lib/extractionCriteria.mjs';
 import { mayReadWorkspace } from '../lib/creditGate.mjs';
 import { setUser } from 'useleak';
@@ -1723,12 +1723,14 @@ export async function persistFacts(supabase, workspaceId, kept, { type, source, 
 // about. Cheaper AND it can finally see the room.
 /**
  * Whether a meeting was already read: a claim cites it (value.metadata.source_ref), or the read
- * ledger stamped it (observation external_id read_<source_ref>, workers/readLedger.mjs).
+ * ledger stamped it (observation external_id read_<source_ref>, workers/readLedger.mjs). A document
+ * a sync filed cites it too, and is not a read (filed_unread, saveDocument).
  */
 export async function meetingAlreadyRead(supabase, workspaceId, sourceRef) {
   try {
     const { data: cited } = await supabase.from('claims').select('id')
-      .eq('workspace_id', workspaceId).eq('value->metadata->>source_ref', sourceRef).limit(1);
+      .eq('workspace_id', workspaceId).eq('value->metadata->>source_ref', sourceRef)
+      .is('value->metadata->>filed_unread', null).limit(1);
     if (cited?.length) return true;
     const { data: stamped } = await supabase.from('observations').select('id')
       .eq('workspace_id', workspaceId).eq('external_id', `read_${sourceRef}`).limit(1);
@@ -1804,6 +1806,8 @@ export async function extractMeetingSignals({
   // Handed our side's checked facts, dry run or not (GET-1052): the eval reads them through this.
   onOurs = null,
 }) {
+  // Filed now, read later (GET-1087): a backfill replays this meeting with onceOnly.
+  if (isSyncOnly()) return [];
   try {
     if (onceOnly && sourceRef && !dryRun && await meetingAlreadyRead(supabase, workspaceId, sourceRef)) return [];
     // The same text of the same meeting, already read: nothing new to find (GET-1050).
@@ -2596,7 +2600,7 @@ Output ONLY valid JSON, max 4 items:
 // ── Public export — call this after every logActivity ────────────────────────
 
 export async function extractAfterActivity(supabase, activityResult, { contactId, workspaceId, type, source, summary, isOutbound, occurredAt }) {
-  if (!activityResult?.id) return;
+  if (!activityResult?.id || isSyncOnly()) return;
   if (extractionSkipReason({ type, text: summary })) return;
 
   // A meeting is logged once per resolved attendee, and every one of those calls

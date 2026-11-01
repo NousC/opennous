@@ -7,7 +7,7 @@ import { ArrowUpRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { BackfillCard } from "@/components/BackfillCard";
-import { CONTACT_URL } from "@/config/contact";
+import { contactUrl } from "@/config/contact";
 import { SELF_SERVE_TIERS, isApiTier } from "@/config/plans";
 import { day, num } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -19,7 +19,7 @@ export type ApiUsageState = PlanState & {
   aiCredits?: (NonNullable<PlanState["aiCredits"]> & {
     state?: "ok" | "warn" | "over" | "restricted";
     nextTier?: { credits: number; priceUsd: number } | null;
-    notLiveReason?: "no_plan" | "canceled" | "payment_failed" | null;
+    notLiveReason?: "no_plan" | "canceled" | "payment_failed" | "trial_ended" | null;
     /** A failed card still inside its grace (GET-698): reading continues until graceUntil. */
     paymentFailed?: boolean;
     graceUntil?: string | null;
@@ -29,6 +29,8 @@ export type ApiUsageState = PlanState & {
     daysUntilStop?: number | null;
   }) | null;
   stripe?: { customer: boolean; subscription: boolean } | null;
+  /** The sizes on sale (GET-1087): one with no Stripe price configured is not offered. */
+  sizes?: { name: string; credits: number; priceUsd: number }[];
   planName?: string;
   /** The Custom plan's quote on file: price, credits and what it bought. Null on the API plan. */
   customPlan?: { priceUsd: number | null; credits: number | null; basics: string[]; custom: string[]; customLabel?: string } | null;
@@ -171,6 +173,7 @@ export function ApiUsage({
   const custom = !isApiTier(state.plan);
   const cp = state.customPlan ?? null;
   const apiLine = planLine(state, SELF_SERVE_TIERS);
+  const sizes = state.sizes ?? SELF_SERVE_TIERS;
   const line = custom
     ? {
         name: state.planName || "Custom plan",
@@ -197,7 +200,7 @@ export function ApiUsage({
     <Popover open={picking} onOpenChange={setPicking}>
       <PopoverTrigger asChild>
         {ai?.needsPlan ? (
-          <Button size="sm">{ai.notLiveReason === "canceled" ? "Pick a plan" : "Choose a plan"}</Button>
+          <Button size="sm">{ai.notLiveReason === "canceled" || ai.notLiveReason === "trial_ended" ? "Pick a plan" : "Choose a plan"}</Button>
         ) : (
           <button type="button" className="text-[12px] text-muted-foreground underline-offset-2 transition-colors duration-fast hover:text-foreground hover:underline">
             Change credits
@@ -205,7 +208,7 @@ export function ApiUsage({
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-60 p-1.5">
-        {SELF_SERVE_TIERS.map((b) => {
+        {sizes.map((b) => {
           const current = !ai?.needsPlan && b.credits === included;
           return (
             <button key={b.credits} type="button" disabled={!!action || current}
@@ -215,7 +218,7 @@ export function ApiUsage({
                 current ? "text-foreground" : "text-ink-2 hover:bg-hover hover:text-foreground",
                 "disabled:cursor-default",
               )}>
-              <span>{num(b.credits)} credits</span>
+              <span>{b.name} · {num(b.credits)}</span>
               <span className="text-muted-foreground">{busy(b.credits) ? "…" : current ? "Current" : `$${b.priceUsd}`}</span>
             </button>
           );
@@ -230,16 +233,21 @@ export function ApiUsage({
       <span className="text-[11.5px] text-risk">Your last payment didn't go through, so reading has stopped. Update your card in Stripe.</span>
     ) : (
       <span className="text-[11.5px] text-foreground">
-        {ai.notLiveReason === "canceled" ? "Your subscription has ended, so reading has stopped." : "Choose a plan to start reading."}
+        {ai.notLiveReason === "trial_ended" ? "Your trial has ended. Reading and syncing have stopped; your data is still here."
+          : ai.notLiveReason === "canceled" ? "Your subscription has ended, so reading has stopped." : "Choose a plan to start reading."}
       </span>
     )
   ) : ai?.paymentFailed ? (
     <span className="text-[11.5px] text-risk">
       Your last payment didn't go through. Reading continues{ai.graceUntil ? ` until ${day(ai.graceUntil)}` : ""}; update your card in Stripe to keep it running.
     </span>
+  ) : ai?.state === "restricted" && ai.trial ? (
+    <span className="text-[11.5px] text-risk">
+      Trial credits used, so reading has paused. {next ? `Move to ${num(next.credits)} credits to keep reading.` : "Talk to us to keep reading."}
+    </span>
   ) : ai?.state === "restricted" ? (
     <span className="text-[11.5px] text-risk">
-      You're at {pct}%. Reading has paused until {resetDay ?? "your next period"}. Upgrade to keep reading now.
+      You're at {pct}%. Reading has paused until {resetDay ?? "your next period"}. {next ? `Move to ${num(next.credits)} credits to keep reading now.` : "Talk to us to keep reading now."}
     </span>
   ) : ai?.state === "over" ? (
     <span className="text-[11.5px] text-risk">
@@ -278,7 +286,9 @@ export function ApiUsage({
             {line.name}
             {line.price && <span className="font-normal text-muted-foreground"> · {line.price}</span>}
           </span>
-          {!ai?.needsPlan && (line.renews || !custom) && (
+          {ai?.trial && !ai.needsPlan && !custom ? (
+            <span className="mt-1">{picker}</span>
+          ) : !ai?.needsPlan && (line.renews || !custom) && (
             <span className="flex flex-wrap items-center gap-x-1.5 text-[12px] text-muted-foreground">
               {line.renews && <span>{line.renews}</span>}
               {line.renews && !custom && <span aria-hidden>·</span>}
@@ -301,7 +311,7 @@ export function ApiUsage({
               </Button>
             )}
             <Button variant={custom ? "outline" : "ghost"} size="sm" asChild>
-              <a href={CONTACT_URL} target="_blank" rel="noreferrer">{custom ? "Talk to us" : "Talk to us about volume"}</a>
+              <a href={contactUrl()} target="_blank" rel="noreferrer">{custom ? "Talk to us" : "Over 8,000 credits? Talk to us"}</a>
             </Button>
           </span>
           {custom && !hasStripe && (

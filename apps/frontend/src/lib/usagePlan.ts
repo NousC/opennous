@@ -4,23 +4,27 @@
 
 import { day, num } from "./format.ts";
 
-export type Tier = { credits: number; priceUsd: number };
+export type Tier = { name?: string; credits: number; priceUsd: number };
 
 /** The slice of GET /api/billing/state this page reads. */
 export type PlanState = {
   plan: string;
+  /** What this subscription pays a month, so a grandfathered price reads as itself. */
+  priceUsd?: number | null;
   subscription?: { current_period_end?: string | null; cancel_at_period_end?: boolean } | null;
   aiCredits?: {
     used: number;
     included: number | null;
     needsPlan?: boolean;
+    /** The no-card trial (GET-1087). */
+    trial?: { endsAt: string; daysLeft: number; ended: boolean } | null;
     backfill?: { used: number; allowance: number | null } | null;
   } | null;
   allPlans?: { id: string; monthlyPriceUsd: number | null }[];
 };
 
 export type PlanLine = {
-  /** "API plan". */
+  /** "Starter", "Trial", or "API plan" for a size we no longer sell. */
   name: string;
   /** "$49 a month", "From $49 a month" before a plan is chosen, null when nothing says. */
   price: string | null;
@@ -36,17 +40,25 @@ export type PlanLine = {
  */
 export function planLine(state: PlanState, tiers: Tier[], now: number | Date = Date.now()): PlanLine {
   const c = state.aiCredits;
+  if (c?.trial && !c.trial.ended) {
+    const left = c.trial.daysLeft;
+    return { name: "Trial", price: `${left} day${left === 1 ? "" : "s"} left`, renews: null, credits: c.included ?? null };
+  }
   const included = c?.included != null && c.included > 0 ? c.included : null;
-  const tier = included != null ? tiers.find((t) => t.credits === included) : undefined;
+  const paying = state.priceUsd ?? null;
+  const tier = included != null
+    ? tiers.find((t) => t.credits === included && (paying == null || t.priceUsd === paying))
+    : undefined;
   const listed = state.allPlans?.find((p) => p.id === state.plan)?.monthlyPriceUsd ?? null;
   let price: string | null = null;
   if (c?.needsPlan) price = tiers[0] ? `From $${tiers[0].priceUsd} a month` : null;
+  else if (paying != null) price = `$${paying} a month`;
   else if (tier) price = `$${tier.priceUsd} a month`;
   else if (listed != null) price = `$${listed} a month`;
   const end = state.subscription?.current_period_end ?? null;
   const d = end && !c?.needsPlan ? day(end, now) : "";
   const renews = d ? `${state.subscription?.cancel_at_period_end ? "Ends" : "Renews"} ${d}` : null;
-  return { name: "API plan", price, renews, credits: c?.needsPlan ? null : included };
+  return { name: (!c?.needsPlan && tier?.name) || "API plan", price, renews, credits: c?.needsPlan ? null : included };
 }
 
 /** A meter's fill, 0–100. */

@@ -8,6 +8,7 @@
 // clean run; errors are logged to workspace_system_log so the UI can show
 // them, never thrown.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import { getSupabaseClient, syncCrmProvider, logWorkerRun, writePrimaryPipelineRef, ensureHubspotPortal, salesforceAccess } from '@nous/core';
 import { decrypt } from '../utils/encryption.mjs';
 
@@ -167,7 +168,7 @@ export async function runCrmAutoSync() {
     if (!configs?.length) return;
 
     let ran = 0;
-    for (const cfg of configs) {
+    for (const cfg of await withoutLapsedTrials(supabase, configs)) {
       const cfgStart = new Date();
       try {
         await syncOneConfig(supabase, cfg);

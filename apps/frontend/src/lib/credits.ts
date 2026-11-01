@@ -7,7 +7,7 @@ import { day, num } from "./format.ts";
 
 /** The slice of GET /api/billing/state the meter needs. */
 export type CreditsState = {
-  aiCredits?: { used: number; included: number | null; needsPlan?: boolean; state?: string | null; periodEnd?: string | null } | null;
+  aiCredits?: { used: number; included: number | null; needsPlan?: boolean; state?: string | null; periodEnd?: string | null; trial?: { ended: boolean } | null } | null;
   subscription?: { current_period_end?: string | null } | null;
 } | null | undefined;
 
@@ -37,7 +37,8 @@ export function creditsMeter(state: CreditsState, now: number | Date = Date.now(
     used: num(used),
     included: included != null ? num(included) : null,
     pct,
-    resets: resetDay ? `Resets ${resetDay}` : null,
+    // A trial's credits do not come back.
+    resets: resetDay && !c.trial ? `Resets ${resetDay}` : null,
     over: c.state === "over" || c.state === "restricted",
     stopped: c.state === "restricted",
   };

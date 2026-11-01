@@ -73,7 +73,8 @@ per door of the public API: `whoami`, `find`, `get_context`, `query`, `attention
 `webhooks` (2026-10-01, GET-559: subscribe the operator's stack to events), plus `tasks`
 (2026-10-11, GET-830: list the task list and close or reopen tasks; closing cannot fold into
 `record` or `add_note`, which only append) and `rules` (2026-10-12, GET-846: the operator's own
-rules, guidance or checked in the background). Nous Cloud adds `read_brain` and `write_brain` for
+rules, guidance or checked in the background) and `rev_plays` (2026-11-01, GET-1087: automations the
+agent sets up, which run on OpenNous without it). Nous Cloud adds `read_brain` and `write_brain` for
 the GTM brain, which the open-source edition does not have (GET-839), and `read_intelligence` for the
 Intelligence files (GET-1042). They come
 first in `PLUGIN_TOOLS`, so an agent's tool list leads with them. `find` replaces `list_people`
@@ -113,6 +114,7 @@ as before and are described under **Legacy** below.
 | `write_brain` | Cloud only. Saves the next version of a GTM brain page (`PUT /v2/brain/page`): Decisions, the playbooks, `Playbooks/Competitors/<Name>`, `Working Documents/<Name>`, `Archive/<Name>`. Internal Meetings, Insights, the Overview and indexes are refused. |
 | `set_icp` | Writes the ICP (`PUT /v2/icp`). The scoring model is built from it only when none exists yet; an existing model is kept, and the result says which. Read it back with `query({scope:{foundation:'icp'}})`. |
 | `webhooks` | Subscribes the operator's own stack to events (`/v2/webhooks`): `events`, `list`, `create` (the signing secret is returned once), `update`, `delete`, `test` (a `webhook.test` built on a real account), `deliveries`. Record events carry the account, people, deal and evidence. |
+| `rev_plays` | Automations that run on OpenNous by themselves (`/v2/rev-plays`, `/v2/approvals`): `templates`, `list`, `create` (from a template, or a custom trigger and steps), `enable`, `disable`, `delete` (frees its slot), `test` (one run with every send held), `run`, `approvals`, `approve`, `reject`. The plan's limit counts every RevPlay, on or off. |
 
 ### Legacy (retained until the plugin skills migrate, GET-536)
 

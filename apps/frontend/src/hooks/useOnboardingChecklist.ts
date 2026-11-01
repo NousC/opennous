@@ -20,6 +20,17 @@ export type OnboardingChecklist = {
   /** An invited member onboards their own sources and backfill, not the CRM (GET-571). */
   seat?: "founder" | "member";
   api_key: { created: boolean; used: boolean };
+  /** 'sync' files history by itself; 'backfill' asks first (GET-1087). */
+  flow?: "sync" | "backfill";
+  sync?: SyncStatus | null;
+};
+
+/** The history sync (GET-1087): the top-right button and the Sync done pop-up. */
+export type SyncStatus = {
+  state: "none" | "running" | "done" | "failed" | "stopped";
+  counts: { accounts: number; people: number; conversations: number } | null;
+  seen: boolean;
+  finished_at: string | null;
 };
 
 export function checklistComplete(c: OnboardingChecklist | null): boolean {

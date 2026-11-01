@@ -35,8 +35,8 @@ const ROLES: { value: Role; label: string; body: string }[] = [
 
 /** `trigger` replaces the default rail row (the sidebar's top row draws its own icon button). It is
  *  drawn for everyone; for a viewer who can't invite, `open` is null so it can show as disabled. */
-export function InviteMemberButton({ collapsed = false, className = "", trigger }: {
-  collapsed?: boolean; className?: string; trigger?: (open: (() => void) | null) => ReactNode;
+export function InviteMemberButton({ collapsed = false, className = "", trigger, defaultRole = "member" }: {
+  collapsed?: boolean; className?: string; trigger?: (open: (() => void) | null) => ReactNode; defaultRole?: Role;
 }) {
   const { session, userData } = useAuth();
   const token = session?.access_token ?? "";
@@ -47,7 +47,7 @@ export function InviteMemberButton({ collapsed = false, className = "", trigger 
   const [open, setOpen] = useState(false);
   const [emails, setEmails] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
-  const [role, setRole] = useState<Role>("member");
+  const [role, setRole] = useState<Role>(defaultRole);
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState<Result[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -55,7 +55,7 @@ export function InviteMemberButton({ collapsed = false, className = "", trigger 
 
   if (!isAdmin || !teamId) return trigger ? <>{trigger(null)}</> : null;
 
-  const reset = () => { setEmails([]); setDraft(""); setRole("member"); setResults(null); };
+  const reset = () => { setEmails([]); setDraft(""); setRole(defaultRole); setResults(null); };
   /** Add whatever is typed or pasted: split on commas, semicolons, spaces and new lines. */
   const commit = (text: string) => {
     const parts = text.split(/[\s,;]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);

@@ -8,7 +8,9 @@
 // now: the billing page, the credit gate, the chart and the worker's backfill gate all read it.
 //
 // Background work — insights, topics, scoring, the agent — is included in the plan, not billed.
-// Skipped and unread conversations cost nothing: only what was read counts.
+// Skipped and unread conversations cost nothing: only what was read counts. So does anything read
+// on the person's own Claude or ChatGPT plan (`value.own_model`, GET-1085): it cost us nothing, so
+// it is neither the month's nor a backfill's.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cloudRequestedFeatures } from '../services/cloudRequestedFeatures.js';
@@ -139,13 +141,14 @@ export async function conversationCredits(
   const windows = backfillWindows.map(w => [Date.parse(w.from), Date.parse(w.to)] as const);
   const inBackfill = (iso: string) => { const t = Date.parse(iso); return windows.some(([a, b]) => t >= a && t <= b); };
   for (const ws of workspaceIds) {
-    const reads = await pageAll<{ source: string; observed_at: string; value: { kind?: string; credits?: number } | null }>((a, b) => {
+    const reads = await pageAll<{ source: string; observed_at: string; value: { kind?: string; credits?: number; own_model?: boolean } | null }>((a, b) => {
       let q = supabase.from('observations').select('source, observed_at, value')
         .eq('workspace_id', ws).eq('property', 'noema.read').gte('observed_at', since);
       if (until) q = q.lt('observed_at', until);
       return q.order('observed_at').range(a, b);
     });
     for (const r of reads) {
+      if (r.value?.own_model) continue;
       const kind = r.source === 'gmail' ? 'email' : (r.value?.kind ?? 'meeting');
       // The ledger stores CONVERSATIONS; the scale turns them into credits here, so a
       // redenomination never has to rewrite what was already read.
@@ -204,7 +207,7 @@ export async function conversationCredits(
 /** One `noema.read` row, as the by-key sum reads it. */
 export interface ReadRow {
   source: string | null;
-  value: { kind?: string; credits?: number; api_key_id?: string | null } | null;
+  value: { kind?: string; credits?: number; api_key_id?: string | null; own_model?: boolean } | null;
 }
 
 export interface CreditsByKey {
@@ -218,6 +221,7 @@ export interface CreditsByKey {
 
 /** A read's credits at the scale billing counts them (the same rule as conversationCredits). */
 export function readRowCredits(r: ReadRow): number {
+  if (r.value?.own_model) return 0;
   return CREDIT_SCALE * (r.source === 'gmail' ? 1 : Math.max(0, Number(r.value?.credits ?? 1)));
 }
 

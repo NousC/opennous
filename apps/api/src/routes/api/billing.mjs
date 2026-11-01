@@ -23,6 +23,8 @@ import {
   getTeamEnrichmentUsage,
   getTeamAiCredits,
   isSelfHosted,
+  offeredSizes,
+  STARTER_SIZES,
 } from '../../lib/plans.mjs';
 
 export const billingRouter = Router();
@@ -90,6 +92,10 @@ billingRouter.get('/state', verifySupabaseAuth, async (req, res) => {
       billing_disabled: false,
       plan: plan.id,
       planName: plan.name,
+      // What this subscription actually pays a month, so a grandfathered price reads as itself.
+      priceUsd: plan.monthlyPriceUsd,
+      // The sizes on sale here. One with no Stripe price configured is not offered (GET-1087).
+      sizes: offeredSizes().map(({ name, credits, priceUsd }) => ({ name, credits, priceUsd })),
       // What this account's Custom plan actually is: the price agreed, the credits it buys and
       // the integrations built for them. Null on every other plan, and on a Custom account with
       // no quote on file yet — the page then says "quoted" rather than inventing a number.
@@ -152,6 +158,8 @@ billingRouter.get('/state', verifySupabaseAuth, async (req, res) => {
         nextTier:    aiCredits.nextTier ?? null,   // what an over-limit notice offers (GET-525)
         needsPlan:   aiCredits.needsPlan ?? false, // not paying (GET-532, GET-539)
         notLiveReason: aiCredits.notLiveReason ?? null,
+        // The no-card trial (GET-1087): days left, and whether it has ended. Null otherwise.
+        trial:       aiCredits.trial ?? null,
         // A failed card still inside its grace (GET-698): reading continues, the card needs updating.
         paymentFailed: aiCredits.paymentFailed ?? false,
         graceUntil:  aiCredits.graceUntil ?? null,
@@ -169,11 +177,14 @@ billingRouter.get('/state', verifySupabaseAuth, async (req, res) => {
       // What we present in-app: the two sold plans — API (self-serve) and Headless Revenue
       // Engine (Custom, contact-us). Retired/grandfathered tiers still resolve for an existing
       // subscription but are never OFFERED here.
-      allPlans: SELLABLE_PLAN_IDS.map((id) => PLANS[id]).map((p) => ({
+      // A self-serve customer is never shown the operated plan (GET-1087); it still lists for
+      // the teams on it.
+      allPlans: SELLABLE_PLAN_IDS.filter((id) => id === 'api' || id === plan.id).map((id) => PLANS[id]).map((p) => ({
         id: p.id,
         name: p.name,
-        monthlyPriceUsd: p.monthlyPriceUsd,
-        aiCreditsPerMonth: p.aiCreditsPerMonth ?? null,
+        // What we sell today, not the floor a grandfathered row falls back to (GET-1087).
+        monthlyPriceUsd: p.id === 'api' ? STARTER_SIZES[0].priceUsd : p.monthlyPriceUsd,
+        aiCreditsPerMonth: (p.id === 'api' ? STARTER_SIZES[0].credits : p.aiCreditsPerMonth) ?? null,
         activeAccountsLimit: p.activeAccountsLimit,
         recordsLimit: p.recordsLimit,
         enrichmentsPerMonth: p.enrichmentsPerMonth,

@@ -96,7 +96,7 @@ const ERRORS: Record<string, string> = {
   invalid_due_at: "That due date isn't a real day.",
   invalid_deal_id: "That deal can't be found. Pick another or none.",
   owner_not_a_member: "That person isn't on this workspace.",
-  feature_not_in_plan: "Tasks are on the Workspace plan.",
+  feature_not_in_plan: "Tasks are not on your plan.",
 };
 
 // The palette's quiet chip (GET-658): a soft fill, no outline.

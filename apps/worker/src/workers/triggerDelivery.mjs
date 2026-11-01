@@ -7,6 +7,7 @@ import {
   recordDeliveryAttempt,
   eventIdOf,
 } from '@nous/core';
+import { workspaceTrialLapsed } from '../lib/trialGate.mjs';
 import { decrypt } from '../utils/encryption.mjs';
 
 // Drains pending outbound_events rows and delivers each to its subscription: a signed POST to its
@@ -46,6 +47,12 @@ export async function deliverTriggers() {
       if (!d.active) {
         // Subscription was deactivated after enqueue. Mark as dead, no retry.
         await markFailure(supabase, d.id, d.attempts, null, 'subscription_inactive');
+        continue;
+      }
+      // A trial that ended sends nothing until it pays (GET-1087). The event waits an hour and is
+      // asked again, so it neither fills the batch nor is lost.
+      if (await workspaceTrialLapsed(supabase, d.workspace_id)) {
+        await supabase.from('outbound_events').update({ next_attempt_at: new Date(Date.now() + 3_600_000).toISOString() }).eq('id', d.id);
         continue;
       }
       await deliverOne(supabase, d);

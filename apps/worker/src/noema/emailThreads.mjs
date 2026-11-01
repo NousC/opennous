@@ -11,45 +11,13 @@
 // Everything here except loadEmailThreads is PURE, so the rule that decides what thousands of paid model
 // calls will read can be tested without a database, the way selectBackfillUnits already is.
 
-import { loadOwnDomains, isOwnEmail } from '@nous/core';
-import { machineSenderReason, isRoleInbox } from '../utils/emailIdentity.mjs';
+import { loadOwnDomains, groupIntoThreads, selectEmailThreads, lastAt, MIN_THREAD_CHARS, normalizeSubject, threadKeyOf, sideOf } from '@nous/core';
+
+// The rules that decide what gets read live in @nous/core (GET-1087): the api's plan-fit has to
+// count exactly what the reader would read, and it cannot import the worker.
+export { groupIntoThreads, selectEmailThreads, lastAt, MIN_THREAD_CHARS, normalizeSubject, threadKeyOf, sideOf };
 
 const SENT = 'interaction.email_sent';
-
-// A thread is only worth a model call if there is something in it to read. Below this it is
-// "thanks!", an out-of-office, or a subject with an empty body.
-export const MIN_THREAD_CHARS = 400;
-
-/** `Re: Fwd: RE: Networking call` → `networking call`. */
-export function normalizeSubject(subject) {
-  return String(subject ?? '')
-    .replace(/^(\s*(re|fw|fwd|aw|tr)\s*(\[\d+\])?\s*:\s*)+/i, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
-/**
- * What identifies the conversation this message belongs to.
- *
- * HubSpot gives most rows a thread_id. A few thousand in a large inbox have none, and dropping those would lose
- * real conversations, so they fall back to the pair (normalised subject, counterpart) — the same
- * two things a person uses to say "this is the same email chain". A subject with no counterpart is
- * not enough on its own: "Re: Introduction" would collapse every unrelated intro into one thread.
- */
-export function threadKeyOf(msg) {
-  if (msg?.threadId) return `tid:${msg.threadId}`;
-  const subject = normalizeSubject(msg?.subject);
-  const counterpart = msg?.side === 'us' ? msg?.to : msg?.from;
-  if (!subject || !counterpart) return null;
-  return `subj:${subject}|${String(counterpart).toLowerCase()}`;
-}
-
-/** Which side wrote this. The stored direction decides; the sender's domain is the cross-check. */
-export function sideOf(msg, ownDomains) {
-  if (msg.property === SENT || msg.raw?.is_outbound === true) return 'us';
-  return isOwnEmail(msg.from, ownDomains) ? 'us' : 'them';
-}
 
 // A body line that looks like a side header would let a correspondent forge attribution — write
 // "--- us · someone ---" into an email and the text under it reads as ours, or worse, a sentence of
@@ -59,104 +27,6 @@ export const stripHeaderLines = (body) => String(body ?? '').replace(HEADER_LIKE
 
 /** `2026-09-16`, the day it was sent. */
 const dayOf = (at) => (at ? new Date(at).toISOString().slice(0, 10) : 'undated');
-
-/**
- * Group messages into threads, deduped.
- *
- * One email associated to three contacts is three rows and ONE message — it is read once, and the
- * entity ids it touched are carried on the thread so its claims can still be filed against each
- * person it names.
- *
- * @param messages light rows: { id, entityId, property, observedAt, threadId, from, to, subject, dedupKey, raw? }
- * @returns {Map<string, { key, messages: [], entityIds: Set }>} messages sorted oldest first
- */
-export function groupIntoThreads(messages, ownDomains) {
-  const threads = new Map();
-  const seen = new Map();                         // dedupKey -> the message we kept
-
-  for (const raw of messages ?? []) {
-    const msg = { ...raw, side: sideOf(raw, ownDomains) };
-    const dedup = msg.dedupKey || msg.id;
-    const kept = seen.get(dedup);
-    if (kept) {
-      // The duplicate is the SAME email on another contact. Its only new information is that
-      // contact, and it has to reach the THREAD as well as the message — the thread's entity set is
-      // what decides "is there an external counterpart here" and what the claims get filed against.
-      if (msg.entityId) { kept.entry.entityIds.add(msg.entityId); kept.thread.entityIds.add(msg.entityId); }
-      continue;
-    }
-
-    const key = threadKeyOf(msg);
-    if (!key) continue;                           // no thread_id and no subject: nothing to group on
-    if (!threads.has(key)) threads.set(key, { key, messages: [], entityIds: new Set() });
-    const thread = threads.get(key);
-    const entry = { ...msg, entityIds: new Set(msg.entityId ? [msg.entityId] : []) };
-    thread.messages.push(entry);
-    if (msg.entityId) thread.entityIds.add(msg.entityId);
-    seen.set(dedup, { entry, thread });
-  }
-
-  for (const thread of threads.values()) {
-    thread.messages.sort((a, b) => String(a.observedAt).localeCompare(String(b.observedAt)));
-  }
-  return threads;
-}
-
-/**
- * Which threads are worth reading, and why the rest are not.
- *
- * The ordered rules from the Gmail brief §5–§6. All deterministic; none needs a model, and each
- * one has a named skip reason so a run's own output says where the corpus went.
- */
-export function selectEmailThreads({ threads, externalIds, extractedIds = new Set() }) {
-  const skipped = {};
-  // Which thread was skipped and why, beside the counts — the daily reader records it so the
-  // Activity page can show it (GET-503).
-  const skippedThreads = [];
-  let current = null;
-  const skip = (why) => { skipped[why] = (skipped[why] ?? 0) + 1; skippedThreads.push({ thread: current, why }); };
-  const units = [];
-
-  for (const thread of threads.values()) {
-    current = thread;
-    const machine = thread.messages.map(m => machineSenderReason(m.from)).find(Boolean);
-    if (machine) { skip(machine === 'relay' ? 'relayed from a source we already hold' : 'machine sender'); continue; }
-
-    // A shared desk is not a person, and the sample proved this is a data-integrity rule rather
-    // than a preference. `support@helpdesk-vendor.example` produced about a third of the facts in an early sample —
-    // vendor support-ticket content, filed with an EMAIL ADDRESS as the subject ("support@helpdesk-vendor.example
-    // escalates technical questions to its development team"), while the subject guard correctly
-    // DROPPED several facts about the support agent, the actual human in the thread, because she is not
-    // the contact it is filed against. So the mailbox's statements are kept and the person's are
-    // discarded. isRoleInbox existed and was wired to nothing; this is the wiring.
-    const role = thread.messages.map(m => m.from).find(f => isRoleInbox(f));
-    if (role) { skip('role inbox — no attributable subject'); continue; }
-
-    // Our own cold send that nobody answered is not evidence about them: no reply means they said
-    // nothing. Extracting it would file our pitch as a fact about the prospect.
-    if (!thread.messages.some(m => m.side === 'them')) { skip('outbound only — they never replied'); continue; }
-
-    const external = [...thread.entityIds].filter(id => externalIds.has(id));
-    if (!external.length) { skip('no external counterpart'); continue; }
-
-    if (thread.messages.every(m => extractedIds.has(m.id))) { skip('already has claims'); continue; }
-
-    // "Is there enough here to read" is the one rule that needs the bodies, and the bodies are the
-    // thing pass 1 deliberately does not fetch. So it is evaluated only once they are present, and
-    // the runner calls this function a SECOND time after hydration. Running it twice is free and
-    // keeps one list of rules — a separate post-hydration filter is how the two copies drift.
-    const loaded = thread.messages.some(m => typeof m.body === 'string');
-    const chars = thread.messages.reduce((n, m) => n + String(m.body ?? '').length, 0);
-    if (loaded && chars < MIN_THREAD_CHARS) { skip('nothing to read'); continue; }
-
-    units.push({ ...thread, externalIds: external, chars: loaded ? chars : null });
-  }
-
-  units.sort((a, b) => String(lastAt(b)).localeCompare(String(lastAt(a))));   // newest first
-  return { units, skipped, skippedThreads };
-}
-
-export const lastAt = (thread) => thread.messages[thread.messages.length - 1]?.observedAt ?? null;
 
 /**
  * The month a thread BELONGS to: the month of its last message.
@@ -290,7 +160,7 @@ export async function loadEmailThreads(supabase, workspaceId, { since = null, ma
   // sample this is the right trade against not being able to read at all.
   const perProperty = await Promise.all(properties.map(prop => keysetAll((cursor, want, strict) => {
     let q = supabase.from('observations')
-      .select('id, entity_id, property, observed_at, threadId:raw->>thread_id, from:raw->>from, to:raw->>to, subject:value->>description, dedupKey:raw->>hubspot_id, isOutbound:raw->>is_outbound')
+      .select('id, entity_id, property, observed_at, owner_user_id, threadId:raw->>thread_id, from:raw->>from, to:raw->>to, subject:value->>description, dedupKey:raw->>hubspot_id, isOutbound:raw->>is_outbound')
       .eq('workspace_id', workspaceId).eq('property', prop);
     if (since) q = q.gte('observed_at', since);
     // Inclusive, so no row at the boundary instant is skipped; the duplicates that causes are
@@ -303,7 +173,7 @@ export async function loadEmailThreads(supabase, workspaceId, { since = null, ma
   const light = perProperty.flat().filter(r => !seen.has(r.id) && seen.add(r.id));
 
   const messages = light.map(r => ({
-    id: r.id, entityId: r.entity_id, property: r.property, observedAt: r.observed_at,
+    id: r.id, entityId: r.entity_id, property: r.property, observedAt: r.observed_at, owner_user_id: r.owner_user_id ?? null,
     threadId: r.threadId, from: r.from, to: r.to, subject: r.subject, dedupKey: r.dedupKey,
     raw: { is_outbound: r.isOutbound === 'true' },
   }));

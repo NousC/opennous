@@ -154,9 +154,10 @@ async function request(method, path, { body, query } = {}) {
       );
     }
     const errorMessage = err.error || err.message || res.statusText;
-    // Append `detail` when present — it carries the actionable explanation (e.g. "reconnect
+    // Append `detail` (or `message`) when present — it carries the actionable explanation (e.g. "reconnect
     // the repo with Pull requests: write") that a bare error code doesn't.
-    const suffix = err.detail && err.detail !== errorMessage ? ` — ${err.detail}` : "";
+    const explained = err.detail || err.message;
+    const suffix = explained && explained !== errorMessage ? ` — ${explained}` : "";
     throw new Error(`Nous API error (${res.status}): ${errorMessage}${suffix}`);
   }
 

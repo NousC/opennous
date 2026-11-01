@@ -17,8 +17,9 @@
 // triggers run in the daily automation poll; clock and before_meeting in the routine tick.
 // Other triggers are saved but nothing fires them yet — GET /v2/workflows/triggers says which.
 
+import { PERSONAL, SHARED, canEditRoutine, canSeeRoutine, createVisibility, readOnlyRefusal, viewerOf, visibilityChange, visibilityFields } from '../../lib/routineVisibility.mjs';
 import { Router } from 'express';
-import { getSupabaseClient, runAutomationsForWorkspace } from '@nous/core';
+import { getSupabaseClient, runAutomationsForWorkspace, agentColumnsOf } from '@nous/core';
 import { resolveTeamAndPlan, assertFeature } from '../../lib/access.mjs';
 import { FLOW_TRIGGERS, STEP_TYPES, INTERNAL_STEP_TYPES, scheduleColumns } from '../../lib/flows.mjs';
 import { allowQueryParams, parsePaging } from '../../lib/v2Query.mjs';
@@ -83,7 +84,7 @@ function legacySteps(r) {
 const storedSteps = (r) => (Array.isArray(r.steps) && r.steps.length ? r.steps : legacySteps(r));
 const stepOut = (s) => ({ id: s.id, type: s.type, ...(s.config ?? {}) });
 
-function workflowSummary(r) {
+export function workflowSummary(r) {
   return {
     id: r.id,
     name: r.name,
@@ -95,7 +96,7 @@ function workflowSummary(r) {
   };
 }
 
-function workflowOut(r) {
+export function workflowOut(r) {
   return {
     ...workflowSummary(r),
     steps: storedSteps(r).map(stepOut),
@@ -124,7 +125,7 @@ const invalid = (res, reasons) => res.status(400).json({
 });
 
 /** Public steps [{ id?, type, ...settings }] → the engine's [{ id, type, config }]. */
-function stepsIn(steps) {
+export function stepsIn(steps) {
   if (!Array.isArray(steps)) return steps;
   return normalizeSteps(steps.map((s, i) => {
     if (!s || typeof s !== 'object' || Array.isArray(s)) return s;
@@ -199,7 +200,7 @@ async function workspaceCrm(supabase, workspaceId) {
 }
 
 /** A deal trigger with no tools runs on the CRM this workspace has connected (GET-748). */
-async function withTriggerTools(supabase, workspaceId, trig) {
+export async function withTriggerTools(supabase, workspaceId, trig) {
   if (!trig || !DEAL_TRIGGERS.has(trig.when)) return trig;
   const tools = trig.trigger_config?.tools;
   if (Array.isArray(tools) && tools.length) return trig;
@@ -207,17 +208,7 @@ async function withTriggerTools(supabase, workspaceId, trig) {
   return crm ? { ...trig, trigger_config: { ...(trig.trigger_config ?? {}), tools: [crm] } } : trig;
 }
 
-/** The first agent step, as the artifact/prompt pair the runners read. */
-function agentColumns(steps) {
-  const a = (Array.isArray(steps) ? steps : []).find(s => s?.type === 'agent');
-  const c = a?.config ?? {};
-  return {
-    artifact: typeof c.artifact === 'string' && c.artifact ? c.artifact : null,
-    prompt: typeof c.prompt === 'string' && c.prompt.trim() ? c.prompt.trim() : null,
-  };
-}
-
-function triggerIn(trigger) {
+export function triggerIn(trigger) {
   if (!trigger || typeof trigger !== 'object' || Array.isArray(trigger) || typeof trigger.type !== 'string' || !trigger.type) return null;
   const { type, ...settings } = trigger;
   return { when: type, trigger_config: settings };
@@ -228,7 +219,7 @@ function triggerIn(trigger) {
  * returns null. A plan refusal (artifact not in plan) keeps the app's 402; everything else that
  * makes a flow invalid is 400 invalid_workflow with the checker's reasons.
  */
-function buildColumns(res, body, plan) {
+export function buildColumns(res, body, plan) {
   // Steps only the system writes (an extension's, GET-868) are never accepted from the API.
   const internal = (Array.isArray(body?.steps) ? body.steps : []).find(s => INTERNAL_STEP_TYPES.has(s?.type));
   if (internal) { invalid(res, [{ code: 'unknown_step', step: internal.type, message: `Step type ${internal.type} is not available on the API.` }]); return null; }
@@ -241,26 +232,38 @@ function buildColumns(res, body, plan) {
   return null;
 }
 
-const CREATE_FIELDS = ['name', 'trigger', 'steps', 'enabled'];
+const CREATE_FIELDS = ['name', 'trigger', 'steps', 'enabled', 'visibility'];
 function unknownFields(body, allowed) {
   return Object.keys(body || {}).filter(k => !allowed.includes(k));
 }
 
 // ── Ownership ───────────────────────────────────────────────────────────────
 
-const isMemberKey = (req) => req.viewerScope !== 'admin';
+export const isMemberKey = (req) => req.viewerScope !== 'admin';
 
 /**
- * The workflow this key may touch, or null (→ 404). A routine another surface owns (GET-868,
+ * The workflow this key may see, or null (→ 404). A routine another surface owns (GET-868,
  * lib/routineAccess.mjs) is never one: it is managed only there, which checks the caller's access.
+ * Nor is someone else's personal play (GET-1087). What it may change is loadEditable's.
  */
-async function loadOwned(supabase, req) {
+export async function loadOwned(supabase, req) {
   const { data } = await supabase.from('agent_routines')
     .select('*').eq('id', req.params.id).eq('workspace_id', req.workspaceId).maybeSingle();
   if (!data) return null;
   if (isOwnedRoutine(data)) return null;
-  if (isMemberKey(req) && data.user_id !== req.memberUserId) return null;
-  return data;
+  return canSeeRoutine(data, viewerOf(req)) ? data : null;
+}
+
+/** The row to change: 404 when it cannot be seen, 403 when it is shared and this key is not an admin. Answers itself; null means stop. */
+export async function loadEditable(supabase, req, res, gone) {
+  const row = await loadOwned(supabase, req);
+  if (!row) { gone(res); return null; }
+  if (!canEditRoutine(row, viewerOf(req))) {
+    const { status, body } = readOnlyRefusal();
+    res.status(status).json(body);
+    return null;
+  }
+  return row;
 }
 
 const notFound = (res) => res.status(404).json({ error: 'workflow_not_found' });
@@ -298,7 +301,9 @@ workflowsV2Router.get('/', allowQueryParams(['enabled', 'limit', 'offset']), wra
     let q = supabase.from('agent_routines').select('*').eq('workspace_id', req.workspaceId);
     // Routines another surface owns are its own, never listed here (GET-868).
     if (narrow) q = onlyOrdinaryRoutines(q);
-    if (isMemberKey(req)) q = q.eq('user_id', req.memberUserId ?? '00000000-0000-0000-0000-000000000000');
+    // Shared ones, and this person's own (GET-1087).
+    const me = viewerOf(req).userId;
+    q = me ? q.or(`visibility.neq.personal,user_id.eq.${me}`) : q.neq('visibility', 'personal');
     if (enabled != null) q = q.eq('enabled', String(enabled) === 'true');
     return q.order('created_at', { ascending: true }).order('id', { ascending: true })
       .range(page.offset, page.offset + page.limit);
@@ -309,7 +314,7 @@ workflowsV2Router.get('/', allowQueryParams(['enabled', 'limit', 'offset']), wra
   if (error) throw error;
   const rows = data ?? [];
   const has_more = rows.length > page.limit;
-  return res.json({ workflows: rows.slice(0, page.limit).map(workflowSummary), limit: page.limit, offset: page.offset, has_more });
+  return res.json({ workflows: rows.slice(0, page.limit).map(r => ({ ...workflowSummary(r), ...visibilityFields(r, viewerOf(req)) })), limit: page.limit, offset: page.offset, has_more });
 }));
 
 // POST /v2/workflows { name?, trigger: { type, ...settings }, steps: [{ type, ...settings }], enabled? = true }
@@ -325,19 +330,22 @@ workflowsV2Router.post('/', allowQueryParams([]), wrap('POST /v2/workflows', asy
   if (body.name !== undefined && typeof body.name !== 'string') reasons.push({ code: 'invalid_name', message: 'name must be a string.' });
   if (reasons.length) return invalid(res, reasons);
 
+  const viewer = viewerOf(req);
+  const placed = createVisibility(body.visibility, viewer);
+  if (placed.fail) return res.status(placed.fail.status).json(placed.fail.body);
   const { plan } = await resolveTeamAndPlan(req);
   const steps = stepsIn(body.steps);
   const t = await withTriggerTools(supabase, req.workspaceId, trig);
-  const cols = buildColumns(res, { when: t.when, trigger_config: t.trigger_config, steps, ...agentColumns(steps) }, plan);
+  const cols = buildColumns(res, { when: t.when, trigger_config: t.trigger_config, steps, ...agentColumnsOf(steps) }, plan);
   if (!cols) return;
 
   const enabled = body.enabled ?? true;
   if (enabled) {
-    const hit = await automationLimitHit(supabase, req.workspaceId, plan.id);
+    const hit = await automationLimitHit(supabase, req.workspaceId, plan.id, { personalOf: placed.visibility === PERSONAL ? viewer.userId : null });
     if (hit !== null) return res.status(402).json(automationLimitBody(plan.id, hit));
   }
   const { data, error } = await insertFlow(supabase, {
-    workspaceId: req.workspaceId, userId: req.memberUserId ?? null, name: body.name ?? 'Workflow', cols, enabled,
+    workspaceId: req.workspaceId, userId: viewer.userId, name: body.name ?? 'Workflow', cols, enabled, visibility: placed.visibility,
   });
   if (error && isMissingFlowColumn(error)) return res.status(409).json(NEEDS_MIGRATION);
   if (error) throw error;
@@ -368,8 +376,12 @@ workflowsV2Router.patch('/:id', allowQueryParams([]), wrap('PATCH /v2/workflows/
   const body = req.body || {};
   const extra = unknownFields(body, CREATE_FIELDS);
   if (extra.length) return res.status(400).json({ error: 'unknown_field', detail: `unsupported field(s): ${extra.join(', ')}`, supported: CREATE_FIELDS });
-  const row = await loadOwned(supabase, req);
-  if (!row) return notFound(res);
+  const row = await loadEditable(supabase, req, res, notFound);
+  if (!row) return;
+  if (body.visibility !== undefined) {
+    const refused = visibilityChange(row, body.visibility, viewerOf(req));
+    if (refused) return res.status(refused.status).json(refused.body);
+  }
 
   const reasons = [];
   if (body.trigger !== undefined && !triggerIn(body.trigger)) reasons.push({ code: 'trigger_required', message: 'trigger must be an object with a type.' });
@@ -387,7 +399,7 @@ workflowsV2Router.patch('/:id', allowQueryParams([]), wrap('PATCH /v2/workflows/
     const current = triggerOut(row);
     const trig = await withTriggerTools(supabase, req.workspaceId, body.trigger !== undefined ? triggerIn(body.trigger) : triggerIn(current));
     const steps = body.steps !== undefined ? stepsIn(body.steps) : storedSteps(row);
-    const agent = body.steps !== undefined ? agentColumns(steps) : { artifact: row.artifact ?? null, prompt: row.prompt ?? null };
+    const agent = body.steps !== undefined ? agentColumnsOf(steps) : { artifact: row.artifact ?? null, prompt: row.prompt ?? null };
     if (!steps.length && body.steps === undefined) {
       // A legacy row with nothing to rebuild from: only the trigger moves.
       Object.assign(patch, scheduleColumns(trig.when, trig.trigger_config), { trigger_config: trig.trigger_config });
@@ -423,10 +435,13 @@ workflowsV2Router.post('/:id/duplicate', allowQueryParams([]), wrap('POST /v2/wo
   const { id: _id, created_at: _c, updated_at: _u, last_run_at: _l, next_run_at: _n, condition_state: _cs,
           workspace_id: _w, user_id: _o, name, enabled: _e, ...rest } = row;
   // Disabled, so a copy never takes a slot on the plan's ladder until somebody switches it on.
+  const me = viewerOf(req).userId;
   const { data, error } = await supabase.from('agent_routines').insert({
     ...rest,
     workspace_id: req.workspaceId,
-    user_id: req.memberUserId ?? row.user_id ?? null,
+    user_id: me ?? row.user_id ?? null,
+    // A copy of a shared play is yours until an admin shares it.
+    visibility: me ? PERSONAL : (row.visibility ?? SHARED),
     name: `${name} (copy)`.slice(0, 120),
     enabled: false,
   }).select('*').single();
@@ -439,8 +454,8 @@ workflowsV2Router.post('/:id/duplicate', allowQueryParams([]), wrap('POST /v2/wo
 // with it (agent_routine_runs cascades). This does the same. Disable instead (PATCH enabled:false)
 // to stop one and keep its history.
 workflowsV2Router.delete('/:id', allowQueryParams([]), wrap('DELETE /v2/workflows/:id', async (req, res, supabase) => {
-  const row = await loadOwned(supabase, req);
-  if (!row) return notFound(res);
+  const row = await loadEditable(supabase, req, res, notFound);
+  if (!row) return;
   const { error } = await supabase.from('agent_routines').delete().eq('id', row.id).eq('workspace_id', req.workspaceId);
   if (error) throw error;
   return res.json({ deleted: true, id: row.id });
@@ -456,8 +471,8 @@ workflowsV2Router.delete('/:id', allowQueryParams([]), wrap('DELETE /v2/workflow
 //                      landed in a thread. Needs a prompt, and the in-app agent on the plan.
 // Any other trigger: 409 run_not_supported — nothing in the engine can run it yet.
 workflowsV2Router.post('/:id/run', allowQueryParams([]), wrap('POST /v2/workflows/:id/run', async (req, res, supabase) => {
-  const row = await loadOwned(supabase, req);
-  if (!row) return notFound(res);
+  const row = await loadEditable(supabase, req, res, notFound);
+  if (!row) return;
 
   if (DEAL_TRIGGERS.has(row.trigger_kind)) {
     const since = new Date(Date.now() - 90 * 24 * 3600_000).toISOString();

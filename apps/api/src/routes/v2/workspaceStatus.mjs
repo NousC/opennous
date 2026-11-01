@@ -25,6 +25,7 @@ import { learnedIcpModel, cloudOnlyIcp } from '../../lib/icpScorer.mjs';
 import { markWorkspaceActivated } from '../../lib/onboardingState.mjs';
 import { hasLiveWebhook } from '../../lib/webhookStatus.mjs';
 import { resolveWhoami } from '../../lib/whoami.mjs';
+import { loadWhoamiSetup } from '../../lib/whoamiSetup.mjs';
 import { requireFeature, resolveTeamAndPlan, resolveRequestTeam, hasFeature, isSelfHosted } from '../../lib/access.mjs';
 import { loadTeamUsage, usageBudget } from '../../lib/usageSummary.mjs';
 import { connectProvider } from '../../providers/connect.mjs';
@@ -789,11 +790,17 @@ workspaceStatusV2Router.get('/whoami', async (req, res) => {
     // The budget, so an agent knows what it has left before it spends. The same read as
     // GET /v2/usage and the billing panel (lib/usageSummary.mjs). Never fails whoami: a
     // metering hiccup reads as usage: null, not a broken identity call.
-    const usage = await safe(async () => {
+    const teamUsage = await safe(async () => {
       const { team } = await resolveRequestTeam(req);
-      return usageBudget(await loadTeamUsage(supabase, team));
+      return loadTeamUsage(supabase, team);
     });
-    return res.json({ ...answer, usage });
+    const usage = await safe(async () => (teamUsage ? usageBudget(teamUsage) : null));
+    // What's set up, for the /start skill. Same rule: a failure here leaves the identity standing.
+    const more = await safe(() => loadWhoamiSetup(supabase, {
+      workspaceId: req.workspaceId, scope: req.viewerScope || 'admin',
+      memberUserId: req.noContent ? null : req.memberUserId ?? null, usage, teamUsage,
+    }), {});
+    return res.json({ ...answer, setup: { ...answer.setup, ...more }, usage });
   } catch (err) {
     console.error('[GET /v2/workspace/whoami]', err);
     return res.status(500).json({ error: 'internal_error' });

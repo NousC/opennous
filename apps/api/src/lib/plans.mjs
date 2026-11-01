@@ -47,7 +47,7 @@
 
 import { AI_CREDIT_FEATURES, AI_TELEMETRY_FEATURES, costToCredits } from './llmUsage.mjs';
 import { customPlanFor } from './customPlans.mjs';
-import { cachedConversationCredits, conversationCredits } from '@nous/core';
+import { cachedConversationCredits, conversationCredits, isNoCardTrial, trialHasLapsed } from '@nous/core';
 import { backfillAllowanceForPlan } from './backfillBudget.mjs';
 import { HAS_CLOUD } from './cloud.mjs';
 
@@ -381,6 +381,8 @@ export function getPlan(planId) {
  */
 export function planIdFromPriceId(priceId) {
   if (!priceId) return null;
+  // Every size, sold or grandfathered, is the self-serve plan.
+  if (tierForPriceId(priceId)) return 'api';
   for (const id of PLAN_IDS) {
     const envName = PLANS[id]?.stripePriceEnv;
     if (envName && process.env[envName] && process.env[envName] === priceId) return id;
@@ -405,7 +407,29 @@ export function planIdFromPriceId(priceId) {
 export function needsPlan(subscription) {
   if (!subscription) return true;
   if (subscription.stripe_subscription_id) return false;
+  if (trialHasEnded(subscription)) return true;
   return subscription.status === 'unpaid';
+}
+
+/**
+ * THE NO-CARD TRIAL (GET-1087). Replaces hosted Free for new signups: 14 days, 500 credits, no
+ * Stripe subscription. The row carries plan 'api', status 'trialing' and trial_ends_at; a Stripe
+ * trial is a different thing (it has a subscription id) and is not this. Rows on 'free', and any
+ * trial-like row with no end date, keep behaving exactly as they did.
+ */
+export const TRIAL_DAYS = 14;
+export const TRIAL_CREDITS = 500;
+
+// Both answers live in @nous/core (services/trialGate.mjs): the worker asks the same two.
+export { isNoCardTrial };
+export const trialHasEnded = trialHasLapsed;
+
+/** What the app shows about a trial, or null when this is not one. */
+export function trialState(subscription, now = Date.now()) {
+  if (!isNoCardTrial(subscription)) return null;
+  const ended = trialHasEnded(subscription, now);
+  const left = Math.ceil((Date.parse(subscription.trial_ends_at) - now) / 86_400_000);
+  return { endsAt: subscription.trial_ends_at, daysLeft: ended ? 0 : Math.max(1, left), ended };
 }
 
 /**
@@ -431,7 +455,7 @@ export const PAST_DUE_GRACE_DAYS = 7;
  * behaviour, because three different ways of stopping should not be three different bugs.
  *
  *   comped            → live. We decided to carry them.
- *   active / trialing → live.
+ *   active / trialing → live, until a no-card trial's fourteen days are up (GET-1087).
  *   past_due          → live for PAST_DUE_GRACE_DAYS past the period that was paid for.
  *   canceled, unpaid, incomplete, incomplete_expired → not live.
  *
@@ -441,6 +465,7 @@ export const PAST_DUE_GRACE_DAYS = 7;
 export function planIsLive(subscription, now = Date.now()) {
   if (!subscription) return false;
   if (subscription.is_comp) return true;
+  if (trialHasEnded(subscription, now)) return false;
   const status = subscription.status;
   if (status === 'active' || status === 'trialing' || status === 'trial') return true;
   if (status === 'past_due') {
@@ -485,18 +510,63 @@ export function pastDueSincePatch(status, now = new Date()) {
 export function planMayBackfill(subscription) {
   if (!planIsLive(subscription)) return false;
   if (subscription?.is_comp) return true;
+  // A trial, like Free, reads from today. Its history is the paid one-off (GET-1087).
+  if (isNoCardTrial(subscription)) return false;
   return normalizePlanId(subscription?.plan_id) !== 'free';
 }
 
 /** Why a workspace is not reading, for the message it gets. Null when it is. */
 export function notLiveReason(subscription) {
   if (planIsLive(subscription)) return null;
+  if (trialHasEnded(subscription)) return 'trial_ended';
   if (needsPlan(subscription)) return 'no_plan';
   const status = subscription?.status;
   if (status === 'past_due') return 'payment_failed';
   if (status === 'canceled' || subscription?.cancel_at_period_end) return 'canceled';
   return 'no_plan';
 }
+// WHAT WE SELL TODAY (GET-1087, 2026-10-31 plans decision; the sizes are proposals until Bennet
+// confirms). One infrastructure plan at three volumes, same features at each. A size whose env
+// is unset is simply not offered. Past the top size is a conversation, not a tier.
+// Mirror of STARTER_SIZES in apps/frontend/src/config/plans.ts.
+export const STARTER_SIZES = [
+  { name: 'Starter', credits: 2_000, priceUsd: 79,  priceEnv: 'STRIPE_STARTER_79_PRICE_ID' },
+  { name: 'Growth',  credits: 4_000, priceUsd: 149, priceEnv: 'STRIPE_STARTER_149_PRICE_ID' },
+  { name: 'Scale',   credits: 8_000, priceUsd: 249, priceEnv: 'STRIPE_STARTER_249_PRICE_ID' },
+];
+
+/** The sizes on sale here: the ones with a Stripe price configured. */
+export function offeredSizes() {
+  return STARTER_SIZES.filter((s) => !!process.env[s.priceEnv]);
+}
+
+/** The size a checkout buys: the one named by `credits`, the smallest when none is named. */
+export function sizeForPurchase(credits) {
+  const offered = offeredSizes();
+  if (credits === undefined || credits === null || credits === '') return offered[0] ?? null;
+  return offered.find((s) => s.credits === Number(credits)) ?? null;
+}
+
+/** The next size on sale above an allowance, or null: past it the answer is to talk to us. */
+export function nextSizeAfter(credits) {
+  const n = Number(credits) || 0;
+  return offeredSizes().find((s) => s.credits > n) ?? null;
+}
+
+/** About a fifth of room over what a workspace uses, so an ordinary busy month does not stop it. */
+export const PLAN_FIT_HEADROOM = 1.2;
+
+/** The smallest size covering a month with headroom, 'custom' past the top, null if none is on sale. */
+export function recommendedSize(monthlyCredits) {
+  const offered = offeredSizes();
+  if (!offered.length) return null;
+  const need = (Number(monthlyCredits) || 0) * PLAN_FIT_HEADROOM;
+  return offered.find((s) => s.credits >= need)?.credits ?? 'custom';
+}
+
+// RETIRED FROM SALE, kept so live subscribers keep what they pay for: tierForPriceId still reads
+// these. Nothing below offers them any more.
+//
 // SELF-SERVE IS ONE PLAN SOLD AT FIVE VOLUMES (GET-520).
 //
 // Two things to buy: this ladder, and a Custom quote. The old middle plan is gone — it sold a
@@ -532,16 +602,11 @@ export function tierForCredits(credits) {
   const n = Number(credits) || 0;
   return SELF_SERVE_TIERS.find((t) => t.credits === n) || ENTRY_TIER;
 }
-/** The next bundle up from an allowance, or null at the top of the ladder. */
-export function nextTierAfter(credits) {
-  const n = Number(credits) || 0;
-  return SELF_SERVE_TIERS.find((t) => t.credits > n) ?? null;
-}
 
 /** The self-serve tier a Stripe price id belongs to (null if not one of ours). */
 export function tierForPriceId(priceId) {
   if (!priceId) return null;
-  return SELF_SERVE_TIERS.find((t) => process.env[t.priceEnv] === priceId) || null;
+  return [...STARTER_SIZES, ...SELF_SERVE_TIERS].find((t) => process.env[t.priceEnv] === priceId) || null;
 }
 
 export function getPlanFromSubscription(subscription) {
@@ -556,6 +621,12 @@ export function getPlanFromSubscription(subscription) {
   // and stopped with an upgrade message when the fix was their card. Past the grace it is not
   // live, and lands on the floor like any other workspace that stopped paying.
   if (status === 'past_due' && !planIsLive(subscription)) return PLANS.api;
+  // A running no-card trial stops at its 500. An ended one is the floor, read as not paying.
+  if (isNoCardTrial(subscription)) {
+    return planIsLive(subscription)
+      ? { ...PLANS.api, monthlyPriceUsd: 0, aiCreditsPerMonth: TRIAL_CREDITS, hardCreditCap: true }
+      : PLANS.api;
+  }
   return withTier(getPlan(subscription.plan_id ?? subscription.plan_name), subscription);
 }
 
@@ -781,9 +852,8 @@ export async function getTeamAiCredits(supabase, teamId, subscription) {
   const plan = getPlanFromSubscription(subscription);
   const periodStart = periodStartFor(subscription);
 
-  // NO TRIAL (GET-532). Two things exist: a credit bundle and a quote. A workspace that has
-  // not bought a bundle has no allowance — see `needsPlan` — rather than a smaller one on a
-  // clock, because a clock is a third thing and this product does not have one.
+  // A workspace that is not paying has no allowance. The no-card trial (GET-1087) is the one clock
+  // in the product: live, it has its 500, and `planIsLive` takes that to zero the day it ends.
   const periodCap = planIsLive(subscription) ? plan.aiCreditsPerMonth : 0;
 
   // HARD CAP — enforced even when billing is off, so a self-serve workspace cannot burn
@@ -852,8 +922,8 @@ export async function getTeamAiCredits(supabase, teamId, subscription) {
     // Not paying, however it happened: never subscribed, canceled, or a card that failed past
     // its grace. One state, one behaviour.
     const stopped = !planIsLive(subscription);
-    // Free stops AT its allowance (GET-682): 500 is the whole of it, with no band above.
-    const freeStop = plan.id === 'free' && !stopped && used >= (periodCap ?? 0);
+    // Free and the trial stop AT their allowance (GET-682, GET-1087): no band above it.
+    const capStop = plan.hardCreditCap === true && !stopped && used >= (periodCap ?? 0);
     const stoppedReason = notLiveReason(subscription);
     // A failed card still inside its grace (GET-698): reading carries on at the plan they bought,
     // and the thing to say is "update your card" — never "upgrade".
@@ -871,7 +941,7 @@ export async function getTeamAiCredits(supabase, teamId, subscription) {
       untilStop: isSelfHosted() ? null : Math.max(0, (hardCap ? cap : Math.ceil(cap * AI_CREDITS_GRACE_PCT / 100)) - used),
       meterError,
       remaining: remainingApi, unlimited: isSelfHosted(), percentUsed: pctApi,
-      state: isSelfHosted() ? 'ok' : (stopped || freeStop) ? 'restricted' : creditState(pctApi),
+      state: isSelfHosted() ? 'ok' : (stopped || capStop) ? 'restricted' : creditState(pctApi),
       // Not paying: the offer is the entry bundle, not the next one up from zero.
       needsPlan: stopped,
       notLiveReason: stoppedReason,
@@ -879,7 +949,9 @@ export async function getTeamAiCredits(supabase, teamId, subscription) {
       graceUntil,
       // Free: the offer is the first paid bundle, which also runs the history backfill.
       free: plan.id === 'free',
-      nextTier: (stopped || plan.id === 'free') ? ENTRY_TIER : nextTierAfter(cap),
+      trial: trialState(subscription),
+      // Whatever stopped them, the way on is the next size up. Not paying starts from the smallest.
+      nextTier: nextSizeAfter((stopped || plan.hardCreditCap) ? 0 : cap),
       periodStart: periodStart.toISOString(),
       backfill: backfillState(plan, backfillStartedAt, backfillUsed),
     };
@@ -982,7 +1054,9 @@ export async function requireAiCredits(supabase, workspaceId) {
           ? 'Your last payment did not go through, so reading has stopped. Update your card and it starts again straight away.'
           : reason === 'canceled'
             ? `Your subscription has ended, so reading has stopped. Everything is still here — pick a plan and it picks up where it left off.${priced}`
-            : `Choose a plan to start reading.${priced}`;
+            : reason === 'trial_ended'
+              ? `Your trial has ended, so reading and syncing have stopped. Everything is still here to read. Pick a plan and it picks up where it left off.${priced}`
+              : `Choose a plan to start reading.${priced}`;
       return {
         ok: false,
         status: 402,
@@ -1008,7 +1082,9 @@ export async function requireAiCredits(supabase, workspaceId) {
           nextTier: next,
           paymentFailed: !!credits.paymentFailed,
         },
-        message: credits.paymentFailed
+        message: credits.trial
+          ? `You have used your ${credits.included.toLocaleString()} trial credits, so reading has stopped.${next ? ` ${next.credits.toLocaleString()} credits is $${next.priceUsd} a month.` : ' Talk to us and we will set you up.'}`
+          : credits.paymentFailed
           // The card comes first: moving up is a new charge on the card that just failed.
           ? `You have read ${credits.percentUsed}% of this month's credits, and your last payment did not go through. Update your card first; then ${next ? `move up to ${next.credits.toLocaleString()} credits and it starts again straight away.` : 'talk to us about the volume you are running.'}`
           : next

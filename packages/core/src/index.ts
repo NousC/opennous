@@ -114,6 +114,7 @@ export * from './db/workspaces.js';
 export * from './utils/identity.js';
 export * from './utils/photoUrl.js';
 export * from './utils/email.js';
+export { machineSenderReason, isRoleInbox, MIN_THREAD_CHARS, normalizeSubject, threadKeyOf, sideOf, groupIntoThreads, selectEmailThreads, lastAt } from './services/emailThreadRules.mjs';
 export * from './utils/linkedin.js';
 export * from './utils/encryption.js';
 export * from './utils/googleAuth.js';
@@ -186,10 +187,12 @@ export {
 export {
   runAutomationDailyPoll, runAutomationsForWorkspace, makeArtifactForTest, resendAutomationDocument,
   emitDealEventsPoll, emitStalledDealsPoll, emitIcpEventsPoll, emitPeopleAddedPoll, icpChanges, previewAutomationVars, composeAutomationEmail, automationEmailPreview, automationContextPreview, searchAutomationAccounts, CONTEXT_PARTS,
-  processAccountSignals, detectNextStepSignalsPoll, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, reasonWords, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, processHubspotFieldChanges, runFieldChangeAutomation, processPostHogEvents, runPostHogEventAutomation, saveApprovalChoices, testTriggers,
+  processAccountSignals, detectNextStepSignalsPoll, listAccountSignals, SIGNAL_LABEL, SIGNAL_KINDS, runCallEndedAutomations, CALL_TRANSCRIPT_CHARS, registerStepHandler, rulesPass, rulePasses, decideAutomationRun, listAutomationApprovals, getAutomationRun, documentOutput, describeDone, reasonWords, startTestRun, latestTestTrigger, sendRunEmail, runScheduledFlow, flowRunsSteps, scheduledRead, ownerMaySee, agentColumnsOf, JOB_PROMPTS, processHubspotFieldChanges, runFieldChangeAutomation, processPostHogEvents, runPostHogEventAutomation, saveApprovalChoices, testTriggers,
   // What an extension's steps reach (GET-910).
   stepHandler,
 } from './services/automationRun.mjs';
+// RevPlay templates (GET-1087): the one list, for the app and for agents.
+export { listRevPlayTemplates, revPlayTemplateById, TEMPLATE_GROUPS } from './services/revPlayTemplates.mjs';
 // Interpreted events (GET-950): the rules behind account.champion_left, account.expansion_requested
 // and deal.stalled. The stale-deal rule is shared with the API's stale-deal automation.
 export { championLeftEvent, championWhoLeft, replacementFor, championLeftConfidence, expansionRequestedEvent, stalledDealEvent, quietOpenDeals, staleDealFiring, REPLACEMENT_WINDOW_DAYS } from './services/interpretedEvents.mjs';
@@ -202,10 +205,14 @@ export { listEvents, getLoggedEvent, pruneEventLog, EVENT_LOG_RETENTION_DAYS, EV
 // HubSpot fields as automation variables (GET-567): listed from the stored schema, read live.
 export { hubspotFieldList, hubspotTemplateVars, hubspotPropsIn } from './services/hubspotVars.mjs';
 export {
-  createMessage, messageText, parseJsonArray, ModelUnavailableError, registerAnthropicClient, registerUsageSink,
+  createMessage, withOwnModel, ownModelActive, OWN_BACKFILL_OPEN, messageText, parseJsonArray, ModelUnavailableError, registerAnthropicClient, registerUsageSink,
   pipelineModel, pipelineFallbackModel, writingModel, writingFallbackModel, tierModels, insightBoardModel,
   modelEndpoint, modelRoute, modelSetupStatus,
 } from './llm/modelDoor.mjs';
+// A run that files history with no model calls, and when a trial's pulls stop (GET-1087).
+export { isNoCardTrial, trialHasLapsed } from './services/trialGate.mjs';
+export { dropStoppedRoutines } from './services/routineGate.mjs';
+export { withSyncOnly, syncOnlyStore, isSyncOnly, SyncOnlyModelCall } from './llm/syncOnly.mjs';
 // What a model call cost, from one price table for both apps and the door (GET-957).
 export { PRICING as MODEL_PRICING, priceFor, computeCost, usageRow, usageRowsFor } from './llm/usageCost.mjs';
 // Model provider failures sorted for people and ops, and where Claude calls go (GET-885).

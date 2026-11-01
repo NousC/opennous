@@ -20,7 +20,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DOCUMENTED = [
   'whoami', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights',
   'add_note', 'enrich', 'score', 'set_icp',
-  'webhooks',
+  'webhooks', 'rev_plays',
 ];
 // Legacy: still registered because plugin skills call them. Remove with the skills' migration
 // (GET-536), not before.

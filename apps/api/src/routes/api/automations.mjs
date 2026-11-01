@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient, syncAfterCallWebhook, runAutomationsForWorkspace, previewAutomationVars, hubspotFieldList, automationContextPreview, searchAutomationAccounts, automationEmailPreview, listAutomationApprovals, decideAutomationRun, getAutomationRun, startTestRun, sendRunEmail, saveApprovalChoices, testTriggers, hubspotObjects, hubspotObjectFields, readHubspotRecords } from '@nous/core';
+import { listRevPlayTemplates, getSupabaseClient, syncAfterCallWebhook, runAutomationsForWorkspace, previewAutomationVars, hubspotFieldList, automationContextPreview, searchAutomationAccounts, automationEmailPreview, listAutomationApprovals, decideAutomationRun, getAutomationRun, startTestRun, sendRunEmail, saveApprovalChoices, testTriggers, hubspotObjects, hubspotObjectFields, readHubspotRecords } from '@nous/core';
 import { buildOutcomeLedger } from '../../lib/outcomeLedger.mjs';
 import { automationLimit, canMakeArtifact, planName } from '../../lib/plans.mjs';
 import { creditsForRuns, creditsByAutomation } from '../../lib/automationCredits.mjs';
@@ -15,6 +15,7 @@ export async function ownMailboxesOnly(req, decisions) {
 }
 import { listMailboxes, chosenMailbox } from '../../lib/automationMailboxes.mjs';
 import { resolveTeamAndPlan } from '../../lib/access.mjs';
+import { PERSONAL, SHARED, canEditRoutine, canSeeRoutine, createVisibility, isPersonal, readOnlyRefusal, viewerOf, visibilityChange, visibilityFields } from '../../lib/routineVisibility.mjs';
 import { loadModelKey, listModels, callOwnModel, OWN_MODEL_PROVIDERS } from '../../lib/ownModel.mjs';
 import { FLOW_TRIGGERS, FLOW_TRIGGER_KEYS, checkFlow, scheduleColumns, destinationColumns, isMissingFlowColumn } from '../../lib/flows.mjs';
 import { decidedBy, refuseApproval } from '../../lib/approvalGuard.mjs';
@@ -39,13 +40,26 @@ automationsRouter.use((req, res, next) => {
 automationsRouter.param('id', async (req, res, next, id) => {
   try {
     if (await ownsRoutine(getSupabaseClient(), req.workspaceId, id)) return res.status(404).json({ error: 'not_found' });
+    // Personal and shared (GET-1087): someone else's personal play is not there.
+    const { data: row } = await getSupabaseClient().from('agent_routines').select('*').eq('id', id).eq('workspace_id', req.workspaceId).maybeSingle();
+    if (row && !canSeeRoutine(row, viewerOf(req))) return res.status(404).json({ error: 'not_found' });
+    req.routine = row ?? null;
     return next();
   } catch (err) {
     console.error('[/api/automations/:id owner check]', err);
     return res.status(500).json({ error: 'internal_error' });
   }
 });
-automationsRouter.param('runId', routineRunGuard((req) => req.internalUserId ?? null));
+automationsRouter.param('runId', routineRunGuard((req) => viewerOf(req).userId));
+
+/** On a route that changes or runs a play: shared ones are read-only below admin. */
+const canEdit = (req, res, next) => {
+  if (req.routine && !canEditRoutine(req.routine, viewerOf(req))) {
+    const { status, body } = readOnlyRefusal();
+    return res.status(status).json(body);
+  }
+  next();
+};
 
 const AFTER_CALL_EVENT = 'interaction.meeting_held';
 
@@ -294,15 +308,32 @@ export function flowColumns(body, plan) {
  * the defaults OpenNous runs are not rows, so they never count. `excludeId` leaves out the row
  * being switched on, so it is not counted twice. Shared with /v2/workflows.
  */
-export async function automationLimitHit(supabase, workspaceId, planId, { excludeId = null } = {}) {
+export async function automationLimitHit(supabase, workspaceId, planId, { excludeId = null, personalOf = null } = {}) {
   const limit = workspaceAutomationLimit(workspaceId, planId);
   if (limit === null) return null;
-  let q = supabase.from('agent_routines')
-    .select('id', { count: 'exact', head: true })
-    .eq('workspace_id', workspaceId);
-  if (excludeId) q = q.neq('id', excludeId);
-  const { count } = await q;
-  return (count ?? 0) >= limit ? limit : null;
+  const used = await routinesInPool(supabase, workspaceId, { excludeId, personalOf });
+  return used >= limit ? limit : null;
+}
+
+/**
+ * THE LIMIT (GET-1087). Two pools of the plan's number: the team's shared plays, and each person's
+ * personal ones. A personal play in a shared pool would let a member use up a slot no admin can see,
+ * let alone free. Credits still bound what they all spend together.
+ */
+export async function routinesInPool(supabase, workspaceId, { excludeId = null, personalOf = null } = {}) {
+  const query = (split) => {
+    let q = supabase.from('agent_routines').select('id', { count: 'exact', head: true }).eq('workspace_id', workspaceId);
+    if (split) q = personalOf ? q.eq('visibility', PERSONAL).eq('user_id', personalOf) : q.neq('visibility', PERSONAL);
+    if (excludeId) q = q.neq('id', excludeId);
+    return q;
+  };
+  let { count, error } = await query(true);
+  // Before the migration every row is shared.
+  if (error && ['42703', 'PGRST204'].includes(error.code)) {
+    if (personalOf) return 0;
+    ({ count } = await query(false));
+  }
+  return count ?? 0;
 }
 
 /** The 402 a create sends when the ladder is full. */
@@ -329,12 +360,16 @@ automationsRouter.get('/', async (req, res) => {
     if (error) throw error;
 
     const rows = data ?? [];
+    const viewer = viewerOf(req);
     const limit = workspaceAutomationLimit(req.workspaceId, plan.id);
     return res.json({
       plan: planName(plan.id),
-      limit,                                   // null = unlimited
-      used: rows.length,                       // the limit counts every automation, on or off, owned ones too
-      automations: rows.filter(r => !isOwnedRoutine(r)).map(rowOut),   // an owned routine is its surface's, not listed here
+      limit,                                   // null = unlimited, a pool each: see routinesInPool
+      used: rows.filter(r => isPersonal(r) && r.user_id === viewer.userId).length,
+      used_shared: rows.filter(r => !isPersonal(r)).length,   // on or off, owned ones too
+      is_admin: viewer.admin,
+      automations: rows.filter(r => !isOwnedRoutine(r) && canSeeRoutine(r, viewer))   // an owned routine is its surface's, not listed here
+        .map(r => ({ ...rowOut(r), ...visibilityFields(r, viewer) })),
       // The catalogue is returned whole, with each entry saying whether THIS plan may pick it.
       // A locked card that names the plan it needs sells better than a card that is missing.
       catalogue: ARTIFACT_RECIPES.map(r => ({
@@ -348,6 +383,8 @@ automationsRouter.get('/', async (req, res) => {
       custom: { available: true, name: 'Custom', blurb: 'Your own instruction, on your own trigger.' },
       destinations: DESTINATIONS,
       triggers: FLOW_TRIGGERS.map(t => ({ ...t, live: LIVE_TRIGGERS.has(t.key) })),
+      // The one list of templates (GET-1087): agents read the same one at /v2/rev-plays/templates.
+      templates: listRevPlayTemplates(),
     });
   } catch (err) {
     console.error('[GET /api/automations]', err);
@@ -359,21 +396,25 @@ automationsRouter.get('/', async (req, res) => {
 async function createFlow(req, res, supabase, plan) {
   const built = flowColumns(req.body, plan);
   if (built.fail) return res.status(built.fail.status).json(built.fail.body);
-  const hit = await automationLimitHit(supabase, req.workspaceId, plan.id);
+  const viewer = viewerOf(req);
+  const placed = createVisibility(req.body?.visibility, viewer);
+  if (placed.fail) return res.status(placed.fail.status).json(placed.fail.body);
+  const hit = await automationLimitHit(supabase, req.workspaceId, plan.id, { personalOf: placed.visibility === PERSONAL ? viewer.userId : null });
   if (hit !== null) return res.status(402).json(automationLimitBody(plan.id, hit));
   const { data, error } = await insertFlow(supabase, {
-    workspaceId: req.workspaceId, userId: req.internalUserId ?? null, name: req.body?.name, cols: built.cols, enabled: true,
+    workspaceId: req.workspaceId, userId: viewer.userId, name: req.body?.name, cols: built.cols, enabled: true, visibility: placed.visibility,
   });
   if (error && isMissingFlowColumn(error)) return res.status(409).json(NEEDS_MIGRATION);
   if (error) throw error;
-  return res.status(201).json(rowOut(data));
+  return res.status(201).json({ ...rowOut(data), ...visibilityFields(data, viewer) });
 }
 
 /** Write a checked flow (flowColumns' cols) as a row. Shared with /v2/workflows. Returns { data, error }. */
-export function insertFlow(supabase, { workspaceId, userId = null, name, cols, enabled = true }) {
+export function insertFlow(supabase, { workspaceId, userId = null, name, cols, enabled = true, visibility = SHARED }) {
   return supabase.from('agent_routines').insert({
     workspace_id: workspaceId,
     user_id: userId,
+    ...(visibility === PERSONAL ? { visibility } : {}),
     name: String(name ?? 'Automation').trim().slice(0, 120) || 'Automation',
     ...cols,
     enabled,
@@ -408,13 +449,17 @@ automationsRouter.post('/', async (req, res) => {
     // counted over every automation the workspace HAS, on or off (GET-528): self-serve gets five,
     // and a sixth kept switched off is still a sixth. The defaults OpenNous runs are not rows here,
     // so they never count.
-    const hit = await automationLimitHit(supabase, req.workspaceId, plan.id);
+    const viewer = viewerOf(req);
+    const placed = createVisibility(req.body?.visibility, viewer);
+    if (placed.fail) return res.status(placed.fail.status).json(placed.fail.body);
+    const hit = await automationLimitHit(supabase, req.workspaceId, plan.id, { personalOf: placed.visibility === PERSONAL ? viewer.userId : null });
     if (hit !== null) return res.status(402).json(automationLimitBody(plan.id, hit));
 
     // Built field by field so the optional ones can be dropped when the column is missing.
     const insert = {
       workspace_id: req.workspaceId,
-      user_id: req.internalUserId ?? null,
+      user_id: viewer.userId,
+      ...(placed.visibility === PERSONAL ? { visibility: PERSONAL } : {}),
       name: String(req.body?.name ?? recipe?.name ?? 'Automation').slice(0, 120),
       artifact,
       // A preset may still carry a prompt — the "anything else?" field on the dialog. It is
@@ -510,7 +555,7 @@ function buildPatch(body, plan) {
   return { patch };
 }
 
-automationsRouter.patch('/:id', async (req, res) => {
+automationsRouter.patch('/:id', canEdit, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const { plan } = await resolveTeamAndPlan(req);
@@ -536,10 +581,17 @@ automationsRouter.patch('/:id', async (req, res) => {
     const built = buildPatch(req.body ?? {}, plan);
     if (built.fail) return res.status(built.fail.status).json(built.fail.body);
     const patch = built.patch;
+    const viewer = viewerOf(req);
+    if (req.body?.visibility !== undefined && req.routine) {
+      const refused = visibilityChange(req.routine, req.body.visibility, viewer);
+      if (refused) return res.status(refused.status).json(refused.body);
+      patch.visibility = req.body.visibility;
+    }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing_to_change' });
 
-    if (patch.enabled === true) {
-      const hit = await automationLimitHit(supabase, req.workspaceId, plan.id, { excludeId: req.params.id });
+    if (patch.enabled === true || patch.visibility === SHARED) {
+      const goingPersonal = (patch.visibility ?? req.routine?.visibility) === PERSONAL;
+      const hit = await automationLimitHit(supabase, req.workspaceId, plan.id, { excludeId: req.params.id, personalOf: goingPersonal ? req.routine?.user_id : null });
       if (hit !== null) return res.status(402).json({ error: 'automation_limit_reached', limit: hit, current_plan: planName(plan.id) });
     }
 
@@ -550,7 +602,7 @@ automationsRouter.patch('/:id', async (req, res) => {
     if (error && isMissingFlowColumn(error)) return res.status(409).json(NEEDS_MIGRATION);
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'not_found' });
-    return res.json(rowOut(data));
+    return res.json({ ...rowOut(data), ...visibilityFields(data, viewer) });
   } catch (err) {
     console.error('[PATCH /api/automations/:id]', err);
     return res.status(500).json({ error: 'internal_error' });
@@ -577,7 +629,7 @@ async function ownRoutine(supabase, req) {
 }
 
 // POST /api/automations/:id/publish — the draft goes live as the next version.
-automationsRouter.post('/:id/publish', async (req, res) => {
+automationsRouter.post('/:id/publish', canEdit, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const { plan } = await resolveTeamAndPlan(req);
@@ -630,7 +682,7 @@ automationsRouter.get('/:id/versions', async (req, res) => {
 });
 
 // POST /api/automations/:id/versions/:version/restore — that version, live again, as a new one.
-automationsRouter.post('/:id/versions/:version/restore', async (req, res) => {
+automationsRouter.post('/:id/versions/:version/restore', canEdit, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const row = await ownRoutine(supabase, req);
@@ -1036,7 +1088,7 @@ automationsRouter.get('/:id/test-triggers', async (req, res) => {
   }
 });
 
-automationsRouter.post('/:id/test-run', async (req, res) => {
+automationsRouter.post('/:id/test-run', canEdit, async (req, res) => {
   try {
     // A chosen trigger (GET-735), one of GET /:id/test-triggers; else the newest.
     const out = await startTestRun(getSupabaseClient(), req.workspaceId, req.params.id, { pick: req.body?.trigger_id ?? null, startedByKey: req.apiKeyId ?? null });
@@ -1069,7 +1121,7 @@ automationsRouter.post('/runs/:runId/send-email', async (req, res) => {
   }
 });
 
-automationsRouter.post('/:id/test', async (req, res) => {
+automationsRouter.post('/:id/test', canEdit, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     // A wide window, because a test has to find SOMETHING to run against — the point is to
@@ -1088,7 +1140,7 @@ automationsRouter.post('/:id/test', async (req, res) => {
   }
 });
 
-automationsRouter.delete('/:id', async (req, res) => {
+automationsRouter.delete('/:id', canEdit, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const { error } = await supabase.from('agent_routines')

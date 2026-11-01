@@ -380,7 +380,7 @@ meRouter.get('/', verifySupabaseAuth, async (req, res) => {
         .eq('team_id', team.id)
         .maybeSingle();
 
-      if (subscription?.status === 'trial' && subscription?.trial_ends_at) {
+      if ((subscription?.status === 'trial' || subscription?.status === 'trialing') && subscription?.trial_ends_at) {
         const endsAt = new Date(subscription.trial_ends_at);
         trialActive = endsAt > new Date();
         trialEndsAt = subscription.trial_ends_at;

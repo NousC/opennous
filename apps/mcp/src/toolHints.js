@@ -1,6 +1,6 @@
 // What each tool does to the workspace, for MCP clients (GET-1061). A client asks before a write
 // only if the tool says it writes, so this is what makes that prompt appear. Tools that both read
-// and write (tasks, rules, webhooks, pages) stay visible to a read-only grant: their reads work,
+// and write (tasks, rules, webhooks, rev_plays, pages) stay visible to a read-only grant: their reads work,
 // and the API refuses the rest. A tool not listed here is assumed to write.
 
 const READ = { readOnlyHint: true };
@@ -12,7 +12,7 @@ export const TOOL_HINTS = {
   get_account: READ, deals: READ, read_page: READ, read_brain: READ, read_intelligence: READ,
   score: ADDS, add_note: ADDS, enrich: ADDS, record: ADDS, record_insight: ADDS, record_closed_deals: ADDS,
   set_icp: OVERWRITES, save_page: OVERWRITES, write_brain: OVERWRITES,
-  tasks: ADDS, pages: OVERWRITES, rules: OVERWRITES, webhooks: OVERWRITES,
+  tasks: ADDS, pages: OVERWRITES, rules: OVERWRITES, webhooks: OVERWRITES, rev_plays: OVERWRITES,
 };
 
 /** Tools with nothing for a read-only grant to do, so tools/list leaves them out. */

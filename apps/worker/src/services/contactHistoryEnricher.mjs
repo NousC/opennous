@@ -8,6 +8,7 @@
 // email), so they run in bounded per-provider lanes. LinkedIn/Unipile is the
 // irreducible per-contact tail and gets the smallest lane + backoff.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { google } from 'googleapis';
 import { maskEmail } from '../lib/redact.mjs';
 import { decrypt as rawDecrypt } from '../utils/encryption.mjs';
@@ -16,7 +17,7 @@ import { syncGmailConnection } from './gmailSync.mjs';
 import { syncCalendarConnection } from './calendarSync.mjs';
 import { isNativeGoogle } from '../utils/googleNative.mjs';
 import { nativeConnections } from '../utils/googleClient.mjs';
-import { logActivity as coreLogActivity, replySignalToSentiment } from '@nous/core';
+import { logActivity as coreLogActivity, replySignalToSentiment, isSyncOnly } from '@nous/core';
 import { classifyReplySignal } from '../signals/replySentiment.mjs';
 import { extractAfterActivity } from '../signals/index.mjs';
 // The Fireflies backfill REPLAYS each recent transcript through the same handler the
@@ -104,15 +105,22 @@ const BACKFILL_WINDOW_DAYS = {
 };
 const DEFAULT_BACKFILL_DAYS = 90;
 
-// Set at the top of each enrichContactHistory run (jobs run one-at-a-time — see the
-// `running` guard in contactEnrichmentJobs.mjs — so a module-level value is safe). Any
-// activity older than this is dropped before it's written. null = no limit.
-let _backfillCutoffMs = null;
+// One run's state: its cutoff (any activity older is dropped before it's written, null = no limit),
+// whose backfill it is, and the workspace's members. Per run, not per module: a sync and a backfill
+// run side by side in the worker's two lanes (contactEnrichmentJobs.mjs).
+const enrichRun = new AsyncLocalStorage();
+const NO_RUN = Object.freeze({ cutoffMs: null, ownerUserId: null, memberIds: new Set() });
+const runState = () => enrichRun.getStore() ?? NO_RUN;
+const cutoffMs = () => runState().cutoffMs;
 
 // Resolve the workspace's plan and turn it into a cutoff. Fails OPEN (null = no limit) on
 // any lookup glitch — a metering hiccup must never silently discard a customer's history.
-async function resolveBackfillCutoffMs(supabase, workspaceId, overrideDays = null, ownerUserId = null) {
+export async function resolveBackfillCutoffMs(supabase, workspaceId, overrideDays = null, ownerUserId = null, { paidWindow = false, ownPlan = false } = {}) {
   if (isSelfHosted()) return null; // own key, own data — no cap
+  // A paid backfill reads the days it bought (GET-1087). The plan's 90 is what a plan includes,
+  // and the watermark says what was read before, which is not what this customer paid for.
+  // Re-reading is safe: the enricher dedups by external id.
+  if (paidWindow && overrideDays) return Date.now() - overrideDays * 86_400_000;
   try {
     const { data: ws } = await supabase
       .from('workspaces').select('team_id, history_backfilled_at').eq('id', workspaceId).maybeSingle();
@@ -123,7 +131,8 @@ async function resolveBackfillCutoffMs(supabase, workspaceId, overrideDays = nul
     const planId = (!sub || dead) ? 'free' : (sub.plan_id || 'free');
     const planDays = BACKFILL_WINDOW_DAYS[planId] ?? DEFAULT_BACKFILL_DAYS;
     // A job can ask for a NARROWER window than the plan allows, never a wider one.
-    const days = overrideDays != null ? Math.min(overrideDays, planDays ?? overrideDays) : planDays;
+    // Except on the person's own plan (GET-1085): the plan's window caps what we pay for, and we pay nothing.
+    const days = overrideDays != null ? (ownPlan ? overrideDays : Math.min(overrideDays, planDays ?? overrideDays)) : planDays;
     const windowMs = days ? Date.now() - days * 86_400_000 : null; // null = unlimited plan
 
     // WATERMARK — once we've backfilled up to a point, don't re-scan older than it. The
@@ -208,12 +217,40 @@ export async function appOwnsHistoryBackfill(supabase, workspaceId) {
   }
 }
 
+// THE SYNC WINDOW (GET-1087): twelve months on every plan. It carries no reading, so it answers to
+// no backfill window and no watermark. KEEP IN SYNC with SYNC_WINDOW_DAYS in apps/api/src/lib/historyBackfill.mjs.
+export const SYNC_WINDOW_DAYS = 365;
+
+/**
+ * Does this workspace take its history as a sync (filed now, read when someone chooses to)?
+ * API tier with no confirmed backfill behind it, and anyone already on a sync. Custom, self-host
+ * and workspaces that ran a backfill keep theirs. The API's answer is workspaceSyncMode in
+ * lib/backfillStart.mjs; the worker cannot import it. Fails closed to the old path, which asks first.
+ */
+export async function historySyncOnly(supabase, workspaceId) {
+  if (isSelfHosted()) return false;
+  try {
+    const { data: jobs } = await supabase.from('contact_enrichment_jobs')
+      .select('sync_only:state->>sync_only, started_at:state->>started_at, paid:state->>paid_backfill').eq('workspace_id', workspaceId);
+    if ((jobs ?? []).some(j => j.sync_only || j.paid)) return true;
+    if ((jobs ?? []).some(j => j.started_at)) return false;
+    const { data: ws } = await supabase.from('workspaces').select('team_id').eq('id', workspaceId).maybeSingle();
+    if (!ws?.team_id) return false;
+    const { data: sub } = await supabase.from('subscriptions').select('plan_id, status').eq('team_id', ws.team_id).maybeSingle();
+    const dead = sub && (sub.status === 'canceled' || sub.status === 'incomplete_expired');
+    const planId = String((!sub || dead) ? 'api' : (sub.plan_id ?? 'api')).toLowerCase();
+    return planId !== 'custom' && planId !== 'enterprise' && planId !== 'headless' && planId !== 'workspace';
+  } catch {
+    return false;
+  }
+}
+
 // True when an activity's timestamp is older than the current job's backfill window and
 // should be skipped. `now` activities (no occurredAt) are never dropped.
 function _beforeBackfillCutoff(occurredAt) {
-  if (_backfillCutoffMs == null || !occurredAt) return false;
+  if (cutoffMs() == null || !occurredAt) return false;
   const t = new Date(occurredAt).getTime();
-  return Number.isFinite(t) && t < _backfillCutoffMs;
+  return Number.isFinite(t) && t < cutoffMs();
 }
 
 async function logActivity(supabase, params) {
@@ -291,11 +328,13 @@ const GMAIL_MAX_MSGS_PER_CHUNK = 3000; // pagination safety cap per chunk
  * count comes back unattributed. Throws when the read fails, so the lane says failed.
  */
 async function scanGmailComposio(supabase, gmailConn, contacts = []) {
-  const days = _backfillCutoffMs ? Math.max(1, Math.ceil((Date.now() - _backfillCutoffMs) / 86_400_000)) : 90;
-  // Only the people being backfilled (GET-557). With nobody to look for there is nothing to file.
+  const days = cutoffMs() ? Math.max(1, Math.ceil((Date.now() - cutoffMs()) / 86_400_000)) : 90;
+  // Only the people being backfilled (GET-557). With nobody to look for there is nothing to file,
+  // except on a sync, which finds the people in the mailbox's own conversations (GET-1087).
   const addresses = contacts.map(c => c.email).filter(Boolean);
-  if (!addresses.length) { const none = new Map(); none.unattributed = 0; return none; }
-  const r = await syncGmailConnection(supabase, gmailConn, { days, addresses });
+  const discover = isSyncOnly();
+  if (!addresses.length && !discover) { const none = new Map(); none.unattributed = 0; return none; }
+  const r = await syncGmailConnection(supabase, gmailConn, { days, addresses, discover });
   if (!r?.ok) throw new Error(`composio gmail read failed: ${r?.error || 'unknown'}`);
   console.log(`[ENRICH_GMAIL_COMPOSIO] connection=${gmailConn.id} ${days}d: ${r.fetched} messages, ${r.logged} filed`);
   const counts = new Map();
@@ -351,7 +390,7 @@ async function scanGmailBulk(supabase, workspaceId, contacts, gmailConn) {
       // fetching anything older than the plan allows (the logActivity backstop still catches
       // any stragglers). Older-than-window messages never leave Google.
       let q = group.join(' OR ');
-      if (_backfillCutoffMs != null) q = `(${q}) after:${Math.floor(_backfillCutoffMs / 1000)}`;
+      if (cutoffMs() != null) q = `(${q}) after:${Math.floor(cutoffMs() / 1000)}`;
       let pageToken = null, fetched = 0;
       do {
         let listRes;
@@ -466,13 +505,19 @@ async function scanGmailBulk(supabase, workspaceId, contacts, gmailConn) {
 // feed its co-attendance matching.
 const GCAL_LOOKBACK_DAYS = 180;
 
+/** How far back the calendar goes: 180 days, or further when this run's window does (a sync, a paid
+ *  or own-plan read of up to a year or two). Pure. */
+export function calendarLookbackDays(cutoff, { syncOnly = false, now = Date.now() } = {}) {
+  if (syncOnly) return SYNC_WINDOW_DAYS;
+  if (cutoff == null) return GCAL_LOOKBACK_DAYS;
+  return Math.max(GCAL_LOOKBACK_DAYS, Math.ceil((now - cutoff) / 86_400_000));
+}
+
 // WHOSE CONNECTIONS A RUN READS (GET-571). A member's backfill reads only what that member
 // connected. The workspace backfill (the founder's) reads the workspace's connections except the
 // ones invited members made — theirs are read by their own backfill, on their own confirm. Before
 // this, connections were keyed by provider name, so a second person's Gmail silently replaced the
 // first's.
-let _ownerUserId = null;
-let _memberIds = new Set();
 async function loadMemberIds(supabase, workspaceId) {
   const { data: ws } = await supabase.from('workspaces').select('team_id').eq('id', workspaceId).maybeSingle();
   if (!ws?.team_id) return new Set();
@@ -480,8 +525,8 @@ async function loadMemberIds(supabase, workspaceId) {
   return new Set((data ?? []).filter(m => !['founder', 'owner'].includes(m.role)).map(m => m.user_id));
 }
 function connectionInScope(conn) {
-  if (_ownerUserId) return conn.owner_user_id === _ownerUserId;
-  return !conn.owner_user_id || !_memberIds.has(conn.owner_user_id);
+  if (runState().ownerUserId) return conn.owner_user_id === runState().ownerUserId;
+  return !conn.owner_user_id || !runState().memberIds.has(conn.owner_user_id);
 }
 
 async function calendarConnections(supabase, workspaceId) {
@@ -499,7 +544,7 @@ async function calendarConnections(supabase, workspaceId) {
 async function scanGoogleCalendarBulk(supabase, workspaceId, calendarConns) {
   // The reconcile logs per person itself; the enrichment job's per-contact tally stays empty.
   for (const conn of calendarConns) {
-    const r = await syncCalendarConnection(supabase, conn, { lookbackDays: GCAL_LOOKBACK_DAYS });
+    const r = await syncCalendarConnection(supabase, conn, { lookbackDays: calendarLookbackDays(cutoffMs(), { syncOnly: isSyncOnly() }) });
     console.log(`[ENRICH_GOOGLE_CALENDAR_BULK] connection=${conn.id} ok=${r.ok} logged=${r.logged ?? 0}${r.error ? ` err=${r.error}` : ''}`);
   }
   return new Map();
@@ -1063,6 +1108,7 @@ async function scanInstantly(supabase, workspaceId, contact, apiKey) {
       if (reply) {
         let signal = instantlyReplySignal(reply);
         if (!signal && reply.text) {
+          // In a sync it answers from the deterministic opt-outs and never asks the model.
           try { signal = await classifyReplySignal(reply.text, supabase, workspaceId); } catch { /* leave null */ }
         }
         const rawData = {
@@ -1344,7 +1390,7 @@ async function scanFathomReplay(supabase, workspaceId, apiKey) {
       // Per-plan backfill window. Fathom is newest-first, so once a whole page is older
       // than the cutoff, stop paging — the rest is all older. (Each meeting is also
       // filtered below, so this only bounds fetch cost.)
-      if (_backfillCutoffMs != null && pageItems.length
+      if (cutoffMs() != null && pageItems.length
           && pageItems.every(x => _beforeBackfillCutoff(x?.recording_start_time || x?.scheduled_start_time))) {
         break;
       }
@@ -1537,7 +1583,12 @@ async function persistJob(supabase, jobId, done = false) {
 // loading by id from the view returned zero and the whole backfill silently no-op'd
 // on exactly the people it's meant to seed. The import already holds every email and
 // name, so it passes them straight through and we scan off that — no view dependency.
-export async function enrichContactHistory(supabase, workspaceId, input, jobId = null, opts = {}) {
+export function enrichContactHistory(supabase, workspaceId, input, jobId = null, opts = {}) {
+  return enrichRun.run({ cutoffMs: null, ownerUserId: null, memberIds: new Set() },
+    () => enrichOneRun(supabase, workspaceId, input, jobId, opts));
+}
+
+async function enrichOneRun(supabase, workspaceId, input, jobId, opts) {
   // `allowEmpty` is a DISCOVERY run: no accounts to enrich, but a notetaker is connected and
   // its replay creates the accounts from the meetings themselves. See historyBackfill.mjs —
   // without this, connecting Fireflies to an empty workspace did nothing, silently.
@@ -1546,8 +1597,9 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
 
   // API plan → the user's own agent backfills history (richer, on their tokens). The app
   // must not also pull it. Ongoing webhooks still ingest for every plan; this is only the
-  // one-time historical pull.
-  if (!(await appOwnsHistoryBackfill(supabase, workspaceId))) {
+  // one-time historical pull. A sync reads nothing, so it is not that pull (GET-1087).
+  const syncOnly = isSyncOnly();
+  if (!syncOnly && !(await appOwnsHistoryBackfill(supabase, workspaceId))) {
     console.log(`[BACKFILL_SKIP] ws=${workspaceId} on the API plan — history backfill is the agent's job, skipping in-app pull`);
     return { enriched: 0, activitiesLogged: 0, skipped: 'api_agent_backfill' };
   }
@@ -1557,18 +1609,20 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
   // opts.creditGuard — async (phase) => throws CreditsExhausted when the API-plan wallet
   //                    hits the floor, so a long run stops between source phases instead of
   //                    spending into the red. A no-op on non-wallet plans.
-  const { windowDays = null, creditGuard = null, ownerUserId = null } = opts;
-  _ownerUserId = ownerUserId;
-  _memberIds = ownerUserId ? new Set() : await loadMemberIds(supabase, workspaceId).catch(() => new Set());
+  const { windowDays = null, creditGuard = null, ownerUserId = null, paidWindow = false, ownPlan = false } = opts;
+  runState().ownerUserId = ownerUserId;
+  runState().memberIds = ownerUserId ? new Set() : await loadMemberIds(supabase, workspaceId).catch(() => new Set());
   const guard = creditGuard ? (phase) => creditGuard(phase) : async () => {};
 
   // Resolve this workspace's plan → history backfill cutoff for the whole run. Every
   // provider below gates against it (server-side date filters where the API supports one,
-  // the logActivity backstop everywhere else). Jobs run one-at-a-time, so this module-level
-  // value is safe for the duration of the run.
-  _backfillCutoffMs = await resolveBackfillCutoffMs(supabase, workspaceId, windowDays, ownerUserId);
-  if (_backfillCutoffMs != null) {
-    console.log(`[BACKFILL_WINDOW] ws=${workspaceId} cutoff=${new Date(_backfillCutoffMs).toISOString().slice(0, 10)}`);
+  // the logActivity backstop everywhere else).
+  // A sync takes the full twelve months whatever the plan or the watermark says (GET-1087).
+  runState().cutoffMs = syncOnly
+    ? Date.now() - SYNC_WINDOW_DAYS * 86_400_000
+    : await resolveBackfillCutoffMs(supabase, workspaceId, windowDays, ownerUserId, { paidWindow, ownPlan });
+  if (cutoffMs() != null) {
+    console.log(`[BACKFILL_WINDOW] ws=${workspaceId} cutoff=${new Date(cutoffMs()).toISOString().slice(0, 10)}`);
   }
 
   let contacts;
@@ -1808,7 +1862,8 @@ export async function enrichContactHistory(supabase, workspaceId, input, jobId =
     }
 
     await guard('granola');
-    if (connections.linkedin?.account_id) {
+    // The URL lookup is a paid enrichment with a model behind it: never on a sync (GET-1087).
+    if (connections.linkedin?.account_id && !syncOnly) {
       const needUrl = contacts.filter(c => c.email && !c.linkedin_url && !c.linkedin_member_id);
       const RESOLVE_CAP = 250;
       const toResolve = needUrl.slice(0, RESOLVE_CAP);

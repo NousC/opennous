@@ -11,6 +11,10 @@
 // An invited member has no CRM step (GET-571). The dialog is LOCKED until the backfill is running:
 // no click-out, no close. A workspace that has not paid and not read anything has nothing to look
 // at behind it. After that it closes freely, and once every step is done the button is gone.
+//
+// THE SYNC FLOW (GET-1087), which replaces the above on the API tier: email, notetaker, CRM, agent.
+// History files itself once email or a notetaker connects, so there is no backfill step, no lock
+// and no payment here. The button reads Syncing… while it runs; Sync done offers the read after.
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -19,15 +23,19 @@ import { usePlan } from "@/hooks/usePlan";
 import { ClientLogo } from "@/components/connect/shared";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { CONTACT_URL } from "@/config/contact";
+import { contactUrl } from "@/config/contact";
 import { SELF_SERVE_TIERS } from "@/config/plans";
 import { MCP_URL, apiBaseUrl } from "@/config/agentEndpoints";
 import { useOnboardingChecklist, type OnboardingChecklist } from "@/hooks/useOnboardingChecklist";
+import { useBillingState } from "@/hooks/useCredits";
+import { trialEnded } from "@/lib/trial";
+import { SyncDoneDialog } from "@/components/SyncDoneDialog";
+import { InviteMemberButton } from "@/components/InviteMemberButton";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { CodeSnippet, useChosenKey, useWorkspaceKeys } from "@/components/connect/shared";
 import { KEY_PLACEHOLDER, keyStatus, mcpSteps, restLookup } from "@/lib/connectSnippets";
 import {
-  CRMS, MAIL, NOTES, backfillCount, backfillDeferred, planFit, setupLocked, setupSteps, stepStatus, toolName,
+  CRMS, INSTALL_PROMPT, MAIL, NOTES, SKIP_LOSS, backfillCount, backfillDeferred, planFit, setupDone, setupLocked, setupSteps, stepStatus, syncDoneMayOpen, toolName, topButton,
   type BackfillPreview, type StepKey, notInCrmLine,
 } from "@/lib/getStarted";
 
@@ -100,13 +108,13 @@ function Logo({ id }: { id: string }) {
 }
 
 /** One tool as a row: logo, name, a grey line, and Connected or a Connect button. */
-function ToolRow({ id, sub, connected, onConnect }: { id: string; sub: string; connected: boolean; onConnect?: () => void }) {
+function ToolRow({ id, sub, connected, onConnect, wrap = false }: { id: string; sub: string; connected: boolean; onConnect?: () => void; wrap?: boolean }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-hairline bg-card px-3.5 py-3">
       <Logo id={id} />
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{toolName(id)}</span>
-        <span className="block truncate text-[12px] text-muted-foreground">{sub}</span>
+        <span className={cn("block text-[12px] text-muted-foreground", !wrap && "truncate")}>{sub}</span>
       </span>
       {connected ? (
         <span className="inline-flex items-center gap-[5px] text-[12px] font-medium text-positive">
@@ -235,21 +243,13 @@ function BackfillStep({ c, paid, p, load, token, workspaceId, onChange }: {
     return <div className="flex items-center gap-2 text-[13px] text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Paid. Starting your backfill…</div>;
   }
 
-  // Started free (GET-682): the history waits for the upgrade, and the upgrade is right here.
+  // Parked for the upgrade (GET-682).
   const deferred = backfillDeferred(c);
-  // Started free and nothing else to decide yet? Free reads from today; say so, offer the upgrade.
-  const startFree = async () => {
-    setBusy(true); setError(null);
-    try { await confirm(); load(); onChange(); }   // a 402 here parks the job for the upgrade
-    catch (e) { setError((e instanceof Error && e.message) || "Something went wrong."); }
-    setBusy(false);
-  };
-
   if (p.state === "needs_support") {
     return (
       <div className="space-y-3">
         <p className="text-[13px] text-foreground">{found(p)} from the last 3 months. More than onboarding reads on its own.</p>
-        <a href={CONTACT_URL} target="_blank" rel="noreferrer" className={primary}>Contact us</a>
+        <a href={contactUrl()} target="_blank" rel="noreferrer" className={primary}>Contact us</a>
       </div>
     );
   }
@@ -286,7 +286,7 @@ function BackfillStep({ c, paid, p, load, token, workspaceId, onChange }: {
       {/* The backfill credits, said plainly (GET-682): what it needs, what is left, what we do. */}
       {short ? (
         <p className="text-[12.5px] text-foreground">
-          Your last 3 months need {num(p.estimate?.credits ?? 0)} backfill credits and {num(p.estimate?.allowance ?? 0)} are left, so we read the last 30 days ({num(est)} credits). <a href={CONTACT_URL} target="_blank" rel="noreferrer" className="underline underline-offset-2">Talk to us</a> for all 3 months.
+          Your last 3 months need {num(p.estimate?.credits ?? 0)} backfill credits and {num(p.estimate?.allowance ?? 0)} are left, so we read the last 30 days ({num(est)} credits). <a href={contactUrl()} target="_blank" rel="noreferrer" className="underline underline-offset-2">Talk to us</a> for all 3 months.
         </p>
       ) : (
         <p className="text-[12.5px] text-muted-foreground">
@@ -294,11 +294,6 @@ function BackfillStep({ c, paid, p, load, token, workspaceId, onChange }: {
         </p>
       )}
       {p.plan_live && fitNote}
-      {deferred && (
-        <p className="text-[12.5px] text-foreground">
-          You're on Free: 500 credits a month, read from today. Your last 3 months are read the moment you upgrade.
-        </p>
-      )}
       {!p.plan_live && (
         <div className="space-y-1">
           {rec && !deferred && (
@@ -329,17 +324,7 @@ function BackfillStep({ c, paid, p, load, token, workspaceId, onChange }: {
           {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           {p.plan_live ? (short ? "Read the last 30 days" : "Run backfill") : deferred ? "Upgrade and read it now" : "Continue to payment"}
         </button>
-        {/* FREEMIUM (GET-682): pay now and read the history, or start free and read from today. */}
-        {!p.plan_live && p.on_free && !deferred && (
-          <button disabled={busy} onClick={() => void startFree()}
-            className="text-[12.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50">
-            Start free instead
-          </button>
-        )}
       </div>
-      {!p.plan_live && p.on_free && !deferred && (
-        <p className="text-[12px] text-muted-foreground">Free: 500 credits a month, read from today. The backfill runs when you upgrade.</p>
-      )}
       {error && <p className="text-[12px] text-risk">{error}</p>}
     </div>
   );
@@ -402,16 +387,48 @@ function AgentStep({ newKey, client, setClient, locked, onManage }: {
 
 // ── The dialog ───────────────────────────────────────────────────────────────
 
+/** Where each notetaker keeps its key: the same steps the connect dialog gives. */
+const KEY_HELP: Record<string, string> = {
+  fireflies: "Settings → Developer settings → copy your API key",
+  granola: "Settings → Connectors → API keys → create a key",
+  fathom: "Settings → API Access → generate an API key",
+};
+
+const EMAIL_USES = [
+  "Finds the people and companies you talk to",
+  "Files 12 months of conversations on each account",
+  "Leaves out internal mail and newsletters",
+];
+
+/** Skips live in this browser: a step that comes back asks again, which costs nothing. */
+function useSkippedSteps(workspaceId: string) {
+  const key = `getstarted.skipped.${workspaceId}`;
+  const read = () => {
+    try { return new Set(JSON.parse(localStorage.getItem(key) ?? "[]") as StepKey[]); } catch { return new Set<StepKey>(); }
+  };
+  const [skipped, setSkipped] = useState<Set<StepKey>>(read);
+  useEffect(() => { setSkipped(read()); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const skip = (step: StepKey) => {
+    const next = new Set(skipped).add(step);
+    setSkipped(next);
+    try { localStorage.setItem(key, JSON.stringify([...next])); } catch { /* private mode */ }
+  };
+  return { skipped, skip };
+}
+
 const HEAD: Record<StepKey, { title: string; sub: string }> = {
+  email: { title: "Connect your email", sub: "How we build your accounts." },
+  notes: { title: "Connect your notetaker", sub: "Your calls, on the right accounts." },
   crm: { title: "Connect your CRM", sub: "Your accounts, deals and activity from the last 12 months." },
   tools: { title: "Connect your email and meeting notes", sub: "What was said: threads and calls with your accounts." },
   backfill: { title: "Run your backfill", sub: "Nous reads your past conversations so the record starts full." },
   agent: { title: "Connect your agent", sub: "Work your accounts from Claude Code, any MCP client, or your own code." },
 };
 
-function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }: {
+function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange, skipped, onSkip }: {
   c: OnboardingChecklist; paid: boolean; locked: boolean; open: boolean;
   onConnect: (id: string) => void; onClose: () => void; onChange: () => void;
+  skipped: ReadonlySet<StepKey>; onSkip: (step: StepKey) => void;
 }) {
   const navigate = useNavigate();
   const { p, load, token, workspaceId } = useBackfillPreview(paid ? 3_000 : 10_000);
@@ -423,10 +440,11 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
   const [creating, setCreating] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
 
-  const steps = setupSteps(c);
+  const sync = c.flow === "sync";
+  const steps = setupSteps(c, skipped);
   const doneCount = steps.filter((s) => s.done).length;
-  const firstOpen = steps.find((s) => !s.done)?.key ?? "agent";
-  const [sel, setSel] = useState<StepKey>(paid ? "backfill" : firstOpen);
+  const firstOpen = steps.find((s) => !s.done)?.key ?? steps[steps.length - 1].key;
+  const [sel, setSel] = useState<StepKey>(paid && !sync ? "backfill" : firstOpen);
   // Move on by itself when the open step gets done (a connect landing, a payment arriving).
   const [lastFirst, setLastFirst] = useState(firstOpen);
   useEffect(() => { if (firstOpen !== lastFirst) { setLastFirst(firstOpen); setSel(firstOpen); } }, [firstOpen, lastFirst]);
@@ -468,6 +486,30 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
   const connected = status.connected || c.api_key.used;
 
   const body: Record<StepKey, React.ReactNode> = {
+    email: c.mail.done ? (
+      <div className="flex flex-col gap-2">
+        {(c.mail.providers ?? []).map((id) => <ToolRow key={id} id={id} sub="Email" connected />)}
+      </div>
+    ) : (
+      <>
+        <ul className="flex flex-col gap-2.5">
+          {EMAIL_USES.map((line) => (
+            <li key={line} className="flex items-start gap-2.5 text-[13px]">
+              <Check className="mt-[3px] h-[13px] w-[13px] flex-none text-muted-foreground" strokeWidth={2.4} />{line}
+            </li>
+          ))}
+        </ul>
+        <button type="button" className={cn(primary, "mt-5")} onClick={() => onConnect(MAIL[0][0])}>
+          <img src="/provider-logos/gmail.svg" alt="" className="h-3.5 w-3.5 object-contain" />Connect Google
+        </button>
+      </>
+    ),
+    notes: (
+      <div className="flex flex-col gap-2">
+        {(c.notes.providers ?? []).map((id) => <ToolRow key={id} id={id} sub="Meeting notes" connected />)}
+        {!c.notes.done && NOTES.map(([id]) => <ToolRow key={id} id={id} sub={KEY_HELP[id]} wrap connected={false} onConnect={() => onConnect(id)} />)}
+      </div>
+    ),
     crm: c.crm.done ? (
       <>
         <ToolRow id={c.crm.provider ?? "crm"} connected
@@ -477,6 +519,14 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
     ) : (
       <div className="flex flex-col gap-2">
         {CRMS.map(([id]) => <ToolRow key={id} id={id} sub="CRM" connected={false} onConnect={() => onConnect(id)} />)}
+        {sync && (
+          <div className="mt-2 text-[12.5px] text-muted-foreground">
+            Someone else manages it?{" "}
+            <InviteMemberButton defaultRole="admin" trigger={(invite) => (
+              <button type="button" disabled={!invite} onClick={() => invite?.()} className={linkCls}>Invite them</button>
+            )} />
+          </div>
+        )}
       </div>
     ),
     tools: (
@@ -497,6 +547,12 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
       <>
         <AgentStep newKey={newKey} client={client} setClient={setClient} locked={locked}
           onManage={() => { onClose(); navigate("/keys"); }} />
+        {sync && (
+          <div className="mt-5">
+            <div className="text-[12.5px] font-medium">Or paste this into your agent</div>
+            <CodeSnippet code={INSTALL_PROMPT} className="mt-2" />
+          </div>
+        )}
         {keyError && <p className="mt-2 text-[12px] text-risk">{keyError}</p>}
       </>
     ),
@@ -564,6 +620,7 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
           <h3 className="mb-1.5 mt-1 text-[20px] font-semibold tracking-[-0.02em]">{HEAD[step.key].title}</h3>
           <p className="mb-[22px] text-[13px] text-muted-foreground">{HEAD[step.key].sub}</p>
           {body[step.key]}
+          {sync && !step.done && SKIP_LOSS[step.key] && <p className="mt-4 text-[12px] text-muted-foreground">{SKIP_LOSS[step.key]}</p>}
         </div>
         <div className="flex flex-none items-center gap-2.5 border-t border-hairline px-5 py-4 sm:pl-9 sm:pr-5">
           {step.key === "agent" && (
@@ -576,9 +633,14 @@ function GetStartedPanel({ c, paid, locked, open, onConnect, onClose, onChange }
           <span className="flex-1" />
           <button type="button" className={ghost} disabled={idx === 0} onClick={() => setSel(steps[Math.max(0, idx - 1)].key)}>Back</button>
           {step.key === "agent" ? (
-            <button type="button" className={primary} disabled={creating} onClick={createKey}>
-              {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Create an API key
-            </button>
+            <>
+              {sync && !step.done && <button type="button" className={ghost} onClick={() => { onSkip("agent"); onClose(); }}>Later</button>}
+              <button type="button" className={primary} disabled={creating} onClick={createKey}>
+                {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Create an API key
+              </button>
+            </>
+          ) : sync && !step.done ? (
+            <button type="button" className={ghost} onClick={() => onSkip(step.key)}>Skip for now</button>
           ) : (
             <button type="button" className={primary} onClick={() => setSel(steps[Math.min(steps.length - 1, idx + 1)].key)}>Continue</button>
           )}
@@ -614,7 +676,14 @@ function InstanceSetupButton() {
 }
 
 function CloudGetStartedButton({ variant }: { variant: "pill" | "segments" }) {
-  const { checklist: c, loaded, complete, reload } = useOnboardingChecklist(5_000);
+  const { checklist: c, loaded, complete: backfillComplete, reload } = useOnboardingChecklist(5_000);
+  const { session, userData } = useAuth();
+  const workspaceId = userData?.workspace?.id ?? "";
+  const token = session?.access_token ?? "";
+  const { skipped, skip } = useSkippedSteps(workspaceId);
+  const ended = trialEnded(useBillingState());
+  const complete = c?.flow === "sync" ? setupDone(c, skipped) : backfillComplete;
+  const [syncDoneOpen, setSyncDoneOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const [open, setOpen] = useState(false);
   const [paid, setPaid] = useState(false);
@@ -622,7 +691,7 @@ function CloudGetStartedButton({ variant }: { variant: "pill" | "segments" }) {
   const locked = !!c && setupLocked(c);
 
   useEffect(() => {
-    if (!loaded || complete) return;
+    if (!loaded || complete || ended) return;
     const asked = params.get("getstarted") === "1";
     if (params.get("paid") === "1") setPaid(true);
     let seen = false;
@@ -634,13 +703,45 @@ function CloudGetStartedButton({ variant }: { variant: "pill" | "segments" }) {
     }
   }, [loaded, complete, locked]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!loaded || complete || !c) return null;
-  const marks = setupSteps(c).map((s) => s.done);
+  // Sync done: once by itself, never over a data step; Settings reopens it with ?syncdone=1. An open
+  // agent step steps aside for it, and comes back from the button.
+  const due = !!c && syncDoneMayOpen(c, { panelOpen: open, connecting: !!connecting, skipped });
+  useEffect(() => {
+    if (params.get("syncdone") === "1") {
+      setOpen(false); setSyncDoneOpen(true);
+      params.delete("syncdone"); setParams(params, { replace: true });
+    } else if (due) { setOpen(false); setSyncDoneOpen(true); }
+  }, [due, params]); // eslint-disable-line react-hooks/exhaustive-deps
+  const closeSyncDone = () => {
+    setSyncDoneOpen(false);
+    fetch(`${apiUrl}/api/onboarding/sync-seen`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}",
+    }).then(reload).catch(() => {});
+  };
+
+  if (!loaded || !c || ended) return null;
+  const syncDone = <SyncDoneDialog open={syncDoneOpen} onClose={closeSyncDone} sync={c.sync} token={token} workspaceId={workspaceId} />;
+  const button = topButton(c, complete);
+  if (button === "none") return syncDone;
+  const marks = setupSteps(c, skipped).map((s) => s.done);
   const done = marks.filter(Boolean).length;
+  const syncing = button === "syncing";
+  const syncCount = c.sync?.counts?.conversations;
+  const syncingCls = variant === "segments"
+    ? "inline-flex h-7 shrink-0 items-center gap-[7px] whitespace-nowrap rounded-lg border border-border bg-card px-2 text-[12.5px] font-medium text-foreground shadow-[0_1px_0_rgba(20,20,18,0.04)] sm:px-2.5"
+    : "inline-flex h-8 items-center gap-2 rounded-full border border-border bg-background px-3.5 text-[12.5px] font-medium text-foreground shadow-sm";
+  const syncingLabel = <><Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-hidden />Syncing…</>;
 
   return (
     <>
-      {variant === "segments" ? (
+      {syncDone}
+      {syncing ? (
+        // While steps are open it still opens them: connecting email starts the sync, and the
+        // notetaker, CRM and agent steps are still to do.
+        complete
+          ? <span role="status" title={syncCount ? `${num(syncCount)} conversations so far` : undefined} className={syncingCls}>{syncingLabel}</span>
+          : <button onClick={() => setOpen(true)} aria-label={`Syncing. Get started, ${done} of ${marks.length} done`} className={cn(syncingCls, "transition-colors duration-fast hover:bg-hover")}>{syncingLabel}</button>
+      ) : variant === "segments" ? (
         <button onClick={() => setOpen(true)} aria-label={`Get started, ${done} of ${marks.length} done`}
           className="inline-flex h-7 shrink-0 items-center gap-[7px] whitespace-nowrap rounded-lg border border-border bg-card px-2 text-[12.5px] font-medium text-foreground shadow-[0_1px_0_rgba(20,20,18,0.04)] transition-colors duration-fast hover:bg-hover sm:px-2.5">
           <span className="inline-flex gap-0.5" aria-hidden>
@@ -662,7 +763,7 @@ function CloudGetStartedButton({ variant }: { variant: "pill" | "segments" }) {
           onPointerDownOutside={(e) => { if (locked) e.preventDefault(); }}
           onEscapeKeyDown={(e) => { if (locked) e.preventDefault(); }}>
           <GetStartedPanel c={c} paid={paid} locked={locked} open={open && !connecting} onConnect={(id) => setConnecting(id)}
-            onClose={() => { if (!locked) setOpen(false); }} onChange={reload} />
+            onClose={() => { if (!locked) setOpen(false); }} onChange={reload} skipped={skipped} onSkip={skip} />
         </DialogContent>
       </Dialog>
       {/* The real connect flow opens its own dialog; ours steps aside and comes back after. */}

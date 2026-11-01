@@ -5,14 +5,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { creditsMeter, type CreditsMeter, type CreditsState } from "@/lib/credits";
+import type { BillingState } from "@/lib/billing";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "";
 
-export function useCredits(enabled = true): CreditsMeter | null {
+/** GET /api/billing/state, shared by everything that reads it. Null until it answers. */
+export function useBillingState(enabled = true) {
   const { session, userData } = useAuth();
   const token = session?.access_token ?? "";
   const workspaceId = userData?.workspace?.id ?? "";
-  const { data } = useQuery<CreditsState>({
+  const { data } = useQuery<BillingState | null>({
     queryKey: ["billing-state", workspaceId],
     queryFn: async () => {
       const qs = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
@@ -23,5 +25,9 @@ export function useCredits(enabled = true): CreditsMeter | null {
     enabled: enabled && !!token,
     staleTime: 60_000,
   });
-  return creditsMeter(data);
+  return data ?? null;
+}
+
+export function useCredits(enabled = true): CreditsMeter | null {
+  return creditsMeter(useBillingState(enabled) as CreditsState);
 }

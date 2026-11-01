@@ -31,10 +31,11 @@ function fakeSupabase(tables) {
 }
 const job = (id, extra = {}) => ({ job_id: id, workspace_id: 'w1', status: AWAITING, paused_reason: 'awaiting_confirmation', window_days: 90, created_at: '2026-10-01', state: {}, ...extra });
 const noEnqueue = async () => null;
+const noSync = async () => false;
 
 test('the first payment starts every waiting backfill, flagged or not, founder and member', async () => {
   const db = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [job('a'), job('b', { state: { owner_user_id: 'm1' } })] };
-  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue: noEnqueue });
+  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue: noEnqueue, syncMode: noSync });
   assert.deepEqual(db.contact_enrichment_jobs.map(j => j.status), ['pending', 'pending']);
 });
 
@@ -51,7 +52,7 @@ test('the first payment makes the backfill where none ever ran', async () => {
   const db = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [] };
   const made = [];
   const enqueue = async (_sb, ws, { ownerUserId }) => { made.push(ownerUserId); db.contact_enrichment_jobs.push(job('new')); };
-  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue });
+  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue, syncMode: noSync });
   assert.deepEqual(made, [null]);
   assert.equal(db.contact_enrichment_jobs[0].status, 'pending');
 });
@@ -65,10 +66,32 @@ test('…but not where a backfill already ran', async () => {
 
 test('over the backfill credits it reads the last 30 days; over the ceiling it waits for us', async () => {
   const db = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [job('a', { paused_reason: 'over_allowance' })] };
-  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue: noEnqueue });
+  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue: noEnqueue, syncMode: noSync });
   assert.equal(db.contact_enrichment_jobs[0].status, 'pending');
   assert.equal(db.contact_enrichment_jobs[0].window_days, 30);
   const big = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [job('b', { paused_reason: 'over_ceiling' })] };
-  await startBackfillsOnPayment(fakeSupabase(big), 't1', { firstPayment: true, enqueue: noEnqueue });
+  await startBackfillsOnPayment(fakeSupabase(big), 't1', { firstPayment: true, enqueue: noEnqueue, syncMode: noSync });
   assert.equal(big.contact_enrichment_jobs[0].status, AWAITING);
+});
+
+test('in sync mode subscribing starts nothing: no job is made, a waiting one stays waiting (GET-1087)', async () => {
+  const db = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [job('a')] };
+  const made = [];
+  const enqueue = async () => { made.push(1); };
+  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue, syncMode: async () => true });
+  assert.equal(db.contact_enrichment_jobs[0].status, AWAITING);
+  assert.equal(made.length, 0);
+  const empty = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [] };
+  await startBackfillsOnPayment(fakeSupabase(empty), 't1', { firstPayment: true, enqueue, syncMode: async () => true });
+  assert.equal(made.length, 0, 'never backfilled, and still no read');
+  assert.equal(empty.contact_enrichment_jobs.length, 0);
+});
+
+test('a live customer outside sync mode keeps paying is the yes; a yes given before sync mode still stands', async () => {
+  const db = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [job('a')] };
+  await startBackfillsOnPayment(fakeSupabase(db), 't1', { firstPayment: true, enqueue: noEnqueue, syncMode: async () => false });
+  assert.equal(db.contact_enrichment_jobs[0].status, 'pending');
+  const parked = { workspaces: [{ id: 'w1', team_id: 't1' }], contact_enrichment_jobs: [job('b', { state: { start_on_payment: { short: false } } })] };
+  await startBackfillsOnPayment(fakeSupabase(parked), 't1', { firstPayment: true, enqueue: noEnqueue, syncMode: async () => true });
+  assert.equal(parked.contact_enrichment_jobs[0].status, 'pending');
 });

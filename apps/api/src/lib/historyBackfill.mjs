@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { checkBackfillBudget } from './backfillBudget.mjs';
 import { countHistoryAtSource, monthlyCredits } from './historyCount.mjs';
 import { getPlanFromSubscription, getTeamAiCredits, isSelfHosted } from './plans.mjs';
-import { ownerJobFilter } from './backfillStart.mjs';
+import { ownerJobFilter, workspaceSyncMode, workspaceTrialLapsed } from './backfillStart.mjs';
 import { sendEmail } from '@nous/core';
 
 // Enqueue a history backfill for a workspace's EXISTING accounts. Called after a new
@@ -15,8 +15,12 @@ import { sendEmail } from '@nous/core';
 // Debounced: if a backfill is already pending/running for the workspace, we skip rather
 // than stack jobs when someone connects two tools back to back. Best-effort — a failure
 // here must never break the connect flow.
-export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { limit = 2000, reason = 'integration_connected', windowDays = 90, ownerUserId = null } = {}) {
+export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { limit = 2000, reason = 'integration_connected', windowDays = 90, ownerUserId = null, paid = null } = {}) {
   if (!workspaceId) return null;
+  // A paid read is the one thing in sync mode that is not a sync: it was chosen and bought.
+  if (!paid && await workspaceSyncMode(supabase, workspaceId)) {
+    return enqueueWorkspaceSync(supabase, workspaceId, { limit, reason, ownerUserId });
+  }
   try {
     // Debounce, but only against a job that hasn't started.
     //
@@ -32,8 +36,10 @@ export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { l
       .from('contact_enrichment_jobs')
       .select('job_id, status')
       .eq('workspace_id', workspaceId)
-      .in('status', ['pending', 'running']), ownerUserId);
-    if ((inflight ?? []).some(j => j.status === 'pending')) {
+      .in('status', ['pending', 'running'])
+      .is('state->>sync_only', null), ownerUserId);
+    // A paid backfill (GET-1087) is never skipped: it queues behind whatever is there.
+    if (!paid && (inflight ?? []).some(j => j.status === 'pending')) {
       console.log(`[BACKFILL_ON_CONNECT] ws=${workspaceId} a backfill is queued and will pick this up — skipping (${reason})`);
       return null;
     }
@@ -76,13 +82,17 @@ export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { l
     // workspace-level replays run.
     if (!contacts.length) {
       const discoverer = await hasDiscoverySource(supabase, workspaceId);
-      if (!discoverer) return null;
+      if (!discoverer && !paid) return null;
       console.log(`[BACKFILL_ON_CONNECT] ws=${workspaceId} no accounts yet — ${discoverer} can discover them (${reason})`);
     }
 
     // Price it before running it. Counting is a database read, not a model call, so this
     // costs nothing — and enqueue time is the last point where the bill is still hypothetical.
-    const budget = await assessBackfillBudget(supabase, workspaceId, { windowDays, ownerUserId, addresses: contacts.map(c => c.email).filter(Boolean) });
+    // A paid one is already counted and bought: its allowance is what they paid for, whatever the
+    // plan's own backfill pool says (GET-1087).
+    const budget = paid
+      ? { credits: paid.credits, allowance: paid.allowance, estimateUsd: 0, ceilingUsd: null, basis: 'counted', windowDays, byType: {}, needsSupport: false }
+      : await assessBackfillBudget(supabase, workspaceId, { windowDays, ownerUserId, addresses: contacts.map(c => c.email).filter(Boolean) });
     // THE SMALLER OFFER (GET-515). When three months is over the plan's backfill allowance, the
     // last thirty days often is not — so the customer is offered that, and only a history too big
     // for even that goes to us.
@@ -122,6 +132,7 @@ export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { l
       state: {
         estimate: budget ?? null, estimate_30: budget30 ?? null,
         ...(ownerUserId ? { owner_user_id: ownerUserId } : {}),
+        ...(paid ? { paid_backfill: { session_id: paid.session_id, credits: paid.credits, days: paid.days } } : {}),
         ...(waiting?.state?.start_on_payment ? { start_on_payment: waiting.state.start_on_payment } : {}),
       },
     };
@@ -151,6 +162,57 @@ export async function enqueueWorkspaceHistoryBackfill(supabase, workspaceId, { l
     return jobId;
   } catch (err) {
     console.error('[BACKFILL_ON_CONNECT] non-fatal:', err?.message || err);
+    return null;
+  }
+}
+
+// THE SYNC (GET-1087). Twelve months of contacts, accounts and activities, no model calls, so it
+// has nothing to price and nobody to ask: pending the moment email or a notetaker is connected,
+// on every plan state, on no credits. KEEP IN SYNC with SYNC_WINDOW_DAYS in contactHistoryEnricher.mjs.
+export const SYNC_WINDOW_DAYS = 365;
+const SYNC_SOURCES = ['gmail_oauth', 'gmail', 'fireflies', 'fathom', 'granola'];
+
+export async function enqueueWorkspaceSync(supabase, workspaceId, { limit = 2000, reason = 'integration_connected', ownerUserId = null } = {}) {
+  try {
+    // A payment adds no source. It must not start anything, least of all a read nobody chose.
+    if (reason === 'payment') return null;
+    if (await workspaceTrialLapsed(supabase, workspaceId)) return null;
+    const { data: provs } = await supabase.from('workflow_providers').select('id').in('name', SYNC_SOURCES);
+    const { data: conns } = await supabase.from('workflow_provider_connections')
+      .select('id, owner_user_id').eq('workspace_id', workspaceId).in('provider_id', (provs ?? []).map(p => p.id));
+    const mine = (conns ?? []).filter(c => !ownerUserId || c.owner_user_id === ownerUserId);
+    if (!mine.length) return null;   // a CRM on its own waits for email or a notetaker
+
+    // Same debounce as the backfill: a queued sync picks the new source up, a running one cannot.
+    const { data: inflight } = await ownerJobFilter(supabase
+      .from('contact_enrichment_jobs').select('job_id, status')
+      .eq('workspace_id', workspaceId).eq('status', 'pending').eq('state->>sync_only', 'true'), ownerUserId);
+    if (inflight?.length) return null;
+
+    const { data: rows } = await supabase
+      .from('contacts')
+      .select('id, email, first_name, last_name, company, company_id, linkedin_url, linkedin_member_id')
+      .eq('workspace_id', workspaceId)
+      .or('email.not.is.null,linkedin_url.not.is.null')
+      .order('last_activity_at', { ascending: false, nullsFirst: false })
+      .limit(limit);
+    const contacts = (rows ?? []).filter(c => c.email || c.linkedin_url).map(c => ({
+      id: c.id, email: c.email ? String(c.email).toLowerCase().trim() : null,
+      first_name: c.first_name || null, last_name: c.last_name || null, company: c.company || null,
+      company_id: c.company_id || null, linkedin_url: c.linkedin_url || null, linkedin_member_id: c.linkedin_member_id || null,
+    }));
+
+    const jobId = randomUUID();
+    const { error } = await supabase.from('contact_enrichment_jobs').insert({
+      job_id: jobId, workspace_id: workspaceId, contact_ids: contacts.map(c => c.id), contacts,
+      window_days: SYNC_WINDOW_DAYS, status: 'pending',
+      state: { sync_only: true, reason, ...(ownerUserId ? { owner_user_id: ownerUserId } : {}) },
+    });
+    if (error) { console.error('[SYNC_ON_CONNECT] enqueue failed:', error.message); return null; }
+    console.log(`[SYNC_ON_CONNECT] ws=${workspaceId} job=${jobId} ${contacts.length} accounts, ${SYNC_WINDOW_DAYS}d (${reason})`);
+    return jobId;
+  } catch (err) {
+    console.error('[SYNC_ON_CONNECT] non-fatal:', err?.message || err);
     return null;
   }
 }
@@ -248,11 +310,13 @@ async function assessBackfillBudget(supabase, workspaceId, { windowDays = 90, ad
 // they are never read, so they cannot cost anything.
 const MESSAGES_PER_THREAD = 1.64;
 
-async function countConversationsInWindow(supabase, workspaceId, since) {
+export async function countConversationsInWindow(supabase, workspaceId, since, { ownerUserId = null } = {}) {
   const countOf = async (properties) => {
-    const { count } = await supabase
+    let q = supabase
       .from('observations').select('id', { count: 'exact', head: true })
       .eq('workspace_id', workspaceId).in('property', properties).gte('observed_at', since);
+    if (ownerUserId) q = q.eq('owner_user_id', ownerUserId);
+    const { count } = await q;
     return count ?? 0;
   };
   const [emails, calls, meetings, notes] = await Promise.all([
@@ -267,6 +331,53 @@ async function countConversationsInWindow(supabase, workspaceId, since) {
     meeting: meetings,
     note: notes, // counted for the record; bills as zero credits
   };
+}
+
+/** The meeting a filed row belongs to. A call is one row per attendee, one read. Pure. */
+const meetingKey = (r) => {
+  // `<provider>_<meeting>_<contact>`, and source_ref is derived from it, so it is per attendee too.
+  const key = r.external_id ?? r.source_ref ?? r.id;
+  return String(key).replace(/_[0-9a-f]{8}-[0-9a-f-]{27}$/i, '');
+};
+export const distinctMeetingCount = (rows) => new Set((rows ?? []).map(meetingKey)).size;
+
+/** Meetings in the window, each counted once however many people were on it. Paged, up to 50,000 rows. */
+export async function countMeetingsInWindow(supabase, workspaceId, since, { ownerUserId = null } = {}) {
+  const rows = [];
+  for (let from = 0; from < 50_000; from += 1000) {
+    let q = supabase.from('observations').select('id, source_ref, external_id')
+      .eq('workspace_id', workspaceId).eq('property', 'interaction.meeting_held').gte('observed_at', since);
+    if (ownerUserId) q = q.eq('owner_user_id', ownerUserId);
+    const { data, error } = await q.order('id', { ascending: true }).range(from, from + 999);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < 1000) break;
+  }
+  return distinctMeetingCount(rows);
+}
+
+/**
+ * WHAT A READ OF `days` WOULD COVER (GET-1087), in countHistoryAtSource's shape. Once a sync has
+ * finished, the history is in the graph, so the graph is the count: every conversation it filed,
+ * with no call to Gmail or a notetaker and no dependence on who has reached the contacts view
+ * (a person only we wrote to is not on it, so counting by address came back 0 or low). Before a
+ * sync, past its twelve months, or when it filed nothing, the source answers as it always did.
+ */
+export async function countHistoryToRead(supabase, workspaceId, addresses, { days, ownerUserId = null, atSource = countHistoryAtSource }) {
+  if (days <= SYNC_WINDOW_DAYS) {
+    const { data: synced } = await supabase.from('contact_enrichment_jobs').select('job_id')
+      .eq('workspace_id', workspaceId).eq('status', 'done').eq('state->>sync_only', 'true').limit(1);
+    if (synced?.length) {
+      const since = new Date(Date.now() - days * 86_400_000).toISOString();
+      const { email_thread, call } = await countConversationsInWindow(supabase, workspaceId, since, { ownerUserId });
+      // The price says "exact": a three-person call is one read, not three.
+      const meeting = await countMeetingsInWindow(supabase, workspaceId, since, { ownerUserId });
+      if (email_thread + call + meeting > 0) {
+        return { counts: { email_thread, meeting, call }, meetingCredits: 0, sources: { graph: email_thread + call + meeting }, discovered: null };
+      }
+    }
+  }
+  return atSource(supabase, workspaceId, addresses, { days, ownerUserId });
 }
 
 // The hand-off. A held backfill is not a failure and should never read like one: this

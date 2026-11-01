@@ -3,7 +3,7 @@
 // Update-only — never creates new contacts from meeting invitees.
 
 import { getSupabaseClient, saveDocument, resolveMeetingOwner, attributeRelationship, isEntityInternal } from '@nous/core';
-import { logActivity } from '../../utils/activity.mjs';
+import { logActivity, filedUnreadMeeting } from '../../utils/activity.mjs';
 import { extractMeetingSignals } from '../../signals/index.mjs';
 import { summarizeInternalMeeting } from '../../signals/meetingSummary.mjs';
 import { scoreCall, recordSecondRecording } from '../../signals/callScore.mjs';
@@ -211,6 +211,17 @@ export async function reprocessFathom(supabase, workspaceId, payload, { onceOnly
           });
         }
       }
+    } else {
+      const filed = await filedUnreadMeeting(supabase, { workspaceId, source: 'fathom', externalId: externalId, sourceRef: `source://fathom/${meetingKey}`, replay: onceOnly });
+      if (filed) {
+        const internal = await isEntityInternal(supabase, workspaceId, contact.id).catch(() => false);
+        if (internal) internals.push(contact.id);
+        else externals.push({
+          contactId: contact.id, activityId: filed.id,
+          name: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email,
+          company: contact.company || null, companyId: contact.company_id || null,
+        });
+      }
     }
   }
 
@@ -260,6 +271,7 @@ export async function reprocessFathom(supabase, workspaceId, payload, { onceOnly
       contacts,
       recorder:         { email: hostEmail, userId: meetingOwnerUserId },
       namedSpeakers:    speakerNameSet.size > 0,
+      dispatch:         !onceOnly,
     }).catch(err => console.warn('[fathom] call scoring failed', err.message));
   }
 

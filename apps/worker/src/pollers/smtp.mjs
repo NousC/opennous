@@ -3,6 +3,7 @@
 // Dedup via externalId (imap_<messageId>_<date>).
 // Never creates new contacts — update-only, same as Gmail.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { getSupabaseClient, messageBodyText } from '@nous/core';
@@ -222,7 +223,7 @@ const WORKSPACE_POLL_TIMEOUT_MS = 60_000;
 
 export async function pollAllSmtpWorkspaces() {
   const supabase = getSupabaseClient();
-  const connections = await getSmtpConnections(supabase);
+  const connections = await withoutLapsedTrials(supabase, await getSmtpConnections(supabase));
   if (!connections.length) return 0;
 
   console.log(`[SMTP_POLL] Starting — ${connections.length} workspace(s)`);

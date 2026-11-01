@@ -11,7 +11,7 @@
 // Anthropic directly and returned null on every reply from the day the credit ran out. Callers treat null as "unclassified" — the CRM gate stays
 // closed and the lead is left for the next pass, so an outage never mislabels.
 
-import { isReplySignal } from '@nous/core';
+import { isReplySignal, isSyncOnly } from '@nous/core';
 import { createMessage, messageText } from '../lib/llm.mjs';
 import { meterLLM } from '../utils/meterLLM.mjs';
 
@@ -50,6 +50,8 @@ export async function classifyReplySignal(text, supabase = null, workspaceId = n
   // Opt-outs are caught deterministically — never gambled on the model.
   const optOut = detectOptOut(body);
   if (optOut) return optOut;
+  // A sync-only run keeps the deterministic opt-outs and spends no model call (GET-1087).
+  if (isSyncOnly()) return null;
 
   const label = (t) => String(t || '').trim().toLowerCase().replace(/[^a-z_]/g, '');
   try {

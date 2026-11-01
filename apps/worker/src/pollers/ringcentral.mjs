@@ -22,6 +22,7 @@
 // Live only: the first run starts at the moment the connection was made (LIVE_ONLY_ON_CONNECT in
 // apps/api/src/lib/connectIngest.mjs), so connecting imports no history.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import { getSupabaseClient, ringCentralGet, callFromCallLog, isConversation } from '@nous/core';
 import { reprocessRingCentral, getRingCentralConnections, fetchInsights } from '../webhooks/handlers/ringcentral.mjs';
 
@@ -170,7 +171,7 @@ export async function pollAllRingCentralWorkspaces() {
   running = true;
   try {
     const supabase = getSupabaseClient();
-    const connections = (await getRingCentralConnections(supabase)).filter(c => c.isVerified);
+    const connections = await withoutLapsedTrials(supabase, (await getRingCentralConnections(supabase)).filter(c => c.isVerified));
     if (!connections.length) return 0;
 
     let total = 0;

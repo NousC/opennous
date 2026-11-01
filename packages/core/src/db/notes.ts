@@ -1,3 +1,5 @@
+import { isSyncOnly } from '../llm/syncOnly.mjs';
+import { ownModelActive } from '../llm/modelDoor.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { embed } from '../embed.js';
@@ -458,6 +460,8 @@ export async function saveNote(
   const saidAt = resolveSaidAt(params.saidAt);
   const metadata: Record<string, unknown> = { ...(params.metadata ?? {}) };
   if (params.subject) metadata.subject = params.subject;
+  // Read on a person's own plan (GET-1085): the read ledger must not bill the conversation this cites.
+  if (ownModelActive()) metadata.own_model = true;
   // The controlled vocabulary, enforced where claims are actually written rather than wherever a
   // caller remembers (GET-346). The old default was 'General' — capitalised, outside the
   // vocabulary, and therefore invisible to every rollup that filters by key.
@@ -780,6 +784,9 @@ export async function saveDocument(
   // Phase 0 provenance (parity with observations): a document's raw IS its content, so hash it,
   // and record a pointer to the source (source_url / <source>:<meeting_id> when present). Stored
   // in metadata since notes live in claims (JSONB) — no schema change. resolveRaw can follow it.
+  // A sync files a meeting's document and reads nothing (GET-1087). The document cites the meeting,
+  // so without this mark it looks like a read, and a paid or own-plan read would skip every meeting.
+  if (isSyncOnly()) metadata.filed_unread = true;
   if (params.content) metadata.content_hash = createHash('sha256').update(String(params.content)).digest('hex');
   const meetingId = (params.meta?.meeting_id ?? params.meta?.external_id) as string | undefined;
   metadata.source_ref = (params.meta?.source_url as string | undefined)

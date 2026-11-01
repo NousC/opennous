@@ -15,7 +15,7 @@
  *   IDENTITY  whoami   (who the key acts as · scope · GTM role[s] · usage left)
  *   READ      find (people | accounts | deals lists) · get_context (person, account or deal) ·
  *             query · attention · get_insights
- *   WRITE     add_note · enrich · score · set_icp
+ *   WRITE     add_note · enrich · score · set_icp · rev_plays
  * (Cloud adds read_brain, write_brain and read_intelligence through src/cloud/, GET-839, GET-1042.)
  * Legacy, still registered because plugin skills call them (retire with GET-536):
  *   get_account · deals · pages · read_page · save_page · record · record_insight · record_closed_deals
@@ -43,7 +43,7 @@ const APP_URL = () => (process.env.NOUS_APP_URL || "https://app.opennous.cloud")
 const OAUTH_CONNECT = { gmail: "gmail", gmail_oauth: "gmail", google: "gmail", "google-mail": "gmail", googlemail: "gmail", linkedin: "linkedin" };
 const connectLink = (slug) => `${APP_URL()}/settings?section=integrations&connect=${slug}`;
 
-export const SERVER_VERSION = "0.77.0";
+export const SERVER_VERSION = "0.78.0";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -449,6 +449,9 @@ export function createServer({ hideWrites = false } = {}) {
     // Events pushed to the operator's own stack (GET-559): a door of its own, /v2/webhooks —
     // nothing else subscribes, and an agent wiring n8n or Clay to the record needs it.
     "webhooks",
+    // RevPlays (GET-1087): automations an agent sets up for the user, its own door at /v2/rev-plays.
+    // It cannot fold into `webhooks` (those push events out; these run on OpenNous) or `rules`.
+    "rev_plays",
     // (`tasks` sits next to attention: the worklist's items, read and closed. Closing a task cannot
     // fold into record or add_note, which only append; GET-830.)
     // Legacy: still registered because plugin skills call them. Retired once the skills
@@ -2015,6 +2018,101 @@ export function createServer({ hideWrites = false } = {}) {
   );
 
   // ===========================================================================
+  // TOOL: rev_plays  —  /v2/rev-plays, /v2/approvals
+  // Automations that run on OpenNous without the agent (GET-1087). Create only after the user says yes.
+  // ===========================================================================
+  tool(
+    "rev_plays",
+    "RevPlays: automations that run on OpenNous by themselves, on a trigger or a schedule, without this " +
+    "agent. Propose first, and create only after the user says yes. Actions: `templates` (what can be " +
+    "created here, what each needs, what covers the ones that cannot); `list` (their RevPlays, and how " +
+    "many the plan allows, on or off: the team's shared ones and each person's own are separate pools); " +
+    "a RevPlay is personal by default, visible only to the person whose key made it, and runs as them on what " +
+    "they can see; only an admin can share one with `visibility: shared` on create or with `share`, and a " +
+    "shared one is read-only to everyone else. `create` from a `template` (with `to` when it needs_to), or custom " +
+    "with `trigger` + `steps` (trigger { type, ...settings }, steps [{ type, ...settings }]: " +
+    " agent, gmail, email, hubspot, webhook, only_if, approval); `enable`, `disable` " +
+    "(a disabled RevPlay still counts toward the limit); `delete` removes one and its history and frees " +
+    "its slot, only after the user says so; `test` runs one once on its latest real trigger " +
+    "with every send held, then `run` (id + run_id) shows what it wrote and what it would send; " +
+    "`approvals` lists runs waiting on a person, `approve` / `reject` decide one by run_id, only when the " +
+    "user says so. A member key acts as that member. To push an event to the user's own stack use webhooks.",
+    {
+      action: z.enum(["templates", "list", "create", "enable", "disable", "share", "delete", "test", "run", "approvals", "approve", "reject"]).optional().describe("Default list."),
+      template: z.string().optional().describe("For create: a template id from action templates."),
+      to: z.string().optional().describe("For create from a template that needs_to: who gets the email. Several, comma-separated: the first is To, the rest Cc."),
+      name: z.string().optional().describe("For create: its name. Defaults to the template's."),
+      trigger: z.object({ type: z.string() }).passthrough().optional().describe("For a custom create: e.g. { type: 'deal_closed_won' }, { type: 'clock', frequency: 'weekly', at: '08:00' }, { type: 'call_ended' }, { type: 'account_signal', signals: ['objection_raised'] }."),
+      steps: z.array(z.object({ type: z.string() }).passthrough()).optional().describe("For a custom create: e.g. [{ type: 'agent', prompt: '…' }, { type: 'webhook', url: 'https://…' }]."),
+      enabled: z.boolean().optional().describe("For create: start it switched on. Default true."),
+      visibility: z.enum(["personal", "shared"]).optional().describe("For create: personal (default) or shared with the team, admins only."),
+      id: z.string().optional().describe("The RevPlay id, for enable, disable, delete, test and run."),
+      run_id: z.string().optional().describe("For run, approve and reject."),
+    },
+    async ({ action = "list", template, to, name, trigger, steps, enabled, visibility, id, run_id }) => {
+      const text = (t) => ({ content: [{ type: "text", text: t }] });
+      const refuse = (t) => ({ isError: true, content: [{ type: "text", text: t }] });
+      const when = (t) => [t?.type ?? "?", t?.frequency, t?.at].filter(Boolean).join(" ");
+      const line = (p) => `• ${p.name} (${p.enabled ? "on" : "off"}, ${p.visibility === "personal" ? "yours" : p.can_edit === false ? "shared, read-only" : "shared"}) · ${when(p.trigger)} · ${p.steps_count} step${p.steps_count === 1 ? "" : "s"} · last run ${p.last_run_at ? relAge(p.last_run_at) : "never"}\n   id: ${p.id}`;
+      if (action === "templates") {
+        const r = await get("/v2/rev-plays/templates");
+        return text(r.templates.map(t => t.available
+          ? `• ${t.id}: ${t.name}. ${t.does} Trigger ${t.trigger}.${t.needs.length ? ` Needs ${t.needs.join(", ")}.` : ""}${t.needs_to ? " Needs `to`." : ""}`
+          : `• ${t.id}: not available. ${t.why_not}`).join("\n"));
+      }
+      if (action === "create") {
+        if (!template && !trigger) return refuse("Pass `template`, or `trigger` and `steps`. See action templates.");
+        const r = await post("/v2/rev-plays", Object.fromEntries(Object.entries({ template, to, name, trigger, steps, enabled, visibility }).filter(([, v]) => v !== undefined)));
+        const p = r.rev_play;
+        return text([`Created ${p.name} (${p.enabled ? "on" : "off"}), ${when(p.trigger)}.`, `id: ${p.id}`, ...(r.warnings ?? []).map(w => `Heads up: ${w}`)].join("\n"));
+      }
+      if (action === "enable" || action === "disable") {
+        if (!id) return refuse("Pass `id`: the RevPlay id from action list.");
+        const r = await patch(`/v2/rev-plays/${encodeURIComponent(id)}`, { enabled: action === "enable" });
+        return text(`${r.rev_play.name} is ${r.rev_play.enabled ? "on" : "off"}.`);
+      }
+      if (action === "share") {
+        if (!id) return refuse("Pass `id`: the RevPlay id from action list.");
+        const r = await patch(`/v2/rev-plays/${encodeURIComponent(id)}`, { visibility: "shared" });
+        return text(`${r.rev_play.name} is shared with the team. Everyone sees it; only admins can change it.`);
+      }
+      if (action === "delete") {
+        if (!id) return refuse("Pass `id`: the RevPlay id from action list.");
+        await del(`/v2/rev-plays/${encodeURIComponent(id)}`);
+        return text("Deleted. Its slot is free.");
+      }
+      if (action === "test") {
+        if (!id) return refuse("Pass `id`: the RevPlay id from action list.");
+        const r = await post(`/v2/rev-plays/${encodeURIComponent(id)}/test`, {});
+        return text(`Test started on ${r.trigger?.label ?? "the latest trigger"}, every send held.\nrun_id: ${r.run_id}\nRead it in a moment with action run.`);
+      }
+      if (action === "run") {
+        if (!id || !run_id) return refuse("Pass `id` and `run_id`.");
+        const { run } = await get(`/v2/rev-plays/${encodeURIComponent(id)}/runs/${encodeURIComponent(run_id)}`);
+        const lines = [`${run.automation?.name ?? "RevPlay"}: ${run.status}${run.error ? ` (${run.error})` : ""}`];
+        for (const s of run.steps ?? []) {
+          lines.push(`${s.step}. ${s.name}: ${s.status}${s.detail ? ` · ${s.detail}` : ""}`);
+          if (s.output) lines.push(`   ${clip(typeof s.output === "string" ? s.output : JSON.stringify(s.output), 1500)}`);
+        }
+        return text(lines.join("\n"));
+      }
+      if (action === "approvals") {
+        const r = await get("/v2/approvals");
+        if (!r.approvals?.length) return text("Nothing is waiting for approval.");
+        return text(r.approvals.map(a => `• ${a.automation?.name ?? "RevPlay"}${a.account?.name ? ` · ${a.account.name}` : ""}\n   run_id: ${a.run_id}${(a.rows ?? []).map(([k, v]) => `\n   ${k}: ${clip(v, 300)}`).join("")}`).join("\n"));
+      }
+      if (action === "approve" || action === "reject") {
+        if (!run_id) return refuse("Pass `run_id` from action approvals.");
+        await post(`/v2/approvals/${encodeURIComponent(run_id)}/${action}`, {});
+        return text(action === "approve" ? "Approved. It carries on from that step." : "Rejected. The run ended there.");
+      }
+      const r = await get("/v2/rev-plays");
+      const cap = r.limit == null ? "no limit" : `yours ${r.used} of ${r.limit}, shared ${r.used_shared ?? 0} of ${r.limit}, on or off`;
+      return text([`${r.rev_plays.length} RevPlay${r.rev_plays.length === 1 ? "" : "s"} · ${r.plan} plan · ${cap}`, ...r.rev_plays.map(line)].join("\n"));
+    }
+  );
+
+  // ===========================================================================
   // TOOL: whoami  —  GET /v2/workspace/whoami
   // The identity primitive: who this key acts AS, their scope, and their GTM
   // role(s). Every governance/permission decision hangs off knowing the actor.
@@ -2054,12 +2152,21 @@ export function createServer({ hideWrites = false } = {}) {
           `${u.ops_used != null ? ` (${num(u.ops_used)} used${u.ops_limit != null ? ` of ${num(u.ops_limit)}` : ""})` : ""}` +
           ` · credits ${u.credits_left == null ? "unlimited" : `${num(u.credits_left)} left`}` +
           `${u.period_end ? ` · period ends ${day(u.period_end)}` : ""}.`;
+      // What's set up inside the app, for /start. Absent on an older API: the lines just don't show.
+      const yn = (v) => (v ? "yes" : "no");
+      const inside = !s.integrations ? "" :
+        `Connected: ${s.integrations.join(", ") || "nothing yet"} (email ${yn(s.email_connected)}, notetaker ${yn(s.notetaker_connected)}, CRM ${yn(s.crm_connected)}).\n` +
+        `Sync: ${s.sync?.state ?? "unknown"}${s.sync?.counts ? ` (${num(s.sync.counts.accounts)} accounts, ${num(s.sync.counts.people)} people, ${num(s.sync.counts.conversations)} conversations)` : ""}.\n` +
+        `Foundations missing: ${s.foundations?.missing?.join(", ") || "none"}. Webhooks: ${s.webhooks ?? "?"}. ` +
+        `RevPlays: ${s.rev_plays?.used ?? "?"} of ${s.rev_plays?.limit ?? "no limit"}. Members: ${s.members ?? "?"}.\n` +
+        (s.plan ? `Plan: ${s.plan.name}${s.plan.trial_ends_at ? `, trial ends ${day(s.plan.trial_ends_at)}` : ""}.\n` : "");
       return { content: [{ type: "text", text:
         `You are acting as ${who} on ${w.name || "this workspace"}.\n` +
         `Scope: ${scope}.\n` +
         `Role(s): ${roles}.\n` +
         `Capability: ${cap}.\n` +
         `${usage}\n` +
+        inside +
         next }] };
     }
   );

@@ -19,6 +19,8 @@ import { getSupabaseClient } from '@nous/core';
 import { ingestGmail } from '../webhooks/handlers/composio.mjs';
 import { googleClientFor, hasGoogleTransport, noClientError, nativeConnections } from '../utils/googleClient.mjs';
 import { isNativeGoogle } from '../utils/googleNative.mjs';
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
+import { sentCounterparts, repliedAmong, internalScope, createConversationPeople } from './mailDiscovery.mjs';
 
 // Composio caps GMAIL_FETCH_EMAILS at 50 per call, but 50 real messages can exceed its response
 // limit: a 60-day read of one mailbox failed with 413 Upstream_PayloadTooLarge (GET-237). 25 per
@@ -186,7 +188,7 @@ async function fillAccountEmail(supabase, composio, conn) {
  * Scan one connected mailbox. `days` > 1 is a history backfill (composioBackfill.mjs); the
  * schedule uses 1. Returns counts; never throws on a single message.
  */
-export async function syncGmailConnection(supabase, conn, { days = 1, addresses = null } = {}) {
+export async function syncGmailConnection(supabase, conn, { days = 1, addresses = null, discover = false } = {}) {
   // Composio or the install's own Google OAuth app (GET-765): the same reads either way.
   if (!hasGoogleTransport(conn)) return { ok: false, error: 'no composio_connection_id' };
   const composio = await googleClientFor(supabase, conn);
@@ -196,6 +198,8 @@ export async function syncGmailConnection(supabase, conn, { days = 1, addresses 
   // Native Google only (GET-765): what a partly failed read left behind. Composio never sets these.
   let partialError = null;
   let unreadable = 0;
+  let candidates = [];
+  let own = null;
   const note = (list) => {
     if (list.partialError) partialError = list.partialError;
     unreadable += list.unreadable || 0;
@@ -205,9 +209,16 @@ export async function syncGmailConnection(supabase, conn, { days = 1, addresses 
     // Never search for the mailbox's own address (GET-557): it is on every message in the mailbox,
     // so one CRM contact who is the person who connected Gmail turned the search back into a
     // download of everything. Found on a workspace whose founder was in their own CRM.
+    // A sync with nobody in the graph yet (GET-1087): whoever this mailbox wrote to joins the search.
+    if (discover) {
+      own = String(await fillAccountEmail(supabase, composio, conn) || conn.account_email || '').toLowerCase();
+      const sent = note(await listMessages(composio, conn, { days, query: `in:sent newer_than:${days}d` }));
+      candidates = sentCounterparts(sent, await internalScope(supabase, conn.workspace_id, own));
+      addresses = [...new Set([...(addresses ?? []), ...candidates])];
+    }
     const searching = Array.isArray(addresses);
     if (addresses?.length) {
-      const own = String(await fillAccountEmail(supabase, composio, conn) || conn.account_email || '').toLowerCase();
+      own ??= String(await fillAccountEmail(supabase, composio, conn) || conn.account_email || '').toLowerCase();
       addresses = addresses.filter(a => String(a || '').toLowerCase() !== own);
     }
     if (searching) {
@@ -239,6 +250,10 @@ export async function syncGmailConnection(supabase, conn, { days = 1, addresses 
 
   const done = handledFor(conn.id);
   const totals = { fetched: items.length, skipped_seen: 0, logged: 0, errors: 0 };
+  // Before filing, so the people exist when their mail is matched: only who wrote back.
+  if (discover && candidates.length) {
+    totals.people_created = await createConversationPeople(supabase, conn.workspace_id, repliedAmong(items, candidates));
+  }
   for (const raw of items) {
     const data = gmailMessageToData(raw);
     if (!data.id) continue;
@@ -273,7 +288,7 @@ export async function syncAllGmail() {
     .not('composio_connection_id', 'is', null)
     .eq('workflow_providers.name', 'gmail_oauth');
   if (error) { console.error('[GMAIL] connections query failed:', error.message); return; }
-  const all = [...(conns || []), ...await nativeConnections(supabase, 'gmail_oauth')];
+  const all = await withoutLapsedTrials(supabase, [...(conns || []), ...await nativeConnections(supabase, 'gmail_oauth')]);
   for (const conn of all) {
     try { await syncGmailConnection(supabase, conn); }
     catch (e) { console.error(`[GMAIL] connection=${conn.id}:`, e.message); }

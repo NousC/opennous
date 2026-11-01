@@ -9,6 +9,10 @@
 // Pure functions, no I/O — the fetch lives in handlers/gmailBody.mjs.
 
 import { createHash } from 'node:crypto';
+import { machineSenderReason, isRoleInbox } from '@nous/core';
+
+// In @nous/core since GET-1087, beside the thread rules that use them.
+export { machineSenderReason, isRoleInbox };
 
 const EMAIL_RE = /[^\s<>"',;()]+@[^\s<>"',;()]+\.[^\s<>"',;()]+/g;
 
@@ -61,56 +65,6 @@ export function emailExternalId({ rfcMessageId, gmailMessageId, contactId }) {
 
 const NOREPLY_RE = /(^|[._+-])(no-?reply|do-?not-?reply|notifications?|mailer-daemon|bounce|newsletter|marketing|news|updates?|digest)([._+-]|@)/i;
 
-// Senders that are machines whatever their local part says (GET-329).
-//
-// WHY A LIST AND NOT JUST THE REGEX. The four header checks below decide this correctly for live
-// Gmail, and the regex is the fallback for the local part. Neither fires on CRM-IMPORTED mail:
-// HubSpot stores from/to/subject/body and no headers at all, and `jira@examplecorp.atlassian.net`
-// matches nothing in NOREPLY_RE — it is not a no-reply, a notification or a digest by name. On
-// a real corpus that alone can be a great many inbound rows we would have paid to extract facts out of.
-//
-// TWO REASONS, KEPT APART ON PURPOSE. They look like one list and are not, and someone reading
-// only a flat blocklist would eventually "fix" it by letting the relays back in:
-//
-//   machine — no human voice at any point. An HR notification, a ticket update, a receipt.
-//   relay   — a human conversation that BELONGS TO ANOTHER INTEGRATION. The email is a strictly
-//             worse copy of it, so reading it files the same meeting or call a second time, from
-//             the summary rather than the transcript. Fellow's meetings are the only claims
-//             a customer has; its digest emails would double every one of them.
-//
-// Matched as SUFFIXES, so one entry covers every tenant: `examplecorp.atlassian.net`,
-// `examplecorp.intercom-mail.com` and the next client's equivalents all resolve from one line.
-//
-// ADDING ONE: it belongs here only when EVERY address on the domain is a machine. A domain with
-// both `support@` and real named people is NOT this — see isRoleInbox. Add on evidence (a sender
-// sweep of a real corpus), never on the strength of recognising the vendor's name.
-const MACHINE_DOMAINS = new Map([
-  ['atlassian.net',          'machine'],   // ticket notifications
-  ['bamboohr.com',           'machine'],   // HR
-  ['fyxer.com',              'machine'],   // AI-drafted mail — machine-written, not correspondence
-  ['zohosubscriptions.com',  'machine'],   // billing
-  ['accounts.google.com',    'machine'],   // account + security notices
-  ['fellow.app',             'relay'],     // meetings — the Fellow integration owns these
-  ['ringcentral.com',        'relay'],     // calls — the RingCentral integration owns these
-  ['justcall.io',            'relay'],     // calls
-  ['intercom-mail.com',      'relay'],     // support conversations
-]);
-
-/** `a@b.atlassian.net` → the entry for `atlassian.net`. Exact match or dot-suffix, never substring. */
-function machineDomainEntry(fromAddr) {
-  const domain = String(fromAddr ?? '').toLowerCase().split('@')[1];
-  if (!domain) return null;
-  for (const [suffix, reason] of MACHINE_DOMAINS) {
-    if (domain === suffix || domain.endsWith(`.${suffix}`)) return { suffix, reason };
-  }
-  return null;
-}
-
-/** Why this sender is a machine — 'machine', 'relay', or null when it is not one. */
-export function machineSenderReason(fromAddr) {
-  return machineDomainEntry(fromAddr)?.reason ?? null;
-}
-
 /**
  * Mail sent to many, by a machine or a list — a newsletter, a notification, an autoresponder.
  * Never a reply to our outreach, so never a reply label and never a suppression.
@@ -120,24 +74,8 @@ export function isBulkEmail(h, fromAddr) {
   if (h?.precedence && /^(bulk|list|junk)$/.test(h.precedence)) return true;
   if (h?.autoSubmitted && h.autoSubmitted !== 'no') return true;
   const from = String(fromAddr || h?.from || '');
-  if (machineDomainEntry(from)) return true;
+  if (machineSenderReason(from)) return true;
   return NOREPLY_RE.test(from.split('@')[0] + '@');
-}
-
-// A shared human inbox on a domain that also has real people on it — `support@harborline.example` sits
-// beside `marlo.trevane@harborline.example`. Deliberately NOT part of isBulkEmail: this is not bulk, it
-// is a person writing from a desk nobody owns, and on a real corpus it is a four-figure row count that may well
-// carry real account content.
-//
-// It gets its own predicate because the call is genuinely open. A claim needs an attributable
-// subject and a role inbox has none, so these are poor CLAIM evidence — but they are real
-// correspondence, and dropping them is a product decision rather than a filtering one. Callers opt
-// in; nothing here decides for them.
-const ROLE_LOCAL_RE = /^(support|help|info|contact|sales|billing|accounts?|admin|team|hello|service|.*support|.*service)$/i;
-
-export function isRoleInbox(fromAddr) {
-  const local = String(fromAddr ?? '').toLowerCase().split('@')[0];
-  return Boolean(local) && ROLE_LOCAL_RE.test(local);
 }
 
 /** True when the email says it answers another one (In-Reply-To or References). */

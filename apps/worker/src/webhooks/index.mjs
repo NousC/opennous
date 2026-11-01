@@ -22,7 +22,7 @@ import { handleAiArk } from './handlers/aiark.mjs';
 import { handleComposio } from './handlers/composio.mjs';
 import { handlePostHog } from './handlers/posthog.mjs';
 import { enqueueForRetry } from '../utils/webhookInbox.mjs';
-import { inboundAllowed, inboundTrusted, untrustedFirefliesBody } from './inboundGate.mjs';
+import { inboundAllowed, inboundTrusted, untrustedFirefliesBody, dropForLapsedTrial } from './inboundGate.mjs';
 
 // Ops metering note: each webhook handler writes its own workspace_system_log
 // row (the live op log), and workspace_system_log.billable_ops defaults to 1 —
@@ -62,6 +62,8 @@ export function verifyHmac(req, secret) {
 // source below and of the catch-all at the end, which would otherwise answer them first.
 // index.mjs hands this router to the cloud layer's register() as its webhookRouter.
 export const cloudWebhookRouter = Router();
+// A trial that ended stops taking pushes as well as pulls (GET-1087). Ahead of every source.
+webhookRouter.use(dropForLapsedTrial);
 webhookRouter.use(cloudWebhookRouter);
 
 webhookRouter.post('/fireflies/:workspaceId', (req, res) => {

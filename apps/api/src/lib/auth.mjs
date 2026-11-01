@@ -2,7 +2,8 @@ import { getSupabaseClient } from '@nous/core';
 import { claimPendingSeat } from './pendingSeats.mjs';
 import { canBindEmailIdentity, canClaimByEmailMatch, identityColumn, findUserByAuthId, getAuthProvider } from './authProvider/index.mjs';
 import { assertMayCreateOwnTeam, SETUP_TOKEN_METADATA_KEY } from './instanceOwner.mjs';
-import { PLANS } from './plans.mjs';
+import { PLANS, TRIAL_DAYS, TRIAL_CREDITS } from './plans.mjs';
+import { billingEnabled } from './billingHooks.mjs';
 import { captureProductEvent } from './productEvents.mjs';
 
 // Who is this request, and which team — cached briefly in process (GET-312).
@@ -43,12 +44,27 @@ export function invalidateAuthCache(authUserId) {
 }
 
 /**
- * What a new team starts on: THE FREE PLAN (GET-682, reversing GET-532).
+ * What a new team starts on: A 14-DAY NO-CARD TRIAL (GET-1087, replacing Free from GET-682).
  *
- * New conversations read from today up to 500 credits a month, no history backfill until they
- * pay. A paid bundle goes through Stripe, and stripeWebhook.mjs moves this row to the paid plan.
+ * New conversations read from today within 500 credits, no history until they pay. There is no
+ * Stripe subscription behind it. A paid bundle goes through Stripe, and stripeWebhook.mjs moves
+ * this row to the paid plan. Self-host, or any deployment that cannot take a payment, has nothing
+ * to end a trial with, so it stays on the row it always had.
  */
-function newFreeSubscription(teamId) {
+export function newFreeSubscription(teamId, { now = new Date(), trial = billingEnabled() } = {}) {
+  if (trial) {
+    const ends = new Date(now.getTime() + TRIAL_DAYS * 86_400_000).toISOString();
+    return {
+      team_id: teamId,
+      plan_id: 'api',
+      plan_name: 'api',
+      status: 'trialing',
+      trial_ends_at: ends,
+      current_period_start: now.toISOString(),
+      // The trial's credits are one allowance over the trial: the period is the trial.
+      current_period_end: ends,
+    };
+  }
   return {
     team_id: teamId,
     plan_id: 'free',
@@ -253,7 +269,7 @@ export async function ensureUserAndTeam(authUser, skipTeamCreation = false, opts
     captureProductEvent({ distinctId: user.id, event: 'signed_up', set: { email, name, ...(companyName ? { company_name: companyName } : {}) }, workspaceId: newWorkspace?.id ?? null });
     if (newWorkspace) captureProductEvent({ distinctId: user.id, event: 'workspace_created', properties: { source: 'signup' }, workspaceId: newWorkspace.id });
 
-    // Every new team starts on Free (GET-682). A paid upgrade goes through Stripe, and
+    // Every new team starts on the trial (GET-1087). A paid upgrade goes through Stripe, and
     // stripeWebhook.mjs moves this row to the bundle they bought.
     try {
       await supabase.from('subscriptions').insert(newFreeSubscription(team.id));
@@ -268,7 +284,7 @@ export async function ensureUserAndTeam(authUser, skipTeamCreation = false, opts
     // idempotent: onboarding /activate reuses the same key, so a team is granted its
     // base credits exactly once regardless of which path it takes first.
     try {
-      const base = PLANS.api?.aiCreditsPerMonth || 0;
+      const base = billingEnabled() ? TRIAL_CREDITS : (PLANS.api?.aiCreditsPerMonth || 0);
       if (base > 0) {
         const { error: grantErr } = await supabase.from('credit_grants').insert({
           team_id: team.id, credits: base, kind: 'base',
@@ -365,7 +381,7 @@ export async function ensureUserAndTeam(authUser, skipTeamCreation = false, opts
       if (!existingSub) {
         try {
           await supabase.from('subscriptions').insert(newFreeSubscription(team.id));
-          console.log(`[ensureUserAndTeam] Heal: created missing Free subscription for team ${team.id}`);
+          console.log(`[ensureUserAndTeam] Heal: created missing subscription for team ${team.id}`);
         } catch { /* duplicate is fine */ }
       }
     } catch (healErr) {

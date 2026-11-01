@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { trialEndedGate } from '../lib/trialEndedGate.mjs';
 import { getSupabaseClient, NO_CONTENT_VIEWER } from '@nous/core';
 import { trackApiKeyRequest } from '../lib/apiRequestLog.mjs';
 import { refuseForeignWorkspace } from '../lib/requestWorkspace.mjs';
@@ -142,5 +143,7 @@ async function verify(getClient, req, res, next) {
   // Normalize client identifier: mcp, sdk (sdk-node → sdk), or api
   const rawClient = (req.headers['x-nous-client'] || '').toLowerCase();
   req.clientType = rawClient === 'mcp' ? 'mcp' : rawClient.startsWith('sdk') ? 'sdk' : 'api';
-  next();
+  req.workspaceId ??= keyRow.workspace_id;
+  // A trial that ended stops every key call until they subscribe (GET-1087).
+  return trialEndedGate(req, res, next);
 }

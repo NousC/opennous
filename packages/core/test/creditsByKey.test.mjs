@@ -100,3 +100,20 @@ test('the query pages past 1000 rows rather than stopping at the PostgREST cap',
 test('a failed read throws, never a quiet zero', async () => {
   await assert.rejects(conversationCreditsByKey(fakeSupabase([new Error('statement timeout')]), 'ws-1', '2026-09-04T00:00:00.000Z'), /statement timeout/);
 });
+
+test("a read on the person's own plan is no credit of any kind (GET-1085)", async () => {
+  assert.equal(readRowCredits(read('fellow', { kind: 'meeting', credits: 3, own_model: true })), 0);
+  assert.equal(readRowCredits({ source: 'gmail', value: { own_model: true } }), 0);
+  const rows = [
+    { source: 'gmail', observed_at: '2026-10-05T00:00:00Z', value: { own_model: true } },
+    { source: 'fellow', observed_at: '2026-10-05T00:00:00Z', value: { kind: 'meeting', credits: 3, own_model: true } },
+    { source: 'gmail', observed_at: '2026-10-05T00:00:00Z', value: {} },
+  ];
+  const q = { select: () => q, eq: () => q, gte: () => q, in: () => q, order: () => q, range: async () => ({ data: q.t === 'observations' ? rows : [], error: null }) };
+  const db = { from: (t) => { q.t = t; return q; } };
+  const windows = [{ from: '2026-10-01T00:00:00Z', to: '2026-10-30T00:00:00Z' }];
+  assert.equal((await conversationCredits(db, ['w'], '2026-10-01')).total, CREDIT_SCALE);
+  const inWindow = await conversationCredits(db, ['w'], '2026-10-01', null, windows);
+  assert.equal(inWindow.backfill, CREDIT_SCALE);
+  assert.equal(inWindow.total, 0);
+});

@@ -1204,7 +1204,7 @@ export default function Integrations({ embedded = false, connectProvider, chrome
     if (p) {
       const label = googleNative && isComposio(p) ? "Connect with Google" : `Connect ${p.display_name}`;
       if (tileState(p) === "locked") {
-        notice = <p className="text-[12px] text-muted-foreground">{p.display_name} is on the Workspace plan.</p>;
+        notice = <p className="text-[12px] text-muted-foreground">{p.display_name} is not on your plan.</p>;
         cta = <Button asChild size="sm"><a href="/settings?section=billing">See plans</a></Button>;
       } else if (scopeOfTool(p) === "company" && !isManager) {
         notice = <p className="text-[12px] text-muted-foreground">Owners and admins connect shared tools.</p>;

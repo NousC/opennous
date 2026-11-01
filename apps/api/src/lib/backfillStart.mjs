@@ -7,8 +7,9 @@
 // not bring it back. Now the yes is remembered on the job (`start_on_payment`) and the job
 // stays waiting; the subscription webhook starts it the moment the plan is live.
 
+import { trialHasLapsed } from '@nous/core';
 import { billingEnabled } from './billingHooks.mjs';
-import { planIsLive, planMayBackfill, getPlanFromSubscription } from './plans.mjs';
+import { planIsLive, planMayBackfill, getPlanFromSubscription, isApiTier, isSelfHosted } from './plans.mjs';
 
 export const AWAITING = 'paused_awaiting_confirmation';
 
@@ -29,6 +30,36 @@ export async function backfillOwnerFor(supabase, workspaceId, userId) {
 /** The latest job that is this owner's — the workspace's when owner is null. */
 export function ownerJobFilter(query, ownerUserId) {
   return ownerUserId ? query.eq('state->>owner_user_id', ownerUserId) : query.is('state->>owner_user_id', null);
+}
+
+/**
+ * Does this workspace take its history as a sync (GET-1087)? Filed by itself when email or a
+ * notetaker connects, read only when someone chooses to. The API tier, unless a confirmed backfill
+ * already ran there: existing workspaces keep what they have. Once on a sync, always on it, so a
+ * paid read does not send the next connect back to the old confirm step, and a paid read alone puts
+ * it there: only the sync-era flow sells one. Custom and self-host keep
+ * the confirmed backfill. The worker's copy is historySyncOnly in contactHistoryEnricher.mjs.
+ */
+export async function workspaceSyncMode(supabase, workspaceId, { selfHosted = isSelfHosted() } = {}) {
+  if (selfHosted) return false;
+  try {
+    const { data: jobs } = await supabase.from('contact_enrichment_jobs')
+      .select('sync_only:state->>sync_only, started_at:state->>started_at, paid:state->>paid_backfill').eq('workspace_id', workspaceId);
+    if ((jobs ?? []).some(j => j.sync_only || j.paid)) return true;
+    if ((jobs ?? []).some(j => j.started_at)) return false;
+    return isApiTier(getPlanFromSubscription(await workspaceSubscription(supabase, workspaceId)));
+  } catch {
+    return false;   // the old path asks before it does anything
+  }
+}
+
+/**
+ * A no-card trial that ran out (GET-1087): syncing stops, the data stays read-only. Free rows and
+ * self-host never match. The same answer as planIsLive and the worker's gate: trialHasLapsed.
+ */
+export async function workspaceTrialLapsed(supabase, workspaceId, { selfHosted = isSelfHosted() } = {}) {
+  if (selfHosted) return false;
+  return trialHasLapsed(await workspaceSubscription(supabase, workspaceId));
 }
 
 /**
@@ -136,12 +167,17 @@ export async function rememberStartOnPayment(supabase, workspaceId, { short = fa
  *   otherwise     a renewal or a bundle change: only a backfill explicitly parked for the payment
  *                 (start_on_payment) starts. Nothing else re-runs.
  *
+ * A SUBSCRIPTION NEVER STARTS A READ IN SYNC MODE (GET-1087). There, history is read through
+ * `nous backfill` or a paid "Run it for me", so subscribing, from a trial included, starts nothing.
+ * The one exception is a yes someone already gave on a row from before the sync (start_on_payment).
+ * Workspaces outside sync mode (a confirmed backfill behind them, Custom) keep everything above.
+ *
  * Every one is RE-COUNTED first: a Free workspace can wait months, and both the backfill-credit
  * check and the plan-fit numbers the panel shows must be today's. Over the pool, it reads the
  * last 30 days (the panel's own fallback) and says so; over the ceiling, it waits for us.
  * Never throws — a webhook that fails here would be retried and re-sync the subscription for nothing.
  */
-export async function startBackfillsOnPayment(supabase, teamId, { firstPayment = false, enqueue = null } = {}) {
+export async function startBackfillsOnPayment(supabase, teamId, { firstPayment = false, enqueue = null, syncMode = workspaceSyncMode } = {}) {
   try {
     // `enqueue` is injectable so the tests can run this without the whole pricing path.
     const enqueueWorkspaceHistoryBackfill = enqueue ?? (await import('./historyBackfill.mjs')).enqueueWorkspaceHistoryBackfill;
@@ -150,7 +186,8 @@ export async function startBackfillsOnPayment(supabase, teamId, { firstPayment =
       const { data: waiting } = await supabase.from('contact_enrichment_jobs')
         .select('job_id, state, paused_reason').eq('workspace_id', id).eq('status', AWAITING);
       const owners = [...new Set((waiting ?? []).map(j => j.state?.owner_user_id ?? null))];
-      if (firstPayment && !owners.includes(null)) {
+      const paying = firstPayment && !(await syncMode(supabase, id));
+      if (paying && !owners.includes(null)) {
         const { count } = await supabase.from('contact_enrichment_jobs')
           .select('job_id', { count: 'exact', head: true })
           .eq('workspace_id', id).is('state->>owner_user_id', null).not('state->>started_at', 'is', null);
@@ -158,7 +195,7 @@ export async function startBackfillsOnPayment(supabase, teamId, { firstPayment =
       }
       for (const owner of owners) {
         const parked = (waiting ?? []).find(j => (j.state?.owner_user_id ?? null) === owner);
-        if (!firstPayment && !parked?.state?.start_on_payment) continue;
+        if (!paying && !parked?.state?.start_on_payment) continue;
         // Today's numbers: re-prices the waiting job in place, or makes it.
         await enqueueWorkspaceHistoryBackfill(supabase, id, { ownerUserId: owner, reason: 'payment' });
         const { data: fresh } = await ownerJobFilter(supabase.from('contact_enrichment_jobs')

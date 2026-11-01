@@ -15,10 +15,11 @@
 // first dogfood events tell us precisely which keys to lock in.
 
 import crypto from 'crypto';
-import { getSupabaseClient, attributeRelationship, getInternalEntityIds, getInternalIdentities, confirmByAction, hashBody, splitMessage, emitEvent } from '@nous/core';
+import { getSupabaseClient, syncOnlyStore, attributeRelationship, getInternalEntityIds, getInternalIdentities, confirmByAction, hashBody, splitMessage, emitEvent } from '@nous/core';
 import { fetchSentBody, hasOpenProposalFor, fetchMessageHeaders } from './gmailBody.mjs';
 import { emailExternalId, isBulkEmail, isReply, participantsOf } from '../../utils/emailIdentity.mjs';
 import { logActivity } from '../../utils/activity.mjs';
+import { workspaceTrialLapsed } from '../../lib/trialGate.mjs';
 import { decrypt } from '../../utils/encryption.mjs';
 import { nudgeCalendarSync } from '../../services/calendarSync.mjs';
 
@@ -139,6 +140,9 @@ export async function handleComposio(req, res) {
     return res.status(401).json({ error: 'invalid_signature' });
   }
 
+  // A trial that ended takes no pushes (GET-1087). Answered 200: an error would only retry.
+  if (await workspaceTrialLapsed(supabase, conn.workspace_id)) return res.json({ ok: true, dropped: 'trial_ended' });
+
   // A calendar trigger is a nudge, never a parsed event: see services/calendarSync.mjs. The
   // scan reads the canonical Google event, so a change in this payload cannot drop a meeting.
   if (conn.workflow_providers?.name === 'google_calendar' || triggerSlug.startsWith('GOOGLECALENDAR')) {
@@ -180,12 +184,19 @@ async function contactsByAnyEmail(supabase, workspaceId, emails) {
     .in('value', list);
   const emailByEntity = new Map();
   for (const r of ids || []) if (!emailByEntity.has(r.entity_id)) emailByEntity.set(r.entity_id, r.value);
-  if (!emailByEntity.size) return [];
+  // People a sync just created from this mailbox (GET-1087). They have no email filed yet, and the
+  // contacts view only holds people with an inbound touch, so without this their first email could
+  // never be filed: the email that would show them needs them to show already.
+  const discovered = syncOnlyStore()?.discovered;
+  const found = list.map(e => (discovered?.has(e) ? { ...discovered.get(e), email: e } : null)).filter(Boolean);
+  if (!emailByEntity.size) return found;
   const { data: contacts } = await supabase.from('contacts')
     .select('id, company_id')
     .eq('workspace_id', workspaceId)
     .in('id', [...emailByEntity.keys()]);
-  return (contacts || []).map(c => ({ ...c, email: emailByEntity.get(c.id) }));
+  const inView = (contacts || []).map(c => ({ ...c, email: emailByEntity.get(c.id) }));
+  const seen = new Set(inView.map(c => c.id));
+  return [...inView, ...found.filter(c => !seen.has(c.id))];
 }
 // Match existing contacts only (Gmail never bootstraps new contacts — same rule as the
 // native poller). Attribution owner is the mailbox member (conn.owner_user_id) directly.

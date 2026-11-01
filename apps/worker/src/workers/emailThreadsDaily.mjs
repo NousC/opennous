@@ -17,7 +17,7 @@
 // backfill on the same workspace.
 
 import { mayReadWorkspace, noteCreditsSpent } from '../lib/creditGate.mjs';
-import { getSupabaseClient, getInternalEntityIds, withBackfillLock, lockHolder, LockHeldError, CREDIT_SCALE } from '@nous/core';
+import { getSupabaseClient, getInternalEntityIds, withBackfillLock, lockHolder, LockHeldError, CREDIT_SCALE, OWN_BACKFILL_OPEN } from '@nous/core';
 
 /** Reads between two product usages inside one batch (GET-700). */
 export const RECHECK_EVERY = 10;
@@ -84,11 +84,36 @@ async function lastReadAt(supabase, workspaceId) {
   return at;
 }
 
+/** Whether a message on this thread came through this person's own mailbox. Pure. */
+export function threadIsTheirs(thread, ownerUserId) {
+  return (thread.messages ?? []).some(m => m.owner_user_id === ownerUserId);
+}
+
+/**
+ * Whether an open own-plan backfill holds this thread (GET-1085). Its job files a person's history
+ * and then reads it on their plan, and filing can take a while: without this the hourly reader
+ * found the fresh mail first and read it on ours. A thread with a message since the job started is
+ * new mail, and stays ours. A job left paused keeps its hold until it is picked up. Pure.
+ */
+export function heldForOwnBackfill(thread, holds) {
+  const last = Date.parse(lastAt(thread));
+  return holds.some(h => last < h.startedAt && threadIsTheirs(thread, h.ownerUserId));
+}
+
+async function ownBackfillHolds(supabase, workspaceId) {
+  try {
+    const { data } = await supabase.from('contact_enrichment_jobs').select('state')
+      .eq('workspace_id', workspaceId).in('status', OWN_BACKFILL_OPEN);
+    return (data ?? []).map(j => ({ ownerUserId: j.state?.own_model?.owner_user_id, startedAt: Date.parse(j.state?.own_model?.started_at) }))
+      .filter(h => h.ownerUserId && Number.isFinite(h.startedAt));
+  } catch { return []; }   // Reading new mail matters more than the rare thread this would hold.
+}
+
 /**
  * The threads due a read in one workspace: a message in the last `days`, and none of it read yet.
  * Newest first. Reads nothing and costs nothing — the model is only called in `readWorkspace`.
  */
-export async function threadsToRead(supabase, workspaceId, { days = 3 } = {}) {
+export async function threadsToRead(supabase, workspaceId, { days = 3, ownerUserId = null, ownBefore = null } = {}) {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   // A month of history, so a reply is read with the thread it answers, not on its own.
   const context = new Date(Date.now() - (days + 30) * 86400000).toISOString();
@@ -101,9 +126,14 @@ export async function threadsToRead(supabase, workspaceId, { days = 3 } = {}) {
   const readAt = await lastReadAt(supabase, workspaceId);
   const { units, skipped, skippedThreads } = selectEmailThreads({ threads, externalIds });
   const inWindow = (u) => { const last = lastAt(u); return !!last && last >= since; };
+  const holds = ownerUserId ? [] : await ownBackfillHolds(supabase, workspaceId);
   const due = units.filter(u => {
     const last = lastAt(u);
     if (!last || last < since) return false;
+    // A person's own backfill reads their own threads, never a teammate's, and only what it holds
+    // (GET-1085): the hourly reader takes the rest, so the two never meet and need no lock.
+    if (ownerUserId && (!threadIsTheirs(u, ownerUserId) || (ownBefore != null && Date.parse(last) >= ownBefore))) return false;
+    if (heldForOwnBackfill(u, holds)) return false;
     return threadIsDue(last, readAt.get(threadSourceRef(u)) ?? null);
   });
   return {
@@ -114,7 +144,7 @@ export async function threadsToRead(supabase, workspaceId, { days = 3 } = {}) {
 }
 
 /** Read one workspace's due threads. Returns counts. */
-export async function readWorkspace(supabase, workspaceId, { days = 3, maxThreads = 400, concurrency = 4, dryRun = false, markSkipsOnly = false, onProgress = null, countsAgainstMonth = true, deps = {} } = {}) {
+export async function readWorkspace(supabase, workspaceId, { days = 3, maxThreads = 400, concurrency = 4, dryRun = false, markSkipsOnly = false, onProgress = null, countsAgainstMonth = true, ownerUserId = null, ownBefore = null, deps = {} } = {}) {
   const gateFor = deps.mayReadWorkspace ?? mayReadWorkspace;
   const spent = deps.noteCreditsSpent ?? noteCreditsSpent;
   const readThread = deps.readGmailThread ?? readGmailThread;
@@ -147,7 +177,7 @@ export async function readWorkspace(supabase, workspaceId, { days = 3, maxThread
   const threadsLeft = (g) => (typeof g.untilStop === 'number' ? Math.floor(g.untilStop / CREDIT_SCALE) : Infinity);
   let budget = threadsLeft(gate);
 
-  const { due, externalIds, reread, skippedThreads } = await load(supabase, workspaceId, { days });
+  const { due, externalIds, reread, skippedThreads } = await load(supabase, workspaceId, { days, ownerUserId, ownBefore });
   const batch = due.slice(0, Math.min(maxThreads, budget));
   const cappedByCredits = budget < Math.min(maxThreads, due.length);
   const stats = { due: due.length, reread, read: 0, facts: 0, tasks: 0, failed: 0, skipped: skippedThreads.length, deferred: Math.max(0, due.length - batch.length) };

@@ -9,7 +9,8 @@
 // real webhook AND every test event short-circuited to a silent no-op.)
 
 import { getSupabaseClient, saveDocument, resolveMeetingOwner, attributeRelationship, isEntityInternal } from '@nous/core';
-import { logActivity } from '../../utils/activity.mjs';
+import { logActivity, filedUnreadMeeting } from '../../utils/activity.mjs';
+import { isSyncOnly } from '@nous/core';
 import { extractMeetingSignals } from '../../signals/index.mjs';
 import { summarizeInternalMeeting } from '../../signals/meetingSummary.mjs';
 import { scoreCall, recordSecondRecording } from '../../signals/callScore.mjs';
@@ -445,8 +446,18 @@ export async function reprocessFireflies(supabase, workspaceId, body, { onceOnly
           });
         }
       }
+    } else {
+      const filed = await filedUnreadMeeting(supabase, { workspaceId, source: 'fireflies', externalId: `ff_${id}_${contact.id}`, sourceRef: `source://fireflies/${id}`, replay: onceOnly });
+      if (filed) {
+        const internal = await isEntityInternal(supabase, workspaceId, contact.id).catch(() => false);
+        if (internal) internals.push(contact.id);
+        else externals.push({
+          contactId: contact.id, activityId: filed.id,
+          name: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email,
+          company: contact.company || null, companyId: contact.company_id || null,
+        });
+      }
     }
-
   }
 
   // One extraction pass over the whole room. Cheaper than one-per-attendee, and
@@ -498,6 +509,8 @@ export async function reprocessFireflies(supabase, workspaceId, body, { onceOnly
       contacts,
       recorder:         { email: hostEmail, userId: meetingOwnerUserId },
       namedSpeakers:    speakerNamesFromTranscript(transcriptText).length > 0,
+      // A replay is history: no after-call runs for a call that ended months ago.
+      dispatch:         !onceOnly,
     }).catch(err => console.warn('[fireflies] call scoring failed', err.message));
   }
 
@@ -506,7 +519,7 @@ export async function reprocessFireflies(supabase, workspaceId, body, { onceOnly
   // Backend-only: action_item.* claims don't render in the contact UI.
   // Not on an internal call: its next steps come from the meeting summary (GET-446), and these
   // filed a teammate's items as a prospect's.
-  if (actionItems && contacts.length && externals.length) {
+  if (actionItems && contacts.length && externals.length && !isSyncOnly()) {
     const primary = contacts[0];
     const parsed = parseActionItems(actionItems);
     if (parsed.length) {

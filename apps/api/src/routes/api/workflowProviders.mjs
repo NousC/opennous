@@ -97,7 +97,7 @@ async function assertIntegrationAllowed(supabase, req, providerId) {
       feature: 'slack',
       provider: provider.display_name || name,
       current_plan: plan.id,
-      message: `${provider.display_name || name} is available on the Workspace plan. Everything else connects on any plan.`,
+      message: `${provider.display_name || name} is not on your plan. Everything else connects on any plan.`,
       upgrade_url: '/settings?section=billing',
     };
   } catch (err) {

@@ -31,6 +31,8 @@
 // WRITING_PROVIDER): one open model is served by many hosts, some quantised, and an eval only
 // holds on the host it ran on.
 
+import { refuseInSyncOnly } from './syncOnly.mjs';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import AnthropicSDK from '@anthropic-ai/sdk';
 import { claudeClientOptions, claudeProvider, routeClaudeClient } from './claudeRoute.mjs';
 import { classifyProviderError } from './providerError.mjs';
@@ -48,6 +50,45 @@ const DEFAULT_REASONING_HEADROOM = 16_000;
 // A hung connection must not hold a job forever. Past two minutes the fallback is the faster
 // route to an answer.
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+// ── A person's own model (GET-1085) ──────────────────────────────────────────────
+// A backfill run through `nous backfill` reads on that person's own Claude or ChatGPT plan. The
+// whole production read still runs here (filter, prompts, quote grounding, guards, the write path);
+// only its model calls leave, each answered by the person's CLI. So the route belongs to the run,
+// not to the process, and there is never a fallback: a call this person's plan could not answer
+// must not quietly land on ours.
+const ownModelRun = new AsyncLocalStorage();
+
+/** Run `work` with every door call inside it answered by `ask`: ({ feature, system, messages, max_tokens, temperature }) => { text, model?, usage? }. */
+export function withOwnModel(ask, work) {
+  return ownModelRun.run({ ask }, work);
+}
+
+/** Whether this code is running inside a person's own-plan read: what it reads is not ours to bill. */
+export function ownModelActive() {
+  return !!ownModelRun.getStore();
+}
+
+// The states a person's backfill is open in. While one is open its history is its own to read:
+// the hourly reader leaves those threads alone, so they never land on our model bill.
+export const OWN_BACKFILL_OPEN = ['own_model_pending', 'own_model_running', 'paused_own_model'];
+
+async function callOwnModel({ ask }, { feature, max_tokens, system, messages, temperature }) {
+  let answer;
+  try {
+    answer = await ask({
+      feature: feature || 'pipeline', max_tokens, temperature: temperature ?? 0, system: systemText(system),
+      messages: messages.map(msg => ({ role: msg.role, content: contentText(msg.content) })),
+    });
+  } catch (err) {
+    throw new ModelUnavailableError(err?.message || 'own model failed', { model: 'own-model' });
+  }
+  return {
+    id: null, model: answer.model || 'own-model', provider: 'own-model', latency_ms: null, finish_reason: 'stop', cost_usd: 0,
+    content: [{ type: 'text', text: answer.text ?? '' }],
+    usage: { input_tokens: answer.usage?.input_tokens ?? 0, output_tokens: answer.usage?.output_tokens ?? 0 },
+  };
+}
 
 // ── Claude client ────────────────────────────────────────────────────────────────
 // Each app registers its own instrumented client at boot (both use `useleak`, which tracks
@@ -256,6 +297,13 @@ export async function createMessage({
   feature, tier = 'extraction', model, max_tokens, system, messages,
   accept = null, fallback = undefined, temperature, meter,
 }) {
+  refuseInSyncOnly(feature);
+  const own = ownModelRun.getStore();
+  if (own) {
+    const msg = await callOwnModel(own, { feature, max_tokens, system, messages, temperature });
+    recordUsage(msg, feature, meter);
+    return msg;
+  }
   const [tierPrimary, tierFallback] = tierModels(tier);
   const primary = model || tierPrimary;
   const second = fallback === false ? null

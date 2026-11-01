@@ -20,6 +20,7 @@
 // first pull within the hour and every other one once a day. Facts are state observations, one
 // per property per entity per day (the external id names the day), so a re-run is a no-op.
 
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 import crypto from 'crypto';
 import { getSupabaseClient, usageAccountOf, rollUpByAccount, companyGroupIndex, posthogGroupsQuery, parseGroupRows, accountUsageSignals, seatDroppedSignal, posthogIssuesQuery, parseIssueRows, issuesFor, issueStatement, upsertInsightItems, posthogSettings, posthogRequest, posthogUsageQuery, parseUsageRows, rollUpByDomain, companyUsageFacts, personUsageFacts, recordObservations, logWorkerRun, loadOwnDomains, PostHogError, POSTHOG_CS_FACTS, QUIET_COMPANY_FACTS } from '@nous/core';
 import { assertPublicUrl } from '../lib/engineStepHandlers.mjs';
@@ -332,7 +333,7 @@ export async function pollPostHogUsage({ supabase = getSupabaseClient(), now = n
   running = true;
   let pulled = 0;
   try {
-    for (const conn of await connections(supabase)) {
+    for (const conn of await withoutLapsedTrials(supabase, await connections(supabase))) {
       if (!isDue(conn.encrypted_credentials, now.getTime())) continue;
       const startedAt = new Date();
       try {

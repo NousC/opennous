@@ -17,7 +17,7 @@
 // re-using reprocessGranola below.
 
 import { getSupabaseClient, saveDocument, resolveCallHost, attributeRelationship, isEntityInternal } from '@nous/core';
-import { logActivity } from '../../utils/activity.mjs';
+import { logActivity, filedUnreadMeeting } from '../../utils/activity.mjs';
 import { extractMeetingSignals } from '../../signals/index.mjs';
 import { summarizeInternalMeeting } from '../../signals/meetingSummary.mjs';
 import { scoreCall, recordSecondRecording } from '../../signals/callScore.mjs';
@@ -151,7 +151,7 @@ function pickOccurredAt(note) {
   return new Date().toISOString();
 }
 
-export async function reprocessGranola(supabase, workspaceId, body) {
+export async function reprocessGranola(supabase, workspaceId, body, { onceOnly = false } = {}) {
   body = body || {};
   const eventType = body.type || body.event || null;
   // The note id lives under a few shapes across webhook / poll / retry callers.
@@ -304,7 +304,20 @@ export async function reprocessGranola(supabase, workspaceId, body) {
       // Timeline for every attendee; extraction runs ONCE for the room, below.
       suppressExtraction: true,
     });
-    if (!result) continue;
+    if (!result) {
+      // Filed by a sync-only run and never read (GET-1087): a backfill's replay reads it now.
+      const filed = await filedUnreadMeeting(supabase, { workspaceId, source: 'granola', externalId: `granola_${noteId}_${contact.id}`, sourceRef: `source://granola/${noteId}`, replay: onceOnly });
+      if (filed) {
+        const internal = await isEntityInternal(supabase, workspaceId, contact.id).catch(() => false);
+        if (internal) internals.push(contact.id);
+        else externals.push({
+          contactId: contact.id, activityId: filed.id,
+          name: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email,
+          company: contact.company || null, companyId: contact.company_id || null,
+        });
+      }
+      continue;
+    }
     logged++;
 
     let internal = false;
@@ -357,7 +370,7 @@ export async function reprocessGranola(supabase, workspaceId, body) {
   // One extraction pass over the whole room (external calls → CRM facts/intent;
   // internal-only calls → team insights).
   if (externals.length && extractionText) {
-    extractMeetingSignals({ supabase, workspaceId, participants: externals, summary: extractionText,
+    extractMeetingSignals({ onceOnly, supabase, workspaceId, participants: externals, summary: extractionText,
       source: 'granola', occurredAt, sourceRef: `source://granola/${noteId}`,
       // Our side by name, so a fact quoting the rep is dropped rather than filed on the customer (GET-417).
       ourNames: [...contacts.filter(c => internals.includes(c.id)).map(c => [c.first_name, c.last_name].filter(Boolean).join(' ')), recorder?.name].filter(Boolean) })
@@ -393,6 +406,7 @@ export async function reprocessGranola(supabase, workspaceId, body) {
       recorder,
       namedSpeakers:    speakerNames.length > 0,
       repTalkShare,
+      dispatch:         !onceOnly,
     }).catch(err => console.warn('[granola] call scoring failed', err.message));
   }
 

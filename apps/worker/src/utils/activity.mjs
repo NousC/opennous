@@ -2,8 +2,8 @@
 // All worker webhook handlers import logActivity from here, not from @nous/core directly.
 
 import { activityText } from '../signals/extractionText.mjs';
-import { logActivity as _logActivity, addSuppression, recordVerificationObservation, replySignalToSentiment, closeActionItemsForActivity } from '@nous/core';
-import { extractAfterActivity } from '../signals/index.mjs';
+import { logActivity as _logActivity, isSyncOnly, addSuppression, recordVerificationObservation, replySignalToSentiment, closeActionItemsForActivity } from '@nous/core';
+import { extractAfterActivity, meetingAlreadyRead } from '../signals/index.mjs';
 import { classifyReplySignal } from '../signals/replySentiment.mjs';
 import { resolveReplyAttribution } from './replyAttribution.mjs';
 
@@ -94,6 +94,22 @@ async function recordReplySignal(supabase, params, signal, observationId = null)
         .catch(() => {});
     }
   }
+}
+
+/**
+ * A MEETING FILED BUT NOT READ (GET-1087). A sync-only run files a meeting and reads nothing, so
+ * when a backfill replays it the timeline row dedups and logActivity returns null. Every handler
+ * read a null as "seen this one": the room came up empty, extraction never ran, and a synced
+ * meeting could never be read. On a replay this finds the filed row of a meeting nobody has read
+ * (claims or a read stamp, the same test the extractor uses), so the room is whole again.
+ * Live deliveries leave replay off and keep their dedup.
+ */
+export async function filedUnreadMeeting(supabase, { workspaceId, source, externalId, sourceRef, replay }) {
+  if (!replay || !externalId || isSyncOnly()) return null;
+  const { data } = await supabase.from('observations').select('id')
+    .eq('workspace_id', workspaceId).eq('source', source).eq('external_id', externalId).maybeSingle();
+  if (!data?.id) return null;
+  return (await meetingAlreadyRead(supabase, workspaceId, sourceRef)) ? null : data;
 }
 
 /**

@@ -28,7 +28,7 @@ const COALESCE_MS = 2 * 60_000;
 // person asked. A later trigger inside the window is deferred to its end, never dropped.
 const MIN_INTERVAL_MS = 10 * 60_000;
 
-const pending = new Map();   // companyId → timer
+const pending = new Map();   // companyId → { timer, workspaceId }
 
 /** Queue a summary refresh after new facts. Coalesces bursts; never throws. */
 export function scheduleCompanySummary(workspaceId, companyId, delayMs = COALESCE_MS) {
@@ -43,7 +43,21 @@ export function scheduleCompanySummary(workspaceId, companyId, delayMs = COALESC
     }
   }, delayMs);
   timer.unref?.();
-  pending.set(companyId, timer);
+  pending.set(companyId, { timer, workspaceId });
+}
+
+/**
+ * Write every summary still waiting, now. A process about to end calls this: an own-plan backfill
+ * (GET-1085) does, or its last accounts would get no summary, and its summaries belong on its plan.
+ */
+export async function flushCompanySummaries(supabase = getSupabaseClient()) {
+  const waiting = [...pending];
+  pending.clear();
+  for (const [companyId, { timer, workspaceId }] of waiting) {
+    clearTimeout(timer);
+    await refreshCompanySummary(supabase, workspaceId, companyId, { reason: 'manual' })
+      .catch(err => console.warn('[COMPANY_SUMMARY_ERROR]', err.message));
+  }
 }
 
 async function currentSummaryState(supabase, companyId) {

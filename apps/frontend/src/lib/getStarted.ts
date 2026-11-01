@@ -45,7 +45,7 @@ export function notInCrmLine(d: { people: number; accounts: number } | null | un
   return `${people}${companies} from your meeting notes ${one ? "isn't" : "aren't"} in your CRM. They're added too, tagged Not in CRM.`;
 }
 
-export type StepKey = "crm" | "tools" | "backfill" | "agent";
+export type StepKey = "crm" | "tools" | "backfill" | "agent" | "email" | "notes";
 export type SetupStep = { key: StepKey; title: string; done: boolean };
 
 export const CRMS = [["hubspot", "HubSpot"], ["salesforce", "Salesforce"], ["attio", "Attio"]] as const;
@@ -83,14 +83,23 @@ export const backfillStarted = (c: OnboardingChecklist) =>
  * and not started reading. An invited member joins a workspace that already has records, and a
  * paid workspace has its plan, so neither is ever trapped on a step they may not be able to finish.
  */
-export const setupLocked = (c: OnboardingChecklist) => !backfillStarted(c) && c.seat !== "member" && !c.plan?.live;
+export const setupLocked = (c: OnboardingChecklist) => c.flow !== "sync" && !backfillStarted(c) && c.seat !== "member" && !c.plan?.live;
 
 /**
  * The steps, in order. An invited member joins records the founder's CRM already made (GET-571),
  * so has no CRM step. The agent step is done when a key has made its first call — the same
  * condition checklistComplete() ends onboarding on.
  */
-export function setupSteps(c: OnboardingChecklist): SetupStep[] {
+export function setupSteps(c: OnboardingChecklist, skipped: ReadonlySet<StepKey> = NOTHING): SetupStep[] {
+  // The sync flow (GET-1087): email, notetaker, CRM, agent. A skipped step counts as settled.
+  if (c.flow === "sync") {
+    return [
+      { key: "email", title: "Connect email", done: c.mail.done || skipped.has("email") },
+      { key: "notes", title: "Connect notetaker", done: c.notes.done || skipped.has("notes") },
+      ...(c.seat === "member" ? [] : [{ key: "crm" as const, title: "CRM", done: c.crm.done || skipped.has("crm") }]),
+      { key: "agent", title: "Connect your agent", done: c.api_key.used || skipped.has("agent") },
+    ];
+  }
   return [
     ...(c.seat === "member" ? [] : [{ key: "crm" as const, title: "Connect your CRM", done: c.crm.done }]),
     { key: "tools", title: "Email and meeting notes", done: c.mail.done && c.notes.done },
@@ -99,9 +108,78 @@ export function setupSteps(c: OnboardingChecklist): SetupStep[] {
   ];
 }
 
+const NOTHING: ReadonlySet<StepKey> = new Set();
+
+/** Every step settled. */
+export const setupDone = (c: OnboardingChecklist, skipped: ReadonlySet<StepKey> = NOTHING) =>
+  setupSteps(c, skipped).every((s) => s.done);
+
+/**
+ * What the top-right button is (GET-1087): Syncing… whenever the sync runs, whatever step they are
+ * on, then Get started while a step is open, then gone. The sync never waits on the agent step.
+ */
+export function topButton(c: OnboardingChecklist, complete: boolean): "get_started" | "syncing" | "none" {
+  if (c.sync?.state === "running") return "syncing";
+  return complete ? "none" : "get_started";
+}
+
+/** The Sync done pop-up opens by itself once, when the sync has finished and nobody has seen it. */
+export const syncDoneDue = (c: OnboardingChecklist) => c.sync?.state === "done" && !c.sync.seen;
+
+/**
+ * May Sync done open now? Not mid-connect, and not over a data step someone is still on. An open
+ * agent step does not hold it: that step can wait, and it is the pop-up that says what comes next.
+ */
+export function syncDoneMayOpen(c: OnboardingChecklist, { panelOpen, connecting, skipped = NOTHING }: {
+  panelOpen: boolean; connecting: boolean; skipped?: ReadonlySet<StepKey>;
+}): boolean {
+  if (!syncDoneDue(c) || connecting) return false;
+  return !panelOpen || setupSteps(c, skipped).every((s) => s.done || s.key === "agent");
+}
+
+/** What skipping a step costs. Only the two that lose data say so. */
+export const SKIP_LOSS: Partial<Record<StepKey, string>> = {
+  email: "Without email, your accounts have no conversations and we can't find who you talk to.",
+  notes: "Without a notetaker, your calls stay off your accounts.",
+};
+
+/** GET /api/billing/plan-fit (GET-1087). */
+export type PlanFit = {
+  monthly_credits: number;
+  sizes: { credits: number; name?: string; price_usd?: number; priceUsd?: number; usd?: number; price?: number }[];
+  recommended_credits: number | "custom";
+  basis?: string;
+  months_measured?: number;
+};
+const SIZE_NAME: Record<number, string> = { 2000: "Starter", 4000: "Growth", 8000: "Scale" };
+
+/** One line under the counts: "About 3,200 credits a month. Recommended: Growth, $149." Null when
+ *  there is nothing to say. `credits` is what the upgrade passes; a custom size is Talk to us. */
+export function planFitLine(fit: PlanFit | null | undefined): { lead: string; rec: string; credits: number | null } | null {
+  if (!fit || !fit.monthly_credits) return null;
+  const lead = `About ${num(fit.monthly_credits)} credits a month.`;
+  if (fit.recommended_credits === "custom") return { lead, rec: "Talk to us", credits: null };
+  const size = fit.sizes?.find((s) => s.credits === fit.recommended_credits);
+  const price = size?.price_usd ?? size?.priceUsd ?? size?.usd ?? size?.price;
+  const name = size?.name ?? SIZE_NAME[fit.recommended_credits];
+  if (!name || price == null) return null;
+  return { lead, rec: `Recommended: ${name}, $${num(price)}.`, credits: fit.recommended_credits };
+}
+
+export const SYNC_DAYS = [90, 180, 365] as const;
+export const INSTALL_PROMPT = "Set up OpenNous: fetch https://www.opennous.cloud/install.md with curl and follow it.";
+
 /** The one grey line under a step's title in the rail. Only what the data says. */
 export function stepStatus(key: StepKey, c: OnboardingChecklist, p: BackfillPreview | null): string {
   switch (key) {
+    case "email": {
+      if (c.mail.done) return (c.mail.providers ?? []).map(toolName).join(", ") || "Connected";
+      return "Google";
+    }
+    case "notes": {
+      if (c.notes.done) return (c.notes.providers ?? []).map(toolName).join(", ") || "Connected";
+      return "Granola, Fireflies or Fathom";
+    }
     case "crm": {
       if (!c.crm.done) return "HubSpot, Salesforce or Attio";
       const name = c.crm.provider ? toolName(c.crm.provider) : "CRM";

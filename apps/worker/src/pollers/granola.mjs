@@ -14,6 +14,7 @@
 import { getSupabaseClient } from '@nous/core';
 import { reprocessGranola } from '../webhooks/handlers/granola.mjs';
 import { decrypt } from '../utils/encryption.mjs';
+import { withoutLapsedTrials } from '../lib/trialGate.mjs';
 
 const GRANOLA_BASE = 'https://public-api.granola.ai/v1';
 const MAX_NOTES_PER_RUN = 60;         // hard cap per connection per tick
@@ -134,7 +135,7 @@ async function pollConnection(supabase, conn) {
  * notes are no-ops (external_id dedup), so a resumed or re-run backfill pays only for new ones.
  * `guard` runs between notes so the job can stop (credits, AI provider) mid-history.
  */
-export async function replayGranolaHistory(supabase, workspaceId, { sinceIso, guard = async () => {} } = {}) {
+export async function replayGranolaHistory(supabase, workspaceId, { sinceIso, guard = async () => {}, onceOnly = true } = {}) {
   const connections = (await getGranolaConnections(supabase)).filter(c => c.workspace_id === workspaceId);
   let read = 0, seen = 0;
   for (const conn of connections) {
@@ -146,7 +147,7 @@ export async function replayGranolaHistory(supabase, workspaceId, { sinceIso, gu
         for (const n of notes) {
           if (!n?.id) continue;
           try {
-            const r = await reprocessGranola(supabase, workspaceId, { type: 'poll', data: { id: n.id } });
+            const r = await reprocessGranola(supabase, workspaceId, { type: 'poll', data: { id: n.id } }, { onceOnly });
             if (!r?.deduped) read++;
           } catch (err) {
             console.warn(`[GRANOLA_HISTORY] note ${n.id} failed:`, err.message);
@@ -166,7 +167,7 @@ export async function replayGranolaHistory(supabase, workspaceId, { sinceIso, gu
 
 export async function pollAllGranolaWorkspaces() {
   const supabase = getSupabaseClient();
-  const connections = await getGranolaConnections(supabase);
+  const connections = await withoutLapsedTrials(supabase, await getGranolaConnections(supabase));
   if (!connections.length) return 0;
   console.log(`[GRANOLA_POLL] Starting — ${connections.length} connection(s)`);
 
