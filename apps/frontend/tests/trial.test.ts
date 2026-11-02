@@ -4,7 +4,7 @@ import { trialBanner, trialEnded, trialWallApplies } from "../src/lib/trial.ts";
 import { planLine } from "../src/lib/usagePlan.ts";
 import { creditsMeter } from "../src/lib/credits.ts";
 
-const SIZES = [{ name: "Starter", credits: 2000, priceUsd: 79 }, { name: "Growth", credits: 4000, priceUsd: 149 }];
+const SIZES = [{ credits: 1000, priceUsd: 49 }, { credits: 2000, priceUsd: 99 }, { credits: 4000, priceUsd: 199 }];
 
 test("the banner counts down, then says the trial ended, and is silent otherwise", () => {
   const at = (trial: unknown) => trialBanner({ aiCredits: { trial } } as never);
@@ -38,10 +38,10 @@ test("the plan line reads a trial as a trial", () => {
 });
 
 test("the plan line names a size, and a grandfathered price reads as itself", () => {
-  assert.equal(planLine({ plan: "api", priceUsd: 79, aiCredits: { used: 0, included: 2000 } }, SIZES).name, "Starter");
-  const old = planLine({ plan: "api", priceUsd: 99, aiCredits: { used: 0, included: 2000 } }, SIZES);
-  assert.equal(old.price, "$99 a month");
-  assert.equal(old.name, "API plan");
+  assert.equal(planLine({ plan: "api", priceUsd: 99, aiCredits: { used: 0, included: 2000 } }, SIZES).name, "2,000 credits");
+  const old = planLine({ plan: "api", priceUsd: 79, aiCredits: { used: 0, included: 2000 } }, SIZES);
+  assert.equal(old.price, "$79 a month");
+  assert.equal(old.name, "2,000 credits");
 });
 
 test("a trial's credits do not reset", () => {

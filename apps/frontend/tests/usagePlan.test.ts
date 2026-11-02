@@ -11,7 +11,7 @@ const TIERS = [{ credits: 960, priceUsd: 49 }, { credits: 2000, priceUsd: 99 }];
 
 test("plan line prices from the bundle the allowance names", () => {
   const l = planLine({ plan: "api", aiCredits: { used: 312, included: 2000 }, subscription: { current_period_end: "2026-11-01" }, allPlans: [{ id: "api", monthlyPriceUsd: 49 }] }, TIERS, NOW);
-  assert.deepEqual(l, { name: "API plan", price: "$99 a month", renews: "Renews 1 Nov", credits: 2000 });
+  assert.deepEqual(l, { name: "2,000 credits", price: "$99 a month", renews: "Renews 1 Nov", credits: 2000 });
 });
 
 test("unknown allowance falls back to the listed price; cancelling reads Ends", () => {

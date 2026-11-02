@@ -377,9 +377,9 @@ automationsRouter.get('/', async (req, res) => {
         available: canMakeArtifact(plan.id, r.artifact),
         needs_plan: canMakeArtifact(plan.id, r.artifact)
           ? null
-          : (r.artifact === 'call_score' ? 'Scale' : 'Pro'),
+          : 'Custom',
       })),
-      // Your own prompt, on every plan. This is what keeps a Starter slot from being empty.
+      // Your own prompt, on every plan. This is what keeps a slot from being empty.
       custom: { available: true, name: 'Custom', blurb: 'Your own instruction, on your own trigger.' },
       destinations: DESTINATIONS,
       triggers: FLOW_TRIGGERS.map(t => ({ ...t, live: LIVE_TRIGGERS.has(t.key) })),

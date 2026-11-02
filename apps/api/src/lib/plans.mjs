@@ -77,7 +77,7 @@ export const LEGACY_PLAN_IDS = {
 /**
  * THE FOUR PLANS (2026-09-23). Everything a customer sees is one of these names:
  *
- *   Starter   $29   self-serve. 1,000 credits, 1 workspace. Bring your own agent.
+ *   Entry     $29   self-serve. 1,000 credits, 1 workspace. Bring your own agent.
  *   Pro       $79   self-serve. 5,000 credits, 5 workspaces. Account + call summaries.
  *   Scale     $199  self-serve. 15,000 credits, unlimited workspaces. Scoring + coaching.
  *   Workspace  —    sales-led. We operate the engine. Unlimited everything, base + seats.
@@ -525,19 +525,29 @@ export function notLiveReason(subscription) {
   if (status === 'canceled' || subscription?.cancel_at_period_end) return 'canceled';
   return 'no_plan';
 }
-// WHAT WE SELL TODAY (GET-1087, 2026-10-31 plans decision; the sizes are proposals until Bennet
-// confirms). One infrastructure plan at three volumes, same features at each. A size whose env
-// is unset is simply not offered. Past the top size is a conversation, not a tier.
-// Mirror of STARTER_SIZES in apps/frontend/src/config/plans.ts.
-export const STARTER_SIZES = [
-  { name: 'Starter', credits: 2_000, priceUsd: 79,  priceEnv: 'STRIPE_STARTER_79_PRICE_ID' },
-  { name: 'Growth',  credits: 4_000, priceUsd: 149, priceEnv: 'STRIPE_STARTER_149_PRICE_ID' },
-  { name: 'Scale',   credits: 8_000, priceUsd: 249, priceEnv: 'STRIPE_STARTER_249_PRICE_ID' },
+// WHAT WE SELL TODAY (GET-1087): credits. Four sizes, same features at each, and a size has no name
+// but its credits. A size whose env is unset is simply not offered. Past the top size is a
+// conversation, not a tier. Mirror of CREDIT_SIZES in apps/frontend/src/config/plans.ts.
+export const CREDIT_SIZES = [
+  { credits: 1_000,  priceUsd: 49,  priceEnv: 'STRIPE_CREDITS_1000_PRICE_ID' },
+  { credits: 2_000,  priceUsd: 99,  priceEnv: 'STRIPE_CREDITS_2000_PRICE_ID' },
+  { credits: 4_000,  priceUsd: 199, priceEnv: 'STRIPE_CREDITS_4000_PRICE_ID' },
+  { credits: 10_000, priceUsd: 499, priceEnv: 'STRIPE_CREDITS_10000_PRICE_ID' },
+];
+
+/** How a size reads to a customer, everywhere: "2,000 credits, $99". */
+export const sizeLabel = (size) => `${size.credits.toLocaleString('en-US')} credits, $${size.priceUsd}`;
+
+// Off sale, kept so anyone on these prices keeps what they pay for (tierForPriceId).
+const RETIRED_SIZES = [
+  { credits: 2_000, priceUsd: 79,  priceEnv: 'STRIPE_STARTER_79_PRICE_ID' },
+  { credits: 4_000, priceUsd: 149, priceEnv: 'STRIPE_STARTER_149_PRICE_ID' },
+  { credits: 8_000, priceUsd: 249, priceEnv: 'STRIPE_STARTER_249_PRICE_ID' },
 ];
 
 /** The sizes on sale here: the ones with a Stripe price configured. */
 export function offeredSizes() {
-  return STARTER_SIZES.filter((s) => !!process.env[s.priceEnv]);
+  return CREDIT_SIZES.filter((s) => !!process.env[s.priceEnv]);
 }
 
 /** The size a checkout buys: the one named by `credits`, the smallest when none is named. */
@@ -606,7 +616,7 @@ export function tierForCredits(credits) {
 /** The self-serve tier a Stripe price id belongs to (null if not one of ours). */
 export function tierForPriceId(priceId) {
   if (!priceId) return null;
-  return [...STARTER_SIZES, ...SELF_SERVE_TIERS].find((t) => process.env[t.priceEnv] === priceId) || null;
+  return [...CREDIT_SIZES, ...RETIRED_SIZES, ...SELF_SERVE_TIERS].find((t) => process.env[t.priceEnv] === priceId) || null;
 }
 
 export function getPlanFromSubscription(subscription) {

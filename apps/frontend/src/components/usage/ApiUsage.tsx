@@ -30,7 +30,7 @@ export type ApiUsageState = PlanState & {
   }) | null;
   stripe?: { customer: boolean; subscription: boolean } | null;
   /** The sizes on sale (GET-1087): one with no Stripe price configured is not offered. */
-  sizes?: { name: string; credits: number; priceUsd: number }[];
+  sizes?: { credits: number; priceUsd: number }[];
   planName?: string;
   /** The Custom plan's quote on file: price, credits and what it bought. Null on the API plan. */
   customPlan?: { priceUsd: number | null; credits: number | null; basics: string[]; custom: string[]; customLabel?: string } | null;
@@ -218,7 +218,7 @@ export function ApiUsage({
                 current ? "text-foreground" : "text-ink-2 hover:bg-hover hover:text-foreground",
                 "disabled:cursor-default",
               )}>
-              <span>{b.name} · {num(b.credits)}</span>
+              <span>{num(b.credits)} credits</span>
               <span className="text-muted-foreground">{busy(b.credits) ? "…" : current ? "Current" : `$${b.priceUsd}`}</span>
             </button>
           );

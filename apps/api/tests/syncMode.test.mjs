@@ -134,13 +134,13 @@ test('after a sync the estimate is what it filed; before one it asks the source'
 
 test('the size plan-fit recommends is a size /subscribe sells', async () => {
   const { recommendedSize, sizeForPurchase } = await import('../src/lib/plans.mjs');
-  process.env.STRIPE_STARTER_79_PRICE_ID = 'price_a'; process.env.STRIPE_STARTER_149_PRICE_ID = 'price_b'; process.env.STRIPE_STARTER_249_PRICE_ID = 'price_c';
+  process.env.STRIPE_CREDITS_1000_PRICE_ID = 'price_a'; process.env.STRIPE_CREDITS_4000_PRICE_ID = 'price_b'; process.env.STRIPE_CREDITS_10000_PRICE_ID = 'price_c';
   try {
-    assert.equal(sizeForPurchase(recommendedSize(3000)).priceEnv, 'STRIPE_STARTER_149_PRICE_ID');
-    assert.equal(sizeForPurchase(recommendedSize(100)).priceEnv, 'STRIPE_STARTER_79_PRICE_ID');
+    assert.equal(sizeForPurchase(recommendedSize(3000)).priceEnv, 'STRIPE_CREDITS_4000_PRICE_ID');
+    assert.equal(sizeForPurchase(recommendedSize(100)).priceEnv, 'STRIPE_CREDITS_1000_PRICE_ID');
     assert.equal(sizeForPurchase(3333), null, 'a size not on sale is refused, never swapped');
   } finally {
-    delete process.env.STRIPE_STARTER_79_PRICE_ID; delete process.env.STRIPE_STARTER_149_PRICE_ID; delete process.env.STRIPE_STARTER_249_PRICE_ID;
+    delete process.env.STRIPE_CREDITS_1000_PRICE_ID; delete process.env.STRIPE_CREDITS_4000_PRICE_ID; delete process.env.STRIPE_CREDITS_10000_PRICE_ID;
   }
 });
 

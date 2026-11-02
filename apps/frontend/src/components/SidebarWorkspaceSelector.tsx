@@ -234,7 +234,7 @@ export function SidebarWorkspaceSelector({ collapsed = false }: SidebarWorkspace
           return;
         }
         // Flat-plan workspace cap hit — show the plan's friendly message and point at
-        // Billing, not the raw error code. Growth includes more workspaces than Starter.
+        // Billing, not the raw error code. Custom includes more workspaces.
         if (data.error === 'workspace_limit_reached') {
           setCreateDialogOpen(false);
           const limit = data.limit ?? 1;

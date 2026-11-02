@@ -24,7 +24,7 @@ import {
   getTeamAiCredits,
   isSelfHosted,
   offeredSizes,
-  STARTER_SIZES,
+  CREDIT_SIZES,
 } from '../../lib/plans.mjs';
 
 export const billingRouter = Router();
@@ -95,7 +95,7 @@ billingRouter.get('/state', verifySupabaseAuth, async (req, res) => {
       // What this subscription actually pays a month, so a grandfathered price reads as itself.
       priceUsd: plan.monthlyPriceUsd,
       // The sizes on sale here. One with no Stripe price configured is not offered (GET-1087).
-      sizes: offeredSizes().map(({ name, credits, priceUsd }) => ({ name, credits, priceUsd })),
+      sizes: offeredSizes().map(({ credits, priceUsd }) => ({ credits, priceUsd })),
       // What this account's Custom plan actually is: the price agreed, the credits it buys and
       // the integrations built for them. Null on every other plan, and on a Custom account with
       // no quote on file yet — the page then says "quoted" rather than inventing a number.
@@ -183,8 +183,8 @@ billingRouter.get('/state', verifySupabaseAuth, async (req, res) => {
         id: p.id,
         name: p.name,
         // What we sell today, not the floor a grandfathered row falls back to (GET-1087).
-        monthlyPriceUsd: p.id === 'api' ? STARTER_SIZES[0].priceUsd : p.monthlyPriceUsd,
-        aiCreditsPerMonth: (p.id === 'api' ? STARTER_SIZES[0].credits : p.aiCreditsPerMonth) ?? null,
+        monthlyPriceUsd: p.id === 'api' ? CREDIT_SIZES[0].priceUsd : p.monthlyPriceUsd,
+        aiCreditsPerMonth: (p.id === 'api' ? CREDIT_SIZES[0].credits : p.aiCreditsPerMonth) ?? null,
         activeAccountsLimit: p.activeAccountsLimit,
         recordsLimit: p.recordsLimit,
         enrichmentsPerMonth: p.enrichmentsPerMonth,

@@ -151,9 +151,9 @@ test("the pop-up is due once, when the sync is done", () => {
 });
 
 test("plan fit is one line, names the size, and above the sizes it's Talk to us", () => {
-  const sizes = [{ credits: 2000, price_usd: 79 }, { credits: 4000, price_usd: 149 }, { credits: 8000, price_usd: 249 }];
-  assert.deepEqual(planFitLine({ monthly_credits: 3200, sizes, recommended_credits: 4000 }),
-    { lead: "About 3,200 credits a month.", rec: "Recommended: Growth, $149.", credits: 4000 });
+  const sizes = [{ credits: 1000, priceUsd: 49 }, { credits: 2000, priceUsd: 99 }, { credits: 4000, priceUsd: 199 }, { credits: 10000, priceUsd: 499 }];
+  assert.deepEqual(planFitLine({ monthly_credits: 1600, sizes, recommended_credits: 2000 }),
+    { lead: "About 1,600 credits a month.", rec: "Recommended: 2,000 credits, $99.", credits: 2000 });
   assert.deepEqual(planFitLine({ monthly_credits: 12000, sizes, recommended_credits: "custom" }),
     { lead: "About 12,000 credits a month.", rec: "Talk to us", credits: null });
   assert.equal(planFitLine(null), null);

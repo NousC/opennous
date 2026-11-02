@@ -4,7 +4,7 @@
 
 import { day, num } from "./format.ts";
 
-export type Tier = { name?: string; credits: number; priceUsd: number };
+export type Tier = { credits: number; priceUsd: number };
 
 /** The slice of GET /api/billing/state this page reads. */
 export type PlanState = {
@@ -24,7 +24,7 @@ export type PlanState = {
 };
 
 export type PlanLine = {
-  /** "Starter", "Trial", or "API plan" for a size we no longer sell. */
+  /** "2,000 credits", "Trial", or "API plan" when there is no allowance. */
   name: string;
   /** "$49 a month", "From $49 a month" before a plan is chosen, null when nothing says. */
   price: string | null;
@@ -58,7 +58,8 @@ export function planLine(state: PlanState, tiers: Tier[], now: number | Date = D
   const end = state.subscription?.current_period_end ?? null;
   const d = end && !c?.needsPlan ? day(end, now) : "";
   const renews = d ? `${state.subscription?.cancel_at_period_end ? "Ends" : "Renews"} ${d}` : null;
-  return { name: (!c?.needsPlan && tier?.name) || "API plan", price, renews, credits: c?.needsPlan ? null : included };
+  // A size is its credits, on sale or not: someone on a retired price reads the same way.
+  return { name: !c?.needsPlan && included != null ? `${num(included)} credits` : "API plan", price, renews, credits: c?.needsPlan ? null : included };
 }
 
 /** A meter's fill, 0–100. */

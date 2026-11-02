@@ -146,14 +146,13 @@ export const SKIP_LOSS: Partial<Record<StepKey, string>> = {
 /** GET /api/billing/plan-fit (GET-1087). */
 export type PlanFit = {
   monthly_credits: number;
-  sizes: { credits: number; name?: string; price_usd?: number; priceUsd?: number; usd?: number; price?: number }[];
+  sizes: { credits: number; price_usd?: number; priceUsd?: number; usd?: number; price?: number }[];
   recommended_credits: number | "custom";
   basis?: string;
   months_measured?: number;
 };
-const SIZE_NAME: Record<number, string> = { 2000: "Starter", 4000: "Growth", 8000: "Scale" };
 
-/** One line under the counts: "About 3,200 credits a month. Recommended: Growth, $149." Null when
+/** One line under the counts: "About 1,600 credits a month. Recommended: 2,000 credits, $99." Null when
  *  there is nothing to say. `credits` is what the upgrade passes; a custom size is Talk to us. */
 export function planFitLine(fit: PlanFit | null | undefined): { lead: string; rec: string; credits: number | null } | null {
   if (!fit || !fit.monthly_credits) return null;
@@ -161,9 +160,8 @@ export function planFitLine(fit: PlanFit | null | undefined): { lead: string; re
   if (fit.recommended_credits === "custom") return { lead, rec: "Talk to us", credits: null };
   const size = fit.sizes?.find((s) => s.credits === fit.recommended_credits);
   const price = size?.price_usd ?? size?.priceUsd ?? size?.usd ?? size?.price;
-  const name = size?.name ?? SIZE_NAME[fit.recommended_credits];
-  if (!name || price == null) return null;
-  return { lead, rec: `Recommended: ${name}, $${num(price)}.`, credits: fit.recommended_credits };
+  if (price == null) return null;
+  return { lead, rec: `Recommended: ${num(fit.recommended_credits)} credits, $${num(price)}.`, credits: fit.recommended_credits };
 }
 
 export const SYNC_DAYS = [90, 180, 365] as const;

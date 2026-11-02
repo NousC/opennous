@@ -13,7 +13,7 @@ import { upsellCopy } from "@/config/upsell";
 export function FeatureUpgrade({ feature }: { feature: keyof PlanFeatures }) {
   const { name } = upsellCopy(feature);
 
-  // Self-serve is one plan at three volumes, and nothing above it is sold from here (GET-1087):
+  // Self-serve is one plan at four volumes, and nothing above it is sold from here (GET-1087):
   // this names no other plan and offers no upgrade, only a conversation.
   return (
     <div className="flex h-full items-center justify-center bg-background px-6">

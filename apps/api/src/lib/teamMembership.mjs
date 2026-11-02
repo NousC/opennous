@@ -117,7 +117,7 @@ export async function createTeamInvitation(supabase, {
     return {
       ok: false, status: 402, code: 'invite_requires_team_plan',
       current_plan: teamPlan.id,
-      message: 'On this plan teammates join over the CLI. Share the "Invite by link" command, or upgrade to Growth to invite members into the app.',
+      message: 'On this plan teammates join over the CLI. Share the "Invite by link" command, or talk to us to invite members into the app.',
       upgrade_url: '/settings?section=billing',
     };
   }
@@ -135,7 +135,7 @@ export async function createTeamInvitation(supabase, {
         ok: false, status: 402, code: 'seat_limit_reached',
         seatLimit,
         message: seatLimit === 1
-          ? 'Starter is a single-operator plan. Upgrade to Growth to invite teammates.'
+          ? 'This plan is for one operator. Talk to us to invite teammates.'
           : `Your plan includes ${seatLimit} members. Upgrade to invite more.`,
       };
     }

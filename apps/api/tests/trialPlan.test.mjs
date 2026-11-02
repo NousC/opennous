@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   planIsLive, needsPlan, notLiveReason, planMayBackfill, trialState, getPlanFromSubscription, getTeamAiCredits,
-  STARTER_SIZES, offeredSizes, sizeForPurchase, nextSizeAfter, recommendedSize, tierForPriceId,
+  CREDIT_SIZES, sizeLabel, offeredSizes, sizeForPurchase, nextSizeAfter, recommendedSize, tierForPriceId,
   planIdFromPriceId, TRIAL_CREDITS, isSelfHosted,
 } from '../src/lib/plans.mjs';
 import { newFreeSubscription } from '../src/lib/auth.mjs';
@@ -11,7 +11,7 @@ import { HAS_CLOUD } from '../src/lib/cloud.mjs';
 
 const D = 86_400_000;
 const trial = (ms) => ({ plan_id: 'api', status: 'trialing', trial_ends_at: new Date(Date.now() + ms).toISOString() });
-const ENVS = STARTER_SIZES.map((s) => s.priceEnv);
+const ENVS = [...CREDIT_SIZES.map((s) => s.priceEnv), 'STRIPE_STARTER_79_PRICE_ID', 'STRIPE_STARTER_149_PRICE_ID', 'STRIPE_STARTER_249_PRICE_ID'];
 const setEnvs = (on = ENVS) => { for (const e of ENVS) delete process.env[e]; for (const e of on) process.env[e] = `price_${e}`; };
 
 test('a new signup is a 14-day trial with no Stripe subscription', () => {
@@ -67,32 +67,35 @@ test('nothing that is not a no-card trial changes', () => {
 });
 
 test('the sizes, and only the ones with a price configured', () => {
-  assert.deepEqual(STARTER_SIZES.map((s) => [s.name, s.credits, s.priceUsd]),
-    [['Starter', 2000, 79], ['Growth', 4000, 149], ['Scale', 8000, 249]]);
+  assert.deepEqual(CREDIT_SIZES.map((s) => [s.credits, s.priceUsd]), [[1000, 49], [2000, 99], [4000, 199], [10000, 499]]);
+  assert.equal(CREDIT_SIZES.some((s) => 'name' in s), false, 'a size is its credits');
+  assert.equal(sizeLabel(CREDIT_SIZES[1]), '2,000 credits, $99');
   setEnvs([]);
   assert.deepEqual(offeredSizes(), []);
   assert.equal(sizeForPurchase(undefined), null);
-  setEnvs(['STRIPE_STARTER_79_PRICE_ID', 'STRIPE_STARTER_249_PRICE_ID']);
-  assert.deepEqual(offeredSizes().map((s) => s.credits), [2000, 8000]);
-  assert.equal(sizeForPurchase(undefined).credits, 2000, 'no credits buys the smallest');
-  assert.equal(sizeForPurchase('8000').credits, 8000);
-  assert.equal(sizeForPurchase(4000), null, 'not configured is not offered');
+  setEnvs(['STRIPE_CREDITS_1000_PRICE_ID', 'STRIPE_CREDITS_4000_PRICE_ID', 'STRIPE_STARTER_79_PRICE_ID']);
+  assert.deepEqual(offeredSizes().map((s) => s.credits), [1000, 4000], 'a retired price is never offered');
+  assert.equal(sizeForPurchase(undefined).credits, 1000, 'no credits buys the smallest');
+  assert.equal(sizeForPurchase('4000').credits, 4000);
+  assert.equal(sizeForPurchase(2000), null, 'not configured is not offered');
   assert.equal(sizeForPurchase(960), null, 'a retired size is not sold');
-  assert.equal(nextSizeAfter(2000).credits, 8000, 'skips a size that is not on sale');
+  assert.equal(sizeForPurchase(8000), null);
+  assert.equal(nextSizeAfter(1000).credits, 4000, 'skips a size that is not on sale');
   setEnvs();
-  assert.equal(nextSizeAfter(2000).credits, 4000);
-  assert.equal(nextSizeAfter(8000), null, 'past the top is a conversation');
-  assert.equal(nextSizeAfter(960).credits, 2000, 'a grandfathered allowance moves onto the new sizes');
+  assert.equal(nextSizeAfter(1000).credits, 2000);
+  assert.equal(nextSizeAfter(10000), null, 'past the top is a conversation');
+  assert.equal(nextSizeAfter(8000).credits, 10000, 'a retired allowance moves onto the new sizes');
+  assert.equal(nextSizeAfter(960).credits, 1000);
 });
 
 test('recommended: the smallest covering the month with a fifth of room, custom past the top', () => {
   setEnvs();
-  assert.equal(recommendedSize(0), 2000);
+  assert.equal(recommendedSize(0), 1000);
+  assert.equal(recommendedSize(800), 1000);
   assert.equal(recommendedSize(1600), 2000);
   assert.equal(recommendedSize(1700), 4000);
-  assert.equal(recommendedSize(6600), 8000);
-  assert.equal(recommendedSize(6700), 'custom');
-  assert.equal(recommendedSize(9000), 'custom');
+  assert.equal(recommendedSize(8300), 10000);
+  assert.equal(recommendedSize(8400), 'custom');
   setEnvs([]);
   assert.equal(recommendedSize(100), null);
   setEnvs();
@@ -105,6 +108,8 @@ test('live subscribers keep what they pay for', () => {
   assert.equal(old.monthlyPriceUsd, 99);
   assert.equal(old.aiCreditsPerMonth, 2000);
   assert.equal(tierForPriceId('price_STRIPE_STARTER_149_PRICE_ID').credits, 4000);
+  assert.equal(tierForPriceId('price_STRIPE_STARTER_249_PRICE_ID').credits, 8000);
+  assert.equal(tierForPriceId('price_STRIPE_CREDITS_10000_PRICE_ID').priceUsd, 499);
   assert.equal(planIdFromPriceId('price_STRIPE_STARTER_249_PRICE_ID'), 'api');
   assert.equal(planIdFromPriceId('price_old_99'), 'api');
   const fresh = getPlanFromSubscription({ plan_id: 'api', status: 'active', stripe_subscription_id: 's', stripe_price_id: 'price_STRIPE_STARTER_79_PRICE_ID' });
@@ -134,7 +139,7 @@ test('a trial stops at 500 and points at the smallest size; an ended one says it
   const atCap = await getTeamAiCredits(meterDb(250), 'team-trial-1', trial(3 * D));
   assert.equal(atCap.state, 'restricted');
   assert.equal(atCap.needsPlan, false);
-  assert.equal(atCap.nextTier.credits, 2000);
+  assert.equal(atCap.nextTier.credits, 1000);
   assert.equal(atCap.trial.ended, false);
   const under = await getTeamAiCredits(meterDb(10), 'team-trial-2', trial(3 * D));
   assert.equal(under.state, 'ok');
@@ -142,7 +147,7 @@ test('a trial stops at 500 and points at the smallest size; an ended one says it
   const ended = await getTeamAiCredits(meterDb(0), 'team-trial-3', trial(-D));
   assert.equal(ended.state, 'restricted');
   assert.equal(ended.notLiveReason, 'trial_ended');
-  assert.equal(ended.nextTier.credits, 2000);
+  assert.equal(ended.nextTier.credits, 1000);
 });
 
 test('the stop on a paid plan names the next size up', async (t) => {

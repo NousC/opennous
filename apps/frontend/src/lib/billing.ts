@@ -26,7 +26,7 @@ export type BillingState = {
   /** What this subscription pays a month. */
   priceUsd?: number | null;
   /** The sizes on sale here (GET-1087). A size with no Stripe price is not listed. */
-  sizes?: { name: string; credits: number; priceUsd: number }[];
+  sizes?: { credits: number; priceUsd: number }[];
   subscription?: {
     status: string;
     current_period_start?: string | null;

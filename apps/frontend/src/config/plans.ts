@@ -209,20 +209,21 @@ export const SELF_HOST_BLOCKED: (keyof PlanFeatures)[] = [
  */
 export const SELF_HOST_EXTRA: (keyof PlanFeatures)[] = ['adoption', 'insights'];
 
-// What we sell (GET-1087): one infrastructure plan at three volumes, same features at each.
-// Keep in step with STARTER_SIZES in apps/api/src/lib/plans.mjs. The API is the source of truth:
+// What we sell (GET-1087): credits. Four sizes, same features at each, named only by their credits.
+// Keep in step with CREDIT_SIZES in apps/api/src/lib/plans.mjs. The API is the source of truth:
 // GET /api/billing/state lists the sizes on sale, and tierForPriceId keeps retired prices alive
 // for the people still paying them. This copy is what the UI prices from before that answers.
-export const STARTER_SIZES: { name: string; credits: number; priceUsd: number }[] = [
-  { name: 'Starter', credits: 2_000, priceUsd: 79 },
-  { name: 'Growth',  credits: 4_000, priceUsd: 149 },
-  { name: 'Scale',   credits: 8_000, priceUsd: 249 },
+export const CREDIT_SIZES: { credits: number; priceUsd: number }[] = [
+  { credits: 1_000,  priceUsd: 49 },
+  { credits: 2_000,  priceUsd: 99 },
+  { credits: 4_000,  priceUsd: 199 },
+  { credits: 10_000, priceUsd: 499 },
 ];
 /** The old name of the list, still read by the screens that pick a size. */
-export const SELF_SERVE_TIERS = STARTER_SIZES;
+export const SELF_SERVE_TIERS = CREDIT_SIZES;
 
 export const PLANS: Record<PlanId, Plan> = {
-  // Self-serve — $79 to $249, one plan at three volumes (STARTER_SIZES). Bring your own
+  // Self-serve — $49 to $499, one plan at four volumes (CREDIT_SIZES). Bring your own
   // agent: we read the tools and resolve the graph, the operator works the result in their own
   // runner. No in-app agent, no insights, tasks or automations — those are the app doing the
   // work for you, which is Custom. The numbers here are the ENTRY bundle; the subscribed tier
@@ -230,8 +231,8 @@ export const PLANS: Record<PlanId, Plan> = {
   api: {
     id: 'api',
     name: 'Nous',
-    monthlyPriceUsd: 79,
-    aiCreditsPerMonth: 2_000,
+    monthlyPriceUsd: 49,
+    aiCreditsPerMonth: 1_000,
     activeAccountsLimit: 10_000,
     includedOpsPerMonth: null,
     recordsLimit: null,
@@ -239,7 +240,7 @@ export const PLANS: Record<PlanId, Plan> = {
     enrichmentsPerMonth: 0,
     workspaceLimit: 5,
     memberLimit: null,
-    stripePriceEnv: 'STRIPE_STARTER_79_PRICE_ID',
+    stripePriceEnv: 'STRIPE_CREDITS_1000_PRICE_ID',
     // No RevBoxes on the API plan (GET-908); mirrors apps/api/src/lib/plans.mjs.
     features: { ...GRAPH, ...TEAM_OFF, ...API_TIER_OFF, insights: true, supportTier: 'priority' },
   },
