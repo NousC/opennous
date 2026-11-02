@@ -25,6 +25,8 @@ import {
 } from "./world.mjs";
 
 const PORT = Number(process.env.PORT) || 3000;
+const PREVIEW_ASSIGNED = [];
+const PREVIEW_CHANGES = [];
 
 // Mutable copies so PATCHes stick for the session (resolve a flag, close a task).
 // Contacts are mutated IN PLACE on the world's array so companyDetail()/
@@ -197,6 +199,40 @@ const routes = [
   ["GET", /^\/api\/onboarding\/checklist$/, () => ({ crm: { done: true, provider: "hubspot", imported: true, accounts: 20 } })],
   ["GET", /^\/api\/usage$/, () => USAGE],
   ["GET", /^\/api\/usage\/ops-breakdown$/, () => OPS_BREAKDOWN],
+  // Settings > Team (GET-1120): the agents behind each person, by the fixture's user ids.
+  // Assign (GET-1122), in memory: what the person page and the Team log show.
+  ["GET", /^\/v2\/assignments$/, () => ({ assignments: PREVIEW_ASSIGNED.filter(a => a.status === "active") })],
+  ["POST", /^\/v2\/assignments$/, async (_m, _q, req) => {
+    const b = await readBody(req);
+    const a = { id: `a${PREVIEW_ASSIGNED.length + 1}`, status: "active", audience: b.target_user_id ? "One person" : "Everyone", target_user_id: b.target_user_id ?? null, ...b };
+    PREVIEW_ASSIGNED.unshift(a);
+    PREVIEW_CHANGES.unshift({ id: `c${PREVIEW_CHANGES.length + 1}`, action: `${a.kind}_assigned`, subject: a.title, audience: a.audience, assignment_id: a.id, rolled_back_at: null, created_at: new Date().toISOString() });
+    return a;
+  }],
+  ["POST", /^\/v2\/assignments\/([^/]+)\/remove$/, (m) => { const a = PREVIEW_ASSIGNED.find(x => x.id === m[1]); if (a) a.status = "removed"; return a ?? {}; }],
+  ["GET", /^\/v2\/changes$/, () => ({ changes: PREVIEW_CHANGES })],
+  ["POST", /^\/v2\/changes\/([^/]+)\/rollback$/, (m) => { const c = PREVIEW_CHANGES.find(x => x.id === m[1]); if (c) { c.rolled_back_at = new Date().toISOString(); const a = PREVIEW_ASSIGNED.find(x => x.id === c.assignment_id); if (a) a.status = "removed"; } return {}; }],
+  ["GET", /^\/api\/usage\/team\/[^/]+$/, () => {
+    const at = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+    const about = (id, name) => ({ id, type: "company", name });
+    return {
+      last_active_at: at(2), calls_7d: 81, calls_30d: 312,
+      agents: [{ name: "claude-code", last_at: at(2) }, { name: "grok", last_at: at(24) }],
+      tools: [{ route: "POST /v2/context", calls: 140 }, { route: "GET /v2/attention", calls: 71 }, { route: "POST /v2/record", calls: 52 }, { route: "GET /v2/deals", calls: 49 }],
+      accounts: [{ ...about("c1", "Northwind"), at: at(2) }, { ...about("c2", "Brightlist"), at: at(26) }, { ...about("c3", "Halcyon"), at: at(50) }],
+      calls: [
+        { id: "1", at: at(2), route: "POST /v2/context", target: "c1", about: about("c1", "Northwind"), status: 200, client: "claude-code/2.1.0" },
+        { id: "2", at: at(3), route: "POST /v2/record", target: "c1", about: about("c1", "Northwind"), status: 200, client: "claude-code/2.1.0" },
+        { id: "3", at: at(26), route: "GET /v2/attention", target: null, about: null, status: 200, client: "grok/1.0" },
+      ],
+      documents: [{ id: "d1", title: "Doctrine", folder: "Doctrine", shared: "workspace", updated_at: at(3) }, { id: "d2", title: "Q1 push", folder: "Initiatives", shared: "operators", updated_at: at(30) }],
+      keys: [{ id: "k1", name: "Claude Code", created_at: at(400), revoked: false, expires_at: null }],
+    };
+  }],
+  ["GET", /^\/api\/usage\/team$/, () => ({ members: {
+    u1: { last_active_at: new Date(Date.now() - 2 * 3600e3).toISOString(), calls_7d: 81, agents: [{ name: "claude-code", last_at: new Date(Date.now() - 2 * 3600e3).toISOString() }, { name: "grok", last_at: new Date(Date.now() - 86400e3).toISOString() }] },
+    u2: { last_active_at: new Date(Date.now() - 3 * 86400e3).toISOString(), calls_7d: 12, agents: [{ name: "cursor", last_at: new Date(Date.now() - 3 * 86400e3).toISOString() }] },
+  } })],
   ["GET", /^\/api\/billing\/state$/, () => BILLING_STATE],
   ["GET", /^\/api\/workspaces$/, () => ({ workspaces: [{ id: WS, name: "Nous", icon: null }] })],
   ["GET", /^\/api\/teams\/[^/]+\/members$/, () => ({ members: USERS.map(u => ({ user_id: u.id, name: u.name, email: u.email, role: u.role, avatar: null })) })],

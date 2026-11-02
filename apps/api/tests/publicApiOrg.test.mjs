@@ -373,6 +373,14 @@ test('icp: POST /v2/icp/closed-deals is the record_closed_deals handler', async 
   assert.equal(r.body.error, 'need_more_deals');
 });
 
+test('closed deals train the ICP: a member key is refused on both routes (GET-1121)', async () => {
+  for (const path of ['/v2/icp/closed-deals', '/v2/workspace/closed-deals']) {
+    const r = await call('POST', path, { won: ['a.com'], lost: [] }, 'member');
+    assert.equal(r.status, 403, path);
+    assert.equal(r.body.error, 'admin_key_required', path);
+  }
+});
+
 // ── Usage ────────────────────────────────────────────────────────────────────
 
 function seedOps() {

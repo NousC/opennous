@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseClient } from '@nous/core';
+import { requireAdminKey } from '../../lib/v2Query.mjs';
 import { writeIcp } from '../../lib/icp.mjs';
 import { markWorkspaceActivated } from '../../lib/onboardingState.mjs';
 import { learnedIcpModel } from '../../lib/icpScorer.mjs';
@@ -80,7 +81,7 @@ export async function writeFoundation(supabase, workspaceId, kind, body) {
 
 // POST /v2/foundations/:kind — sync a (Claude Code) file up into the graph.
 // Body: { body_md, file_path?, title?, content_hash? }. Bumps version, stamps synced_at.
-foundationsV2Router.post('/:kind', async (req, res) => {
+foundationsV2Router.post('/:kind', requireAdminKey, async (req, res) => {
   try {
     const supabase = getSupabaseClient();
     const { kind } = req.params;

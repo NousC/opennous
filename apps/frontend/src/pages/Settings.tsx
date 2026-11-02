@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, Suspense, type ChangeEvent, type ReactNode } from "react";
-import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation, Link } from "react-router-dom";
 import {
   Trash2, Copy, Check, Upload, ChevronDown, MoreHorizontal, Lock, Globe,
 } from "lucide-react";
@@ -25,7 +25,7 @@ import Integrations from "@/pages/Integrations";
 import Webhooks from "@/pages/Webhooks";
 import { AutomationsPanel } from "@/components/AutomationsPanel";
 import { RepositoriesPane } from "@/components/settings/RepoPane";
-import { ContextRepoBar } from "@/components/knowledge/ContextRepoBar";
+import { TeamChanges, TeamMember, agentLabel } from "@/components/settings/TeamMember";
 import MarketFocus from "@/pages/MarketFocus";
 import { ApiActivity } from "@/components/settings/ApiActivity";
 import { activeTeam } from "@/lib/activeTeam";
@@ -232,6 +232,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
   const CloudSection = cloud.settings?.sections?.[section];
   const goto = (id: SettingsTab) => navigate(`${basePath}?section=${id}`);
   const activeItem = inScope.find(s => s.id === section);
+  const person = isWorkspaceAdmin ? searchParams.get("person") : null;
 
   // A row that is its own page (integrations, webhooks, keys, billing — on every plan since
   // GET-660) is never rendered here: an old /settings?section=… link goes to that page with its
@@ -455,6 +456,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
     URL.revokeObjectURL(url);
   };
 
+  const [teamActivity, setTeamActivity] = useState<Record<string, { last_active_at: string | null; calls_7d: number; agents: { name: string; last_at: string }[] }>>({});
   const loadTeam = async () => {
     if (!teamId || !token) return;
     setTeamLoading(true);
@@ -465,6 +467,11 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
         fetch(`${apiUrl}/api/teams/${teamId}/invitations`, { headers: h }),
       ]);
       if (mRes.ok) setMembers((await mRes.json()).members ?? []);
+      // Each person's agents and last activity (GET-1120): admins only, and the table reads fine without it.
+      if (workspaceId && isWorkspaceAdmin) {
+        const aRes = await fetch(`${apiUrl}/api/usage/team?workspaceId=${workspaceId}`, { headers: h });
+        if (aRes.ok) setTeamActivity((await aRes.json()).members ?? {});
+      }
       if (iRes.ok) setInvitations((await iRes.json()).invitations ?? []);
       // Each member's assigned role(s) — the founder edits these below.
       if (workspaceId) {
@@ -498,6 +505,9 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
     // and stays true across the ~30s rotations, so this never re-fires on rotation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, workspaceId, teamId, !!token]);
+
+  const personRow = person ? members.find((x) => (x.user_id ?? x.id) === person) : undefined;
+  const personName: string = personRow?.name ?? personRow?.users?.name ?? personRow?.user?.name ?? "";
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [avatarSaving, setAvatarSaving] = useState(false);
@@ -768,7 +778,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
       {/* ─── RIGHT — the active section, in the same white panel as every app page ─── */}
       <main className={embedded ? "min-w-0 flex-1 overflow-y-auto" : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-2 pt-0 md:pl-0 md:pt-2"}>
        <div className={embedded ? "" : "flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/[0.06] bg-background shadow-card dark:border-white/[0.06]"}>
-        {!embedded && <PageTopBar crumbs={[{ label: activeItem?.label ?? "Settings" }]} />}
+        {!embedded && <PageTopBar crumbs={section === "members" && person ? [{ label: "Team", href: `${basePath}?section=members` }, { label: personName || "Person" }] : [{ label: activeItem?.label ?? "Settings" }]} />}
         <div className={embedded ? "" : "min-h-0 flex-1 overflow-y-auto"}>
 
           {/* ── Account (GET-636, board SettingsAccount): profile, preferences, privacy. ── */}
@@ -1031,8 +1041,10 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           )}
 
           {/* ── Members (GET-637, board SettingsMembers) ── */}
-          {section === "members" && (
-            <SectionShell title="Members" description="Who works in this workspace.">
+          {section === "members" && person && <TeamMember workspaceId={workspaceId} userId={person} name={personName} email={personRow?.email ?? personRow?.users?.email ?? personRow?.user?.email ?? ""}
+            avatar={personRow?.profile_picture_url ?? personRow?.users?.profile_picture_url ?? personRow?.user?.profile_picture_url} role={personRow ? roleLabel(personRow.role) : ""} />}
+          {section === "members" && !person && (
+            <SectionShell title="Team" description="Who works here and what their agents are doing." wide>
               {/* Invite a teammate: set their name, access and GTM role now and hand them ONE
                   command. When they run `nous join` they are already scoped to their role. */}
               {isWorkspaceAdmin && (
@@ -1080,12 +1092,15 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
                 {teamLoading && members.length === 0 ? (
                   <div className="px-2 py-2 text-[13px] text-muted-foreground/70">Loading…</div>
                 ) : (
-                  <table className="w-full min-w-[560px] border-collapse text-[13px]">
+                  <table className="w-full min-w-[820px] border-collapse text-[13px]">
                     <thead>
                       <tr className="text-left text-[11.5px] text-muted-foreground/70">
                         <th className="h-8 px-2 font-normal">Name</th>
                         <th className="h-8 px-2 font-normal">Access</th>
                         <th className="h-8 px-2 font-normal">GTM role</th>
+                        {isWorkspaceAdmin && <th className="h-8 px-2 font-normal">Agents</th>}
+                        {isWorkspaceAdmin && <th className="h-8 px-2 font-normal">Last active</th>}
+                        {isWorkspaceAdmin && <th className="h-8 px-2 text-right font-normal">Calls, 7 days</th>}
                         <th className="h-8 w-12 px-2"><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
@@ -1108,9 +1123,9 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
                                   ? <img src={avatar} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
                                   : <PersonAvatar person={{ id: String(uid), name: mName === "—" ? mEmail : mName }} size={24} />}
                                 <span className="flex min-w-0 items-baseline gap-2">
-                                  <span className="truncate text-foreground">
-                                    {mName}{isSelf && <span className="ml-1 text-muted-foreground/60">(you)</span>}
-                                  </span>
+                                  {isWorkspaceAdmin
+                                    ? <Link to={`${basePath}?section=members&person=${uid}`} className="truncate text-foreground hover:underline">{mName}{isSelf && <span className="ml-1 text-muted-foreground/60">(you)</span>}</Link>
+                                    : <span className="truncate text-foreground">{mName}{isSelf && <span className="ml-1 text-muted-foreground/60">(you)</span>}</span>}
                                   <span className="truncate text-[11.5px] text-muted-foreground/70">{mEmail}</span>
                                 </span>
                               </span>
@@ -1140,6 +1155,9 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
                               {/* GTM role(s): they drive this person's Reporting tabs and Coaching. */}
                               <MemberRoleEditor roles={memberRoles[uid] ?? []} onChange={(r) => saveMemberRoles(uid, r)} disabled={!isWorkspaceAdmin} />
                             </td>
+                            {isWorkspaceAdmin && <td className="h-10 px-2 text-[12.5px] text-ink-2">{teamActivity[uid]?.agents.length ? teamActivity[uid].agents.map((a) => agentLabel(a.name)).join(", ") : <span className="text-muted-foreground/70">Not connected</span>}</td>}
+                            {isWorkspaceAdmin && <td className="h-10 px-2 text-[12.5px] text-ink-2">{teamActivity[uid]?.last_active_at ? when(teamActivity[uid].last_active_at) : <span className="text-muted-foreground/70">Never</span>}</td>}
+                            {isWorkspaceAdmin && <td className="h-10 px-2 text-right text-[12.5px] tabular-nums text-ink-2">{teamActivity[uid]?.calls_7d ?? 0}</td>}
                             <td className="h-10 px-2 text-right">
                               {isWorkspaceAdmin && !isSelf && !isFounder && (
                                 <DropdownMenu>
@@ -1173,6 +1191,7 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
                           </td>
                           <td className="h-10 px-2">{roleLabel(inv.role)}</td>
                           <td className="h-10 px-2">—</td>
+                          {isWorkspaceAdmin && <td className="h-10 px-2" colSpan={3} />}
                           <td className="h-10 px-2 text-right">
                             <span className="inline-flex items-center gap-1">
                               {inv.token && (
@@ -1193,12 +1212,13 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
                         </tr>
                       ))}
                       {members.length === 0 && invitations.length === 0 && (
-                        <tr><td colSpan={4} className="px-2 py-2 text-[13px] text-muted-foreground/70">No members yet</td></tr>
+                        <tr><td colSpan={7} className="px-2 py-2 text-[13px] text-muted-foreground/70">No members yet</td></tr>
                       )}
                     </tbody>
                   </table>
                 )}
               </SettingsGroup>
+              {isWorkspaceAdmin && <TeamChanges workspaceId={workspaceId} />}
             </SectionShell>
           )}
 
@@ -1425,7 +1445,6 @@ export default function Settings({ embedded = false, forceSection }: { embedded?
           {/* Agent activity (GET-898, GET-900): when, how often and about what agents called the API and MCP. */}
           {section === "activity-log" && <SectionShell title="Agent activity" wide><ApiActivity /></SectionShell>}
           {section === "repo"         && <RepositoriesPane token={token ?? ""} workspaceId={workspaceId} />}
-          {section === "company-repo" && <SectionShell title="Company repo"><ContextRepoBar ws={workspaceId} token={token ?? ""} /></SectionShell>}
           {/* The Workspace layer's sections (memory, skills, config, models, changes, spend,
               adoption, reporting, insights, categories, agents, runs), each with its own shell. */}
           {CloudSection && section !== "billing" && (

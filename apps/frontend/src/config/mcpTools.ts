@@ -6,7 +6,8 @@
 // Cloud's server also lists read_intelligence after `score` (GET-1042); the dialog adds it
 // from the cloud registry (lib/cloud.ts `mcpTools`), as the server adds them from its own.
 export const MCP_TOOLS: readonly string[] = [
-  "whoami", "start", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights", "documents",
+  "whoami", "start", "my_desk", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights", "documents",
+  "assign", "changes",
   "add_note", "enrich", "score", "set_icp",
   "webhooks", "rev_plays",
   "get_account", "deals", "pages", "read_page", "save_page",

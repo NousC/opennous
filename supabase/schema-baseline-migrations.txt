@@ -1,5 +1,5 @@
-# Migration files folded into supabase/schema.sql. Maintained by scripts/check-schema-baseline.sh.
 # Files listed here that did not apply when folded in target the pre-v2 schema or were
+# Migration files folded into supabase/schema.sql. Maintained by scripts/check-schema-baseline.sh.
 # superseded (the script prints them); they are listed so they are never replayed again.
 2026_05_18_add_salesforce_provider.sql
 2026_05_18_crm_activity_push.sql
@@ -281,7 +281,9 @@
 2026_10_30_own_model_calls.sql
 2026_10_30_trigger_functions_private.sql
 2026_10_31_run_started_by_key.sql
+2026_11_01_context_file_operators.sql
 2026_11_01_routine_visibility.sql
+2026_11_02_assignments.sql
 agent_actions.sql
 backfill_credit_control.sql
 campaign_stats.sql

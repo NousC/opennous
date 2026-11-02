@@ -3,13 +3,13 @@
 // on or off stays on the page behind Manage.
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, FileText, Folder, SlidersHorizontal } from "lucide-react";
+import { ChevronRight, FileText, Folder, Plus, SlidersHorizontal } from "lucide-react";
 import type { LivingFile } from "@/components/knowledge/LivingFilesGroup";
 import { RAIL_STROKE, railActive, railGroupLabel, railIcon, railIconActive, railIdle, railLabel, railLabelActive, railRow } from "@/components/shell/rail";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePref } from "@/hooks/usePref";
 import { cloud } from "@/lib/cloud";
-import { FOLDED_PREF, isFolded, KNOWLEDGE_PATH, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, pushedFolders, type ContextLibraryData, type KnowledgeRow } from "@/lib/knowledge";
+import { FOLDED_PREF, INTELLIGENCE_PATH, isFolded, KNOWLEDGE_PATH, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, pushedFolders, type ContextLibraryData, type KnowledgeRow } from "@/lib/knowledge";
 
 export function KnowledgeTree() {
   const { session, userData } = useAuth();
@@ -65,11 +65,21 @@ export function KnowledgeTree() {
     );
   };
 
-  const groups = [...pushedFolders(files), { name: "Playbooks", rows: playbookRows(files, kept, pages) }, { name: "Library", rows: libraryRows(files, kept) }].filter((f) => f.rows.length);
+  const pushed = pushedFolders(files);
+  const intelligence = [{ name: "Playbooks", rows: playbookRows(files, kept, pages) }, { name: "Library", rows: libraryRows(files, kept) }].filter((f) => f.rows.length);
+  const heading = (label: string, href: string) => (
+    <button type="button" onClick={() => navigate(href)} className={`block w-full px-2 pb-1 pt-4 text-left ${railGroupLabel}`}>{label}</button>
+  );
   return (
     <>
-      <div className={`px-2 pb-1 pt-4 ${railGroupLabel}`}>Documents</div>
-      <ul className="flex flex-col gap-px">{groups.map((f) => folder(f.name, f.rows))}</ul>
+      <div className="relative">
+        {heading("Documents", KNOWLEDGE_PATH)}
+        {library.data?.is_admin && <button type="button" aria-label="New document" title="New document" onClick={() => navigate(`${KNOWLEDGE_PATH}?new=1`)}
+          className="absolute bottom-1 right-1 rounded p-0.5 text-muted-foreground/60 transition-colors hover:text-foreground"><Plus className="h-3.5 w-3.5" strokeWidth={RAIL_STROKE} /></button>}
+      </div>
+      {pushed.length > 0 && <ul className="flex flex-col gap-px">{pushed.map((f) => folder(f.name, f.rows))}</ul>}
+      {intelligence.length > 0 && heading("Intelligence", INTELLIGENCE_PATH)}
+      <ul className="flex flex-col gap-px">{intelligence.map((f) => folder(f.name, f.rows))}</ul>
     </>
   );
 }

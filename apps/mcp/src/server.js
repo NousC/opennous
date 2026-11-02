@@ -26,7 +26,7 @@ import { z } from "zod";
 import { get, post, put, patch, del, runWithToolCall } from "./client.js";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { WRITE_ONLY_TOOLS, toolHints } from "./toolHints.js";
+import { OPERATOR_TOOLS, WRITE_ONLY_TOOLS, toolHints } from "./toolHints.js";
 
 // The Workspace layer's (Cloud) additions to the plugin surface, when this checkout carries them:
 // read_intelligence (GET-1042). The open-source edition has no src/cloud/ and serves without them.
@@ -409,7 +409,7 @@ const CLOSED_DEAL = z.union([
 
 const START_GUIDE = readFileSync(new URL("./start.md", import.meta.url), "utf8");
 
-export function createServer({ hideWrites = false } = {}) {
+export function createServer({ hideWrites = false, hideOperator = false } = {}) {
   const server = new McpServer({
     // What an MCP host shows the server as. "OpenNous", like the product and the plugin.
     name: "opennous",
@@ -417,6 +417,7 @@ export function createServer({ hideWrites = false } = {}) {
     description:
       "OpenNous — the revenue Context Graph for your coding agent. Operated by the agent, not a human " +
       "clicking around: when someone asks to get started, call start. Call whoami to confirm who you act as (workspace, scope, GTM role). Call " +
+      "my_desk at the start of a session for what your operators pinned and assigned. Call " +
       "get_context before drafting outreach or preparing for a meeting. Call record after every " +
       "interaction, or whenever you learn something — you observe, Nous derives.",
     icons: [
@@ -443,7 +444,8 @@ export function createServer({ hideWrites = false } = {}) {
   // Claude Code already has. See docs/revenue-plugin/README.md §3.
   const PLUGIN_TOOLS = new Set([
     // The documented core (2026-09-30): one tool per door of the public API.
-    "whoami", "start", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights", "documents",
+    "whoami", "start", "my_desk", "find", "get_context", "query", "attention", "tasks", "rules", "get_insights", "documents",
+    "assign", "changes",
     "add_note", "enrich", "score",
     // The Workspace layer's (Cloud) tool: read_intelligence (GET-1042). None in the open-source edition.
     ...CLOUD_TOOL_NAMES,
@@ -473,6 +475,64 @@ export function createServer({ hideWrites = false } = {}) {
   };
   // What the cloud module's tools and tool extensions call the API with.
   const helpers = { get, post, put, relAge };
+
+  // ===========================================================================
+  // TOOL: my_desk, assign, changes  —  /v2/desk, /v2/assignments, /v2/changes (GET-1122)
+  // What operators gave this person, how operators give it, and the log of it.
+  // ===========================================================================
+  const AUDIENCE = {
+    target_user_id: z.string().optional().describe("One person's user id. Leave out, with target_role, for everyone."),
+    target_role: z.string().optional().describe("A GTM role, like account_executive or sdr."),
+  };
+  tool(
+    "my_desk",
+    "What this person's operators want their agent to know, right now: PINNED instructions to follow in everything " +
+    "you do, SKILLS assigned to them, and documents new since you last looked. Call it at the start of a session, " +
+    "before other work. Follow every pin. Open a skill with my_desk { skill } and follow it when the work calls for " +
+    "it: skills live here, not in local files, so you always get the current version.",
+    { skill: z.string().optional().describe("Open this assigned skill, by id.") },
+    async ({ skill }) => {
+      if (skill) {
+        const s = await get(`/v2/desk/skills/${encodeURIComponent(skill)}`);
+        return { content: [{ type: "text", text: `# ${s.title}\n\n${s.body}` }] };
+      }
+      const d = await get("/v2/desk");
+      const lines = [];
+      if (d.pins.length) lines.push("PINNED (follow these):", ...d.pins.map(p => `• ${p.new ? "[new] " : ""}${p.title}: ${p.body}`), "");
+      if (d.skills.length) lines.push("SKILLS (open with my_desk { skill }):", ...d.skills.map(s => `• ${s.new ? "[new] " : ""}${s.title}  id ${s.id}`), "");
+      if (d.new_documents.length) lines.push("NEW DOCUMENTS (open with documents { id }):", ...d.new_documents.map(f => `• ${f.title} [${f.folder}]  id ${f.id}`));
+      return { content: [{ type: "text", text: lines.length ? lines.join("\n").trim() : "Nothing on your desk." }] };
+    }
+  );
+  tool(
+    "assign",
+    "OPERATORS: give a SKILL (instructions for a recurring job) or a PIN (a standing instruction) to one person, a " +
+    "GTM role or everyone. Their agent sees it through my_desk on its next run. Every change is logged and can be " +
+    "rolled back with `changes`. Confirm what and who with the operator first. No arguments lists what's assigned; " +
+    "`user` lists what one person gets; `remove` takes one away; pass `id` with only the fields to change: who it reaches stays as it was.",
+    {
+      kind: z.enum(["skill", "pin"]).optional(), title: z.string().optional(), body: z.string().optional().describe("The whole text."),
+      id: z.string().optional().describe("Change this assignment."), remove: z.string().optional().describe("Remove this assignment, by id."),
+      user: z.string().optional().describe("List what this person gets."), ...AUDIENCE,
+    },
+    async ({ kind, title, body, id, remove, user, target_user_id, target_role }) => {
+      if (remove) { const a = await post(`/v2/assignments/${encodeURIComponent(remove)}/remove`, {}); return { content: [{ type: "text", text: `Removed "${a.title}" (${a.audience}). Undo it with changes.` }] }; }
+      if (kind || title || body) { const a = await post("/v2/assignments", { id, kind, title, body, target_user_id, target_role }); return { content: [{ type: "text", text: `${id ? "Updated" : "Assigned"} ${a.kind} "${a.title}" to ${a.audience}. Their agent sees it on its next run.` }] }; }
+      const r = await get("/v2/assignments", user ? { user } : undefined);
+      return { content: [{ type: "text", text: r.assignments.length ? r.assignments.map(a => `• ${a.kind}: ${a.title} [${a.audience}]  id ${a.id}`).join("\n") : "Nothing assigned." }] };
+    }
+  );
+  tool(
+    "changes",
+    "OPERATORS: the log of what went out to people and their agents, newest first: skills, pins and pushed documents. " +
+    "Pass `rollback` with a change id to put an assignment back as it was. Confirm with the operator first.",
+    { rollback: z.string().optional().describe("Undo this change, by id.") },
+    async ({ rollback }) => {
+      if (rollback) { const a = await post(`/v2/changes/${encodeURIComponent(rollback)}/rollback`, {}); return { content: [{ type: "text", text: `Rolled back "${a.title}".` }] }; }
+      const r = await get("/v2/changes");
+      return { content: [{ type: "text", text: r.changes.length ? r.changes.map(c => `• ${String(c.created_at).slice(0, 10)} ${c.action}: ${c.subject}${c.audience ? ` [${c.audience}]` : ""}  id ${c.id}${c.rolled_back_at ? " (rolled back)" : ""}`).join("\n") : "No changes yet." }] };
+    }
+  );
 
   // ===========================================================================
   // TOOL: documents  —  GET /v2/company-documents (GET-1117)
@@ -2239,7 +2299,7 @@ export function createServer({ hideWrites = false } = {}) {
   };
   cloudMcp?.register?.({ tool, z, ...helpers });
   for (const name of PLUGIN_TOOLS) {
-    if (!pending.has(name) || (hideWrites && WRITE_ONLY_TOOLS.has(name))) continue;
+    if (!pending.has(name) || (hideWrites && WRITE_ONLY_TOOLS.has(name)) || (hideOperator && OPERATOR_TOOLS.has(name))) continue;
     const args = [...pending.get(name)];
     const handler = args[args.length - 1];
     if (typeof handler === "function") {

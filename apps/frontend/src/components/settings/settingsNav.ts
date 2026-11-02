@@ -59,7 +59,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "security",        label: "Security",              group: "Account" },
     // On API the keys are the account's own way in, so they sit under Account, in Settings itself
     // rather than the sidebar and the top bar (GET-1030). Elsewhere they stay a Connections page.
-    ...(core ? [{ id: "api-keys", label: "API keys", group: "Account", show: !selfHosted } as Row] : []),
+    { id: "api-keys",        label: "API keys",              group: "Account", show: !selfHosted },
     // Connections — how data flows in and out. Integrations is one Settings page with Personal and
     // Shared as tabs, and Webhooks sits under it, on every plan and on self-host: the API sidebar's
     // Integrations group moved here (GET-1043). Shared keeps its own id so every ?section=company-sources
@@ -67,9 +67,6 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     { id: "integrations",    label: "Integrations",          group: "Connections" },
     { id: "company-sources", label: "Shared integrations",   group: "Connections", unlisted: true },
     { id: "webhooks",        label: "Webhooks",              group: "Connections" },
-    // The repo behind Documents: admins only, out of the sidebar since GET-1118.
-    { id: "company-repo",    label: "Company repo",          group: "Connections", show: isWorkspaceAdmin },
-    ...(core ? [] : [{ id: "api-keys", label: "API keys", group: "Connections", show: !selfHosted } as Row]),
     // Repo is no longer a settings page on any plan (GET-882): raw evidence setup lives with the
     // plugin and the docs. Kept as a row so the id stays known; never shown, so ?section=repo lands on Account.
     { id: "repo",            label: "Repo",                  group: "Connections", show: false },
@@ -82,7 +79,7 @@ export function settingsNav(input: SettingsNavInput, extra: ExtraSettingsRow[] =
     // Self-host: what nous.env has configured, AI models, integrations, email (GET-837).
     { id: "instance",        label: "Instance setup",        group: "Workspace", show: !!input.selfHosted && isWorkspaceAdmin },
     { id: "general",         label: "General",               group: "Workspace", show: isWorkspaceAdmin },
-    { id: "members",         label: "Members",               group: "Workspace", show: isWorkspaceAdmin },
+    { id: "members",         label: "Team",                  group: "Workspace", show: isWorkspaceAdmin },
     // When, how often and about what the workspace's API and MCP were called (GET-898). Admins, both
     // plans; not self-host, whose Settings keeps only what lives nowhere else (GET-839).
     { id: "activity-log",    label: "Agent activity",        group: "Workspace", show: isWorkspaceAdmin && !selfHosted },

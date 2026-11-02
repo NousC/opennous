@@ -17,7 +17,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { validateConfig } from "./client.js";
 import { createServer } from "./server.js";
 import { get } from "./client.js";
-import { keyIsReadOnly } from "./toolHints.js";
+import { keyProfile } from "./toolHints.js";
 
 // Advisory only — don't hard-exit if there's no key yet. The user may register
 // the MCP first and sign in after (`npx @opennous/cli login`); the server must
@@ -32,9 +32,7 @@ try {
 // NOUS_SURFACE=plugin trims the stdio server to the 6-primitive plugin allowlist
 // (+ whoami) — the same trim the hosted HTTP variant applies via ?surface=plugin.
 // Unset (or any other value) serves the full toolset. See server.js createServer({surface}).
-const server = createServer({
-  surface: process.env.NOUS_SURFACE,
-  hideWrites: await keyIsReadOnly(() => get("/v2/workspace/whoami", { capability_check: 1 })),
-});
+const key = await keyProfile(() => get("/v2/workspace/whoami", { capability_check: 1 }));
+const server = createServer({ surface: process.env.NOUS_SURFACE, hideWrites: key.readOnly, hideOperator: key.member });
 const transport = new StdioServerTransport();
 await server.connect(transport);

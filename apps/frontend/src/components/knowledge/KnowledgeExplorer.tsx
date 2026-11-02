@@ -17,8 +17,8 @@ export type ExplorerFolder = { name: string; rows: KnowledgeRow[]; action?: Reac
 
 const COLUMNS = 'grid grid-cols-[minmax(0,1fr)_44px] items-center gap-3 sm:grid-cols-[minmax(0,1fr)_130px_110px_44px]';
 
-export function KnowledgeExplorer({ ws, token, folders, manage, note, onNew, onUpload }: {
-  ws: string; token: string; folders: ExplorerFolder[]; manage: boolean; note?: { text: string; error?: boolean } | null; onNew: () => void; onUpload: () => void;
+export function KnowledgeExplorer({ ws, token, folders, manage, note, onNew, onUpload, empty, newLabel = 'New file' }: {
+  ws: string; token: string; folders: ExplorerFolder[]; manage: boolean; note?: { text: string; error?: boolean } | null; onNew?: () => void; onUpload?: () => void; empty?: string; newLabel?: string;
 }) {
   const navigate = useNavigate();
   const cache = useQueryClient();
@@ -37,8 +37,8 @@ export function KnowledgeExplorer({ ws, token, folders, manage, note, onNew, onU
 
   return <div className="h-full overflow-y-auto bg-background">
     <div className="flex items-center justify-end gap-1 px-6 pt-3">
-      <Button size="sm" variant="ghost" onClick={onUpload}><Upload />Upload</Button>
-      <Button size="sm" variant="outline" onClick={onNew}><Plus />New file</Button>
+      {onUpload && <Button size="sm" variant="ghost" onClick={onUpload}><Upload />Upload</Button>}
+      {onNew && <Button size="sm" variant="outline" onClick={onNew}><Plus />{newLabel}</Button>}
     </div>
     {error && <p role="alert" className="px-6 pt-2 text-[12px] text-risk">{error}</p>}
     {note && <p role={note.error ? 'alert' : 'status'} className={cn('px-6 pt-2 text-[12px]', note.error ? 'text-risk' : 'text-muted-foreground')}>{note.text}</p>}
@@ -46,6 +46,10 @@ export function KnowledgeExplorer({ ws, token, folders, manage, note, onNew, onU
       <div className={cn(COLUMNS, 'border-b border-border/70 py-2 text-[11.5px] font-medium text-muted-foreground/70')}>
         <span>Name</span><span className="hidden sm:block">Type</span><span className="hidden sm:block">Updated</span><span />
       </div>
+      {!folders.length && empty && <div className="flex flex-col items-center gap-3 py-16 text-center">
+        <p className="text-[13px] text-muted-foreground">{empty}</p>
+        {onNew && <Button size="sm" onClick={onNew}><Plus />{newLabel}</Button>}
+      </div>}
       {folders.map(f => {
         const open = !folded.includes(f.name);
         return <Fragment key={f.name}>

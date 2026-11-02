@@ -71,7 +71,7 @@ icpV2Router.put('/', allowQueryParams([]), requireAdminKey, async (req, res) => 
 });
 
 // POST /v2/icp/closed-deals { won: [domain], lost: [domain] } — the record_closed_deals handler.
-icpV2Router.post('/closed-deals', allowQueryParams([]), recordClosedDeals);
+icpV2Router.post('/closed-deals', allowQueryParams([]), requireAdminKey, recordClosedDeals);
 
 // Who scores this workspace's accounts (GET-586). 'nous' is the learned scorecard; 'external' means
 // the workspace runs its own scorer and posts results to POST /v2/scores, and Nous stops staking,

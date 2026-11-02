@@ -65,6 +65,7 @@ import { decisionsV2Router } from './routes/v2/decisions.mjs';
 import { notesV2Router } from './routes/v2/notes.mjs';
 import { documentsV2Router } from './routes/v2/documents.mjs';
 import { companyDocumentsV2Router } from './routes/v2/companyDocuments.mjs';
+import { deskV2Router, assignmentsV2Router, changesV2Router } from './routes/v2/desk.mjs';
 import { signalsV2Router } from './routes/v2/signals.mjs';
 import { peopleV2Router } from './routes/v2/people.mjs';
 import { leadsV2Router } from './routes/v2/leads.mjs';
@@ -410,6 +411,10 @@ app.use('/v2/lead-lists',      verifyApiKey,     leadListsV2Router);
 app.use('/v2/notes',           verifyApiKey,     requireOpsBalance, logV2Op, notesV2Router);
 app.use('/v2/documents',       verifyAuthEither, requireOpsBalance, logV2Op, documentsV2Router);
 app.use('/v2/company-documents', verifyApiKey,   requireOpsBalance, logV2Op, companyDocumentsV2Router);
+// Like /v2/rules, no ops balance: an operator must always be able to take a bad pin back.
+app.use('/v2/desk',            verifyAuthEither, logV2Op, deskV2Router);
+app.use('/v2/assignments',     verifyAuthEither, logV2Op, assignmentsV2Router);
+app.use('/v2/changes',         verifyAuthEither, logV2Op, changesV2Router);
 app.use('/v2/signals',         verifyApiKey,     requireOpsBalance, logV2Op, signalsV2Router);
 app.use('/v2/people',          verifyApiKey,     requireOpsBalance, logV2Op, peopleV2Router);
 app.use('/v2/leads',           verifyApiKey,     requireOpsBalance, logV2Op, requireFeature('leadLists'), leadsV2Router);

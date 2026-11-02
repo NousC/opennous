@@ -18,7 +18,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 // PLUGIN_TOOLS so tools/list leads with them. Cloud adds read_intelligence from its own
 // module (src/cloud/index.js, GET-839), so they are not in this literal set.
 const DOCUMENTED = [
-  'whoami', 'start', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights', 'documents',
+  'whoami', 'start', 'my_desk', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights', 'documents',
+  'assign', 'changes',
   'add_note', 'enrich', 'score', 'set_icp',
   'webhooks', 'rev_plays',
 ];
@@ -79,4 +80,16 @@ test('start is a tool and a prompt, and carries the guide', async () => {
   const out = await (tool.handler ?? tool.callback)({}, {});
   assert.match(out.content[0].text, /See what's set up/);
   assert.ok(server._registeredPrompts.start, 'start prompt is registered');
+});
+
+test('a member is offered no operator tools, and an admin all of them (GET-1121)', async () => {
+  process.env.NOUS_API_KEY ??= 'k';
+  const { createServer } = await import('../src/server.js');
+  const names = (opts) => Object.keys(createServer(opts)._registeredTools);
+  const admin = names({}), member = names({ hideOperator: true });
+  for (const t of ['set_icp', 'record_closed_deals', 'webhooks']) {
+    assert.ok(admin.includes(t), t);
+    assert.ok(!member.includes(t), t);
+  }
+  assert.ok(member.includes('documents') && member.includes('get_context'));
 });

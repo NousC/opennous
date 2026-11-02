@@ -51,6 +51,7 @@ export {
 // What the workspace has learned, for the next action (GET-1042); the Cloud layer registers the source.
 export { registerIntelligenceSource, intelligenceFor, intelligenceRefs } from './intelligenceContext.mjs';
 // The Intelligence files (GET-1042), open source since 2026-10-29. Importing this registers the source.
+export { oneLine, audienceOf, assignedTo, rolesOf, logChange, listAssignments, assignmentsFor, saveAssignment, removeAssignment, listChanges, rollbackChange, deskFor } from './context/assignments.mjs';
 export { readIntelligence, sectionsOf, pickSections, wordsOf, renderSection } from './context/intelligence.mjs';
 export { intelligenceRule, withoutIntelligenceRefs } from './intelligencePrompt.mjs';
 // Settings > Knowledge, the workspace context library (GET-875); open source since 2026-10-29.

@@ -1106,7 +1106,7 @@ export async function recordClosedDeals(req, res) {
     return res.status(500).json({ error: 'internal_error' });
   }
 }
-workspaceStatusV2Router.post('/closed-deals', recordClosedDeals);
+workspaceStatusV2Router.post('/closed-deals', requireAdminKey, recordClosedDeals);
 
 // ── POST /v2/workspace/icp/import ─────────────────────────────────────────────
 // The file→Nous direction of the ICP symbiosis (sync_icp). The agent reads the

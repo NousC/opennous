@@ -7,7 +7,7 @@ import { vendorOfModelId, labelOfModelId } from '../../lib/model.mjs';
 import { isSelfHosted, periodStartFor, RETRIEVAL_EVENT_TYPES, backfillWindowsFor } from '../../lib/plans.mjs';
 import { loadTeamUsage } from '../../lib/usageSummary.mjs';
 import { usageByKeyHandler } from './apiKeyUsage.mjs';
-import { activityHandler, activityCallsHandler } from './apiActivity.mjs';
+import { activityHandler, activityCallsHandler, teamActivityHandler, teamMemberHandler } from './apiActivity.mjs';
 
 export const usageRouter = Router();
 
@@ -174,6 +174,8 @@ usageRouter.get('/by-key', verifySupabaseAuth, usageByKeyHandler);
 // (GET-898). See routes/api/apiActivity.mjs.
 usageRouter.get('/activity', verifySupabaseAuth, activityHandler);
 usageRouter.get('/activity/calls', verifySupabaseAuth, activityCallsHandler);
+usageRouter.get('/team', verifySupabaseAuth, teamActivityHandler);
+usageRouter.get('/team/:userId', verifySupabaseAuth, teamMemberHandler);
 
 usageRouter.get('/conversations', verifySupabaseAuth, async (req, res) => {
   try {

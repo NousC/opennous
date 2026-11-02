@@ -1,6 +1,7 @@
 import { getSupabaseClient } from '@nous/core';
 import { isWorkspaceAdmin } from '../../lib/apiKeyUsage.mjs';
 import { loadActivity, loadCalls, parseCallsQuery, parseWindow } from '../../lib/apiActivity.mjs';
+import { loadTeamActivity, loadTeamMember } from '../../lib/teamActivity.mjs';
 
 // Settings > Workspace > API & MCP activity (GET-898). Mounted on /api/usage behind
 // verifySupabaseAuth (?workspaceId=). Workspace owners and admins only: the log holds every
@@ -41,6 +42,33 @@ export function makeActivityHandler({ getClient = getSupabaseClient, now = () =>
   };
 }
 
+/** GET /api/usage/team -> { members: { [userId]: { last_active_at, calls_7d, agents } } }. Admins only (GET-1120). */
+export function makeTeamActivityHandler({ getClient = getSupabaseClient, now = () => Date.now() } = {}) {
+  return async (req, res) => {
+    const gate = activityGate(req);
+    if (gate) return res.status(gate.status).json(gate.body);
+    try {
+      return res.json(await loadTeamActivity(getClient(), { workspaceId: req.workspaceId, now: now() }));
+    } catch (err) {
+      return fail(res, 'GET /api/usage/team', err);
+    }
+  };
+}
+
+/** GET /api/usage/team/:userId -> one person in depth. Admins only; 404 for someone not in the workspace. */
+export function makeTeamMemberHandler({ getClient = getSupabaseClient, now = () => Date.now() } = {}) {
+  return async (req, res) => {
+    const gate = activityGate(req);
+    if (gate) return res.status(gate.status).json(gate.body);
+    try {
+      const out = await loadTeamMember(getClient(), { workspaceId: req.workspaceId, userId: req.params.userId, now: now() });
+      return out ? res.json(out) : res.status(404).json({ error: 'not_found' });
+    } catch (err) {
+      return fail(res, 'GET /api/usage/team/:userId', err);
+    }
+  };
+}
+
 /**
  * GET /api/usage/activity/calls?window=&surface=mcp|rest&route=&status=ok|error&key=<uuid>&client=&q=&limit=&before=
  *   (client=(unknown) is the calls that named no client)
@@ -63,3 +91,6 @@ export function makeActivityCallsHandler({ getClient = getSupabaseClient, now = 
 
 export const activityHandler = makeActivityHandler();
 export const activityCallsHandler = makeActivityCallsHandler();
+
+export const teamActivityHandler = makeTeamActivityHandler();
+export const teamMemberHandler = makeTeamMemberHandler();

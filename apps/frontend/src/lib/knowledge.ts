@@ -28,6 +28,8 @@ export type ContextVersion = {
 export type KnowledgeRow = { key: string; title: string; href: string; type: string; updated?: string | null; off?: boolean; living?: boolean; error?: string | null };
 type LivingRow = { key: string; title: string; enabled: boolean; file_id: string | null; last_run_at?: string | null; last_error?: string | null };
 export const KNOWLEDGE_PATH = "/knowledge";
+/** Documents is only what operators pushed; everything OpenNous and the library hold is Intelligence (GET-1119). */
+export const INTELLIGENCE_PATH = `${KNOWLEDGE_PATH}?view=intelligence`;
 /** The Playbooks folder: the ICP, then the files OpenNous keeps. `pages` are the ones that open as a page (Cloud). */
 export function playbookRows(files: LibraryFile[], living: LivingRow[], pages: readonly string[]): KnowledgeRow[] {
   const icp = files.find((f) => f.kind === "icp");

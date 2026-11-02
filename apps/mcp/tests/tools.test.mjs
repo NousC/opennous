@@ -54,11 +54,11 @@ test('tools/list leads with the documented core, list_people is gone', async () 
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name);
   // Cloud's module adds read_intelligence (GET-1042) after score; the open-source edition has none.
-  const core = ['whoami', 'start', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights', 'documents',
-    'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_intelligence'] : []), 'set_icp', 'webhooks', 'rev_plays'];
+  const core = ['whoami', 'start', 'my_desk', 'find', 'get_context', 'query', 'attention', 'tasks', 'rules', 'get_insights', 'documents',
+    'assign', 'changes', 'add_note', 'enrich', 'score', ...(HAS_CLOUD ? ['read_intelligence'] : []), 'set_icp', 'webhooks', 'rev_plays'];
   assert.deepEqual(names.slice(0, core.length), core);
   assert.ok(!names.includes('list_people'));
-  assert.equal(names.length, HAS_CLOUD ? 25 : 24);
+  assert.equal(names.length, HAS_CLOUD ? 28 : 27);
   assert.ok(!names.includes('read_brain') && !names.includes('write_brain'));
 });
 
@@ -453,4 +453,20 @@ test('documents: lists what the reader may see, searches, and opens one (GET-111
   assert.equal(found.calls[0].query.q, 'pricing');
   const open = await callTool('documents', { id: 'd1' }, { 'GET /v2/company-documents/d1': () => [200, { title: 'Doctrine', folder: 'Doctrine', shared: 'everyone', body: 'The rules.' }] });
   assert.match(open.text, /The rules\./);
+});
+
+test('my_desk: pins to follow, skills to open, new documents; assign says who got it (GET-1122)', async () => {
+  const desk = { pins: [{ id: 'p', title: 'Next steps', body: 'End every call with a dated next step.', new: true }], skills: [{ id: 's1', title: 'Call prep', new: false }], new_documents: [{ id: 'd', title: 'Q1 push', folder: 'Initiatives' }] };
+  const r = await callTool('my_desk', {}, { 'GET /v2/desk': () => [200, desk] });
+  assert.match(r.text, /\[new\] Next steps: End every call/);
+  assert.match(r.text, /Call prep  id s1/);
+  assert.match(r.text, /Q1 push \[Initiatives\]/);
+  const open = await callTool('my_desk', { skill: 's1' }, { 'GET /v2/desk/skills/s1': () => [200, { title: 'Call prep', body: 'Read the account first.' }] });
+  assert.match(open.text, /Read the account first/);
+  const empty = await callTool('my_desk', {}, { 'GET /v2/desk': () => [200, { pins: [], skills: [], new_documents: [] }] });
+  assert.equal(empty.text, 'Nothing on your desk.');
+  const a = await callTool('assign', { kind: 'pin', title: 'T', body: 'B', target_role: 'sdr' }, { 'POST /v2/assignments': () => [201, { kind: 'pin', title: 'T', audience: 'Role: sdr' }] });
+  assert.match(a.text, /Assigned pin "T" to Role: sdr/);
+  const back = await callTool('changes', { rollback: 'c1' }, { 'POST /v2/changes/c1/rollback': () => [200, { title: 'T' }] });
+  assert.match(back.text, /Rolled back "T"/);
 });

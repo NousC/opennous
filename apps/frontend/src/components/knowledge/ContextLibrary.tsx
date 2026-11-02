@@ -16,7 +16,7 @@
 // place; "Tags & sharing" opens the full dialog below. ?file=<id> opens a file on arrival (the box
 // page links here to edit one). One file can be the About us file (GET-1036): who we are and what we
 // have, read wherever the system needs to know what we sell. Like the ICP file: one, shared, admins.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpRight, Plus } from 'lucide-react';
@@ -32,10 +32,10 @@ import { useTopBarCrumbs } from '@/components/shell/topBar';
 import type { LivingFile } from '@/components/knowledge/LivingFilesGroup';
 import { cloud } from '@/lib/cloud';
 import { when } from '@/lib/format';
-import { KNOWLEDGE_PATH, VISIBILITY_LABEL, pushedFolders, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, CONTEXT_KIND_LABEL, type ContextVisibility, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
+import { INTELLIGENCE_PATH, KNOWLEDGE_PATH, VISIBILITY_LABEL, pushedFolders, knowledgeKey, knowledgeRequest, libraryRows, playbookRows, CONTEXT_KIND_LABEL, type ContextVisibility, type ContextLibraryData, type LibraryFile } from '@/lib/knowledge';
 
-type Draft = { id: string | null; title: string; body: string; kind: 'reference' | 'instructions'; icp: boolean; about: boolean; audience: ContextVisibility; boxes: string[]; document: boolean };
-const empty: Draft = { id: null, title: '', body: '', kind: 'reference', icp: false, about: false, audience: 'boxes', boxes: [], document: false };
+type Draft = { id: string | null; title: string; body: string; kind: 'reference' | 'instructions'; icp: boolean; about: boolean; audience: ContextVisibility; folder: string; boxes: string[]; document: boolean };
+const empty: Draft = { id: null, title: '', body: '', kind: 'reference', icp: false, about: false, audience: 'boxes', folder: '', boxes: [], document: false };
 const MARKED = new Set(['icp', 'about']);
 type IcpOutcome = { status: string; signals?: number; message?: string; scorer_switched?: boolean };
 type IcpReply = { icp?: IcpOutcome };
@@ -68,6 +68,9 @@ export function ContextLibrary() {
   // The open file is the URL's (?file=), so the sidebar's tree can open one from outside (GET-1082).
   const [params, setParams] = useSearchParams();
   const open = params.get('file');
+  const intelligence = params.get('view') === 'intelligence';
+  // The sidebar's + lands here with ?new=1.
+  const asked = params.get('new') === '1';
   const setOpen = (id: string | null) => setParams(p => { const n = new URLSearchParams(p); if (id) n.set('file', id); else n.delete('file'); return n; });
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,16 +112,22 @@ export function ContextLibrary() {
   async function save() {
     if (!draft) return;
     const markedKind = draft.icp ? 'icp' : draft.about ? 'about' : null;
-    const payload = { title: draft.title, ...(draft.document ? {} : { body: draft.body }), kind: markedKind ?? draft.kind, ...(markedKind ? {} : { visibility: draft.audience }), revbox_ids: draft.boxes };
+    const payload = { ...(!draft.id && draft.folder.trim() ? { folder: draft.folder.trim() } : {}), title: draft.title, ...(draft.document ? {} : { body: draft.body }), kind: markedKind ?? draft.kind, ...(markedKind ? {} : { visibility: draft.audience }), revbox_ids: draft.boxes };
     await icpCall<{ file: LibraryFile } & IcpReply>(requestTo(draft.id ? `/files/${draft.id}` : '/files', draft.id ? 'PATCH' : 'POST'), payload,
       { done: out => { setDraft(null); setOpen(out.file.id); } });
   }
   async function upload(file: File | undefined) {
     if (!file) return;
     if (file.size > 262144) { setNote({ text: 'Upload text up to 256 KB.', error: true }); return; }
-    setDraft({ ...empty, title: file.name, body: await file.text() });
+    setDraft({ ...empty, title: file.name, body: await file.text(), ...(intelligence ? {} : { audience: 'operators' as const, folder: 'Initiatives' }) });
   }
-  const edit = (f: LibraryFile) => setDraft({ id: f.id, title: f.title, body: f.body, kind: f.kind === 'icp' || f.kind === 'about' ? 'reference' : f.kind, icp: f.kind === 'icp', about: f.kind === 'about', audience: f.visibility, boxes: f.boxes.map(b => b.id), document: !!f.document_id });
+  const edit = (f: LibraryFile) => setDraft({ id: f.id, title: f.title, body: f.body, kind: f.kind === 'icp' || f.kind === 'about' ? 'reference' : f.kind, icp: f.kind === 'icp', about: f.kind === 'about', audience: f.visibility, folder: f.folder ?? '', boxes: f.boxes.map(b => b.id), document: !!f.document_id });
+
+  useEffect(() => {
+    if (!asked || !data?.is_admin) return;
+    setDraft({ ...empty, audience: 'operators', folder: 'Initiatives' });
+    setParams(p => { const n = new URLSearchParams(p); n.delete('new'); return n; }, { replace: true });
+  }, [asked, data?.is_admin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openFile = data?.files.find(f => f.id === open);
   // The ICP lives in Intelligence, not the library (GET-1044).
@@ -148,10 +157,9 @@ export function ContextLibrary() {
   const kept = living.data?.files ?? [];
   const inPlaybooks = !!openFile && (openFile.kind === 'icp' || kept.some(f => f.file_id === openFile.id));
   useTopBarCrumbs(openFile
-    ? [{ label: openFile.folder ?? (inPlaybooks ? 'Playbooks' : 'Library'), href: KNOWLEDGE_PATH }, { label: openFile.title }]
-    : openBlock ? [{ label: `${openBlock.box.name} instructions`, href: KNOWLEDGE_PATH }, { label: openBlock.b.title }] : [{ label: 'Documents' }]);
-  const folders: ExplorerFolder[] = [
-    ...pushedFolders(data?.files ?? []),
+    ? [{ label: openFile.folder ?? (inPlaybooks ? 'Playbooks' : 'Library'), href: openFile.folder ? KNOWLEDGE_PATH : INTELLIGENCE_PATH }, { label: openFile.title }]
+    : openBlock ? [{ label: `${openBlock.box.name} instructions`, href: KNOWLEDGE_PATH }, { label: openBlock.b.title }] : [{ label: intelligence ? 'Intelligence' : 'Documents' }]);
+  const folders: ExplorerFolder[] = !intelligence ? pushedFolders(data?.files ?? []) : [
     {
       name: 'Playbooks', rows: playbookRows(data?.files ?? [], kept, pages ?? []),
       ...(!icpFile && !pages?.includes('icp') && data?.is_admin ? { action: <Button size="sm" variant="ghost" onClick={() => setDraft({ ...empty, title: 'ICP', icp: true })}><Plus /></Button> } : {}),
@@ -164,7 +172,9 @@ export function ContextLibrary() {
     <input ref={uploader} type="file" hidden accept=".md,.markdown,.txt,.csv,.json,text/*,application/json" onChange={e => { void upload(e.target.files?.[0]); e.target.value = ''; }} />
     {!openFile && !openBlock && !(open && query.isLoading) && <KnowledgeExplorer ws={ws} token={token} folders={folders} manage={!!living.data?.can_manage}
       note={query.error ? { text: query.error.message, error: true } : !openFile ? note : null}
-      onNew={() => setDraft({ ...empty })} onUpload={() => uploader.current?.click()} />}
+      empty={intelligence ? undefined : 'No documents yet'} newLabel={intelligence ? 'New file' : 'New document'}
+      onNew={intelligence || data?.is_admin ? () => setDraft({ ...empty, ...(intelligence ? {} : { audience: 'operators' as const, folder: 'Initiatives' }) }) : undefined}
+      onUpload={intelligence || data?.is_admin ? () => uploader.current?.click() : undefined} />}
 
     {openFile ? <Doc
       doc={{ id: openFile.id, title: openFile.title, body: openFile.body, kind: openFile.kind, linkedDocument: !!openFile.document_id, tags: openFile.boxes, hiddenBoxes: openFile.hidden_boxes, visibility: openFile.visibility, updatedAt: openFile.updated_at }}
@@ -191,10 +201,11 @@ export function ContextLibrary() {
 
     <Dialog open={!!draft} onOpenChange={o => { if (!o) setDraft(null); }}>
       <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto sm:max-w-[560px]">
-        <DialogHeader><DialogTitle className="text-[16px] font-medium">{draft?.id ? 'Edit document' : 'New document'}</DialogTitle>
-          <DialogDescription className="mt-1 text-[12px]">Saved to Documents.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle className="text-[16px] font-medium">{draft?.id ? 'Edit document' : intelligence ? 'New file' : 'New document'}</DialogTitle>
+          <DialogDescription className="mt-1 text-[12px]">{intelligence ? 'Saved to the library.' : 'Saved to Documents. It stays here; nothing goes to your repo.'}</DialogDescription></DialogHeader>
         {draft && <div className="mt-4 space-y-4">
           <label className="block text-[12px]">Title<input aria-label="Context title" className={cn(fieldCls, 'mt-1.5 sm:w-full')} value={draft.title} maxLength={200} onChange={e => setDraft({ ...draft, title: e.target.value })} /></label>
+          {!draft.id && !intelligence && <label className="block text-[12px]">Folder<input aria-label="Folder" className={cn(fieldCls, 'mt-1.5 sm:w-full')} value={draft.folder} maxLength={60} onChange={e => setDraft({ ...draft, folder: e.target.value.replace(/\//g, '') })} placeholder="Initiatives, Strategy, Objections" /></label>}
           {draft.document ? <p className="text-[12px] text-muted-foreground">This file is a linked document. Edit its text in the document itself.</p>
             : <label className="block text-[12px]">Text<textarea aria-label="Context text" rows={8} className="mt-1.5 w-full resize-y rounded-lg border border-border/70 bg-card px-2.5 py-2 text-[13px] outline-none focus:border-foreground/25" value={draft.body} onChange={e => setDraft({ ...draft, body: e.target.value })} placeholder="Paste or write what your jobs should know." /></label>}
           <fieldset className="text-[12px]"><legend className="mb-1.5">Kind</legend><div className="flex flex-wrap gap-1.5">
@@ -210,7 +221,7 @@ export function ContextLibrary() {
           {taggable.length > 0 && <fieldset className="text-[12px]"><legend className="mb-1.5">Tagged to</legend>
             <div className="max-h-40 space-y-0.5 overflow-y-auto rounded-xl border border-border/70 p-1">{taggable.map(b => <label key={b.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted"><input type="checkbox" checked={draft.boxes.includes(b.id)} onChange={e => setDraft({ ...draft, boxes: e.target.checked ? [...draft.boxes, b.id] : draft.boxes.filter(x => x !== b.id) })} /><span className="flex-1 truncate">{b.name}</span>{!b.shared && <span className="text-[10.5px] text-muted-foreground">Private</span>}</label>)}</div>
           </fieldset>}
-          <div className="flex justify-end gap-2 pt-1"><Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button><Button disabled={busy || !draft.title.trim()} onClick={() => void save()}>{draft.id ? 'Save' : 'Add'}</Button></div>
+          <div className="flex justify-end gap-2 pt-1"><Button variant="ghost" onClick={() => setDraft(null)}>Cancel</Button><Button disabled={busy || !draft.title.trim() || (!draft.id && !intelligence && !draft.folder.trim())} onClick={() => void save()}>{draft.id ? 'Save' : 'Add'}</Button></div>
         </div>}
       </DialogContent>
     </Dialog>

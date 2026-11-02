@@ -2,7 +2,7 @@
 // operator's agent pushes one in. The MCP's `documents` tool reads and pushes here. A key with no person
 // behind it reads only what everyone may read, and pushes nothing.
 import { Router } from 'express';
-import { getSupabaseClient, readableContextFiles, pushDocument, validateContextFile, NO_CONTENT_VIEWER } from '@nous/core';
+import { getSupabaseClient, readableContextFiles, pushDocument, validateContextFile, logChange, oneLine, NO_CONTENT_VIEWER } from '@nous/core';
 import { allowQueryParams } from '../../lib/v2Query.mjs';
 
 export const companyDocumentsV2Router = Router();
@@ -11,7 +11,7 @@ const reader = (req) => {
   const person = req.memberUserId && !req.noContent && req.memberUserId !== NO_CONTENT_VIEWER ? req.memberUserId : null;
   return { userId: person, admin: req.viewerScope === 'admin' };
 };
-const summary = (f) => ({ id: f.id, title: f.title, folder: f.folder ?? 'Library', shared: f.visibility === 'workspace' ? 'everyone' : f.visibility === 'operators' ? 'operators' : 'only me', updated_at: f.updated_at });
+const summary = (f) => ({ id: f.id, title: oneLine(f.title), folder: oneLine(f.folder ?? 'Library'), shared: f.visibility === 'workspace' ? 'everyone' : f.visibility === 'operators' ? 'operators' : 'only me', updated_at: f.updated_at });
 const wrap = (label, fn) => async (req, res) => {
   try { return await fn(req, res); }
   catch (err) { console.error(`[${label}]`, err); return res.status(500).json({ error: 'internal_error' }); }
@@ -45,6 +45,9 @@ companyDocumentsV2Router.post('/', allowQueryParams([]), async (req, res) => {
     const invalid = validateContextFile({ title, folder, body: markdown });
     if (invalid) return res.status(400).json({ error: 'invalid_document', detail: invalid });
     const { file, created } = await pushDocument(getSupabaseClient(), req.workspaceId, userId, { title, folder, body: markdown, ...(shared ? { visibility: SHARED[shared] } : {}) });
+    // A private document stays out of a log every admin reads.
+    if (file.visibility !== 'boxes') await logChange(getSupabaseClient(), req.workspaceId, userId, { action: created ? 'document_pushed' : 'document_updated', subject: `${oneLine(folder)} / ${oneLine(file.title)}`, audience: summary(file).shared })
+      .catch(e => console.warn('[company-documents] change not logged:', e?.message ?? e));
     return res.status(created ? 201 : 200).json({ ...summary(file), created });
   } catch (err) {
     if (err?.status) return res.status(err.status).json({ error: err.message });
